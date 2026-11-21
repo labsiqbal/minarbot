@@ -30,7 +30,7 @@ pub fn restricted(db: &Connection, turn: &Value) -> Result<bool> {
     Ok(tools::project_context(db, turn)?.is_some())
 }
 pub fn reminder(db: &Connection, turn: &Value, profile: &Value) -> Result<Option<String>> {
-    if super::profile::setup(db, turn)? {
+    if turn["agent"] == crate::mcp::guide::ID || super::profile::setup(db, turn)? {
         return Ok(None);
     }
     Ok(verification::nudge(db,string(turn,"id"),turn,profile)?.then(||"One verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. Keep tool mechanics out of the reply.".into()))
@@ -45,6 +45,9 @@ pub fn instructions(
     runtime: &str,
     model: &str,
 ) -> Result<String> {
+    if turn["agent"] == crate::mcp::guide::ID {
+        return Ok(crate::mcp::guide::instructions());
+    }
     let mut specs = specs(state, db, turn)?;
     if !state.computer.enabled
         || !exists(

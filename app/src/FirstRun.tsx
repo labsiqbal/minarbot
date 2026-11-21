@@ -14,18 +14,11 @@ const steps = [
   { title: 'Send first message', icon: Send },
 ];
 
-export function FirstRun({ request, isClientError, settingsOpen, onOpenEngines, onCreated }: {
-  request: <T>(path: string, data?: unknown) => Promise<T>;
-  isClientError: (error: unknown) => boolean;
-  settingsOpen: boolean;
-  onOpenEngines: () => void;
-  onCreated: (agent: Agent) => void;
-}) {
+export function useFirstRunConnections(request: <T>(path: string, data?: unknown) => Promise<T>, settingsOpen = false, profile?: Agent) {
   const accounts = useSetupData<ProviderAccount[]>(request, '/api/provider-accounts', !settingsOpen);
   const engines = useSetupData<{ choices: RuntimeChoice[] }>(request, '/api/runtimes', !settingsOpen);
   const choices = engines.data?.choices;
   const logins = useSetupData<EngineLogin[]>(request, engineLoginsPath, !settingsOpen);
-  const [adding, setAdding] = useState(false);
   // A provider saved here is an explicit choice, so it outranks a detected sign-in.
   const [savedAccount, setSavedAccount] = useState('');
   const [selectedValue, setSelectedValue] = useState('');
@@ -56,8 +49,31 @@ export function FirstRun({ request, isClientError, settingsOpen, onOpenEngines, 
   const connections = [...devices, ...engineLogins, ...providers, ...hosts];
   const account = providers.find(item => item.defaults.account === savedAccount) ?? providers.find(item => item.runtime === 'codex') ?? providers[0];
   const automatic = account && (savedAccount || !devices.length) ? account : devices[0] ?? engineLogins[0] ?? hosts[0];
-  const selection = connections.find(item => item.value === selectedValue) ?? automatic;
+  const selection = connections.find(item => item.value === selectedValue)
+    ?? connections.find(item => profile?.model && item.defaults.account === profile.provider_account && item.runtime === profile.runtime)
+    ?? automatic;
   const defaults = selection?.defaults;
+  return { accounts, engines, logins, choices, connections, selection, defaults, error, setSelectedValue, setSavedAccount };
+}
+
+export function FirstRun({ request, isClientError, settingsOpen, onOpenEngines, onCreated, guide, onGuide }: {
+  request: <T>(path: string, data?: unknown) => Promise<T>;
+  isClientError: (error: unknown) => boolean;
+  settingsOpen: boolean;
+  onOpenEngines: () => void;
+  onCreated: (agent: Agent) => void;
+  guide?: Agent | null;
+  onGuide: (agent: Agent, connection: FirstRunConnection) => Promise<void>;
+}) {
+  const { accounts, engines, logins, choices, connections, selection, defaults, error, setSelectedValue, setSavedAccount } = useFirstRunConnections(request, settingsOpen);
+  const [adding, setAdding] = useState(false);
+  const [guideBusy, setGuideBusy] = useState(false), [guideError, setGuideError] = useState('');
+  async function openGuide(agent: Agent, connection: FirstRunConnection) {
+    setGuideBusy(true); setGuideError('');
+    try { await onGuide(agent, connection); }
+    catch (error) { setGuideError(error instanceof Error ? error.message : 'Could not open the guide.'); }
+    finally { setGuideBusy(false); }
+  }
   const activeStep = defaults && !adding ? 1 : 0;
 
   return <main className="chat page-view bs-root"><div className="page-scroll">
@@ -92,8 +108,8 @@ export function FirstRun({ request, isClientError, settingsOpen, onOpenEngines, 
                 {defaults && <Button variant="ghost" onClick={() => setAdding(false)}>Use {selection?.label}</Button>}
               </div>}
               {index === 1 && ((choices || !engines.busy) && selection
-                ? <AgentForm request={request} isClientError={isClientError} model={selection.defaults.model} firstRun={selection.defaults}
-                  connections={connections} connection={selection.value} onConnectionChange={setSelectedValue} onCreated={onCreated} />
+                ? <div className="k-stack">{guide && !guide.hidden && <Button busy={guideBusy} disabled={guideBusy} onClick={() => void openGuide(guide, selection)}>Set up with {guide.name}</Button>}{guideError && <Alert tone="error">{guideError}</Alert>}<AgentForm request={request} isClientError={isClientError} model={selection.defaults.model} firstRun={selection.defaults}
+                  connections={connections} connection={selection.value} onConnectionChange={setSelectedValue} onCreated={onCreated} /></div>
                 : <span className="k-field__hint" role="status">Checking engines…</span>)}
             </div>}
           </li>;

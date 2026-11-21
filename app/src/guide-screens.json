@@ -1,0 +1,13 @@
+{
+  "settings.providers": {"title": "Providers", "path": "/settings/providers"},
+  "settings.engines": {"title": "Engines", "path": "/settings/engines"},
+  "settings.connected-apps": {"title": "Connected apps", "path": "/settings/connected-apps"},
+  "settings.mcp": {"title": "MCP connections", "path": "/settings/mcp"},
+  "settings.general": {"title": "General settings", "path": "/settings/general"},
+  "settings.appearance": {"title": "Appearance", "path": "/settings/appearance"},
+  "settings.skills": {"title": "Skills", "path": "/settings/skills"},
+  "settings.machines": {"title": "Machines", "path": "/settings/machines"},
+  "settings.backup": {"title": "Backup", "path": "/settings/backup"},
+  "routines": {"title": "Routines", "path": "/routines"},
+  "workflows": {"title": "Workflows", "path": "/workflows"}
+}

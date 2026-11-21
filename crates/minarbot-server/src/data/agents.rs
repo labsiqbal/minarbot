@@ -214,9 +214,22 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
         .map(|v| v["revision"].clone())
         .unwrap_or(json!(0));
     }
+    let guide = rows
+        .iter()
+        .position(|agent| agent["id"] == crate::mcp::guide::ID)
+        .map(|index| {
+            let mut guide = rows.remove(index);
+            guide["builtin"] = json!(true);
+            if string(&guide, "model").is_empty() {
+                guide["runnable"] = json!(false);
+                guide["blocked_reason"] = json!("Choose an AI connection.");
+            }
+            guide
+        });
     let configured = rows.iter().any(|agent| agent["runnable"] == true);
     Ok(json!({
         "agents": rows,
+        "guide": guide,
         "hubAvailable": false,
         "configured": configured,
         "defaultModel": state.config.data.default_model.as_deref().unwrap_or("")
@@ -317,6 +330,9 @@ pub fn create(
     avatar: &mut super::avatar::Prepared,
 ) -> Result<(u16, Value)> {
     let id = string(v, "id");
+    if id == crate::mcp::guide::ID {
+        return Err(error(409, "This agent ID is reserved."));
+    }
     if exists(db, "SELECT 1 FROM deleted_agents WHERE id=?", [id])? {
         return Err(error(409, "Agent was deleted. Use a new ID."));
     }
@@ -429,6 +445,7 @@ pub fn create(
         "INSERT INTO agent_creations VALUES(?,?)",
         rusqlite::params![id, request.to_string()],
     )?;
+    crate::mcp::guide::inherit_connection(state, db)?;
     let mut result = read(db, id)?;
     if v.get("avatar").is_some() {
         result["avatar_revision"] = json!(1);
@@ -436,6 +453,31 @@ pub fn create(
     Ok((201, result))
 }
 pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Value> {
+    let mut guide_edit;
+    let v = if id == crate::mcp::guide::ID {
+        if !closed(
+            v,
+            &[
+                "id",
+                "revision",
+                "model",
+                "runtime",
+                "providerAccount",
+                "confirmRuntime",
+            ],
+        ) {
+            return Err(error(
+                400,
+                "Change the guide's AI connection from its conversation.",
+            ));
+        }
+        guide_edit = v.clone();
+        guide_edit["name"] = json!(crate::mcp::guide::NAME);
+        guide_edit["instructions"] = json!(crate::mcp::guide::PROFILE);
+        &guide_edit
+    } else {
+        v
+    };
     let name = field(v, "name", 80)?;
     let model = field(v, "model", 160)?;
     let instructions = field(v, "instructions", 8000)?;
@@ -794,13 +836,20 @@ pub fn delete(
     if !closed(v, &["id"]) || !uuid(id) {
         return Err(error(400, "Invalid agent deletion request."));
     }
+    if id == crate::mcp::guide::ID {
+        return Err(error(409, "The built-in guide cannot be deleted."));
+    }
     let present = exists(db, "SELECT 1 FROM agents WHERE id=?", [id])?;
     if !present && !exists(db, "SELECT 1 FROM deleted_agents WHERE id=?", [id])? {
         return Err(error(404, "Agent not found."));
     }
     if present {
-        if one(db, "SELECT count(*) n FROM agents", [])?
-            .is_some_and(|v| v["n"].as_i64().unwrap_or(0) <= 1)
+        if one(
+            db,
+            "SELECT count(*) n FROM agents WHERE id<>?",
+            [crate::mcp::guide::ID],
+        )?
+        .is_some_and(|v| v["n"].as_i64().unwrap_or(0) <= 1)
         {
             return Err(error(409, "The last agent cannot be deleted."));
         }

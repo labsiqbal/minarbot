@@ -2,6 +2,7 @@ pub(crate) mod client;
 mod connections;
 pub(crate) mod execution;
 mod features;
+pub(crate) mod guide;
 mod registry;
 pub(crate) mod secrets;
 mod server;
@@ -45,9 +46,13 @@ pub fn handles(path: &str) -> bool {
         || path.starts_with("/api/mcp")
         || path.contains("/mcp/")
         || path.starts_with("/api/projects/") && path.ends_with("/mcp")
+        || guide::handles(path)
 }
 pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     let path = request.uri().path().to_owned();
+    if guide::handles(&path) {
+        return guide::local(state, request).await;
+    }
     if path == "/mcp" {
         let host = crate::text_header(request.headers(), "host").unwrap_or("");
         if format!("http://{host}") != state.origin

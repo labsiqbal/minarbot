@@ -310,8 +310,9 @@ fn remove(state: &AppState, id: &str) -> Result<Response> {
     transaction(db, || {
         let agents = all(
             db,
-            "SELECT name FROM agents WHERE provider_account=? ORDER BY name",
-            [id],
+            "SELECT name FROM agents WHERE provider_account=? AND (id<>? OR EXISTS(
+                SELECT 1 FROM turns WHERE agent=agents.id AND status IN('queued','running'))) ORDER BY name",
+            [id, crate::mcp::guide::ID],
         )?;
         if !agents.is_empty() {
             let names = agents
@@ -326,6 +327,7 @@ fn remove(state: &AppState, id: &str) -> Result<Response> {
         if db.execute("DELETE FROM provider_accounts WHERE id=?", [id])? == 0 {
             return Err(error(404, "Provider account not found."));
         }
+        crate::mcp::guide::detach_connection(db, id)?;
         Ok(json_response(200, json!({"deleted":true})))
     })
 }

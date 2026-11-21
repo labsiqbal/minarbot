@@ -54,8 +54,9 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let turn = one(&guard.connection, "SELECT * FROM turns WHERE id=?", [id])?
             .ok_or_else(Failure::storage)?;
-        if (super::messaging::channel(&guard.connection, id)?.is_none()
-            || tools::project_context(&guard.connection, &turn)?.is_some())
+        if turn["agent"] != crate::mcp::guide::ID
+            && (super::messaging::channel(&guard.connection, id)?.is_none()
+                || tools::project_context(&guard.connection, &turn)?.is_some())
             && !super::profile::setup(&guard.connection, &turn)?
         {
             Some(turn)
@@ -111,6 +112,10 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         }
         if let Some(workspace) = tools::workspace(state, db, &turn)? {
             system.push_str(&workspace_conventions(&workspace.directory)?);
+        }
+        if turn["agent"] == crate::mcp::guide::ID {
+            system.push_str("\n\n");
+            system.push_str(&crate::mcp::guide::instructions());
         }
         system.push_str(&format!(
             "\n\n{}\nCurrent avatar revision: 0. Current profile revision: {}.",
@@ -546,7 +551,9 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                             return Ok(());
                         }
                         let value = json!({"error":e.message,"status":e.status});
-                        tools::journal(&guard.connection, &turn, &call, &value)?;
+                        if turn["agent"] != crate::mcp::guide::ID {
+                            tools::journal(&guard.connection, &turn, &call, &value)?;
+                        }
                         value
                     }
                     result => result?,

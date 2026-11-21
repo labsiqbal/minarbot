@@ -80,7 +80,7 @@ pub fn roster(db: &Connection, turn: &Value, after: &str) -> Result<Vec<Value>> 
         .take(if room { 1 } else { lineage.len() })
         .map(|r| r["agent"].clone())
         .collect();
-    let mut rows=all(db,"SELECT id,name,role,substr(instructions,1,300) AS description FROM agents WHERE id>? AND id NOT IN(SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM agent_visibility WHERE agent=agents.id AND hidden=1) AND (? IS NULL OR id IN(SELECT agent FROM channel_members WHERE channel=?)) ORDER BY id LIMIT 11",params![after,json!(excluded).to_string(),channel,channel])?;
+    let mut rows=all(db,"SELECT id,name,role,substr(instructions,1,300) AS description FROM agents WHERE id>? AND id<>? AND id NOT IN(SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM agent_visibility WHERE agent=agents.id AND hidden=1) AND (? IS NULL OR id IN(SELECT agent FROM channel_members WHERE channel=?)) ORDER BY id LIMIT 11",params![after,crate::mcp::guide::ID,json!(excluded).to_string(),channel,channel])?;
     for row in &mut rows {
         let active=all(db,"SELECT status,channel FROM turns WHERE agent=? AND (status IN('queued','running') OR paused=1)",[string(row,"id")])?;
         row["status"] = json!(if active.iter().any(|r| r["status"] == "running") {
@@ -125,8 +125,8 @@ fn resolve(db: &Connection, name: &str) -> Result<Option<String>> {
     }
     let rows = all(
         db,
-        "SELECT id FROM agents WHERE id=? OR lower(name)=lower(?) ORDER BY (id=?) DESC LIMIT 2",
-        [name, name, name],
+        "SELECT id FROM agents WHERE id<>? AND (id=? OR lower(name)=lower(?)) ORDER BY (id=?) DESC LIMIT 2",
+        [crate::mcp::guide::ID, name, name, name],
     )?;
     Ok(
         if rows.len() == 1 || rows.first().is_some_and(|r| r["id"] == name) {

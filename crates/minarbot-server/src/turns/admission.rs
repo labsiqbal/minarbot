@@ -208,6 +208,12 @@ pub(super) fn conversation(
 }
 pub fn ready(state: &AppState, db: &Connection, agent: &str) -> Result<()> {
     let profile = data::agents::read(db, agent)?;
+    if agent == crate::mcp::guide::ID && string(&profile, "model").is_empty() {
+        return Err(error(
+            503,
+            "Choose an AI connection for the built-in guide.",
+        ));
+    }
     let runtime = string(&profile, "runtime");
     if runtime == "api" {
         account(state, db, agent)?;
@@ -413,6 +419,9 @@ fn create(
         return Ok((202, old));
     }
     let (agent, thread, channel) = conversation(db, kind, owner, v)?;
+    if agent == crate::mcp::guide::ID && (thread.is_some() || channel.is_some()) {
+        return Err(error(403, "Use the guide's direct conversation."));
+    }
     if data::agents::hidden(db, &agent)? {
         return Err(error(
             409,

@@ -666,6 +666,7 @@ async fn main() -> db::Result<()> {
             automation::initialize(&guard.connection).map_err(|e| e.message)?;
             harness::initialize(&guard.connection).map_err(|e| e.message)?;
             mcp::initialize(&guard.connection).map_err(|e| e.message)?;
+            mcp::guide::initialize(&guard.connection).map_err(|e| e.message)?;
             computer::initialize(&guard.connection)?;
             updates::initialize(&guard.connection)?;
             guard
@@ -714,6 +715,13 @@ async fn main() -> db::Result<()> {
         turns: turns::Runtime::new()?,
         computer: computer.clone(),
     };
+    if state.auth.is_none() {
+        let db = state
+            .database
+            .lock()
+            .map_err(|_| "Database lock poisoned")?;
+        mcp::guide::inherit_connection(&state, &db.connection).map_err(|e| e.message)?;
+    }
     automation::scripts::sync(&state).map_err(|e| e.message)?;
     let turn_task = turns::start(state.clone()).map_err(|e| e.message)?;
     let automation_task = automation::start(state.clone());
@@ -737,6 +745,7 @@ async fn main() -> db::Result<()> {
         .merge(computer::routes())
         .merge(harness::routes())
         .merge(mcp::routes())
+        .merge(mcp::guide::routes())
         .merge(files::routes())
         .merge(updates::routes())
         .merge(turns::routes())
