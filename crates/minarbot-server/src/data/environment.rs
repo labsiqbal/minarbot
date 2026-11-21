@@ -283,9 +283,32 @@ fn turn_values(
     agent: &str,
     computer: bool,
 ) -> Result<std::collections::HashMap<String, String>> {
+    let Some(project) = turn_project(db, turn, agent, computer)? else {
+        return Ok(Default::default());
+    };
+    all(
+        db,
+        "SELECT name,ciphertext FROM project_environment WHERE project=?",
+        [&project],
+    )?
+    .into_iter()
+    .map(|r| Ok((string(&r, "name").to_owned(), decrypt(state, &r, &project)?)))
+    .collect()
+}
+
+pub(crate) fn authorize_computer(db: &Connection, turn: &str, agent: &str) -> Result<()> {
+    turn_project(db, turn, agent, true).map(drop)
+}
+
+fn turn_project(
+    db: &Connection,
+    turn: &str,
+    agent: &str,
+    computer: bool,
+) -> Result<Option<String>> {
     let scope=one(db,"SELECT coalesce(p.project,c.project) AS project FROM turns t LEFT JOIN local_project_threads p ON p.thread=t.thread LEFT JOIN channels c ON c.id=t.channel WHERE t.id=?",[turn])?;
     let Some(project) = scope.as_ref().and_then(|r| r["project"].as_str()) else {
-        return Ok(Default::default());
+        return Ok(None);
     };
     if computer
         && !exists(
@@ -294,7 +317,7 @@ fn turn_values(
             [project],
         )?
     {
-        return Ok(Default::default());
+        return Ok(None);
     }
     check_project(db, project)?;
     if !exists(
@@ -304,14 +327,7 @@ fn turn_values(
     )? {
         return Err(error(403, "Agent is not an active project member."));
     }
-    all(
-        db,
-        "SELECT name,ciphertext FROM project_environment WHERE project=?",
-        [project],
-    )?
-    .into_iter()
-    .map(|r| Ok((string(&r, "name").to_owned(), decrypt(state, &r, project)?)))
-    .collect()
+    Ok(Some(project.to_owned()))
 }
 
 pub fn decrypt(state: &AppState, row: &Value, project: &str) -> Result<String> {

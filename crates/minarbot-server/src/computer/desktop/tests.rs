@@ -208,6 +208,71 @@ async fn container_desktop_proxy_profile_and_idle() -> TestResult<()> {
                 .await,
         )?;
         observed(&clicked, "the click").await?;
+        let (_, snapshot) = check(
+            manager
+                .browser_action(
+                    FIRST,
+                    browser_actions::Action::Snapshot,
+                    crate::config::now(),
+                )
+                .await,
+        )?;
+        let reference = |label: &str| {
+            snapshot["tree"]
+                .as_str()
+                .and_then(|tree| {
+                    tree.lines()
+                        .filter(|line| line.contains(label))
+                        .find_map(|line| {
+                            line.split_once("[ref=")
+                                .and_then(|(_, tail)| tail.strip_suffix(']'))
+                        })
+                })
+                .ok_or("Missing container browser ref.")
+        };
+        let login = reference("Fixture login")?;
+        let button = reference("Click fixture")?;
+        clicked.store(false, Ordering::SeqCst);
+        let (_, click) = check(
+            manager
+                .browser_action(
+                    FIRST,
+                    browser_actions::Action::Click {
+                        r#ref: button.into(),
+                    },
+                    crate::config::now(),
+                )
+                .await,
+        )?;
+        assert_eq!(click["status"], "done");
+        observed(&clicked, "the element click").await?;
+        const VALUE: &str = "synthetic-fixture-value";
+        for (origin, reference) in [(&url[..], "old-ref"), ("https://other.invalid", login)] {
+            assert!(!check(
+                manager
+                    .secure_fill(FIRST, origin, None, Some(reference), VALUE.into())
+                    .await
+            )?);
+        }
+        assert!(!check(manager.screenshots_hidden(FIRST))?);
+        assert!(check(
+            manager
+                .secure_fill(FIRST, &url, None, Some(login), VALUE.into())
+                .await
+        )?);
+        observed(&filled, "secure fill by ref").await?;
+        let (_, hidden) = check(
+            manager
+                .browser_action(
+                    FIRST,
+                    browser_actions::Action::Snapshot,
+                    crate::config::now(),
+                )
+                .await,
+        )?;
+        assert_eq!(hidden["status"], "error");
+        assert!(hidden["tree"].is_null());
+        filled.store(false, Ordering::SeqCst);
         let desktop = check(manager.secure_target(FIRST, &url, "fixture-target").await)?;
         assert!(check(
             manager
@@ -215,7 +280,8 @@ async fn container_desktop_proxy_profile_and_idle() -> TestResult<()> {
                     FIRST,
                     &url,
                     Some((&desktop, "fixture-target")),
-                    "synthetic-fixture-value".into(),
+                    None,
+                    VALUE.into(),
                 )
                 .await,
         )?);

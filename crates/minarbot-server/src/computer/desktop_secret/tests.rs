@@ -1,4 +1,6 @@
 use super::*;
+use crate::db::Result;
+use std::process::Stdio;
 
 #[tokio::test]
 #[ignore = "needs installed Google Chrome"]
@@ -26,7 +28,7 @@ async fn chrome_fills_only_the_original_focused_field() -> Result<()> {
         }))).await
     });
     let mut command = tokio::process::Command::new("sh");
-    let chrome = ChromePipe::configure(&mut command, "google-chrome")?;
+    let mut chrome = Connection::configure(&mut command, "google-chrome")?;
     let mut child = command
         .args([
             "--headless",
@@ -38,15 +40,22 @@ async fn chrome_fills_only_the_original_focused_field() -> Result<()> {
             "--no-proxy-server",
         ])
         .arg(format!("--user-data-dir={}", scratch.0.display()))
-        .arg("about:blank")
+        .arg(&origin)
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()?;
+    drop(command);
     let result = tokio::time::timeout(Duration::from_secs(45), async {
         {
-            let mut io = chrome.io.lock().await;
+            let io = &mut chrome;
             let tab = loop {
-                let result = io.call(None, "Target.getTargets", json!({})).await?;
+                let result = match io.call(None, "Target.getTargets", json!({})).await {
+                    Err(Error::Transport) => {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        continue;
+                    }
+                    result => result?,
+                };
                 if let Some(tab) = result["targetInfos"]
                     .as_array()
                     .and_then(|tabs| tabs.iter().find(|tab| tab["type"] == "page"))
@@ -66,22 +75,19 @@ async fn chrome_fills_only_the_original_focused_field() -> Result<()> {
             let session = attached["sessionId"]
                 .as_str()
                 .ok_or("Fixture tab unavailable.")?;
-            io.call(Some(session), "Page.enable", json!({})).await?;
-            let response = io
-                .call(Some(session), "Page.navigate", json!({"url":origin}))
-                .await?;
-            assert!(response.get("errorText").is_none());
             io.call(Some(session), "Page.bringToFront", json!({}))
                 .await?;
-            for event in ["mousePressed", "mouseReleased"] {
-                io.call(
-                    Some(session),
-                    "Input.dispatchMouseEvent",
-                    json!({
-                        "type":event,"x":16,"y":16,"button":"left","clickCount":1
-                    }),
-                )
-                .await?;
+            loop {
+                let ready = io
+                    .call(Some(session), "Runtime.evaluate", json!({
+                        "expression":"(() => { const field = document.getElementById('first'); if (!field?.getClientRects().length) return false; field.focus(); return document.hasFocus() && document.activeElement === field; })()",
+                        "returnByValue":true
+                    }))
+                    .await;
+                if ready.is_ok_and(|value| value["result"]["value"] == true) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
             io.call(
                 None,
@@ -111,12 +117,7 @@ async fn chrome_fills_only_the_original_focused_field() -> Result<()> {
                 .focused(&origin, "fixture-target", Some(SENSITIVE))
                 .await?
         );
-        let targets = chrome
-            .io
-            .lock()
-            .await
-            .call(None, "Target.getTargets", json!({}))
-            .await?;
+        let targets = chrome.call(None, "Target.getTargets", json!({})).await?;
         assert!(targets["targetInfos"]
             .as_array()
             .is_some_and(|tabs| tabs.iter().any(|tab| tab["title"] == "matched")));

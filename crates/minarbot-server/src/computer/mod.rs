@@ -1,5 +1,7 @@
 #[allow(dead_code)]
 pub mod actions;
+mod browser_actions;
+mod browser_pipe;
 #[allow(dead_code)]
 pub mod control;
 mod desktop;

@@ -10,7 +10,7 @@ pub fn validate(name: &str, value: &Value, width: u32, height: u32) -> Result<Ve
         "computer_open_url" => (&["url"], &["url"]),
         "computer_request_user" => (&["reason"], &["reason"]),
         "computer_list_vault" | "computer_screenshot" => (&[], &[]),
-        "computer_fill_secret" => (&["entry", "which"], &["entry", "which"]),
+        "computer_fill_secret" => (&["entry", "which", "ref"], &["entry", "which"]),
         "computer_request_secret" => (&["entry", "origin"], &["entry", "origin"]),
         _ => return Err(error(400, "Invalid computer action.")),
     };
@@ -124,21 +124,11 @@ pub fn validate(name: &str, value: &Value, width: u32, height: u32) -> Result<Ve
             result
         }
         "computer_open_url" => {
-            let s = value["url"]
-                .as_str()
-                .filter(|s| {
-                    s.encode_utf16().count() <= 2000
-                        && !s.chars().any(|c| c <= ' ' || c == '\u{7f}')
-                })
-                .ok_or_else(|| error(400, "Invalid URL."))?;
-            let url = url::Url::parse(s).map_err(|_| error(400, "Invalid URL."))?;
-            if !["http", "https"].contains(&url.scheme())
-                || !url.username().is_empty()
-                || url.password().is_some()
-            {
-                return Err(error(400, "Use an http/https URL without credentials."));
-            }
-            vec![url.to_string()]
+            vec![http_url(
+                value["url"]
+                    .as_str()
+                    .ok_or_else(|| error(400, "Invalid URL."))?,
+            )?]
         }
         "computer_fill_secret" | "computer_request_secret" => {
             let entry = value["entry"]
@@ -154,7 +144,17 @@ pub fn validate(name: &str, value: &Value, width: u32, height: u32) -> Result<Ve
             } else {
                 super::vault::origin(value["origin"].as_str().unwrap_or_default())?
             };
-            vec![entry.into(), target]
+            let mut args = vec![entry.into(), target];
+            if let Some(reference) = value.get("ref") {
+                args.push(
+                    reference
+                        .as_str()
+                        .filter(|r| super::browser_actions::valid_ref(r))
+                        .ok_or_else(|| error(400, "Invalid browser element ref."))?
+                        .to_owned(),
+                );
+            }
+            args
         }
         "computer_request_user" => {
             value["reason"]
@@ -171,10 +171,36 @@ pub fn validate(name: &str, value: &Value, width: u32, height: u32) -> Result<Ve
     };
     Ok(args)
 }
+pub(super) fn http_url(s: &str) -> Result<String> {
+    if s.encode_utf16().count() > 2000 || s.chars().any(|c| c <= ' ' || c == '\u{7f}') {
+        return Err(error(400, "Invalid URL."));
+    }
+    let url = url::Url::parse(s).map_err(|_| error(400, "Invalid URL."))?;
+    if !["http", "https"].contains(&url.scheme())
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(error(400, "Use an http/https URL without credentials."));
+    }
+    Ok(url.to_string())
+}
+pub(crate) fn is_computer_tool(name: &str) -> bool {
+    name.starts_with("computer_") || name.starts_with("browser_")
+}
+pub(crate) fn is_read_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "computer_screenshot"
+            | "browser_snapshot"
+            | "browser_wait"
+            | "browser_extract"
+            | "browser_screenshot"
+    )
+}
 pub fn tools(width: u32, height: u32) -> Value {
     let tool = |name: &str, description: String, properties: Value, required: Value| json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}});
     let entry = json!({"type":"string","pattern":"^[a-z0-9-]{1,64}$"});
-    json!([
+    let mut tools = vec![
         tool("computer_screenshot",format!("See your own {width}x{height} desktop, returned as a PNG image scaled to 960x600. Input coordinates use original {width}x{height} pixels. Starts your desktop on demand."),json!({}),json!([])),
         tool("computer_click","Click your desktop at original screen coordinates.".into(),json!({"x":{"type":"integer","minimum":0,"maximum":width-1},"y":{"type":"integer","minimum":0,"maximum":height-1},"button":{"type":"integer","enum":[1,2,3],"description":"1 left, 2 middle, 3 right."}}),json!(["x","y"])),
         tool("computer_type","Type literal text into the focused field on your desktop.".into(),json!({"text":{"type":"string","minLength":1,"maxLength":4000}}),json!(["text"])),
@@ -183,9 +209,11 @@ pub fn tools(width: u32, height: u32) -> Value {
         tool("computer_open_url","Navigate Chrome on your desktop to an http/https URL.".into(),json!({"url":{"type":"string","maxLength":2000}}),json!(["url"])),
         tool("computer_request_user","Ask the user to take control for a login, CAPTCHA, payment, or other human-only step.".into(),json!({"reason":{"type":"string","minLength":1,"maxLength":500}}),json!(["reason"])),
         tool("computer_list_vault","List the Vault entry names, site origins and fields granted to you.".into(),json!({}),json!([])),
-        tool("computer_fill_secret","Fill a granted Vault field into the focused Chrome input on its saved origin. Refer to the tool's placeholder. Never ask for the value in chat. Screenshots are hidden after a fill; use keyboard to finish or ask the user to check Computer.".into(),json!({"entry":entry,"which":{"type":"string","enum":["username","password","totp","value"]}}),json!(["entry","which"])),
+        tool("computer_fill_secret","Fill a granted Vault field on its saved origin. Pass a browser snapshot ref or focus the intended Chrome input. Browser reads and screenshots are hidden after a fill. Refer to the placeholder and keep values out of chat.".into(),json!({"entry":entry,"which":{"type":"string","enum":["username","password","totp","value"]},"ref":{"type":"string","maxLength":48}}),json!(["entry","which"])),
         tool("computer_request_secret","Ask the owner for a missing value in a secure Minarbot form. First focus the intended Chrome input. If approved, save a new Vault entry and fill the value. Use an unused entry name and the site's HTTPS origin.".into(),json!({"entry":entry,"origin":{"type":"string","maxLength":2000}}),json!(["entry","origin"]))
-    ])
+    ];
+    tools.extend(super::browser_actions::tools());
+    json!(tools)
 }
 #[cfg(test)]
 mod tests {

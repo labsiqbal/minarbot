@@ -1,4 +1,7 @@
-use super::desktop_secret::ChromePipe;
+mod browser;
+pub(super) mod cdp;
+
+use super::browser_actions;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::json;
@@ -82,7 +85,8 @@ struct Program {
 struct Supervisor {
     environment: BTreeMap<OsString, OsString>,
     programs: Vec<Program>,
-    chrome: Option<ChromePipe>,
+    connection: Option<cdp::Connection>,
+    browser: Option<browser::Browser>,
 }
 
 impl Supervisor {
@@ -114,7 +118,8 @@ impl Supervisor {
         Ok(Self {
             environment,
             programs: Vec::new(),
-            chrome: None,
+            connection: None,
+            browser: None,
         })
     }
 
@@ -233,9 +238,10 @@ impl Supervisor {
 
     fn launch_chrome(&mut self, binary: &str, no_sandbox: bool) -> Result<Arc<Mutex<Vec<u8>>>> {
         let mut command = self.command("sh");
-        let pipe = ChromePipe::configure(&mut command, binary)?;
+        let connection = cdp::Connection::configure(&mut command, binary)?;
         command.args([
             "--user-data-dir=/home/desktop/chrome",
+            "--profile-directory=Default",
             "--no-first-run",
             "--no-default-browser-check",
             "--hide-crash-restore-bubble",
@@ -255,7 +261,7 @@ impl Supervisor {
             command.arg("--no-sandbox");
         }
         let mut child = command.arg("about:blank").stderr(Stdio::piped()).spawn()?;
-        self.chrome = Some(pipe);
+        self.connection = Some(connection);
         let mut stderr = child
             .stderr
             .take()
@@ -390,25 +396,75 @@ impl Supervisor {
         if let Some(chrome) = self.programs.last_mut() {
             chrome.critical = true;
         }
+        let connection = self
+            .connection
+            .take()
+            .ok_or("Chrome DevTools pipe unavailable.")?;
+        self.browser = Some(
+            timeout(
+                START_TIMEOUT,
+                browser::Browser::start(
+                    connection,
+                    Path::new(HOME).join("chrome/minarbot-tabs.json"),
+                ),
+            )
+            .await?
+            .map_err(|_| "Chrome could not open its dedicated browser profile.")?,
+        );
         Ok(())
     }
 
-    async fn action(&self, request: &Request) -> Result<Vec<u8>> {
+    async fn action(&mut self, request: &Request) -> Result<Vec<u8>> {
         let deadline = Duration::from_secs(10);
         match request.operation.as_str() {
+            "browser" => {
+                let [packet] = request.args.as_slice() else {
+                    return Err("Invalid browser helper command.".into());
+                };
+                let request: browser_actions::Request = serde_json::from_str(packet)?;
+                let read_only = request.action.read_only();
+                let browser = self
+                    .browser
+                    .as_mut()
+                    .ok_or("Chrome DevTools is unavailable.")?;
+                let result = timeout(deadline, browser.run(request))
+                    .await
+                    .unwrap_or(Err(cdp::Error::Transport));
+                let response = match result {
+                    Ok(response) => response,
+                    Err(cdp::Error::Rejected(message)) => browser_actions::Reply {
+                        result: json!({"status":"error","error":message}),
+                        image: None,
+                    },
+                    Err(_) if read_only => browser_actions::Reply {
+                        result: json!({"status":"error","error":"Chrome could not finish the read. Try a fresh snapshot or use Computer pixels."}),
+                        image: None,
+                    },
+                    Err(_) => return Err("Chrome input outcome may be uncertain.".into()),
+                };
+                Ok(serde_json::to_vec(&response)?)
+            }
             "input" => self.tool("xdotool", &request.args, deadline).await,
             "secret-target" | "secret-fill" => {
                 let [origin, target, fields @ ..] = request.args.as_slice() else {
                     return Err("Invalid secure input.".into());
                 };
-                let value = match (request.operation.as_str(), fields) {
-                    ("secret-target", []) => None,
-                    ("secret-fill", [value]) => Some(value.as_str()),
-                    _ => return Err("Invalid secure input.".into()),
-                };
-                let chrome = self.chrome.as_ref().ok_or("Browser is unavailable.")?;
-                let matched =
-                    tokio::time::timeout(deadline, chrome.focused(origin, target, value)).await??;
+                let browser = self.browser.as_mut().ok_or("Browser is unavailable.")?;
+                let matched = timeout(deadline, async {
+                    match (request.operation.as_str(), fields) {
+                        ("secret-target", []) => browser.focused(origin, target, None).await,
+                        ("secret-fill", [value]) => {
+                            browser.focused(origin, target, Some(value)).await
+                        }
+                        ("secret-fill", [value, reference, epoch]) if target.is_empty() => {
+                            let epoch = epoch.parse().map_err(|_| cdp::Error::Command)?;
+                            browser.secure_type(origin, reference, value, epoch).await
+                        }
+                        _ => Err(cdp::Error::Command),
+                    }
+                })
+                .await?
+                .map_err(|_| "Secure browser input outcome may be uncertain.")?;
                 Ok(vec![u8::from(matched)])
             }
             "capture" => {
@@ -435,18 +491,19 @@ impl Supervisor {
     }
 
     async fn stop(&mut self) {
-        if let (Some(chrome), Some(browser)) = (
-            self.chrome.as_ref(),
-            self.programs
-                .last_mut()
-                .filter(|program| program.name == "Chrome"),
-        ) {
+        if let Some(browser) = &mut self.browser {
             // Keep X11 and D-Bus available while Chrome flushes its profile.
-            let _ = timeout(Duration::from_millis(1500), async {
-                let _ = chrome.close().await;
-                browser.child.wait().await
-            })
-            .await;
+            if let Some(chrome) = self
+                .programs
+                .last_mut()
+                .filter(|program| program.name == "Chrome")
+            {
+                let _ = timeout(Duration::from_millis(1500), async {
+                    browser.close().await;
+                    chrome.child.wait().await
+                })
+                .await;
+            }
         }
         for program in self.programs.iter().rev() {
             signal_group(&program.child, rustix::process::Signal::TERM);
@@ -551,37 +608,43 @@ pub(crate) async fn run() -> Result<()> {
         _ = &mut eof => None,
     };
     let result = match ready {
-        Some(Ok(())) => {
-            async {
-                writeln!(io::stdout(), "ready")?;
-                let mut monitor = interval(Duration::from_millis(100));
-                loop {
-                    let request = tokio::select! {
-                        request = requests.recv() => request,
-                        _ = monitor.tick() => { supervisor.check()?; continue; }
-                        _ = term.recv() => None,
-                        _ = interrupt.recv() => None,
-                        _ = &mut eof => None,
-                    };
-                    let Some(request) = request else {
-                        break;
-                    };
-                    let result = tokio::select! {
-                        result = supervisor.action(&request) => result,
-                        _ = term.recv() => break,
-                        _ = interrupt.recv() => break,
-                        _ = &mut eof => break,
-                    };
-                    let message = match result {
-                        Ok(data) => json!({"id":request.id,"data":STANDARD.encode(data)}),
-                        Err(_) => json!({"id":request.id,"error":true}),
-                    };
-                    writeln!(io::stdout(), "{message}")?;
-                }
-                Ok(())
+        Some(Ok(())) => async {
+            writeln!(io::stdout(), "ready")?;
+            let mut monitor = interval(Duration::from_millis(100));
+            let mut checkpoint = interval(Duration::from_secs(2));
+            checkpoint.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                let request = tokio::select! {
+                    request = requests.recv() => request,
+                    _ = monitor.tick() => { supervisor.check()?; continue; }
+                    _ = checkpoint.tick() => {
+                        if let Some(browser) = &mut supervisor.browser {
+                            let _ = timeout(Duration::from_millis(500), browser.checkpoint()).await;
+                        }
+                        continue;
+                    }
+                    _ = term.recv() => None,
+                    _ = interrupt.recv() => None,
+                    _ = &mut eof => None,
+                };
+                let Some(request) = request else {
+                    break;
+                };
+                let result = tokio::select! {
+                    result = supervisor.action(&request) => result,
+                    _ = term.recv() => break,
+                    _ = interrupt.recv() => break,
+                    _ = &mut eof => break,
+                };
+                let message = match result {
+                    Ok(data) => json!({"id":request.id,"data":STANDARD.encode(data)}),
+                    Err(_) => json!({"id":request.id,"error":true}),
+                };
+                writeln!(io::stdout(), "{message}")?;
             }
-            .await
+            Ok(())
         }
+        .await,
         Some(Err(error)) => {
             let _ = writeln!(io::stdout(), "failed");
             Err(error)

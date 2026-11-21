@@ -1,4 +1,6 @@
 use super::{
+    browser_actions,
+    browser_pipe::private_stdio,
     error,
     options::dimensions,
     proxy,
@@ -19,14 +21,15 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
-        atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
     },
     time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    net::UnixStream,
+    process::{Child, Command},
     sync::{watch, Mutex as AsyncMutex, Semaphore},
 };
 
@@ -139,8 +142,8 @@ impl Drop for Busy<'_> {
 }
 struct Helper {
     child: Option<Child>,
-    input: Option<ChildStdin>,
-    output: Option<Lines<BufReader<ChildStdout>>>,
+    input: Option<UnixStream>,
+    output: Option<Lines<BufReader<UnixStream>>>,
     sequence: u64,
     container: Option<(Runtime, String)>,
 }
@@ -160,6 +163,7 @@ pub struct Desktop {
     pub stopped: AtomicBool,
     pub starting: AtomicBool,
     busy: AtomicUsize,
+    browser_epoch: AtomicU64,
     pub display: i64,
     jpeg: Mutex<Option<(Vec<u8>, Vec<u8>)>>,
     pub disconnected: watch::Sender<u64>,
@@ -506,6 +510,8 @@ impl Manager {
         };
         for (k, x) in [
             ("signin", json!({"allowed":false})),
+            // The supervisor restores tabs with their Minarbot IDs.
+            ("session", json!({"restore_on_startup":5})),
             (
                 "profile",
                 json!({"password_manager_enabled":false,"exit_type":"Normal","exited_cleanly":true}),
@@ -644,11 +650,7 @@ impl Manager {
                 .env("MINARBOT_DESKTOP_GEOMETRY", &geometry);
             command
         };
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
+        command.stderr(Stdio::null()).kill_on_drop(true);
         let (child, input, output, fixture) = if let Some(bridge) = &self.test_bridge {
             let env = command
                 .as_std()
@@ -677,16 +679,17 @@ impl Manager {
                 }),
             )
         } else {
-            let mut child = command.spawn().map_err(|_| error(503, if container.is_some() {
+            let (input, output) = private_stdio(&mut command)
+                .map_err(|_| error(503, "Desktop supervisor channel is unavailable."))?;
+            let child = command.spawn().map_err(|_| error(503, if container.is_some() {
                 "Computer container could not start. Check the container runtime."
             } else {
                 "Desktop sandbox could not start. Install bwrap and enable unprivileged user namespaces."
             }))?;
-            let input = child.stdin.take();
-            let output = child.stdout.take().ok_or_else(Failure::storage)?;
+            drop(command);
             (
                 Some(child),
-                input,
+                Some(input),
                 Some(BufReader::new(output).lines()),
                 None,
             )
@@ -710,6 +713,7 @@ impl Manager {
             stopped: AtomicBool::new(false),
             starting: AtomicBool::new(true),
             busy: AtomicUsize::new(0),
+            browser_epoch: AtomicU64::new(0),
             display,
             jpeg: Mutex::new(None),
             disconnected,
@@ -927,6 +931,7 @@ impl Manager {
         agent: &str,
         origin: &str,
         target: Option<(&str, &str)>,
+        reference: Option<&str>,
         value: String,
     ) -> Result<bool> {
         let Some(d) = self.get(agent)? else {
@@ -938,14 +943,19 @@ impl Manager {
         }
         let token = target.map_or("", |(_, token)| token);
         let already_hidden = d.sensitive.swap(true, Ordering::SeqCst);
-        let reply = Self::request(&d, "secret-fill", &[origin.into(), token.into(), value])
-            .await
-            .map_err(|_| {
-                error(
-                    503,
-                    "Secure fill outcome is uncertain. Check Computer before trying again.",
-                )
-            })?;
+        let mut args = vec![origin.into(), token.into(), value];
+        if let Some(reference) = reference {
+            args.extend([
+                reference.into(),
+                d.browser_epoch.load(Ordering::SeqCst).to_string(),
+            ]);
+        }
+        let reply = Self::request(&d, "secret-fill", &args).await.map_err(|_| {
+            error(
+                503,
+                "Secure fill outcome is uncertain. Check Computer before trying again.",
+            )
+        })?;
         d.activity.store(crate::config::now(), Ordering::SeqCst);
         match reply.as_slice() {
             [1] => Ok(true),
@@ -1017,6 +1027,41 @@ impl Manager {
             *d.jpeg.lock().map_err(|_| Failure::storage())? = Some((bytes, encoded.clone()));
         }
         Ok(encoded)
+    }
+    pub(super) async fn browser_action(
+        &self,
+        agent: &str,
+        action: browser_actions::Action,
+        now: i64,
+    ) -> Result<(Option<Vec<u8>>, Value)> {
+        let d = self.start(agent, now).await?;
+        d.activity.store(now, Ordering::SeqCst);
+        let _slot = d
+            .slots
+            .try_acquire()
+            .map_err(|_| error(429, "Computer is busy."))?;
+        let _gate = d.gate.lock().await;
+        let _busy = Busy::new(&d.busy);
+        let request = browser_actions::Request {
+            action,
+            epoch: d.browser_epoch.load(Ordering::SeqCst),
+        };
+        let packet = serde_json::to_string(&request).map_err(|_| Failure::storage())?;
+        let response = Self::request(&d, "browser", &[packet]).await;
+        d.activity.store(crate::config::now(), Ordering::SeqCst);
+        let reply: browser_actions::Reply =
+            serde_json::from_slice(&response?).map_err(|_| Failure::storage())?;
+        let image = reply
+            .image
+            .map(|image| STANDARD.decode(image).map_err(|_| Failure::storage()))
+            .transpose()?;
+        Ok((image, reply.result))
+    }
+    pub(super) fn invalidate_browser(&self, agent: &str) -> Result<()> {
+        if let Some(d) = self.get(agent)? {
+            d.browser_epoch.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
     }
     pub async fn action(
         &self,

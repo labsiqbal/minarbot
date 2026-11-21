@@ -391,7 +391,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         )?;
         return crate::files::writes::execute(db, &binding, string(turn, "id"), call, actions);
     }
-    if name.starts_with("computer_") {
+    if crate::computer::actions::is_computer_tool(name) {
         let (outputs, actions) = {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
             let db = &guard.connection;
