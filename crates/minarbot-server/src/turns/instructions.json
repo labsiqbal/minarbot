@@ -40,7 +40,11 @@
         "computer_scroll",
         "computer_request_user"
       ],
-      "Use Computer for browser tasks. Deliver browser pages using the returned panelUrl as an inline link so it opens the navigated Computer. Inspect screenshots before input and after changes. Use only your desktop. Human-only login or approval steps need the user; never invent completion."
+      "Use only your desktop. For pixel input, inspect a screenshot before acting and verify the result. Use the returned panelUrl when linking a page in Computer. Human-only login or approval steps need the user."
+    ],
+    [
+      ["browser_snapshot"],
+      "Prefer browser element tools in Chrome. Snapshot before using refs and refresh after navigation, tab switches, or takeover. Use Computer pixel tools for canvas, cross-origin frames, native dialogs, and other apps."
     ],
     [
       [

@@ -51,8 +51,8 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
             if ["list_agents", "send_message", "read_history"].contains(&name) {
                 continue;
             }
-            let scope = if name.starts_with("computer_") {
-                if name == "computer_screenshot" {
+            let scope = if crate::computer::actions::is_computer_tool(name) {
+                if crate::computer::actions::is_read_tool(name) {
                     "computer:read"
                 } else {
                     "computer:run"

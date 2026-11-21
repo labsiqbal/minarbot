@@ -122,21 +122,11 @@ pub fn validate(name: &str, value: &Value, width: u32, height: u32) -> Result<Ve
             result
         }
         "computer_open_url" => {
-            let s = value["url"]
-                .as_str()
-                .filter(|s| {
-                    s.encode_utf16().count() <= 2000
-                        && !s.chars().any(|c| c <= ' ' || c == '\u{7f}')
-                })
-                .ok_or_else(|| error(400, "Invalid URL."))?;
-            let url = url::Url::parse(s).map_err(|_| error(400, "Invalid URL."))?;
-            if !["http", "https"].contains(&url.scheme())
-                || !url.username().is_empty()
-                || url.password().is_some()
-            {
-                return Err(error(400, "Use an http/https URL without credentials."));
-            }
-            vec![url.to_string()]
+            vec![http_url(
+                value["url"]
+                    .as_str()
+                    .ok_or_else(|| error(400, "Invalid URL."))?,
+            )?]
         }
         "computer_request_user" => {
             value["reason"]
@@ -153,9 +143,35 @@ pub fn validate(name: &str, value: &Value, width: u32, height: u32) -> Result<Ve
     };
     Ok(args)
 }
+pub(super) fn http_url(s: &str) -> Result<String> {
+    if s.encode_utf16().count() > 2000 || s.chars().any(|c| c <= ' ' || c == '\u{7f}') {
+        return Err(error(400, "Invalid URL."));
+    }
+    let url = url::Url::parse(s).map_err(|_| error(400, "Invalid URL."))?;
+    if !["http", "https"].contains(&url.scheme())
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(error(400, "Use an http/https URL without credentials."));
+    }
+    Ok(url.to_string())
+}
+pub(crate) fn is_computer_tool(name: &str) -> bool {
+    name.starts_with("computer_") || name.starts_with("browser_")
+}
+pub(crate) fn is_read_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "computer_screenshot"
+            | "browser_snapshot"
+            | "browser_wait"
+            | "browser_extract"
+            | "browser_screenshot"
+    )
+}
 pub fn tools(width: u32, height: u32) -> Value {
     let tool = |name: &str, description: String, properties: Value, required: Value| json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}});
-    json!([
+    let mut tools = vec![
         tool("computer_screenshot",format!("See your own {width}x{height} desktop, returned as a PNG image scaled to 960x600. Input coordinates use original {width}x{height} pixels. Starts your desktop on demand."),json!({}),json!([])),
         tool("computer_click","Click your desktop at original screen coordinates.".into(),json!({"x":{"type":"integer","minimum":0,"maximum":width-1},"y":{"type":"integer","minimum":0,"maximum":height-1},"button":{"type":"integer","enum":[1,2,3],"description":"1 left, 2 middle, 3 right."}}),json!(["x","y"])),
         tool("computer_type","Type literal text into the focused field on your desktop.".into(),json!({"text":{"type":"string","minLength":1,"maxLength":4000}}),json!(["text"])),
@@ -163,7 +179,9 @@ pub fn tools(width: u32, height: u32) -> Value {
         tool("computer_scroll","Scroll your desktop in wheel ticks: positive dx right, positive dy down. Each axis -20..20.".into(),json!({"dx":{"type":"integer","minimum":-20,"maximum":20},"dy":{"type":"integer","minimum":-20,"maximum":20}}),json!(["dx","dy"])),
         tool("computer_open_url","Navigate Chrome on your desktop to an http/https URL.".into(),json!({"url":{"type":"string","maxLength":2000}}),json!(["url"])),
         tool("computer_request_user","Ask the user to take control for a login, CAPTCHA, payment, or other human-only step.".into(),json!({"reason":{"type":"string","minLength":1,"maxLength":500}}),json!(["reason"]))
-    ])
+    ];
+    tools.extend(super::browser_actions::tools());
+    json!(tools)
 }
 #[cfg(test)]
 mod tests {

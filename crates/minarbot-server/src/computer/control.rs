@@ -190,7 +190,7 @@ pub async fn transition(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
                 let note = if op == "dismiss" {
                     "The user declined to take control. Continue without the human-only step or explain what is blocked."
                 } else {
-                    "The user handed control back. The screen may have changed; take a screenshot first."
+                    "The user handed control back. Refresh the browser snapshot or desktop screenshot before input."
                 };
                 c.execute(
                     "UPDATE computer_waits SET state=? WHERE turn=? AND state='waiting'",
@@ -214,6 +214,10 @@ pub async fn transition(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
         )?;
         Ok(())
     })?;
+    if op == "take" {
+        // The next successful browser command must use a fresh snapshot after takeover.
+        s.computer.invalidate_browser(agent)?;
+    }
     s.computer.viewers.revoke(agent)?;
     if let Some(d) = s.computer.get(agent)? {
         d.disconnected.send_modify(|n| *n += 1);
@@ -292,7 +296,12 @@ pub async fn action(
     assert_enabled(s, agent)?;
     db(s, |c| assert_recoverable(c, turn))?;
     let name = text(&call["function"], "name");
-    super::actions::validate(name, args, s.computer.width, s.computer.height)?;
+    let browser = if name.starts_with("browser_") {
+        Some(super::browser_actions::Action::parse(name, args)?)
+    } else {
+        super::actions::validate(name, args, s.computer.width, s.computer.height)?;
+        None
+    };
     let current = db(s, |c| control(c, agent, s.config.now()))?;
     if current["mode"] == "user" || name == "computer_request_user" {
         let result = json!({"status":"waiting_for_user","message":if name=="computer_request_user"{"The user must take control before this human-only step can continue."}else{"The user is controlling your computer. Wait until they hand it back."}});
@@ -311,9 +320,16 @@ pub async fn action(
             paused: true,
         });
     }
-    let environment = db(s, |c| {
-        crate::data::environment::computer_values(s, c, turn, agent)
-    })?;
+    let environment = if browser.is_none() {
+        db(s, |c| {
+            crate::data::environment::computer_values(s, c, turn, agent)
+        })?
+    } else {
+        db(s, |c| {
+            crate::data::environment::authorize_computer(c, turn, agent)
+        })?;
+        Default::default()
+    };
     tx(s, |c| {
         c.execute(
             "INSERT INTO computer_actions VALUES(?,?,'uncertain',NULL)",
@@ -323,32 +339,38 @@ pub async fn action(
         Ok(())
     })?;
     let now = s.config.now();
-    let ((image, title), _guard) = if environment.is_empty() {
-        let result = s.computer.action(agent, name, args, now).await?;
-        (result, guard)
+    let (image, result, _guard) = if let Some(browser) = browser {
+        let (image, result) = s.computer.browser_action(agent, browser, now).await?;
+        (image, result, guard)
     } else {
-        let computer = s.computer.clone();
-        let (agent, name, args) = (agent.to_owned(), name.to_owned(), args.clone());
-        let (_in_progress, cancelled) = tokio::sync::oneshot::channel::<()>();
-        tokio::spawn(async move {
-            let result = computer
-                .action_with_environment(&agent, &name, &args, now, &environment, cancelled)
-                .await?;
-            Ok::<_, Failure>((result, guard))
-        })
-        .await
-        .map_err(|_| Failure::storage())??
+        let ((image, title), guard) = if environment.is_empty() {
+            let result = s.computer.action(agent, name, args, now).await?;
+            (result, guard)
+        } else {
+            let computer = s.computer.clone();
+            let (agent, name, args) = (agent.to_owned(), name.to_owned(), args.clone());
+            let (_in_progress, cancelled) = tokio::sync::oneshot::channel::<()>();
+            tokio::spawn(async move {
+                let result = computer
+                    .action_with_environment(&agent, &name, &args, now, &environment, cancelled)
+                    .await?;
+                Ok::<_, Failure>((result, guard))
+            })
+            .await
+            .map_err(|_| Failure::storage())??
+        };
+        let mut result = json!({"status":"done"});
+        if let Some(title) = title {
+            result["pageTitle"] = title.into();
+            result["note"] = "Page finished loading. Take a screenshot to see it.".into();
+        }
+        if image.is_some() {
+            result["note"] =
+                "Desktop screenshot follows as an image. Coordinates use original desktop pixels."
+                    .into();
+        }
+        (image, result, guard)
     };
-    let mut result = json!({"status":"done"});
-    if let Some(title) = title {
-        result["pageTitle"] = title.into();
-        result["note"] = "Page finished loading. Take a screenshot to see it.".into();
-    }
-    if image.is_some() {
-        result["note"] =
-            "Desktop screenshot follows as an image. Coordinates use original desktop pixels."
-                .into();
-    }
     tx(s, |c| {
         c.execute(
             "UPDATE computer_actions SET state='done',image=? WHERE turn=? AND call_id=?",

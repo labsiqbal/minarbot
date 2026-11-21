@@ -1,4 +1,6 @@
-use super::{error, options::dimensions, proxy, Result};
+use super::{
+    browser_actions, browser_pipe::private_stdio, error, options::dimensions, proxy, Result,
+};
 use crate::{config::Config, web::Failure};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rusqlite::{params, Connection};
@@ -11,14 +13,15 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
-        atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    net::UnixStream,
+    process::{Child, Command},
     sync::{watch, Mutex as AsyncMutex, Semaphore},
 };
 
@@ -133,8 +136,8 @@ impl Drop for Busy<'_> {
 }
 struct Helper {
     child: Option<Child>,
-    input: Option<ChildStdin>,
-    output: Option<Lines<BufReader<ChildStdout>>>,
+    input: Option<UnixStream>,
+    output: Option<Lines<BufReader<UnixStream>>>,
     sequence: u64,
 }
 struct Fixture {
@@ -150,6 +153,7 @@ pub struct Desktop {
     pub stopped: AtomicBool,
     pub starting: AtomicBool,
     busy: AtomicUsize,
+    browser_epoch: AtomicU64,
     pub display: i64,
     jpeg: Mutex<Option<(Vec<u8>, Vec<u8>)>>,
     pub disconnected: watch::Sender<u64>,
@@ -403,6 +407,8 @@ impl Manager {
         };
         for (k, x) in [
             ("signin", json!({"allowed":false})),
+            // The supervisor restores tabs with their Minarbot IDs.
+            ("session", json!({"restore_on_startup":5})),
             (
                 "profile",
                 json!({"password_manager_enabled":false,"exit_type":"Normal","exited_cleanly":true}),
@@ -500,8 +506,6 @@ impl Manager {
                 "MINARBOT_DESKTOP_GEOMETRY",
                 format!("{}x{}", self.width, self.height),
             )
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
         let (child, input, output, fixture) = if let Some(bridge) = &self.test_bridge {
@@ -536,18 +540,24 @@ impl Manager {
                 }),
             )
         } else {
-            let mut child = match command.spawn() {
+            let (input, output) = match private_stdio(&mut command) {
+                Ok(pair) => pair,
+                Err(_) => {
+                    self.release(agent)?;
+                    return Err(error(503, "Desktop supervisor channel is unavailable."));
+                }
+            };
+            let child = match command.spawn() {
                 Ok(v) => v,
                 Err(_) => {
                     self.release(agent)?;
                     return Err(error(503,"Desktop sandbox could not start. Install bwrap and enable unprivileged user namespaces."));
                 }
             };
-            let input = child.stdin.take();
-            let output = child.stdout.take().ok_or_else(Failure::storage)?;
+            drop(command);
             (
                 Some(child),
-                input,
+                Some(input),
                 Some(BufReader::new(output).lines()),
                 None,
             )
@@ -567,6 +577,7 @@ impl Manager {
             stopped: AtomicBool::new(false),
             starting: AtomicBool::new(true),
             busy: AtomicUsize::new(0),
+            browser_epoch: AtomicU64::new(0),
             display,
             jpeg: Mutex::new(None),
             disconnected,
@@ -769,6 +780,79 @@ impl Manager {
             *d.jpeg.lock().map_err(|_| Failure::storage())? = Some((bytes, encoded.clone()));
         }
         Ok(encoded)
+    }
+    pub(super) async fn browser_action(
+        &self,
+        agent: &str,
+        action: browser_actions::Action,
+        now: i64,
+    ) -> Result<(Option<Vec<u8>>, Value)> {
+        match action {
+            browser_actions::Action::Type {
+                r#ref,
+                text,
+                submit,
+            } => {
+                self.type_into_ref(agent, r#ref, text, false, submit, now)
+                    .await
+            }
+            action => self.browser_request(agent, action, false, now).await,
+        }
+    }
+    // Call under the Computer control gate after authority and takeover checks.
+    pub(crate) async fn type_into_ref(
+        &self,
+        agent: &str,
+        reference: String,
+        text: String,
+        redacted: bool,
+        submit: bool,
+        now: i64,
+    ) -> Result<(Option<Vec<u8>>, Value)> {
+        let mut action = browser_actions::Action::Type {
+            r#ref: reference,
+            text,
+            submit,
+        };
+        action.validate()?;
+        self.browser_request(agent, action, redacted, now).await
+    }
+    async fn browser_request(
+        &self,
+        agent: &str,
+        action: browser_actions::Action,
+        redacted: bool,
+        now: i64,
+    ) -> Result<(Option<Vec<u8>>, Value)> {
+        let d = self.start(agent, now).await?;
+        d.activity.store(now, Ordering::SeqCst);
+        let _slot = d
+            .slots
+            .try_acquire()
+            .map_err(|_| error(429, "Computer is busy."))?;
+        let _gate = d.gate.lock().await;
+        let _busy = Busy::new(&d.busy);
+        let request = browser_actions::Request {
+            action,
+            redacted,
+            epoch: d.browser_epoch.load(Ordering::SeqCst),
+        };
+        let packet = serde_json::to_string(&request).map_err(|_| Failure::storage())?;
+        let response = Self::request(&d, "browser", &[packet]).await;
+        d.activity.store(crate::config::now(), Ordering::SeqCst);
+        let reply: browser_actions::Reply =
+            serde_json::from_slice(&response?).map_err(|_| Failure::storage())?;
+        let image = reply
+            .image
+            .map(|image| STANDARD.decode(image).map_err(|_| Failure::storage()))
+            .transpose()?;
+        Ok((image, reply.result))
+    }
+    pub(super) fn invalidate_browser(&self, agent: &str) -> Result<()> {
+        if let Some(d) = self.get(agent)? {
+            d.browser_epoch.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
     }
     pub async fn action(
         &self,

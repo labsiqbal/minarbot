@@ -25,7 +25,7 @@ pub fn migrate(db: &Connection) -> Result<()> {
 }
 
 fn stamp(db: &Connection, turn: &str) -> Result<String> {
-    let changes:i64=db.query_row("SELECT count(*) FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name') IN ('replace_workspace_file','create_workspace_file','delete_workspace_file','create_routine','update_routine','computer_open_url','computer_click','computer_type','computer_key','computer_scroll')",[turn],|r|r.get(0))?;
+    let changes:i64=db.query_row("SELECT count(*) FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name') IN ('replace_workspace_file','create_workspace_file','delete_workspace_file','create_routine','update_routine','computer_open_url','computer_click','computer_type','computer_key','computer_scroll','browser_click','browser_type','browser_select','browser_hover','browser_press','browser_navigate','browser_back','browser_tabs') AND json_extract(result,'$.status') IS NOT 'error'",[turn],|r|r.get(0))?;
     let writes:i64=db.query_row("SELECT count(*) FROM harness_steps WHERE turn=? AND (name IN ('Write','Edit','MultiEdit','fileChange') OR name LIKE '%apply_patch%')",[turn],|r|r.get(0))?;
     let files: i64 = db.query_row(
         "SELECT count(*) FROM generated_files WHERE turn=?",

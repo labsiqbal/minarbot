@@ -1,3 +1,7 @@
+mod browser;
+mod cdp;
+
+use super::{browser_actions, browser_pipe::private_stdio};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::json;
@@ -77,6 +81,8 @@ struct Program {
 struct Supervisor {
     environment: BTreeMap<OsString, OsString>,
     programs: Vec<Program>,
+    connection: Option<cdp::Connection>,
+    browser: Option<browser::Browser>,
 }
 
 impl Supervisor {
@@ -108,6 +114,8 @@ impl Supervisor {
         Ok(Self {
             environment,
             programs: Vec::new(),
+            connection: None,
+            browser: None,
         })
     }
 
@@ -225,9 +233,19 @@ impl Supervisor {
     }
 
     fn launch_chrome(&mut self, no_sandbox: bool) -> Result<Arc<Mutex<Vec<u8>>>> {
-        let mut command = self.command("google-chrome");
+        let mut command = self.command("/bin/sh");
+        // Chrome reads DevTools messages on fd 3 and writes them on fd 4.
+        command.args([
+            "-c",
+            r#"exec 3<&0 4>&1 0</dev/null 1>/dev/null; exec google-chrome "$@""#,
+            "chrome",
+        ]);
+        let (send, receive) = private_stdio(&mut command)?;
+        self.connection = Some(cdp::Connection::new(send, receive));
         command.args([
             "--user-data-dir=/home/desktop/chrome",
+            "--profile-directory=Default",
+            "--remote-debugging-pipe",
             "--no-first-run",
             "--no-default-browser-check",
             "--hide-crash-restore-bubble",
@@ -370,12 +388,54 @@ impl Supervisor {
         if let Some(chrome) = self.programs.last_mut() {
             chrome.critical = true;
         }
+        let connection = self
+            .connection
+            .take()
+            .ok_or("Chrome DevTools pipe unavailable.")?;
+        self.browser = Some(
+            timeout(
+                START_TIMEOUT,
+                browser::Browser::start(
+                    connection,
+                    Path::new(HOME).join("chrome/minarbot-tabs.json"),
+                ),
+            )
+            .await?
+            .map_err(|_| "Chrome could not open its dedicated browser profile.")?,
+        );
         Ok(())
     }
 
-    async fn action(&self, request: &Request) -> Result<Vec<u8>> {
+    async fn action(&mut self, request: &Request) -> Result<Vec<u8>> {
         let deadline = Duration::from_secs(10);
         match request.operation.as_str() {
+            "browser" => {
+                let [packet] = request.args.as_slice() else {
+                    return Err("Invalid browser helper command.".into());
+                };
+                let request: browser_actions::Request = serde_json::from_str(packet)?;
+                let read_only = request.action.read_only();
+                let browser = self
+                    .browser
+                    .as_mut()
+                    .ok_or("Chrome DevTools is unavailable.")?;
+                let result = timeout(deadline, browser.run(request))
+                    .await
+                    .unwrap_or(Err(cdp::Error::Transport));
+                let response = match result {
+                    Ok(response) => response,
+                    Err(cdp::Error::Rejected(message)) => browser_actions::Reply {
+                        result: json!({"status":"error","error":message}),
+                        image: None,
+                    },
+                    Err(_) if read_only => browser_actions::Reply {
+                        result: json!({"status":"error","error":"Chrome could not finish the read. Try a fresh snapshot or use Computer pixels."}),
+                        image: None,
+                    },
+                    Err(_) => return Err("Chrome input outcome may be uncertain.".into()),
+                };
+                Ok(serde_json::to_vec(&response)?)
+            }
             "input" => self.tool("xdotool", &request.args, deadline).await,
             "capture" => {
                 let file = format!("/tmp/minarbot-{}.png", request.id);
@@ -401,6 +461,16 @@ impl Supervisor {
     }
 
     async fn stop(&mut self) {
+        if let Some(browser) = &mut self.browser {
+            browser.close().await;
+            if let Some(chrome) = self
+                .programs
+                .iter_mut()
+                .rfind(|program| program.name == "Chrome")
+            {
+                let _ = timeout(Duration::from_millis(600), chrome.child.wait()).await;
+            }
+        }
         for program in self.programs.iter().rev() {
             signal_group(&program.child, rustix::process::Signal::TERM);
         }
@@ -475,37 +545,43 @@ pub(crate) async fn run() -> Result<()> {
         _ = &mut eof => None,
     };
     let result = match ready {
-        Some(Ok(())) => {
-            async {
-                writeln!(io::stdout(), "ready")?;
-                let mut monitor = interval(Duration::from_millis(100));
-                loop {
-                    let request = tokio::select! {
-                        request = requests.recv() => request,
-                        _ = monitor.tick() => { supervisor.check()?; continue; }
-                        _ = term.recv() => None,
-                        _ = interrupt.recv() => None,
-                        _ = &mut eof => None,
-                    };
-                    let Some(request) = request else {
-                        break;
-                    };
-                    let result = tokio::select! {
-                        result = supervisor.action(&request) => result,
-                        _ = term.recv() => break,
-                        _ = interrupt.recv() => break,
-                        _ = &mut eof => break,
-                    };
-                    let message = match result {
-                        Ok(data) => json!({"id":request.id,"data":STANDARD.encode(data)}),
-                        Err(_) => json!({"id":request.id,"error":true}),
-                    };
-                    writeln!(io::stdout(), "{message}")?;
-                }
-                Ok(())
+        Some(Ok(())) => async {
+            writeln!(io::stdout(), "ready")?;
+            let mut monitor = interval(Duration::from_millis(100));
+            let mut checkpoint = interval(Duration::from_secs(2));
+            checkpoint.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                let request = tokio::select! {
+                    request = requests.recv() => request,
+                    _ = monitor.tick() => { supervisor.check()?; continue; }
+                    _ = checkpoint.tick() => {
+                        if let Some(browser) = &mut supervisor.browser {
+                            let _ = timeout(Duration::from_millis(500), browser.checkpoint()).await;
+                        }
+                        continue;
+                    }
+                    _ = term.recv() => None,
+                    _ = interrupt.recv() => None,
+                    _ = &mut eof => None,
+                };
+                let Some(request) = request else {
+                    break;
+                };
+                let result = tokio::select! {
+                    result = supervisor.action(&request) => result,
+                    _ = term.recv() => break,
+                    _ = interrupt.recv() => break,
+                    _ = &mut eof => break,
+                };
+                let message = match result {
+                    Ok(data) => json!({"id":request.id,"data":STANDARD.encode(data)}),
+                    Err(_) => json!({"id":request.id,"error":true}),
+                };
+                writeln!(io::stdout(), "{message}")?;
             }
-            .await
+            Ok(())
         }
+        .await,
         Some(Err(error)) => {
             let _ = writeln!(io::stdout(), "failed");
             Err(error)
