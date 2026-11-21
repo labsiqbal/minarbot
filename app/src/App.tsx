@@ -29,6 +29,7 @@ import { HarnessApprovalCard, type HarnessApproval } from './HarnessApprovalCard
 import './ui/csp-nonce';
 import { RestoreCheckpoint } from './SourceControl';
 import { ComputerViewer, ComputerRequestCard } from './ComputerViewer';
+import { ComputerSetupPage } from './ComputerSetup';
 import type { ComputerWait } from '../shared/computer';
 import { AgentComputerPanel } from './AgentComputerPanel';
 import { restoreChatCommand, restoreChannelCommand, type ChatCommand, type ChannelCommand } from './conversation-command';
@@ -1136,7 +1137,7 @@ const settingsGroups: { label: string; items: { id: SettingsSection; label: stri
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
   { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'minarbot.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
-  { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'devices', icon: Smartphone, label: 'Devices' }, { id: 'updates', icon: Download, label: 'Updates' }] },
+  { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'devices', icon: Smartphone, label: 'Devices' }, { id: 'computer', icon: Monitor, label: 'Computer' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
 ];
@@ -1499,6 +1500,7 @@ function App() {
             : settings === 'providers' ? <ProvidersPanel request={api} />
             : settings === 'engines' ? <EnginesPanel request={api} />
             : settings === 'devices' ? <DevicesPanel request={api} />
+            : settings === 'computer' ? <ComputerSetupPage request={api} />
             : settings === 'updates' ? <UpdatesPanel updates={updates} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />
             : settings === 'hub' ? <Suspense fallback={<p className="empty" role="status">Loading hub connection...</p>}><HubConnection agents={directory.agents} request={api} /></Suspense>

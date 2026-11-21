@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Progress, Row, SkeletonRows, Switch, useConfirm, RecoveryAlert } from './ui/kit';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
+import { computerSetupLabel } from './ComputerSetup';
+import { parseRoute, routePath } from './navigation';
 type Command = { id: string; revision: number; enabled: boolean };
 export function useComputerSettings(agent: string, request: ComputerRequest, onSaved?: (status: ComputerStatus) => void) {
   const key = `minarbot-computer:${agent}`;
@@ -46,9 +48,14 @@ export function useComputerSettings(agent: string, request: ComputerRequest, onS
 export function AgentComputerSettings({ agent, request, autoFocus = false }: { agent: string; request: ComputerRequest; autoFocus?: boolean }) {
   const settings = useComputerSettings(agent, request);
   const { section, status, target, action, busy, locked, save, recovery } = settings;
-  useEffect(() => { if (!autoFocus) return; const frame = requestAnimationFrame(() => { section.current?.scrollIntoView({ block: 'center' }); section.current?.querySelector<HTMLButtonElement>('[role="switch"]')?.focus(); }); return () => cancelAnimationFrame(frame); }, [autoFocus, section, status?.available]);
+  useEffect(() => { if (!autoFocus) return; const frame = requestAnimationFrame(() => { section.current?.scrollIntoView({ block: 'center' }); section.current?.querySelector<HTMLElement>(status?.available ? '[role="switch"]' : 'a[href]')?.focus(); }); return () => cancelAnimationFrame(frame); }, [autoFocus, section, status?.available]);
+  const setupPath = routePath({ ...parseRoute(location.pathname + location.search), settings: 'computer' });
   return <div ref={section} className="bs-root k-stack">
-    {!status ? <><span className="sr-only" role="status">Loading computer status...</span><SkeletonRows count={1} /></> : status.available && <Card><Row title="Computer" meta={busy ? <Progress>{action}</Progress> : undefined} trailing={<Switch label="Computer" checked={target} disabled={locked} onChange={value => void save(value)} />} /></Card>}
+    {!status ? <><span className="sr-only" role="status">Loading computer status...</span><SkeletonRows count={1} /></> : <Card>
+      <Row title="Computer" meta={busy ? <Progress>{action}</Progress> : !status.available && <>
+        <span>{status.setup ? computerSetupLabel(status.setup) : 'Setup required'}</span><a className="k-link" href={setupPath}>Computer setup</a>
+      </>} trailing={<Switch label="Computer" checked={target} disabled={locked || !status.available} onChange={value => void save(value)} />} />
+    </Card>}
     {recovery}
   </div>;
 }

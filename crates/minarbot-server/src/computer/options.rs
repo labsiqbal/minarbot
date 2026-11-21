@@ -26,7 +26,9 @@ pub struct DesktopOptions {
 impl Options {
     pub fn environment() -> crate::db::Result<Self> {
         let desktop = DesktopOptions {
-            enabled: Some(std::env::var("MINARBOT_AGENT_DESKTOP").as_deref() == Ok("1")),
+            enabled: std::env::var("MINARBOT_AGENT_DESKTOP")
+                .ok()
+                .map(|value| value == "1"),
             max: std::env::var("MINARBOT_AGENT_DESKTOP_MAX")
                 .ok()
                 .map(|v| v.parse())

@@ -5,9 +5,9 @@ const FIRST: &str = "10000000-0000-4000-8000-000000000001";
 const SECOND: &str = "10000000-0000-4000-8000-000000000002";
 const THIRD: &str = "10000000-0000-4000-8000-000000000003";
 
-struct Scratch(PathBuf);
+pub(in crate::computer) struct Scratch(pub(in crate::computer) PathBuf);
 impl Scratch {
-    fn new() -> TestResult<Self> {
+    pub(in crate::computer) fn new() -> TestResult<Self> {
         let path = std::env::temp_dir().join(format!("bs-desk-{}", uuid::Uuid::new_v4().simple()));
         fs::create_dir(&path)?;
         Ok(Self(path))
@@ -82,6 +82,123 @@ fn check<T>(result: super::Result<T>) -> TestResult<T> {
 }
 
 #[tokio::test]
+#[ignore = "requires rootless Podman and locally built image; run scripts/test-computer-image.sh"]
+async fn container_desktop_proxy_profile_and_idle() -> TestResult<()> {
+    use axum::{
+        extract::Request,
+        response::{Html, IntoResponse},
+        Router,
+    };
+    use std::sync::atomic::AtomicBool;
+    let runtime = Runtime::podman()
+        .await
+        .ok_or("Rootless Podman is required")?;
+    let image = std::env::var("MINARBOT_TEST_COMPUTER_IMAGE")?;
+    let scratch = Scratch::new()?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    let loaded = Arc::new(AtomicBool::new(false));
+    let clicked = Arc::new(AtomicBool::new(false));
+    let restored = Arc::new(AtomicBool::new(false));
+    let (load, click, restore) = (loaded.clone(), clicked.clone(), restored.clone());
+    let router = Router::new().fallback(move |request: Request| {
+        let (load, click, restore) = (load.clone(), click.clone(), restore.clone());
+        async move {
+            match request.uri().path() {
+                "/loaded" => load.store(true, Ordering::SeqCst),
+                "/clicked" => click.store(true, Ordering::SeqCst),
+                "/verify" => restore.store(
+                    request.headers().get("cookie").is_some_and(|cookie| cookie == "profile=kept"),
+                    Ordering::SeqCst,
+                ),
+                _ => return ([("set-cookie", "profile=kept; Max-Age=86400; Path=/")],
+                    Html(r#"<!doctype html><title>Computer fixture</title>
+                         <button style="position:fixed;left:100px;top:70px;width:300px;height:210px"
+                           onclick="fetch('/clicked')">Click fixture</button><script>fetch('/loaded')</script>"#)).into_response(),
+            }
+            axum::http::StatusCode::NO_CONTENT.into_response()
+        }
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, router).await });
+    let launcher = scratch.supervisor()?;
+    let mut manager = scratch.manager(&launcher, 1)?;
+    manager.proxy_target = Some(proxy::TestTarget {
+        hostname: "computer-fixture.test".into(),
+        port,
+        https_port: None,
+    });
+    manager
+        .setup
+        .set_backend(Backend::Container { runtime, image });
+    let outcome = async {
+        async fn observed(flag: &AtomicBool) -> TestResult<()> {
+            tokio::time::timeout(Duration::from_secs(15), async {
+                while !flag.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            })
+            .await?;
+            Ok(())
+        }
+        let url = format!("http://computer-fixture.test:{port}");
+        let open = |suffix: &'static str| {
+            let destination = format!("{url}{suffix}");
+            let manager = &manager;
+            async move {
+                check(
+                    manager
+                        .action(
+                            FIRST,
+                            "computer_open_url",
+                            &json!({"url":destination}),
+                            crate::config::now(),
+                        )
+                        .await,
+                )
+            }
+        };
+        open("/").await?;
+        observed(&loaded).await?;
+        let screen = check(manager.screenshot(FIRST, false).await)?;
+        let frame = image::load_from_memory(&screen)?;
+        assert_eq!((frame.width(), frame.height()), (960, 600));
+        check(
+            manager
+                .action(
+                    FIRST,
+                    "computer_click",
+                    &json!({"x":250,"y":190}),
+                    crate::config::now(),
+                )
+                .await,
+        )?;
+        observed(&clicked).await?;
+        assert_eq!(
+            manager
+                .start(SECOND, crate::config::now())
+                .await
+                .err()
+                .map(|failure| failure.status),
+            Some(429)
+        );
+        check(manager.maintain(crate::config::now() + 1001).await)?;
+        assert_eq!(
+            check(manager.status(FIRST, crate::config::now()))?["state"],
+            "off"
+        );
+        check(manager.start(SECOND, crate::config::now()).await)?;
+        check(manager.stop(SECOND).await)?;
+        open("/verify").await?;
+        observed(&restored).await?;
+        Ok(())
+    }
+    .await;
+    manager.close().await;
+    server.abort();
+    outcome
+}
+
+#[tokio::test]
 async fn sandbox_start_failure_releases_lease() -> TestResult<()> {
     let scratch = Scratch::new()?;
     let early_exit = scratch.script("exit 1")?;
@@ -133,7 +250,8 @@ async fn desktop_mounts_and_preferences_stay_private() -> TestResult<()> {
     fs::remove_file(defaults.join("Preferences"))?;
     check(manager.start(FIRST, 0).await)?;
     let executable = std::env::current_exe()?;
-    let args = sandbox(&profile, &manager.proxy_path, &executable);
+    let proxy_path = manager.proxy_path.get().ok_or("desktop proxy path")?;
+    let args = sandbox(&profile, proxy_path, &executable);
     assert!(args.windows(3).any(|mount| mount[0] == "--ro-bind"
         && Path::new(&mount[1]) == executable
         && mount[2] == "/minarbot-server"));
@@ -161,7 +279,7 @@ async fn desktop_mounts_and_preferences_stay_private() -> TestResult<()> {
             profile,
             agent.join("x11"),
             agent.join("x11"),
-            manager.proxy_path.clone(),
+            proxy_path.clone(),
             executable
         ]
     );

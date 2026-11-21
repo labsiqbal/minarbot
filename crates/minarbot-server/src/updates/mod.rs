@@ -45,6 +45,24 @@ fn receive_lock() -> Result<tokio::sync::MutexGuard<'static, ()>> {
 
 const UNMANAGED: &str = "Server is not running under the Minarbot launcher. Install the launcher before applying updates.";
 
+pub(crate) async fn computer_image(state: &AppState, cache: &std::path::Path) -> Result<String> {
+    let unavailable = || error(503, "Computer image needs a published Minarbot release.");
+    let id = std::env::var("MINARBOT_RELEASE_ID").map_err(|_| unavailable())?;
+    let feed = state
+        .config
+        .update
+        .options()
+        .github
+        .as_ref()
+        .ok_or_else(unavailable)?;
+    feed.computer_image(&id, cache).await?.ok_or_else(|| {
+        error(
+            503,
+            "This Minarbot release has no Computer image. Update Minarbot and try again.",
+        )
+    })
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .merge(install::routes())
