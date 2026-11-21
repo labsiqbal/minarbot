@@ -12,6 +12,7 @@ pub struct Metrics {
     cached: Option<Value>,
     started: Option<Instant>,
 }
+#[cfg(target_os = "linux")]
 fn memory(text: &str, key: &str) -> Option<u64> {
     text.lines().find_map(|line| {
         line.strip_prefix(key)?
@@ -22,6 +23,7 @@ fn memory(text: &str, key: &str) -> Option<u64> {
             .checked_mul(1024)
     })
 }
+#[cfg(any(test, target_os = "linux"))]
 fn cgroup_limit(limits: [Option<&str>; 2], total: Option<u64>) -> Option<u64> {
     let limit = limits
         .into_iter()
@@ -30,6 +32,7 @@ fn cgroup_limit(limits: [Option<&str>; 2], total: Option<u64>) -> Option<u64> {
         .min()?;
     Some(limit.min(total?))
 }
+#[cfg(target_os = "linux")]
 fn constrained_memory(total: Option<u64>) -> Option<(u64, u64)> {
     let group = fs::read_to_string("/proc/self/cgroup").ok()?;
     let group = group.lines().find_map(|line| line.strip_prefix("0::"))?;
@@ -43,6 +46,7 @@ fn constrained_memory(total: Option<u64>) -> Option<(u64, u64)> {
         .ok()?;
     Some((limit, limit.saturating_sub(current)))
 }
+#[cfg(target_os = "linux")]
 fn cpu() -> (u64, u64, usize) {
     let text = fs::read_to_string("/proc/stat").unwrap_or_default();
     let mut idle = 0;
@@ -63,6 +67,64 @@ fn cpu() -> (u64, u64, usize) {
         cores += 1;
     }
     (idle, total, cores)
+}
+struct HostSample {
+    cpu: (u64, u64, usize),
+    process_cpu: Option<u64>,
+    memory: Option<u64>,
+    available: Option<u64>,
+    constrained: Option<(u64, u64)>,
+    rss: Option<u64>,
+}
+
+#[cfg(target_os = "linux")]
+fn host_sample() -> HostSample {
+    let meminfo = fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    let total = memory(&meminfo, "MemTotal:");
+    HostSample {
+        cpu: cpu(),
+        process_cpu: fs::read_to_string("/proc/self/schedstat")
+            .ok()
+            .and_then(|value| value.split_whitespace().next()?.parse().ok()),
+        memory: total,
+        available: memory(&meminfo, "MemAvailable:"),
+        constrained: constrained_memory(total),
+        rss: memory(
+            &fs::read_to_string("/proc/self/status").unwrap_or_default(),
+            "VmRSS:",
+        ),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn host_sample() -> HostSample {
+    let number = |command, args: &[&str]| {
+        let output = std::process::Command::new(command)
+            .args(args)
+            .output()
+            .ok()?;
+        std::str::from_utf8(&output.stdout)
+            .ok()?
+            .trim()
+            .parse::<u64>()
+            .ok()
+    };
+    HostSample {
+        cpu: (
+            0,
+            0,
+            std::thread::available_parallelism().map_or(1, |n| n.get()),
+        ),
+        process_cpu: None,
+        memory: number("/usr/sbin/sysctl", &["-n", "hw.memsize"]),
+        available: None,
+        constrained: None,
+        rss: number(
+            "/bin/ps",
+            &["-o", "rss=", "-p", &std::process::id().to_string()],
+        )
+        .and_then(|rss| rss.checked_mul(1024)),
+    }
 }
 fn host_cpu_percent(before: (u64, u64, usize), after: (u64, u64, usize)) -> Option<f64> {
     let (before_idle, before_total, before_cores) = before;
@@ -115,11 +177,8 @@ impl Metrics {
                 return Ok(value.clone());
             }
         }
-        let (idle, total, cores) = cpu();
-        let process = fs::read_to_string("/proc/self/schedstat")
-            .ok()
-            .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
-            .unwrap_or(0);
+        let sample = host_sample();
+        let (idle, total, cores) = sample.cpu;
         let interval = self
             .previous
             .map(|p| now.duration_since(p.0).as_millis() as u64);
@@ -132,21 +191,16 @@ impl Metrics {
                 )
             });
         let process_percent = self.previous.and_then(|(before, _, _, _, cpu)| {
-            process_cpu_percent(cpu, process, now.duration_since(before))
+            process_cpu_percent(cpu, sample.process_cpu?, now.duration_since(before))
         });
-        let meminfo = fs::read_to_string("/proc/meminfo").unwrap_or_default();
-        let available = memory(&meminfo, "MemAvailable:");
-        let total_memory = memory(&meminfo, "MemTotal:");
-        let constrained = constrained_memory(total_memory);
+        let available = sample.available;
+        let total_memory = sample.memory;
+        let constrained = sample.constrained;
         let available_memory = match (available, constrained) {
             (Some(host), Some((_, group))) => Some(host.min(group)),
             _ => available,
         };
-        let rss = memory(
-            &fs::read_to_string("/proc/self/status").unwrap_or_default(),
-            "VmRSS:",
-        )
-        .unwrap_or(0);
+        let rss = sample.rss.unwrap_or(0);
         let mut files_out = Vec::new();
         for (kind, suffix) in [
             ("database", ""),
@@ -169,8 +223,8 @@ impl Metrics {
         let page_size: u64 = db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
         let pages: u64 = db.query_row("PRAGMA page_count", [], |r| r.get(0))?;
         let free: u64 = db.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
-        let value = json!({"sampledAt":files::timestamp(db,crate::config::now())?,"platform":std::env::consts::OS,"cpu":{"scope":"host","cores":cores,"availableParallelism":std::thread::available_parallelism().map(|n|n.get()).unwrap_or(1),"percent":percent,"intervalMs":interval},"memory":{"total":total_memory,"available":available.filter(|a|total_memory.is_some_and(|t|*a<=t)),"source":"MemAvailable"},"process":{"rss":rss,"cpuPercent":process_percent,"memoryLimit":constrained.map(|v|v.0),"availableMemory":available_memory,"uptimeSeconds":now.duration_since(*self.started.get_or_insert(now)).as_secs()},"filesystem":state.config.database.parent().and_then(|p|rustix::fs::statvfs(p).ok()).and_then(disk),"storage":{"files":files_out,"databaseBytes":(page_size*pages).to_string(),"reusableBytes":(page_size*free).to_string()}});
-        self.previous = Some((now, idle, total, cores, process));
+        let value = json!({"sampledAt":files::timestamp(db,crate::config::now())?,"platform":std::env::consts::OS,"cpu":{"scope":"host","cores":cores,"availableParallelism":std::thread::available_parallelism().map(|n|n.get()).unwrap_or(1),"percent":percent,"intervalMs":interval},"memory":{"total":total_memory,"available":available.filter(|a|total_memory.is_some_and(|t|*a<=t)),"source":if crate::platform::LINUX_SANDBOX {"MemAvailable"} else {"sysctl"}},"process":{"rss":rss,"cpuPercent":process_percent,"memoryLimit":constrained.map(|v|v.0),"availableMemory":available_memory,"uptimeSeconds":now.duration_since(*self.started.get_or_insert(now)).as_secs()},"filesystem":state.config.database.parent().and_then(|p|rustix::fs::statvfs(p).ok()).and_then(disk),"storage":{"files":files_out,"databaseBytes":(page_size*pages).to_string(),"reusableBytes":(page_size*free).to_string()}});
+        self.previous = Some((now, idle, total, cores, sample.process_cpu.unwrap_or(0)));
         self.cached = Some(value.clone());
         Ok(value)
     }

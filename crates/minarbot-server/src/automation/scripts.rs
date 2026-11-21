@@ -58,7 +58,7 @@ pub fn open(config: &crate::config::Config) -> crate::db::Result<DiscoveryGuard>
         }
         let meta = fs::symlink_metadata(path)?;
         if !meta.is_dir()
-            || meta.uid() != fs::metadata("/proc/self")?.uid()
+            || meta.uid() != rustix::process::geteuid().as_raw()
             || meta.mode() & 0o077 != 0
         {
             return Err("Script discovery directory must be private and owned by this user".into());

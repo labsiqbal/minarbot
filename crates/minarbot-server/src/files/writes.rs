@@ -1,14 +1,10 @@
 use super::*;
+use crate::operator_file;
+use rustix::fs::{self as at, AtFlags, FileType, Mode, OFlags};
 use sha2::{Digest, Sha256};
-use std::{
-    fs::{self, File, OpenOptions},
-    io::Write,
-    os::{
-        fd::AsRawFd,
-        unix::fs::{DirBuilderExt, OpenOptionsExt},
-    },
-    path::{Path, PathBuf},
-};
+#[cfg(test)]
+use std::{fs, path::PathBuf};
+use std::{fs::File, io::Write, path::Path};
 
 fn invalid() -> Failure {
     error(400, "Invalid workspace path")
@@ -40,7 +36,9 @@ fn parent(root: &Path, relative: &str, max: usize) -> Result<(File, String)> {
         name.to_owned(),
     ))
 }
+#[cfg(all(test, target_os = "linux"))]
 fn location(fd: &File, name: &str) -> PathBuf {
+    use std::os::fd::AsRawFd;
     PathBuf::from(format!("/proc/self/fd/{}/{name}", fd.as_raw_fd()))
 }
 fn io<T>(value: std::io::Result<T>) -> Result<T> {
@@ -70,28 +68,38 @@ fn text_file(args: &Value) -> Result<&str> {
 }
 fn publish(root: &Path, relative: &str, bytes: &[u8]) -> Result<Value> {
     let (fd, name) = parent(root, relative, 2048)?;
-    let staged = location(&fd, &format!(".minarbot-{}.tmp", uuid::Uuid::new_v4()));
-    let mut output = io(OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(0x20000)
-        .open(&staged))?;
+    let staged = format!(".minarbot-{}.tmp", uuid::Uuid::new_v4());
+    let mut output = File::from(
+        at::openat(
+            &fd,
+            staged.as_str(),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map_err(|_| error(400, "Workspace operation failed."))?,
+    );
     let result = (|| {
         io(output.write_all(bytes))?;
         io(output.sync_all())?;
-        let destination = location(&fd, &name);
-        #[cfg(test)]
-        tests::fault("before-link", &staged, &destination);
-        io(fs::hard_link(&staged, &destination))?;
-        #[cfg(test)]
-        tests::fault("after-link", &staged, &destination);
+        #[cfg(all(test, target_os = "linux"))]
+        tests::fault(
+            "before-link",
+            &location(&fd, &staged),
+            &location(&fd, &name),
+        );
+        io(
+            at::linkat(&fd, staged.as_str(), &fd, name.as_str(), AtFlags::empty())
+                .map_err(Into::into),
+        )?;
+        #[cfg(all(test, target_os = "linux"))]
+        tests::fault("after-link", &location(&fd, &staged), &location(&fd, &name));
         Ok(
             json!({"path":relative,"digest":format!("{:x}",Sha256::digest(bytes)),"size":bytes.len()}),
         )
     })();
     drop(output);
-    let cleanup = io(fs::remove_file(&staged)).and_then(|_| io(fd.sync_all()));
+    let cleanup = io(at::unlinkat(&fd, staged.as_str(), AtFlags::empty()).map_err(Into::into))
+        .and_then(|_| io(fd.sync_all()));
     match result {
         Err(e) => Err(e),
         Ok(v) => {
@@ -111,11 +119,11 @@ pub fn publish_generated(
     }
     let root = &binding.directory;
     let (fd, filename) = parent(root, name, 2048)?;
-    match fs::symlink_metadata(location(&fd, &filename)) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    match at::statat(&fd, filename.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
+        Err(rustix::io::Errno::NOENT) => {
             publish(root, name, text.as_bytes())?;
         }
-        Ok(meta) if meta.is_file() => {
+        Ok(meta) if FileType::from_raw_mode(meta.st_mode) == FileType::RegularFile => {
             let bytes = workspace::read_bytes(&fd, &filename, 32768)?;
             if bytes == text.as_bytes() {
                 return Ok(());
@@ -168,19 +176,17 @@ fn remove(root: &Path, args: &Value) -> Result<Value> {
         .rsplit_once('/')
         .map(|(p, _)| format!("{p}/{recovery}/file"))
         .unwrap_or_else(|| format!("{recovery}/file"));
-    let directory = location(&fd, &recovery);
-    io(fs::DirBuilder::new().mode(0o700).create(&directory))?;
-    let saved = io(OpenOptions::new()
-        .read(true)
-        .custom_flags(0x20000 | 0x10000)
-        .open(&directory))?;
+    io(at::mkdirat(&fd, recovery.as_str(), Mode::RWXU).map_err(Into::into))?;
+    let saved = io(operator_file::directory_at(&fd, &recovery))?;
     io(fd.sync_all())?;
     let moved = (|| {
-        let original = location(&fd, &name);
-        let destination = location(&saved, "file");
-        #[cfg(test)]
-        tests::fault("before-rename", &original, &destination);
-        io(fs::rename(original, destination))?;
+        #[cfg(all(test, target_os = "linux"))]
+        tests::fault(
+            "before-rename",
+            &location(&fd, &name),
+            &location(&saved, "file"),
+        );
+        io(at::renameat(&fd, name.as_str(), &saved, "file").map_err(Into::into))?;
         io(saved.sync_all())?;
         io(fd.sync_all())?;
         let bytes = workspace::read_bytes(&saved, "file", 10 * 1024 * 1024)?;
@@ -229,9 +235,7 @@ fn perform(root: &Path, name: &str, args: &Value) -> Result<Value> {
                 return Err(error(400, "Invalid workspace directory"));
             }
             let (fd, name) = parent(root, text(args, "path"), 2048)?;
-            io(fs::DirBuilder::new()
-                .mode(0o700)
-                .create(location(&fd, &name)))?;
+            io(at::mkdirat(&fd, name.as_str(), Mode::RWXU).map_err(Into::into))?;
             io(fd.sync_all())?;
             Ok(json!({"path":args["path"],"kind":"directory"}))
         }

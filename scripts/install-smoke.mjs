@@ -59,7 +59,7 @@ try {
   copyFileSync(join(root, 'app/package.json'), join(content, 'package.json'));
   cpSync(join(root, 'app/dist'), join(content, 'dist'), { recursive: true });
   writeFileSync(join(content, 'release.json'), JSON.stringify({ id, version, commit, files: fileManifest(content) }));
-  execFileSync('tar', ['--format', 'ustar', '-czf', archive, '-C', content, '.']);
+  execFileSync('tar', ['--format', 'ustar', '-czf', archive, '-C', content, '.'], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(archive)) hash.update(chunk);
   manifest = JSON.stringify({ id, version, commit, assets: { [basename(archive)]: { sha256: hash.digest('hex'), size: statSync(archive).size } } });
@@ -78,6 +78,7 @@ try {
   }
   const bin = join(scratch, 'path');
   mkdirSync(bin);
+  writeFileSync(join(bin, mac ? 'open' : 'xdg-open'), '#!/bin/sh\nprintf "%s\\n" "$1" > "$HOME/opened-url"\n', { mode: 0o700 });
   writeFileSync(join(bin, 'systemctl'), `#!/bin/sh
 set -eu
 [ "$*" = '--user daemon-reload' ] && exit 0
@@ -95,7 +96,7 @@ echo "$!" > "$HOME/launcher.pid"
   const envFile = join(cfg, 'launcher.env');
   const config = join(cfg, 'launcher.json');
   const port = await freePort();
-  const args = [installer, '--no-open', '--port', String(port)];
+  const args = [installer, '--port', String(port)];
   const env = { PATH: bin + ':' + process.env.PATH, HOME: home, MINARBOT_RELEASE_BASE: base };
   for (const [failure, text] of [['signature', /Invalid GitHub release signature/], ['digest', /SHA-256 mismatch/]]) {
     mode = failure;
@@ -109,6 +110,9 @@ echo "$!" > "$HOME/launcher.pid"
   const origin = `http://127.0.0.1:${port}`;
   const { stdout } = await run('sh', args, { env });
   assert.match(stdout, /is ready at/);
+  const opened = join(home, 'opened-url');
+  for (let n = 0; n < 30 && !existsSync(opened); n++) await delay(100);
+  assert.equal(readFileSync(opened, 'utf8').trim(), origin);
   assert.equal(readlinkSync(join(home, '.local/share/minarbot/releases/current')), id);
   assert.equal(statSync(config).mode & 0o777, 0o600);
   assert.equal(readFileSync(envFile, 'utf8'), provider);
@@ -117,9 +121,18 @@ echo "$!" > "$HOME/launcher.pid"
   assert.equal((await request(origin, '/api/environment')).version, version);
   const index = await fetch(origin);
   assert(index.ok);
-  assert.match(await index.text(), /<title>Minarbot<\/title>/);
+  const html = await index.text();
+  assert.match(html, /<title>Minarbot<\/title>/);
+  const bundle = /<script[^>]+src="([^"\s]+)"/.exec(html)?.[1];
+  assert(bundle);
+  assert((await fetch(new URL(bundle, origin))).ok);
   const agent = randomUUID(), turn = randomUUID(), turns = `/api/agents/${agent}/turns`;
   await request(origin, '/api/agents', { id: agent, name: 'Smoke', instructions: 'Answer.', model: 'fixture', runtime: 'api' });
+  if (mac) {
+    const computer = await request(origin, `/api/agents/${agent}/computer`);
+    assert.equal(computer.available, false);
+    assert.equal(computer.reason, 'Computer is unavailable on this platform.');
+  }
   await request(origin, turns, { id: turn, text: 'Reply.' });
   let result;
   for (let n = 0; n < 100; n++) {
@@ -130,7 +143,19 @@ echo "$!" > "$HOME/launcher.pid"
   assert.equal(result?.status, 'done', result?.error);
   assert.equal(result.reply, 'Installed and ready.');
   await run('sh', args, { env });
-  console.log('Installer smoke passed: signature, digest, private config, service, UI, fake provider turn, rerun.');
+  if (!mac) {
+    const { token } = await request(origin, '/api/install/tokens', { id: randomUUID() });
+    const peer = join(scratch, 'peer');
+    homes.push(peer);
+    mkdirSync(peer);
+    const peerPort = await freePort();
+    await run('sh', [installer, '--no-open', '--port', String(peerPort), '--source', origin, '--token', token], { env: { ...env, HOME: peer } }).catch(error => {
+      throw new Error(error.stderr || 'Peer installer failed.');
+    });
+    const machines = await request(`http://127.0.0.1:${peerPort}`, '/api/machines');
+    assert(machines.machines.some(machine => machine.origin === origin));
+  }
+  console.log('Installer smoke passed: signature, digest, private config, service, UI, fake provider turn, rerun' + (mac ? '.' : ', pairing.'));
 } catch (error) {
   for (const home of homes) {
     for (const log of [join(home, 'server.log'), join(home, '.local/share/minarbot/server.log')]) {
@@ -145,10 +170,12 @@ echo "$!" > "$HOME/launcher.pid"
     if (existsSync(file)) {
       const pid = Number(readFileSync(file));
       try {
+        const args = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0');
+        if (args[0] !== join(home, '.local/share/minarbot/releases/current/bin/minarbot-launcher')) continue;
         process.kill(pid, 'SIGTERM');
         for (let n = 0; n < 30; n++) { process.kill(pid, 0); await delay(100); }
       } catch (error) {
-        if (error.code !== 'ESRCH') throw error;
+        if (!['ESRCH', 'ENOENT'].includes(error.code)) throw error;
       }
     }
   }

@@ -133,6 +133,9 @@ async fn approval(
     }
 }
 pub async fn run(state: &AppState, turn: &Value, call: &Value, args: Value) -> Result<Value> {
+    if !crate::platform::LINUX_SANDBOX {
+        return Err(error(503, "Shell sandbox is unavailable on this platform."));
+    }
     let binding = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         tools::workspace(state, &guard.connection, turn)?

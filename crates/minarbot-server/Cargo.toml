@@ -35,15 +35,21 @@ getrandom = "0.2"
 uuid = { version = "1", features = ["v4"] }
 
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
-rustix = { version = "1", features = ["fs", "process"] }
+rustix = { version = "1", features = ["fs", "process", "system"] }
 
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 subtle = "2"
 unicode-normalization = "0.1"
 idna = "1"
 moxcms = "0.8"
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 chrono-tz = "0.10.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# keyring's native backend uses Apple Keychain via security-framework (MIT OR Apache-2.0).
+keyring = { version = "3", features = ["apple-native"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

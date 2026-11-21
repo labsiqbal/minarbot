@@ -12,6 +12,7 @@ mod harness;
 mod mcp;
 mod media;
 mod operator_file;
+mod platform;
 mod restore;
 mod restore_cli;
 mod restore_fence;
@@ -600,9 +601,15 @@ async fn canonical_request(
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> db::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--desktop-supervisor") {
+        if !platform::LINUX_SANDBOX {
+            return Err(platform::COMPUTER_UNAVAILABLE.into());
+        }
         return computer::desktop_supervisor::run().await;
     }
     if std::env::args().nth(1).as_deref() == Some("--device-host") {
+        if !platform::LINUX_SANDBOX {
+            return Err(platform::COMPUTER_UNAVAILABLE.into());
+        }
         return computer::devices::host::run().await;
     }
     if std::env::args().nth(1).as_deref() == Some("--connector-journal-config") {
@@ -829,7 +836,7 @@ async fn shutdown() {
             signal.recv().await;
         }
     };
-    tokio::select! { _ = interrupt => (), _ = terminate => () }
+    tokio::select! { _ = interrupt => (), _ = terminate => (), _ = platform::launcher_exit() => () }
 }
 
 #[cfg(test)]

@@ -75,6 +75,7 @@ async function github(t: TestContext, root: string, target: ReturnType<typeof re
     id: target.id, version: fault === 'version' ? '9.1.3' : version,
     commit: fault === 'commit' ? 'invalid' : fault === 'archive-commit' ? commit.slice(0, -1) + '0' : commit, archive, created, notes: target.notes,
     sha256: fault === 'hash' ? '0'.repeat(64) : hash(bytes), size: bytes.length,
+    ...(resume ? { assets: { [archive]: { sha256: hash(bytes), size: bytes.length } } } : {}),
     ...(fault === 'unknown' ? { extra: true } : {}),
   }, null, 2) + '\n');
   const signature = sign(null, fault === 'signature' ? manifest.subarray(0, -1) : manifest, privateKey).toString('base64');

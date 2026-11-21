@@ -108,7 +108,7 @@ fn server_guard(path: &Path) -> Result<Connection> {
     if !metadata.is_file()
         || metadata.nlink() != 1
         || metadata.mode() & 0o077 != 0
-        || metadata.uid() != fs::metadata("/proc/self")?.uid()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
     {
         return Err("Server guard must be a private file owned by the user.".into());
     }

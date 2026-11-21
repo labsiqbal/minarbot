@@ -3,7 +3,7 @@ use rustix::fs::{mkdirat, open, openat, Mode, OFlags, CWD};
 use std::{
     os::fd::OwnedFd,
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     time::{Duration, Instant},
 };
 
@@ -104,8 +104,6 @@ pub fn create(state: &AppState, path: &Path) -> Result<()> {
     Ok(())
 }
 fn init_repository(fd: &OwnedFd) {
-    use std::os::fd::AsRawFd;
-    let path = format!("/proc/{}/fd/{}", std::process::id(), fd.as_raw_fd());
     for args in [
         vec!["init", "-q", "--template=", "-b", "main"],
         vec![
@@ -122,7 +120,10 @@ fn init_repository(fd: &OwnedFd) {
             "Start project",
         ],
     ] {
-        let child = Command::new("git")
+        let Ok((mut command, path)) = crate::platform::git_command(fd) else {
+            return;
+        };
+        let child = command
             .args(args)
             .current_dir(&path)
             .env_clear()
@@ -168,14 +169,13 @@ pub fn browse(state: &AppState, path: Option<&str>) -> Result<Value> {
         true,
     )?;
     let fd = open_directory(&path).map_err(|_| error(400, "Folder is unavailable."))?;
-    use std::os::fd::AsRawFd;
     let mut dirs = Vec::new();
-    for entry in std::fs::read_dir(format!("/proc/self/fd/{}", fd.as_raw_fd()))
-        .map_err(|_| error(400, "Folder is unavailable."))?
+    for entry in
+        crate::operator_file::entries(&fd).map_err(|_| error(400, "Folder is unavailable."))?
     {
-        let entry = entry.map_err(|_| error(400, "Folder is unavailable."))?;
-        if entry.file_type().is_ok_and(|v| v.is_dir()) {
-            let name = entry.file_name().to_string_lossy().into_owned();
+        let (name, kind) = entry.map_err(|_| error(400, "Folder is unavailable."))?;
+        if kind == rustix::fs::FileType::Directory {
+            let name = name.to_string_lossy().into_owned();
             let child = path.join(&name);
             if validate(state, &json!(child), false, true).is_ok() {
                 dirs.push(json!({"name":name,"path":child.to_string_lossy()}));

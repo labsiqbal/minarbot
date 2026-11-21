@@ -34,7 +34,7 @@ impl Local {
     pub fn read(directory: &Path) -> crate::db::Result<Self> {
         let stat = std::fs::symlink_metadata(directory)?;
         if !stat.is_dir()
-            || stat.uid() != std::fs::metadata("/proc/self")?.uid()
+            || stat.uid() != rustix::process::geteuid().as_raw()
             || stat.mode() & 0o077 != 0
         {
             return Err("Script discovery is unavailable or unsafe.".into());

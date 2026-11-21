@@ -1,31 +1,31 @@
 use crate::{
     db::Result,
     files::skills::parse_files,
-    operator_file::{bounded_read, directory_at, file_at, open_directory, publish},
+    operator_file::{self, bounded_read, directory_at, file_at, open_directory, publish},
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use rustix::fs::FileType;
 use serde_json::{json, Value};
 use std::{
     fs::{self, File},
-    os::{fd::AsRawFd, unix::fs::MetadataExt},
+    os::unix::fs::MetadataExt,
     path::Path,
 };
 
 const PACKAGE_LIMIT: usize = 2 * 1024 * 1024 + 48_000;
 const LIST_LIMIT: usize = 100;
 
-fn entries(directory: &File, limit_error: &str) -> Result<Vec<fs::DirEntry>> {
-    let mut entries = fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))?
+fn entries(directory: &File, limit_error: &str) -> Result<Vec<operator_file::DirectoryEntry>> {
+    let mut entries = operator_file::entries(directory)?
         .take(LIST_LIMIT + 1)
         .collect::<std::io::Result<Vec<_>>>()?;
     if entries.len() > LIST_LIMIT {
         return Err(limit_error.to_owned().into());
     }
     entries.sort_by(|a, b| {
-        a.file_name()
-            .to_string_lossy()
+        a.0.to_string_lossy()
             .encode_utf16()
-            .cmp(b.file_name().to_string_lossy().encode_utf16())
+            .cmp(b.0.to_string_lossy().encode_utf16())
     });
     Ok(entries)
 }
@@ -42,12 +42,11 @@ impl Package {
         if depth > 16 {
             return Err("Skill folder exceeds 16 levels.".into());
         }
-        for entry in entries(directory, "Skill folder is too large.")? {
+        for (name, kind) in entries(directory, "Skill folder is too large.")? {
             self.entries += 1;
             if self.entries > 128 {
                 return Err("Skill folder exceeds 128 entries.".into());
             }
-            let name = entry.file_name();
             let name = name.to_str().ok_or("Skill file name must be UTF-8.")?;
             if name.starts_with('.') {
                 return Err("Hidden entries are not included automatically. Choose a package folder without hidden entries.".into());
@@ -60,14 +59,13 @@ impl Package {
             if path.encode_utf16().count() > 240 {
                 return Err("Skill file path is too long.".into());
             }
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
+            if kind == FileType::Directory {
                 self.scan(&directory_at(directory, name)?, &path, depth + 1)?;
-            } else if kind.is_file() {
+            } else if kind == FileType::RegularFile {
                 if self.files.len() >= 32 {
                     return Err("Skill folder allows at most 32 files.".into());
                 }
-                let file = file_at(directory, entry.file_name().as_os_str())?;
+                let file = file_at(directory, name.as_ref())?;
                 let remaining = PACKAGE_LIMIT - self.bytes;
                 let bytes = bounded_read(file, remaining).map_err(|error| {
                     if error.kind() == std::io::ErrorKind::FileTooLarge {
@@ -109,11 +107,10 @@ fn read_package(directory: &File, name: &str) -> Result<Value> {
 
 fn discover(root: &File) -> Result<Value> {
     let mut result = Vec::new();
-    for entry in entries(
+    for (name, _) in entries(
         root,
         "Discovery is limited to 100 direct entries. Choose a smaller directory.",
     )? {
-        let name = entry.file_name();
         let label = name.to_string_lossy();
         if label.starts_with('.') {
             continue;
@@ -203,8 +200,7 @@ mod tests {
             let children = entries(&pinned, "Too many entries.")?;
             fs::rename(&package, root.join("original"))?;
             std::os::unix::fs::symlink(&external, &package)?;
-            let name = children[0].file_name();
-            assert!(directory_at(&pinned, Path::new(&name)).is_err());
+            assert!(directory_at(&pinned, Path::new(&children[0].0)).is_err());
             assert_eq!(discover(&pinned)?[0]["status"], "invalid");
             Ok(())
         })();

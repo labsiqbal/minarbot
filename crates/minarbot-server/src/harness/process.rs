@@ -1,4 +1,5 @@
 use super::*;
+use crate::platform::{process_identity, processes, LINUX_SANDBOX};
 use std::{
     collections::HashMap,
     fs::File,
@@ -89,38 +90,19 @@ pub(super) fn configure_mise(env: &mut HashMap<String, String>) {
     }
 }
 
-fn identity(pid: u32) -> Option<(u32, u32, String)> {
-    let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let fields = raw
-        .rsplit_once(") ")?
-        .1
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    Some((
-        fields.get(1)?.parse().ok()?,
-        fields.get(2)?.parse().ok()?,
-        fields.get(19)?.to_string(),
-    ))
-}
 fn track(root: u32, birth: &str, owned: &mut HashMap<u32, String>) {
+    let processes = processes();
     let mut parents = owned
         .iter()
-        .filter(|(pid, start)| identity(**pid).is_some_and(|v| v.2 == **start))
+        .filter(|(pid, start)| processes.get(pid).is_some_and(|v| v.1 == **start))
         .map(|(pid, _)| *pid)
         .collect::<std::collections::HashSet<_>>();
-    if identity(root).is_some_and(|v| v.2 == birth) {
+    if processes.get(&root).is_some_and(|v| v.1 == birth) {
         parents.insert(root);
     }
-    let processes = std::fs::read_dir("/proc")
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|v| v.file_name().to_str()?.parse::<u32>().ok())
-        .filter_map(|pid| identity(pid).map(|v| (pid, v)))
-        .collect::<Vec<_>>();
     loop {
         let mut changed = false;
-        for (pid, (parent, _, start)) in &processes {
+        for (pid, (parent, start)) in &processes {
             if parents.contains(parent) && !parents.contains(pid) {
                 parents.insert(*pid);
                 owned.insert(*pid, start.clone());
@@ -184,7 +166,7 @@ impl Process {
             )
         })?;
         let root = child.id().ok_or_else(Failure::storage)?;
-        let birth = identity(root).map(|v| v.2).unwrap_or_default();
+        let birth = process_identity(root).map(|v| v.1).unwrap_or_default();
         let stdin = child.stdin.take().ok_or_else(Failure::storage)?;
         let stdout = BufReader::new(child.stdout.take().ok_or_else(Failure::storage)?);
         let mut pipe = child.stderr.take().ok_or_else(Failure::storage)?;
@@ -327,12 +309,12 @@ impl Drop for Process {
         if let Ok(mut owned) = self.owned.lock() {
             track(self.root, &self.birth, &mut owned);
             for (pid, start) in owned.iter() {
-                if identity(*pid).is_some_and(|v| v.2 == *start) {
+                if process_identity(*pid).is_some_and(|v| v.1 == *start) {
                     signal(*pid);
                 }
             }
         }
-        if identity(self.root).is_some_and(|v| v.2 == self.birth) {
+        if process_identity(self.root).is_some_and(|v| v.1 == self.birth) {
             if let Some(pid) = rustix::process::Pid::from_raw(self.root as i32) {
                 let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
             }
@@ -377,6 +359,9 @@ impl ProbeHome {
         }
         if runtime != "hermes" {
             return Process::launch(path, args, &self.0, &env).ok();
+        }
+        if !LINUX_SANDBOX {
+            return None;
         }
         env.insert("TMPDIR".into(), scratch.to_owned());
         env.extend(HERMES_ENV.map(|(key, value)| (key.into(), value.into())));

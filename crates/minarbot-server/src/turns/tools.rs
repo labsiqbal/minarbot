@@ -103,8 +103,8 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         "edit_profile" | "list_skills" | "read_skill" | "read_skill_file" | "list_sites"
         | "publish_site" | "delete_site" | "set_avatar" | "list_routines" | "read_routine"
         | "set_routine_flow" => private,
-        "run_shell"
-        | "git_status"
+        "run_shell" => bound && crate::platform::LINUX_SANDBOX,
+        "git_status"
         | "git_diff"
         | "git_log"
         | "list_workspace"
