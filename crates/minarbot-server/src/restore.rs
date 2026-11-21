@@ -105,6 +105,11 @@ pub fn workspace(source: &Path, target: &Path, canonical_only: bool) -> db::Resu
             ),
             ("turn_waits", include_str!("restore-local-waits.sql")),
             ("browser_devices", "DELETE FROM browser_devices;"),
+            (
+                "guide_changes",
+                "UPDATE guide_changes SET status=CASE status WHEN 'applying' THEN 'unknown' ELSE 'expired' END
+                 WHERE status IN('applying','pending')",
+            ),
         ] {
             if table(&tx, name).map_err(|e| e.message)? {
                 tx.execute_batch(sql)?;

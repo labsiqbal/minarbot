@@ -108,8 +108,8 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
         db.execute_batch("UPDATE turns SET status='interrupted',error='The process stopped before the result was saved. Check the provider before sending again.' WHERE status='running'; UPDATE provider_calls SET status='interrupted' WHERE status='pending';")?;
         for a in all(
             db,
-            "SELECT * FROM agents WHERE id NOT IN(SELECT id FROM agent_creations)",
-            [],
+            "SELECT * FROM agents WHERE id<>? AND id NOT IN(SELECT id FROM agent_creations)",
+            [crate::mcp::guide::ID],
         )
         .map_err(|_| "Cannot read agent creations")?
         {
