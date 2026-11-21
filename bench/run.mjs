@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { checkTask, readOutput } from './checkers.mjs';
+import { checkTask } from './checkers.mjs';
 import { dryRun } from './dry-run.mjs';
 import { fixtureSite } from './fixture.mjs';
 import { startServer } from './server.mjs';
@@ -73,27 +73,31 @@ function observations(db) {
     };
 }
 
-async function attachedFiles(app, rows, workspace) {
-    const artifacts = Object.create(null);
+async function attachedFiles(app, rows) {
+    const artifacts = Object.create(null), htmlFiles = new Map();
     let shownHtml = null;
     for (const [scope, row] of rows) {
         for (const file of row.generatedFiles ?? []) {
             if (file.deleted || file.size > 256 * 1024) continue;
-            const response = await app.http(`${scope}/files/${file.id}`);
-            if (response.ok) artifacts[file.name] = await response.text();
-            else await response.body?.cancel();
+            const path = `${scope}/files/${file.id}`;
+            const response = await app.http(path);
+            if (response.ok) {
+                artifacts[file.name] = await response.text();
+                if (file.name === 'launch.html') htmlFiles.set(path, artifacts[file.name]);
+            } else await response.body?.cancel();
         }
         for (const match of (row.reply ?? '').matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
             const url = URL.parse(match[1], app.origin);
             if (!url) continue;
             if (url.origin !== app.origin || !/^\/(?:sites\/|api\/(?:agents|channels|threads)\/[^/]+\/(?:panel\/)?(?:workspace\/file|files\/))/.test(url.pathname))
                 continue;
+            if (htmlFiles.has(url.pathname)) {
+                shownHtml = htmlFiles.get(url.pathname);
+                continue;
+            }
             const response = await app.http(url.pathname + url.search);
             if (response.ok && response.headers.get('content-type')?.startsWith('text/html')) shownHtml = await response.text();
             else await response.body?.cancel();
-        }
-        if (!shownHtml && (row.reply ?? '').includes('](workspace:launch.html)')) {
-            shownHtml = await readOutput(workspace, 'launch.html').catch(() => null);
         }
     }
     return { artifacts, shown: shownHtml !== null, shownHtml };
@@ -196,7 +200,7 @@ async function attempt(runtime, task, count, server, signal) {
                     if (task.id === 'show-html' || !['web-app', 'bug-fix', 'feature', 'routine', 'browser'].includes(task.category)) {
                         const scopes = [...new Set(final.turns.map(turnScope))];
                         const history = await Promise.all(scopes.map(async path => (await app.api(path + '/turns')).map(turn => [path, turn])));
-                        Object.assign(context, await attachedFiles(app, history.flat(), workspace));
+                        Object.assign(context, await attachedFiles(app, history.flat()));
                     }
                     if (reviewer) {
                         const deliveries = db.prepare(`SELECT t.id FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request
@@ -282,9 +286,17 @@ async function main() {
     const checkoutCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
     const suiteSHA256 = createHash('sha256').update(JSON.stringify(tasks)).update(await readFile(join(here, 'checkers.mjs')))
         .update(await readFile(join(here, 'fixture.mjs'))).digest('hex');
+    const { version } = JSON.parse(await readFile(join(root, 'app/package.json'), 'utf8'));
+    assert.match(version, /^[0-9][0-9A-Za-z.-]*$/);
     const choices = await disposable(async scratch => {
         const app = await startServer({ ...server, scratch });
-        try { return await app.api('/api/runtimes', undefined, 65000); } finally { await app.close(); }
+        try {
+            const environment = await app.api('/api/environment');
+            assert.equal(environment.version, version, 'Release binary and checkout versions differ');
+            return await app.api('/api/runtimes', undefined, 65000);
+        } finally {
+            await app.close();
+        }
     });
     const inventory = [
         { name: 'api', model: server.provider?.defaultModel, reason: server.provider ? null : 'skipped: no provider' },
@@ -292,13 +304,11 @@ async function main() {
             name, version, account: native.has(name) ? 'device' : server.provider?.id,
             model: native.has(name) ? 'default' : models[0]?.id ?? server.provider?.defaultModel ?? 'default',
             reason: !available ? reason ?? 'Harness unavailable' : signedIn === false ? 'Device sign-in unavailable'
-                : null,
+                : native.has(name) || models.length > 0 || server.provider ? null : 'No ACP model reported and no provider configured',
         })),
     ];
     const requested = values.runtime?.split(',') ?? inventory.map(runtime => runtime.name);
     assert(requested.every(name => inventory.some(runtime => runtime.name === name)), 'Unknown runtime in --runtime');
-    const { version } = JSON.parse(await readFile(join(root, 'app/package.json'), 'utf8'));
-    assert.match(version, /^[0-9][0-9A-Za-z.-]*$/);
     const dir = resolve(values.results, version, startedAt.replaceAll(':', '-'));
     await mkdir(dir, { recursive: true, mode: 0o700 });
     const controller = new AbortController();
