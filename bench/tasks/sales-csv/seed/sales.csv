@@ -1,0 +1,5 @@
+id,region,quantity,unit_price,status
+1, West ,2,10.25,paid
+2,East,1,8.50,paid
+3,West,3,2.10,paid
+4,East,5,100,cancelled

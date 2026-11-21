@@ -1,0 +1,1 @@
+Add paginate(items, page, size) to list.mjs: pages start at 1; return {items,total,pages}; beyond end is empty; reject noninteger or nonpositive page/size with RangeError. Keep existing exports. Add native tests.

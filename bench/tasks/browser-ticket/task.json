@@ -1,0 +1,6 @@
+{
+  "category": "browser",
+  "timeSeconds": 180,
+  "tokenBudget": 150000,
+  "checker": "checker.mjs"
+}

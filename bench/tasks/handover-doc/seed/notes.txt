@@ -1,0 +1,1 @@
+Release Atlas goes live 2026-12-01. Budget USD 2400. Decision: keep email login. Maya owns migration, due 2026-11-25. Rafi owns QA, due 2026-11-27. Risk: vendor sandbox unavailable. Mitigation: test with local fixture.

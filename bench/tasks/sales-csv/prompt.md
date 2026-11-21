@@ -1,0 +1,1 @@
+Summarize sales.csv into sales-summary.json: {currency:"USD",paidOrders,paidTotal,byRegion}. Count only paid orders; total quantity * unit_price, round money to two decimals. byRegion maps trimmed region to paid total.

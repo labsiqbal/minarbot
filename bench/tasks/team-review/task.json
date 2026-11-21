@@ -1,0 +1,6 @@
+{
+  "category": "delegation",
+  "timeSeconds": 150,
+  "tokenBudget": 150000,
+  "checker": "checker.mjs"
+}

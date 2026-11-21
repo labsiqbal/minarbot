@@ -1,0 +1,6 @@
+name,email
+ Alice , ALICE@example.com 
+Bob,bob@example.com
+Alice duplicate,alice@example.com
+No email,
+"Doe, Jane", JANE@example.com
