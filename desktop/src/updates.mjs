@@ -20,7 +20,7 @@ export function configureUpdates({ updater, enabled, prompt, log = console.warn,
   updater.on('update-downloaded', onDownloaded);
   async function check(manual = false) {
     if (!enabled) {
-      if (manual) await prompt({ title: 'Updates unavailable', message: 'Updates require a packaged AppImage.', buttons: ['OK'] });
+      if (manual) await prompt({ title: 'Updates unavailable', message: 'Updates require an installed desktop release.', buttons: ['OK'] });
       return;
     }
     if (downloaded) { if (manual) await offerRestart(); return; }

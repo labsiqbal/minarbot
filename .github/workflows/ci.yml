@@ -1,0 +1,42 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libdbus-1-dev libsqlite3-dev poppler-utils
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - run: cargo build --locked --workspace
+      - working-directory: app
+        run: npm ci
+      - working-directory: app
+        run: npm run lint && npm run build
+      - working-directory: app
+        env:
+          NODE_OPTIONS: --max-old-space-size=2048
+          MINARBOT_RUST_BINARY: ${{ github.workspace }}/target/debug/minarbot-server
+          MINARBOT_RUST_LAUNCHER_BINARY: ${{ github.workspace }}/target/debug/minarbot-launcher
+        run: npm test
+      - run: node scripts/install-smoke.mjs target/debug
+      - working-directory: desktop
+        run: npm test

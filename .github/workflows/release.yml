@@ -1,0 +1,143 @@
+name: Build release draft
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: User-facing release notes
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-draft-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_NOTES: ${{ inputs.notes }}
+
+jobs:
+  runtime:
+    name: Runtime and desktop (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - platform: macos-aarch64
+            runner: macos-15
+          - platform: macos-x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            desktop/package-lock.json
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev
+      - name: Build runtime
+        run: |
+          npm --prefix app ci
+          npm --prefix app run build
+          cargo build --workspace --release --locked
+          node scripts/release.mjs --pack-ci target/release --output artifacts --notes "$RELEASE_NOTES"
+          test -n "$(find artifacts -name "*-${{ matrix.platform }}.tar.gz")"
+      - name: Install and exercise the macOS service
+        if: runner.os == 'macOS'
+        run: node scripts/install-smoke.mjs target/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.platform }}
+          path: artifacts/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+      - name: Build desktop
+        env:
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+        run: |
+          version=$(node -p "require('./app/package.json').version")
+          npm --prefix desktop ci
+          npm --prefix desktop run build -- "$version" "$PWD/desktop-output"
+      - name: Check macOS app signature
+        if: runner.os == 'macOS'
+        run: |
+          app=$(find desktop-output -name Minarbot.app -type d -print -quit)
+          test -n "$app"
+          codesign --verify --deep --strict "$app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: |
+            desktop-output/*.AppImage
+            desktop-output/*.dmg
+            desktop-output/latest-linux*.yml
+          if-no-files-found: error
+          compression-level: 0
+
+  windows:
+    needs: runtime
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-linux-x86_64
+          path: runtime
+      - name: Build Windows NSIS installer
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          $version = node -p "require('./app/package.json').version"
+          $env:MINARBOT_LINUX_ARCHIVE = (Get-Item "runtime/minarbot-$version-linux-x86_64.tar.gz").FullName
+          npm --prefix desktop ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm --prefix desktop run build -- $version "$PWD/desktop-output"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-x64
+          path: |
+            desktop-output/*.exe
+            desktop-output/*.blockmap
+            desktop-output/latest.yml
+          if-no-files-found: error
+          compression-level: 0
+
+  draft:
+    needs: [runtime, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Upload unsigned draft and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs --draft-ci artifacts --notes "$RELEASE_NOTES"

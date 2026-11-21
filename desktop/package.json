@@ -37,6 +37,12 @@
       "executableName": "minarbot",
       "syncDesktopName": true
     },
+    "mac": {
+      "target": ["dmg"]
+    },
+    "win": {
+      "target": ["nsis"]
+    },
     "publish": [
       {
         "provider": "generic",

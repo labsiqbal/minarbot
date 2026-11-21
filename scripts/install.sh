@@ -43,15 +43,17 @@ def curl(url, *, output=None, limit=131072, body=None, origin=None, token=None, 
         command += ['--location', '--max-redirs', '4', '--proto-redir', scheme]
     if output is not None:
         command += ['--output', str(output)]
+    input_bytes = None
     if body is not None:
-        command += ['-H', 'Content-Type: application/json', '--data', json.dumps(body)]
+        command += ['-H', 'Content-Type: application/json', '--data-binary', '@-' if token is None else json.dumps(body)]
+        if token is None:
+            input_bytes = json.dumps(body).encode()
     if origin is not None:
         command += ['-H', 'Origin: ' + origin]
-    headers = None
     if token is not None:
         command += ['-H', '@-']
-        headers = ('Authorization: Bearer ' + token + '\n').encode()
-    result = subprocess.run(command + ['--', url], input=headers, stdout=subprocess.PIPE,
+        input_bytes = ('Authorization: Bearer ' + token + '\n').encode()
+    result = subprocess.run(command + ['--', url], input=input_bytes, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, check=False)
     require(result.returncode == 0, 'Request failed: ' + url)
     return result.stdout
@@ -105,8 +107,19 @@ def signed_archive(stage, base, system, arch, tag, embedded):
     digest, size = asset.get('sha256', ''), asset.get('size', 0)
     require(re.fullmatch(r'[a-f0-9]{64}', digest) and type(size) is int and 0 < size <= LIMIT,
             'Invalid GitHub release archive metadata.')
-    archive = embedded if embedded else stage / name
-    if not embedded:
+    archive = stage / name
+    if embedded:
+        fd = os.open(embedded, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as source, archive.open('xb') as output:
+            info = os.fstat(source.fileno())
+            require(stat.S_ISREG(info.st_mode) and info.st_size == size, 'Release archive size mismatch.')
+            remaining = size
+            while remaining:
+                chunk = source.read(min(65536, remaining))
+                require(chunk, 'Release archive size mismatch.')
+                output.write(chunk)
+                remaining -= len(chunk)
+    else:
         curl(f'{base}/download/v{version}/{name}', output=archive, limit=size, redirects=True)
     require(archive.stat().st_size == size, 'Release archive size mismatch.')
     with archive.open('rb') as stream:
@@ -173,9 +186,10 @@ def local_install(root, config, args, system, arch, base):
         fcntl.flock(lock, fcntl.LOCK_EX)
         current = releases / 'current'
         if current.is_symlink():
-            release_id = os.readlink(current)
-            require(re.fullmatch(ID, release_id) and (releases / release_id).is_dir()
-                    and not (releases / release_id).is_symlink(),
+            installed = current.resolve(strict=True)
+            release_id = installed.name
+            require(re.fullmatch(ID, release_id) and installed.parent == releases.resolve()
+                    and installed.is_dir(),
                     'Invalid existing Minarbot release selection.')
         else:
             require(not current.exists(), 'Existing current path must be a symlink.')
@@ -202,9 +216,13 @@ def local_install(root, config, args, system, arch, base):
         if config.exists():
             private_file(config)
             settings = json.loads(config.read_bytes())
-            port = settings.get('port', 4317)
-            require(type(port) is int and 1 <= port <= 65535 and args.port in (None, port),
+            require(isinstance(settings, dict), 'Invalid launcher.json.')
+            port = settings.get('port')
+            port = 4317 if port is None else port
+            require(type(port) in (int, float) and 1 <= port <= 65535 and port == int(port)
+                    and args.port in (None, port),
                     'Existing launcher.json uses a different port.')
+            port = int(port)
         else:
             require(not config.is_symlink(), 'Invalid launcher.json symlink.')
             port = args.port or 4317
@@ -253,17 +271,20 @@ def service(home, root, system, command):
             subprocess.run(['launchctl', 'bootstrap', domain, str(agent)], check=True)
 
 
+def healthy(local, release_id):
+    try:
+        info = json.loads(curl(local + '/api/environment'))
+        return info.get('version') == release_id.rsplit('-', 1)[0] and info.get('id')
+    except ValueError:
+        return False
+
+
 def wait_for_ui(local, release_id, child):
     deadline = time.monotonic() + 120
-    version = release_id.rsplit('-', 1)[0]
     while time.monotonic() < deadline:
         require(child is None or child.poll() is None, 'Minarbot launcher exited during startup.')
-        try:
-            info = json.loads(curl(local + '/api/environment'))
-            if info.get('version') == version and info.get('id'):
-                return
-        except ValueError:
-            pass
+        if healthy(local, release_id):
+            return
         time.sleep(.5)
     raise ValueError('Minarbot did not become healthy. Check the user service logs.')
 
@@ -317,7 +338,8 @@ def main():
     child = None
     try:
         if args.wsl:
-            child = subprocess.Popen(command)
+            if not healthy(local, release_id):
+                child = subprocess.Popen(command)
         else:
             service(home, root, system, command)
         wait_for_ui(local, release_id, child)
@@ -339,6 +361,6 @@ def main():
 
 try:
     main()
-except (ValueError, OSError, subprocess.CalledProcessError, TypeError, KeyError) as error:
+except (ValueError, OSError, subprocess.CalledProcessError, TypeError, KeyError, RuntimeError) as error:
     raise SystemExit(f'Minarbot install failed. {error}') from None
 PY
