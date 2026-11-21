@@ -1,4 +1,5 @@
 use super::*;
+use crate::mcp::codegraph;
 use crate::{
     data::{agents, exists},
     harness::{
@@ -489,6 +490,28 @@ async fn execute(
             turns::harness::instructions(state, &guard.connection, turn, runtime, &native_model)?;
         redact(&instructions, &secrets, false)
     };
+    let codegraph = if runtime == "pi" || phase != "answer" {
+        None
+    } else {
+        let project = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            if turns::harness::setup(&guard.connection, turn)? {
+                None
+            } else {
+                codegraph::project(state, &guard.connection, turn)?
+            }
+        };
+        match project {
+            Some(project) => match project.prepare().await {
+                Ok(server) => Some(server),
+                Err(e) => {
+                    eprintln!("[server] {}", e.message);
+                    None
+                }
+            },
+            None => None,
+        }
+    };
     let mut prompt = messages
         .iter()
         .map(|v| {
@@ -531,7 +554,12 @@ async fn execute(
         vec!["app-server".into()]
     } else if runtime == "claude" {
         let shim = std::env::current_exe().map_err(|_| Failure::storage())?;
-        let mut args=vec!["--print".into(),"--output-format".into(),"stream-json".into(),"--input-format".into(),"stream-json".into(),"--verbose".into(),"--include-partial-messages".into(),"--permission-prompt-tool".into(),"stdio".into(),"--permission-mode".into(),"default".into(),"--setting-sources".into(),"".into(),"--strict-mcp-config".into(),"--append-system-prompt".into(),format!("{instructions}\nUse minarbot run_shell for workspace commands. Native Bash requires approval. run_shell provides a separate workspace sandbox without host credentials or network. Discover tools needed for the task together; reuse loaded tools and their receipts."),"--mcp-config".into(),json!({"mcpServers":{"minarbot":{"type":"stdio","command":shim,"args":["--mcp-stdio"]}}}).to_string()];
+        let mut mcp = json!({"mcpServers":{"minarbot":{"type":"stdio","command":shim,"args":["--mcp-stdio"]}}});
+        codegraph::Server::configure(codegraph.as_ref(), runtime, &mut mcp);
+        let mut args=vec!["--print".into(),"--output-format".into(),"stream-json".into(),"--input-format".into(),"stream-json".into(),"--verbose".into(),"--include-partial-messages".into(),"--permission-prompt-tool".into(),"stdio".into(),"--permission-mode".into(),"default".into(),"--setting-sources".into(),"".into(),"--strict-mcp-config".into(),"--append-system-prompt".into(),format!("{instructions}\nUse minarbot run_shell for workspace commands. Native Bash requires approval. run_shell provides a separate workspace sandbox without host credentials or network. Discover tools needed for the task together; reuse loaded tools and their receipts."),"--mcp-config".into(),mcp.to_string()];
+        if codegraph.is_some() {
+            args.extend(["--allowedTools".into(), "mcp__codegraph__*".into()]);
+        }
         args.extend([
             if saved.is_some() {
                 "--resume".into()
@@ -613,6 +641,7 @@ async fn execute(
             )?
         };
         let mut params = json!({"cwd":workspace,"approvalPolicy":"on-request","sandbox":if binding.write{"workspace-write"}else{"read-only"},"config":{"mcp_servers":{"minarbot":{"url":mcp_url,"bearer_token_env_var":"MINARBOT_MCP_TOKEN"}},"approvals_reviewer":"user","shell_environment_policy.inherit":"none","shell_environment_policy.set":{"PATH":super::path(state),"LANG":"C.UTF-8","HOME":workspace},"shell_environment_policy.exclude":["MINARBOT_PROVIDER_KEY","MINARBOT_MCP_TOKEN","ANTHROPIC_API_KEY"]}});
+        codegraph::Server::configure(codegraph.as_ref(), runtime, &mut params);
         for (name, value) in environment {
             params["config"]["shell_environment_policy.set"][name] = json!(value);
         }
@@ -695,6 +724,7 @@ async fn execute(
             .await?;
         }
         let mut params = json!({"cwd":workspace,"mcpServers":[{"type":"http","name":"minarbot","url":mcp_url,"headers":[{"name":"Authorization","value":format!("Bearer {token}")}]}]});
+        codegraph::Server::configure(codegraph.as_ref(), runtime, &mut params);
         if let Some(id) = &saved {
             params["sessionId"] = json!(id);
         }

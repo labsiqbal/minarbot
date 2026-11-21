@@ -1,7 +1,7 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
-pub(super) fn project_context(db: &Connection, turn: &Value) -> Result<Option<Value>> {
+pub(crate) fn project_context(db: &Connection, turn: &Value) -> Result<Option<Value>> {
     if turn["thread"].is_string() {
         one(
             db,
