@@ -40,10 +40,10 @@ async function fixture(longHome = false) {
   const options = { launcherSocket: join(data, 'launcher.sock'), releasesDir: releases };
   const db = testDatabase(join(data, 'minarbot.sqlite')); db.exec("CREATE TABLE data(value TEXT); INSERT INTO data VALUES('preserved')"); db.close();
   const processes: ChildProcess[] = [];
-  const publish = (version: string) => {
+  const publish = (version: string, mode?: string) => {
     const id = version + '-12345678', release = join(releases, id); mkdirSync(release);
     writeFileSync(join(release, 'package.json'), JSON.stringify({ version, type: 'module' }));
-    nativeReleaseFixture(release, version);
+    nativeReleaseFixture(release, version, mode);
     const seal = () => writeFileSync(join(release, 'release.json'), JSON.stringify({ id, version, files: fileManifest(release) })); seal();
     return { id, version, release, seal };
   };
@@ -130,6 +130,30 @@ test('launcher rejects tampered startup and public persisted state', async () =>
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id);
     writeFileSync(join(first.release, 'bin/minarbot-server'), 'tampered'); await rejectsStart(f, /manifest mismatch/);
     const state = join(f.data, 'update-state.json'); chmodSync(state, 0o644); await rejectsStart(f, /private files/);
+  } finally { await f.close(); }
+});
+
+test('launcher commits a native trial after its first health probe disconnects', async () => {
+  const f = await fixture();
+  try {
+    f.settings.trialTimeoutMs = 15_000;
+    f.save();
+    const first = f.publish('1.0.0');
+    selectRelease(f.releases, 'current', first.id);
+    f.start();
+    await until(f.read);
+
+    const next = f.publish('1.0.1', 'expired-probe'), id = randomUUID();
+    await launcherRequest(f.options, { type: 'apply', id, target: next.id, version: next.version });
+    const attempt = await until(async () => {
+      const { lastAttempt } = await launcherRequest(f.options, { type: 'status' });
+      const value = lastAttempt as { status: string; reason?: string };
+      return ['done', 'rolled-back', 'failed'].includes(value.status) && value;
+    });
+    assert.equal(attempt.status, 'done', attempt.reason);
+    const candidate = await f.read();
+    assert.equal(candidate.version, next.version);
+    assert.equal(candidate.committed, id);
   } finally { await f.close(); }
 });
 
