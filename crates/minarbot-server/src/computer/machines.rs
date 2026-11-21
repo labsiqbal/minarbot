@@ -83,7 +83,7 @@ fn code(v: &Value) -> Result<String> {
     Ok(s)
 }
 // Peers know this machine by its first allowed origin, like Node's getOrigin.
-fn public_origin(s: &AppState) -> &str {
+pub(crate) fn public_origin(s: &AppState) -> &str {
     s.config
         .allowed_origins
         .first()

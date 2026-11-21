@@ -153,7 +153,9 @@ echo "$!" > "$HOME/launcher.pid"
       throw new Error(error.stderr || 'Peer installer failed.');
     });
     const machines = await request(`http://127.0.0.1:${peerPort}`, '/api/machines');
-    assert(machines.machines.some(machine => machine.origin === origin));
+    assert(machines.machines.some(machine => machine.origin === origin && machine.pairingState === 'paired'));
+    assert((await request(origin, '/api/machines')).machines.some(machine =>
+      machine.origin === `http://127.0.0.1:${peerPort}` && machine.pairingState === 'paired'));
   }
   console.log('Installer smoke passed: signature, digest, private config, service, UI, fake provider turn, rerun' + (mac ? '.' : ', pairing.'));
 } catch (error) {

@@ -49,7 +49,7 @@ Install with `curl`, Python 3, and OpenSSL 3. On macOS, Homebrew provides OpenSS
 curl -fsSL https://raw.githubusercontent.com/labsiqbal/minarbot/main/scripts/install.sh | sh
 ```
 
-To pair during install, append `-s -- --source https://your-machine.example --token YOUR_INSTALL_TOKEN` after `sh`. Get the one-time token from **Machines** on your existing installation.
+To install and pair, copy the command from **Machines > Add machine > Install Minarbot** on your existing installation. Set up reachable HTTPS addresses on both machines first, and put each machine's own address first in `MINARBOT_ALLOWED_ORIGINS` in its `launcher.env`.
 
 For the desktop app, download the AppImage for Linux or the DMG for macOS. If macOS blocks Minarbot on first launch, choose **System Settings > Privacy & Security > Open Anyway**. [Releases](https://github.com/labsiqbal/minarbot/releases/latest)
 

@@ -1900,10 +1900,10 @@ try {
       await settings('Appearance'); await page.getByRole('radio',{name:theme === 'dark'?'Dark':'Light',exact:true}).click();
       const panel=await settings('Machines'), trigger=panel.getByRole('button',{name:'Add machine',exact:true});
       await trigger.click(); await page.getByRole('menuitem',{name:'Install Minarbot',exact:true}).click(); const dialog=page.getByRole('dialog',{name:'Install Minarbot',exact:true}); await visible(dialog);
-      await visible(dialog.getByText('Linux · Requirements',{exact:true}));
+      await visible(dialog.getByText('Linux and macOS requirements',{exact:true}));
       await dialog.getByRole('button',{name:'Create install command',exact:true}).click();
       const command=dialog.getByRole('textbox',{name:'Install command',exact:true});await visible(command);
-      const text=await command.inputValue(); assert(text.startsWith(`curl -fsSL '${origin}/api/install/script' | sh -s -- --source '${origin}' --token 'bsi_`)); assert(text.endsWith("' --serve"));
+      const text=await command.inputValue(); assert(text.startsWith(`curl -fsSL '${origin}/api/install/script' | sh -s -- --source '${origin}' --token 'bsi_`)); assert(/bsi_[A-Za-z0-9_-]{43}'$/.test(text));
       await visible(dialog.getByText('Private, single use',{exact:true}));
       await dialog.getByRole('button',{name:'Copy command',exact:true}).click();await visible(dialog.getByRole('button',{name:'Copied',exact:true}));assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),text);
       for (const key of ['Tab','Shift+Tab']) {await page.keyboard.press(key);assert(await dialog.evaluate(el=>el.contains(document.activeElement)), 'Install dialog must trap focus');}

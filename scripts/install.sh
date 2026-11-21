@@ -291,8 +291,13 @@ def wait_for_ui(local, release_id, child):
 
 def pair(local, args):
     machines = json.loads(curl(local + '/api/machines'))
-    if any(machine.get('origin') == args.source for machine in machines.get('machines', [])):
-        return
+    for machine in machines.get('machines', []):
+        if machine.get('origin') == args.source:
+            require(machine.get('pairingState') == 'paired', 'Unpair the incomplete connection before retrying.')
+            return
+    environment = json.loads(curl(local + '/api/environment'))
+    require(urlsplit(args.source).scheme != 'https' or urlsplit(environment['origin']).scheme == 'https',
+            "Set this machine's reachable HTTPS address in MINARBOT_ALLOWED_ORIGINS before pairing.")
     name = args.name or platform.node()
     curl(local + '/api/environment', body={'id': str(uuid4()), 'name': name}, origin=local)
     reply = json.loads(curl(args.source + '/api/install/pairing-code', body={}, token=args.token))
@@ -309,6 +314,7 @@ def main():
     parser.add_argument('--name')
     parser.add_argument('--port', type=int)
     parser.add_argument('--no-open', action='store_true')
+    parser.add_argument('--serve', action='store_true', help=argparse.SUPPRESS)  # Legacy copied commands.
     parser.add_argument('--wsl', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--tag', help=argparse.SUPPRESS)
     parser.add_argument('--archive', type=Path, help=argparse.SUPPRESS)
