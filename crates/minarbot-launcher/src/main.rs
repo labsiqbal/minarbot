@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 mod backup;
 mod config;
+mod runtime;
 use minarbot_launcher::{files, DATABASE_NAME};
 #[cfg(test)]
 mod tests;
@@ -20,7 +21,6 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     fs,
-    os::unix::fs::PermissionsExt,
     path::Path,
     process::Stdio,
     rc::Rc,
@@ -28,7 +28,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
-    net::{UnixListener, UnixStream},
+    net::UnixStream,
     process::{Child, Command},
     signal::unix::{signal, SignalKind},
     sync::Notify,
@@ -499,7 +499,7 @@ fn own_executable() -> std::io::Result<std::path::PathBuf> {
     }
 }
 
-async fn launch(config: Config) -> Result<()> {
+async fn launch(mut config: Config) -> Result<()> {
     mkdir(&config.data)?;
     mkdir(&config.releases)?;
     let _lease = lease(
@@ -530,6 +530,11 @@ async fn launch(config: Config) -> Result<()> {
     {
         return Err("Invalid launcher state.".into());
     }
+    let socket = runtime::ControlSocket::bind(&config.data)?;
+    config.env.insert(
+        "MINARBOT_LAUNCHER_SOCKET".into(),
+        socket.path().to_string_lossy().into_owned(),
+    );
     let launcher = Rc::new(Launcher {
         config,
         state: RefCell::new(state),
@@ -540,7 +545,6 @@ async fn launch(config: Config) -> Result<()> {
         fatal: Notify::new(),
     });
     launcher.save()?;
-    let socket_path = launcher.config.data.join("launcher.sock");
     let mut term = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
     let result = async {
@@ -549,15 +553,13 @@ async fn launch(config: Config) -> Result<()> {
         } else {
             let current = launcher.state.borrow().current.clone(); verify(&launcher.config.releases, &current)?; select(&launcher.config.releases, "current", &current)?; launcher.start(&current, false)?;
         }
-        remove(&socket_path)?;
-        let listener = UnixListener::bind(&socket_path)?; fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
         let mut clients = JoinSet::new(); let mut tick = tokio::time::interval(Duration::from_millis(50));
         loop {
             tokio::select! {
                 _ = term.recv() => break,
                 _ = interrupt.recv() => break,
                 _ = launcher.fatal.notified() => return Err("Update rollback failed. Server remains stopped.".into()),
-                accepted = listener.accept() => { let (socket, _) = accepted?; clients.spawn_local(control(launcher.clone(), socket)); },
+                accepted = socket.listener.accept() => { let (socket, _) = accepted?; clients.spawn_local(control(launcher.clone(), socket)); },
                 Some(_) = clients.join_next(), if !clients.is_empty() => {},
                 _ = tick.tick() => { if !launcher.busy.get() && launcher.child_exited()? { return Err("Managed server exited.".into()); } },
             }
@@ -570,7 +572,6 @@ async fn launch(config: Config) -> Result<()> {
     if let Some(job) = job {
         job.await?;
     }
-    remove(&socket_path)?;
     stopped?;
     result
 }

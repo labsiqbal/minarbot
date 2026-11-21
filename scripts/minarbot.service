@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/share/minarbot/releases/current/bin/minarbot-launcher --config %h/.config/minarbot/launcher.json
+ExecStart="%h/.local/share/minarbot/releases/current/bin/minarbot-launcher" --config "%h/.config/minarbot/launcher.json"
 Restart=on-failure
 RestartSec=2
 
