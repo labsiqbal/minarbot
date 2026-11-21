@@ -32,12 +32,18 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/engine-logins/{id}/check', 'Checks sign-in for a local engine login.'],
     ['/api/engine-logins/{id}/remove', 'Removes an unused local engine login.'],
     ['/api/turns/{id}/inspect', 'Reads redacted local run diagnostics for the owner.'],
+    ['/api/guide/changes/{id}', 'Applies or cancels a proposed change from the built-in Guide.'],
     ['/api/connected-apps/discord', 'Reads connection state and routes for the local Discord bot.'],
     ['/api/connected-apps/discord/{action}', 'Connects the bot or changes Discord routes from local Settings.'],
+    ['/api/whatsapp', 'Reads the local WhatsApp connection state.'],
+    ['/api/whatsapp/{action}', 'Links, unlinks or maps the local WhatsApp connection.'],
     ['/api/email/settings', 'Configures the agent receiving domain and issues the relay secret.'],
     ['/api/email/inbound', 'Receives signed raw email from the relay.'],
     ['/api/agents/{id}/email', 'Lists the selected agent inbox.'],
     ['/api/agents/{id}/email/messages/{message}', 'Reads a message in the selected agent inbox.'],
+    ['/api/vault', 'Lists Vault entry metadata or saves an entry with agent grants.'],
+    ['/api/vault/delete', 'Deletes a Vault entry at the expected revision.'],
+    ['/api/vault/respond', 'Resolves a Computer secure-fill request.'],
   ]);
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));

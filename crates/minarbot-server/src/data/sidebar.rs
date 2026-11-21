@@ -11,7 +11,8 @@ const SUMMARY_SQL: &str = r#"WITH attention_counts AS (
       coalesce(n.needs_you,0) AS needs_you
     FROM agents a LEFT JOIN attention_counts n ON n.agent=a.id
     LEFT JOIN turns t ON t.seq=(SELECT seq FROM turns WHERE agent=a.id AND channel IS NULL ORDER BY seq DESC LIMIT 1)
-    ORDER BY a.rowid LIMIT 500"#;
+    WHERE a.id=?1 OR a.rowid IN (SELECT rowid FROM agents WHERE id<>?1 ORDER BY rowid LIMIT 500)
+    ORDER BY a.id=?1,a.rowid"#;
 pub fn read(db: &Connection, q: &[(String, String)]) -> Result<Value> {
     if !q.is_empty() {
         return Err(error(400, "Invalid sidebar parameters."));
@@ -120,7 +121,7 @@ pub fn summary(
         let text = pattern.replace_all(&text, "[redacted]");
         text.split_whitespace().collect::<Vec<_>>().join(" ")
     };
-    let local = all(db, SUMMARY_SQL, [])?;
+    let local = all(db, SUMMARY_SQL, [crate::mcp::guide::ID])?;
     let mut summaries=local.into_iter().map(|r|json!({"agent":r["agent"],"preview":redact(if string(&r,"reply").is_empty(){string(&r,"text")}else{string(&r,"reply")}),"time":r["created"],"status":r["status"],"needs_you":r["needs_you"]})).collect::<Vec<_>>();
     if table(db, "paired_machines")? {
         for r in all(db,"SELECT machine,agent,substr(reply,1,8192) AS reply,substr(text,1,8192) AS text,created,status FROM remote_agent_calls AS calls WHERE delivery IS NULL AND EXISTS(SELECT 1 FROM paired_machines WHERE environment_id=calls.machine AND state='paired') AND id=(SELECT id FROM remote_agent_calls AS latest WHERE latest.delivery IS NULL AND latest.machine=calls.machine AND latest.agent=calls.agent ORDER BY created DESC,id DESC LIMIT 1) ORDER BY machine,agent LIMIT 500",[])?{summaries.push(json!({"agent":format!("{}@{}",string(&r,"agent"),string(&r,"machine")),"preview":redact(if string(&r,"reply").is_empty(){string(&r,"text")}else{string(&r,"reply")}),"time":iso(db,r["created"].as_i64().unwrap_or(0))?,"status":r["status"],"needs_you":0}));}
@@ -180,7 +181,7 @@ mod tests {
              INSERT INTO computer_waits VALUES('ask','a','desktop','Take over','waiting',1);",
         )?;
         let counts = || {
-            all(db, SUMMARY_SQL, [])
+            all(db, SUMMARY_SQL, [crate::mcp::guide::ID])
                 .map(|rows| {
                     rows.into_iter()
                         .map(|row| row["needs_you"].clone())

@@ -1083,5 +1083,4 @@ impl Manager {
 }
 
 #[cfg(test)]
-#[path = "desktop_tests.rs"]
 mod tests;
