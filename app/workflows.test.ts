@@ -203,3 +203,15 @@ test('graph view identifies unconditional cycles and latest run attempt without 
   assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'waiting', task_status: 'running', paused: 1 }), 'Paused');
   assert.equal(workflowStepLabel({ seq: 1, node: 'a', status: 'waiting', task_status: 'running' }), 'Running');
 });
+
+test('Discord channel IDs survive workflow drafts and saves without numeric rounding', () => {
+  const graph = {
+    entry: 'out', maxSteps: 1,
+    trigger: { kind: 'discord', channel: '1234567890123456789' },
+    nodes: [{ id: 'out', kind: 'output', discordChannel: '9876543210987654321' }],
+  };
+  const draft = { name: 'Discord workflow', graph, revision: 1 };
+  assert.deepEqual(restoreWorkflowEditorDraft(JSON.stringify(draft)), draft);
+  assert.deepEqual(validateWorkflow(graph, new Set()), graph);
+  assert.throws(() => validateWorkflow({ ...graph, trigger: { ...graph.trigger, channel: '18446744073709551616' } }, new Set()), /Discord channel ID/);
+});

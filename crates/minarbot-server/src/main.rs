@@ -738,6 +738,7 @@ async fn main() -> db::Result<()> {
         }
     });
     let shutdown_state = state.clone();
+    let discord_task = connectors::discord::start(state.clone());
     let connector_maintenance = connectors::mail::start(state.clone());
     let router = Router::new()
         .merge(computer::routes())
@@ -817,6 +818,7 @@ async fn main() -> db::Result<()> {
     maintenance.abort();
     conversation_maintenance.abort();
     connector_maintenance.abort();
+    discord_task.abort();
     for task in computer_maintenance {
         task.abort();
     }

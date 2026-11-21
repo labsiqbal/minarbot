@@ -72,6 +72,19 @@ pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
             let g=data::json(&run["graph"])?;let n=node(&run)?;let kind=string(&n,"kind");let count=run["steps"].as_i64().ok_or_else(Failure::storage)?;let max=g["maxSteps"].as_i64().ok_or_else(Failure::storage)?;
             if run["status"]=="waiting" {
                 if kind=="wait"{break;}
+                if kind=="output" && n["discordChannel"].is_string() {
+                    let (status, detail) = crate::connectors::discord::workflow_delivery(db,id)?;
+                    match status.as_str() {
+                        "queued" | "sending" => break,
+                        "sent" => {
+                            db.execute("UPDATE workflow_steps SET status='done' WHERE run=? AND seq=?",params![id,count])?;
+                            db.execute("UPDATE workflow_runs SET status='done',revision=revision+1 WHERE id=?",[id])?;
+                            db.execute("INSERT INTO workflow_notifications(run,name,created) SELECT ?,name,? FROM workflows WHERE id=?",params![id,iso(db,state.config.now())?,string(&run,"workflow")])?;
+                        }
+                        _ => fail(db,id,&detail)?,
+                    }
+                    break;
+                }
                 if kind=="parallel"{
                     let rows=members(db,id,count)?;
                     if rows.len()!=n["branches"].as_array().ok_or_else(Failure::storage)?.len(){fail(db,id,"Parallel branch journal is incomplete.")?;break;}
@@ -126,6 +139,13 @@ pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
                 break;
             }
             if kind=="output" {
+                if let Some(channel)=n["discordChannel"].as_str(){
+                    let queued = crate::connectors::discord::workflow_output(db,&run,channel)?;
+                    db.execute("INSERT INTO workflow_steps(run,seq,node,status,settings) VALUES(?,?,?,'waiting',?)",params![id,seq,string(&n,"id"),n.to_string()])?;
+                    db.execute("UPDATE workflow_runs SET steps=?,status='waiting',revision=revision+1 WHERE id=?",params![seq,id])?;
+                    if !queued { fail(db,id,"Discord route is unavailable for this workflow. Results remain saved in this run.")?; }
+                    break;
+                }
                 if let Some(c)=n["channel"].as_str(){if !channel(db,c,string(&run,"agent"))?{let reason="Output channel is inactive or the owner agent is not a member. Results remain saved in this run.";db.execute("INSERT INTO workflow_steps(run,seq,node,status,settings,detail) VALUES(?,?,?,'failed',?,?)",params![id,seq,string(&n,"id"),n.to_string(),reason])?;db.execute("UPDATE workflow_runs SET steps=? WHERE id=?",params![seq,id])?;fail(db,id,reason)?;break;}
                     let name=read(db,string(&run,"workflow"))?["name"].clone();db.execute("INSERT INTO turns(id,agent,channel,text,reply,status,created,workflow_run) VALUES(?,?,?,?,?,'done',?,?)",params![uuid::Uuid::new_v4().to_string(),string(&run,"agent"),c,format!("Workflow result: {}",name.as_str().unwrap_or("")),string(&run,"last"),iso(db,state.config.now())?,id])?;
                 }

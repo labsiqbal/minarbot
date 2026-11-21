@@ -18,6 +18,7 @@ pub struct Bridge {
 pub struct Options {
     pub composio: Option<Composio>,
     pub test_connector_bridge: Option<Bridge>,
+    pub discord_test_origin: Option<String>,
     pub mail_api_key: Option<String>,
     pub mail_endpoint: Option<String>,
 }
@@ -40,6 +41,13 @@ impl Options {
             loopback(&bridge.origin)?;
             if bridge.token.len() != 64 || !bridge.token.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err("Invalid connector fixture bridge token.".into());
+            }
+        }
+        if let Some(origin) = &self.discord_test_origin {
+            if std::env::var("MINARBOT_TEST_SERVER").as_deref() != Ok("rust")
+                || loopback(origin)?.origin().ascii_serialization() != *origin
+            {
+                return Err("Discord fixture requires loopback HTTP and Rust test mode.".into());
             }
         }
         if let Some(endpoint) = &self.mail_endpoint {

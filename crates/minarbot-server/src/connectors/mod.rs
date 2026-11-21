@@ -1,9 +1,11 @@
 pub mod calendar;
 pub(crate) mod composio;
 pub mod config;
+pub(crate) mod discord;
 mod journal;
 pub mod mail;
 pub mod runner;
+mod secrets;
 mod slack;
 mod telegram;
 
@@ -24,10 +26,13 @@ use serde_json::{json, Value};
 type Result<T> = std::result::Result<T, Failure>;
 
 pub fn initialize(db: &Connection) -> Result<()> {
-    composio::initialize(db)
+    composio::initialize(db)?;
+    discord::initialize(db)
 }
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/api/connected-apps/discord", any(entry))
+        .route("/api/connected-apps/discord/{action}", any(entry))
         .route("/api/agents/{id}/routines/calendar.ics", any(entry))
         .route("/api/connected-apps", any(entry))
         .route("/api/projects/{project}/connected-apps", any(entry))
@@ -188,7 +193,14 @@ pub(crate) async fn entry(State(state): State<AppState>, request: Request) -> Re
                 state.config.now(),
             );
         }
-        let result = composio::route(&state, &path, &method, &query, &value).await?;
+        let result = if path.starts_with("/api/connected-apps/discord") {
+            if project.is_some() {
+                return Err(error(403, "Manage Discord in Settings."));
+            }
+            discord::settings(&state, &path, &method, &value).await?
+        } else {
+            composio::route(&state, &path, &method, &query, &value).await?
+        };
         Ok(crate::json_response(200, result))
     }
     .await;
