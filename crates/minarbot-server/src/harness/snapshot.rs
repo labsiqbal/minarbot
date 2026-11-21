@@ -94,9 +94,7 @@ impl Snapshot {
         if id.is_empty() || id.len() > 300 || name.len() > 2000 || state.len() > 100 {
             return Err(error(502, "Invalid harness tool identity."));
         }
-        let arguments = crate::turns::diagnostics::display(arguments, &self.secrets);
         let failed = crate::turns::diagnostics::tool_failed(result);
-        let result = crate::turns::diagnostics::display(result, &self.secrets);
         let key = format!("tool-{id}");
         let existing = self
             .segments
@@ -111,6 +109,16 @@ impl Snapshot {
             } else {
                 name
             },
+            &self.secrets,
+        );
+        let private =
+            crate::connectors::mailbox::is_tool(name.rsplit("__").next().unwrap_or(&name));
+        let arguments = crate::turns::diagnostics::display(
+            if private { &Value::Null } else { arguments },
+            &self.secrets,
+        );
+        let result = crate::turns::diagnostics::display(
+            if private { &Value::Null } else { result },
             &self.secrets,
         );
         let state = if state.is_empty() {

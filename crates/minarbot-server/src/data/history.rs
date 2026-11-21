@@ -170,7 +170,11 @@ fn decorate(state: &AppState, db: &Connection, turn: &mut Value, channel: bool) 
     turn["approvals"] = json!(approvals);
     let mut harness = rows(db,"harness_approvals","SELECT id,kind,description,command,prefix,input,state,decision,revision FROM harness_approvals WHERE turn=? ORDER BY rowid",[&id])?;
     for approval in &mut harness {
-        approval["input"] = json(&approval["input"])?;
+        approval["input"] = if approval["kind"] == "email" {
+            crate::connectors::mailbox::draft_preview(state, string(turn, "agent"), approval)?
+        } else {
+            json(&approval["input"])?
+        };
     }
     turn["harnessApprovals"] = json!(harness);
     let mut questions = rows(

@@ -1,7 +1,7 @@
-export type SettingsSection = 'general' | 'appearance' | 'providers' | 'engines' | 'skills' | 'connected-apps' | 'hub' | 'mcp' | 'machines' | 'devices' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server';
+export type SettingsSection = 'general' | 'appearance' | 'providers' | 'engines' | 'skills' | 'connected-apps' | 'hub' | 'mcp' | 'machines' | 'devices' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server' | 'email';
 export type ResultTarget = { view: 'file' | 'url' | 'computer'; path: string; name: string; agent?: string };
-export type AppRoute = { result?: ResultTarget; notFound?: boolean; agent?: string; thread?: string; room?: string; project?: string; machine?: string; remoteAgent?: string; view?: 'routines' | 'workflows' | 'calendar'; settings?: SettingsSection };
-const settings = new Set(['general', 'appearance', 'providers', 'engines', 'skills', 'connected-apps', 'hub', 'mcp', 'machines', 'devices', 'updates', 'usage', 'data', 'backup', 'mcp-server']);
+export type AppRoute = { result?: ResultTarget; notFound?: boolean; agent?: string; inbox?: boolean; thread?: string; room?: string; project?: string; machine?: string; remoteAgent?: string; view?: 'routines' | 'workflows' | 'calendar'; settings?: SettingsSection };
+const settings = new Set(['general', 'appearance', 'providers', 'engines', 'skills', 'connected-apps', 'hub', 'mcp', 'machines', 'devices', 'updates', 'usage', 'data', 'backup', 'mcp-server', 'email']);
 const id = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
 
 function parseBaseRoute(location: string): AppRoute {
@@ -12,6 +12,7 @@ function parseBaseRoute(location: string): AppRoute {
     const from = new URLSearchParams(query).get('from') ?? '/';
     return { ...(!from.startsWith('/settings/') && !parseRoute(from).notFound ? parseRoute(from) : {}), settings: match[1] as SettingsSection };
   }
+  if ((match = new RegExp(`^/agents/(${id})/inbox$`, 'i').exec(path))) return { agent: match[1].toLowerCase(), inbox: true };
   if ((match = new RegExp(`^/agents/(${id})(?:/conversations/(${id}))?$`, 'i').exec(path))) return { agent: match[1].toLowerCase(), ...(match[2] ? { thread: match[2].toLowerCase() } : {}) };
   if ((match = new RegExp(`^/rooms/(${id})$`, 'i').exec(path))) return { room: match[1].toLowerCase() };
   if ((match = new RegExp(`^/projects/(${id})$`, 'i').exec(path))) return { project: match[1].toLowerCase() };
@@ -29,7 +30,7 @@ function baseRoutePath(route: AppRoute): string {
   if (route.machine && route.remoteAgent) return `/machines/${route.machine}/agents/${route.remoteAgent}`;
   if (route.project) return `/projects/${route.project}`;
   if (route.room) return `/rooms/${route.room}`;
-  if (route.agent) return `/agents/${route.agent}${route.thread ? `/conversations/${route.thread}` : ''}`;
+  if (route.agent) return `/agents/${route.agent}${route.inbox ? '/inbox' : route.thread ? `/conversations/${route.thread}` : ''}`;
   return '/';
 }
 

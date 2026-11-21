@@ -199,6 +199,11 @@ fn inspect_step(mut row: Value, secrets: &[String]) -> Result<Value> {
         row["arguments"] = json!(super::diagnostics::display(&args, secrets));
     }
     if let Some(result) = result {
+        let result = if result["mailbox"].is_string() {
+            json!({"message":"Private email tool result."})
+        } else {
+            result
+        };
         row["state"] = json!(if super::diagnostics::tool_failed(&result) {
             "failed"
         } else {

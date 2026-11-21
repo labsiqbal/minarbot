@@ -4,6 +4,7 @@ pub mod config;
 pub(crate) mod discord;
 mod journal;
 pub mod mail;
+pub mod mailbox;
 pub mod runner;
 mod secrets;
 mod slack;
@@ -27,7 +28,8 @@ type Result<T> = std::result::Result<T, Failure>;
 
 pub fn initialize(db: &Connection) -> Result<()> {
     composio::initialize(db)?;
-    discord::initialize(db)
+    discord::initialize(db)?;
+    mailbox::initialize(db)
 }
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -73,6 +75,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/{id}/connected-apps", any(entry))
         .route("/api/agents/{id}/connected-apps/{toolkit}", any(entry))
         .route("/api/agents/{id}/connected-app-policies", any(entry))
+        .route("/api/agents/{id}/email", any(entry))
+        .route("/api/agents/{id}/email/messages/{message}", any(entry))
+        .route("/api/email/settings", any(entry))
+        .route("/api/email/inbound", any(entry))
         .route(
             "/api/agents/{id}/turns/{turn}/app-approvals/{call}",
             any(entry),
@@ -87,6 +93,9 @@ pub fn routes() -> Router<AppState> {
         )
 }
 pub(crate) async fn entry(State(state): State<AppState>, request: Request) -> Response {
+    let path_name = request.uri().path().to_owned();
+    let agent_email = path_name == "/api/email/settings"
+        || path_name.starts_with("/api/agents/") && path_name.split('/').nth(4) == Some("email");
     if state.auth.is_some() && request.uri().path().ends_with("/routines/calendar.ics") {
         return crate::canonical(&state, request).await;
     }
@@ -117,6 +126,18 @@ pub(crate) async fn entry(State(state): State<AppState>, request: Request) -> Re
             && !request.uri().path().starts_with("/api/projects/")
         {
             return Err(error(403, "Request must originate from Minarbot."));
+        }
+        if request.uri().path() == mailbox::INBOUND {
+            return mailbox::inbound(&state, request).await;
+        }
+        if agent_email
+            && request.headers().contains_key("origin")
+            && !crate::data::origin(&state, request.headers())
+        {
+            return Err(error(
+                403,
+                "Email access requires the local owner in Minarbot.",
+            ));
         }
         let mut path = request.uri().path().to_owned();
         let project = path
@@ -192,6 +213,9 @@ pub(crate) async fn entry(State(state): State<AppState>, request: Request) -> Re
                 path.split('/').nth(3).unwrap_or(""),
                 state.config.now(),
             );
+        }
+        if agent_email {
+            return mailbox::owner_route(&state, &path, &method, &query, &value);
         }
         let result = if path.starts_with("/api/connected-apps/discord") {
             if project.is_some() {

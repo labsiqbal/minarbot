@@ -406,6 +406,7 @@ pub fn create(
     let image = avatar.get(input)?;
     super::agent_folders::ensure_managed(state, id)?;
     db.execute("INSERT INTO agents(id,name,role,model,instructions,thread_limit,tool_budget,backup_model,provider_account,runtime) VALUES(?,?,?,?,?,?,?,?,?,?)",rusqlite::params![id,name,role,model,instructions,v["threadLimit"].as_i64().unwrap_or(2),v["toolBudget"].as_i64().unwrap_or(90),backup.as_deref().unwrap_or(""),account.unwrap_or(""),runtime])?;
+    crate::connectors::mailbox::register(db, id, &name)?;
     if setup {
         let a = providers::accounts(state)?
             .into_iter()

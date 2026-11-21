@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -9,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 
 test('generated text artifacts persist across interruption without duplicate creation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-artifacts-'));
-  let hold = false, observedResult = false;
+  let hold = false;
   let releaseLate: (() => void) | undefined;
   let unrelatedFile = '', deniedLater = false;
   const provider = createServer(async (req, res) => {
@@ -23,11 +24,10 @@ test('generated text artifacts persist across interruption without duplicate cre
     if (result) {
       if (task === 'bad-path') assert.deepEqual(result, { error: 'Invalid text file name or content.', status: 400 });
       if (task === 'oversize') assert.deepEqual(result, { error: 'Text file limit is 32 KiB.', status: 413 });
-      observedResult = true;
-      if (hold) return;
+      if (hold) { provider.emit('artifact-result-held', task); return; }
       return res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: `Saved ${result.name}` } }] }));
     }
-    if (task === 'Late file creation') await new Promise<void>(resolve => { releaseLate = resolve; });
+    if (task === 'Late file creation') await new Promise<void>(resolve => { releaseLate = resolve; provider.emit('artifact-call-held', task); });
     const args = { name: task === 'bad-path' ? '../escape.txt' : task === 'Write a file' ? 'result.txt' : `${task}.txt`, text: task === 'oversize' ? '界'.repeat(12000) : '<script>literal text</script>\nSYNTHETIC OUTPUT' };
     res.end(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'artifact-call', type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify(args) } }] } }] }));
   });
@@ -40,6 +40,13 @@ test('generated text artifacts persist across interruption without duplicate cre
     if (status) assert.equal(response.status, status); else assert(response.ok, await response.clone().text()); return response.json();
   }
   async function get(path: string) { return (await fetch(app.origin + path)).json(); }
+  async function holdTurn(path: string, id: string, text: string, event = 'artifact-result-held') {
+    const [[task]] = await Promise.all([
+      once(provider, event, { signal: AbortSignal.timeout(30_000) }),
+      post(path, { id, text }),
+    ]);
+    assert.equal(task, text);
+  }
   async function wait(path: string, id: string, status: string) {
     for (let i = 0; i < 150; i++) { const turn = (await get(path)).find((row: { id: string }) => row.id === id); if (turn?.status === status) return turn; await new Promise(resolve => setTimeout(resolve, 10)); }
     assert.fail(`Timed out waiting for ${status}`);
@@ -62,32 +69,27 @@ test('generated text artifacts persist across interruption without duplicate cre
     const path = paths[0];
     for (const text of ['bad-path', 'oversize']) { const id = randomUUID(); await post(`${path}/turns`, { id, text }); await wait(`${path}/turns`, id, 'done'); }
     assert.equal((await get(`${path}/files`)).length, 1);
-    hold = true; observedResult = false;
-    const id = randomUUID(); await post(`${path}/turns`, { id, text: 'Retain on restart' });
-    for (let i = 0; i < 150 && !observedResult; i++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert(observedResult); await app.close(); app = await startApp(options);
+    hold = true;
+    const id = randomUUID(); await holdTurn(`${path}/turns`, id, 'Retain on restart');
+    await app.close(); app = await startApp(options);
     const interrupted = await wait(`${path}/turns`, id, 'interrupted'); assert.equal(interrupted.generatedFiles.length, 1);
     hold = false;
     await post(`${path}/turns/${id}/resume`, { id: randomUUID(), revision: interrupted.revision, acknowledgeUncertain: true });
     const resumed = await wait(`${path}/turns`, id, 'done'); assert.deepEqual(resumed.generatedFiles, interrupted.generatedFiles);
     assert.equal((await get(`${path}/files`)).length, 2);
-    hold = true; observedResult = false;
-    const cancelledId = randomUUID(); await post(`${path}/turns`, { id: cancelledId, text: 'Retain on cancellation' });
-    for (let i = 0; i < 150 && !observedResult; i++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert(observedResult); await post(`${path}/turns/${cancelledId}/cancel`, { id: randomUUID() });
+    hold = true;
+    const cancelledId = randomUUID(); await holdTurn(`${path}/turns`, cancelledId, 'Retain on cancellation');
+    await post(`${path}/turns/${cancelledId}/cancel`, { id: randomUUID() });
     assert.equal((await wait(`${path}/turns`, cancelledId, 'cancelled')).generatedFiles.length, 1);
-    const lateId = randomUUID(); await post(`${path}/turns`, { id: lateId, text: 'Late file creation' });
-    for (let i = 0; i < 150 && !releaseLate; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    const lateId = randomUUID(); await holdTurn(`${path}/turns`, lateId, 'Late file creation', 'artifact-call-held');
     assert(releaseLate); await post(`${path}/turns/${lateId}/cancel`, { id: randomUUID() });
     releaseLate(); hold = false;
     const sentinel = randomUUID(); await post(`${path}/turns`, { id: sentinel, text: 'Next task after cancellation' });
     await wait(`${path}/turns`, sentinel, 'done');
     assert.equal((await wait(`${path}/turns`, lateId, 'cancelled')).generatedFiles.length, 0);
     assert.equal((await get(`${path}/files`)).length, 4);
-    hold = true; observedResult = false;
-    const earlierId = randomUUID(); await post(`${path}/turns`, { id: earlierId, text: 'Earlier task' });
-    for (let i = 0; i < 150 && !observedResult; i++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert(observedResult);
+    hold = true;
+    const earlierId = randomUUID(); await holdTurn(`${path}/turns`, earlierId, 'Earlier task');
     const earlier = (await get(`${path}/turns`)).find((row: { id: string }) => row.id === earlierId);
     await post(`${path}/turns/${earlierId}/pause`, { id: randomUUID(), revision: earlier.revision });
     hold = false;

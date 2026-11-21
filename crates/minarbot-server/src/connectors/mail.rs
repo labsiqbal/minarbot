@@ -35,8 +35,6 @@ pub(crate) fn seal(
     key_id: &str,
     key: &[u8],
 ) -> Result<(Vec<u8>, String)> {
-    let mut nonce = [0; 12];
-    getrandom::getrandom(&mut nonce).map_err(|_| Failure::storage())?;
     let aad = aad(
         &json!(invitation),
         &json!(1),
@@ -44,23 +42,33 @@ pub(crate) fn seal(
         &json!(email_hash),
     );
     let plaintext = payload.to_string();
-    let mut bytes = plaintext.as_bytes().to_vec();
+    Ok((
+        seal_envelope(key_id, key, &aad, plaintext.as_bytes())?,
+        format!("{:x}", Sha256::digest(plaintext.as_bytes())),
+    ))
+}
+pub(super) fn seal_envelope(
+    key_id: &str,
+    key: &[u8],
+    context: &str,
+    plaintext: &[u8],
+) -> Result<Vec<u8>> {
+    let mut nonce = [0; 12];
+    getrandom::getrandom(&mut nonce).map_err(|_| Failure::storage())?;
+    let mut bytes = plaintext.to_vec();
     let key =
         UnboundKey::new(&AES_256_GCM, key).map_err(|_| crate::data::options::unavailable(true))?;
     let tag = LessSafeKey::new(key)
         .seal_in_place_separate_tag(
             Nonce::assume_unique_for_key(nonce),
-            Aad::from(aad.as_bytes()),
+            Aad::from(context.as_bytes()),
             &mut bytes,
         )
         .map_err(|_| Failure::storage())?;
     let envelope = json!({"v":1,"alg":"AES-256-GCM","keyId":key_id,"nonce":B64.encode(nonce),"ciphertext":B64.encode(bytes),"tag":B64.encode(tag.as_ref())});
-    Ok((
-        envelope.to_string().into_bytes(),
-        format!("{:x}", Sha256::digest(plaintext.as_bytes())),
-    ))
+    Ok(envelope.to_string().into_bytes())
 }
-fn open(row: &Value, ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
+pub(super) fn open_envelope(ciphertext: &[u8], key: &[u8], context: &str) -> Result<Vec<u8>> {
     if ciphertext.len() > 512 * 1024 {
         return Err(invalid("Invalid mail envelope."));
     }
@@ -84,16 +92,10 @@ fn open(row: &Value, ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     bytes.extend_from_slice(&tag);
     let key = UnboundKey::new(&AES_256_GCM, key)
         .map_err(|_| Failure::new(503, "mail_key_unavailable", "Mail key is unavailable."))?;
-    let aad = aad(
-        &row["id"],
-        &row["revision"],
-        &row["authority_generation"],
-        &row["email_hash"],
-    );
-    let plain = LessSafeKey::new(key)
+    Ok(LessSafeKey::new(key)
         .open_in_place(
             Nonce::assume_unique_for_key(nonce),
-            Aad::from(aad.as_bytes()),
+            Aad::from(context.as_bytes()),
             &mut bytes,
         )
         .map_err(|_| {
@@ -103,7 +105,16 @@ fn open(row: &Value, ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
                 "Mail envelope failed verification.",
             )
         })?
-        .to_vec();
+        .to_vec())
+}
+fn open(row: &Value, ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
+    let aad = aad(
+        &row["id"],
+        &row["revision"],
+        &row["authority_generation"],
+        &row["email_hash"],
+    );
+    let plain = open_envelope(ciphertext, key, &aad)?;
     let payload: Value =
         serde_json::from_slice(&plain).map_err(|_| invalid("Invalid mail content."))?;
     if !closed(&payload, &["to", "from", "subject", "text", "html"]) {

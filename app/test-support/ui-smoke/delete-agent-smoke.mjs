@@ -15,7 +15,7 @@ export async function deleteAgentSmoke({ page, check, origin, root }) {
     const row=page.getByRole('button',{name:'Delete fixture Idle',exact:true}), actions=page.getByRole('button',{name:'Actions for Delete fixture',exact:true});
     await row.waitFor();await row.click();await row.hover();await actions.click();
     const menu=page.getByRole('menu');
-    assert.deepEqual(await menu.getByRole('menuitem').allTextContents(),['Edit','Hide','Delete']);
+    assert.deepEqual(await menu.getByRole('menuitem').allTextContents(),['Edit','Inbox','Hide','Delete']);
     assert.equal(await menu.getByRole('separator').count(),1);
     await page.screenshot({path:join(evidence,'menu.png'),animations:'disabled'});
     await menu.getByRole('menuitem',{name:'Hide',exact:true}).click();

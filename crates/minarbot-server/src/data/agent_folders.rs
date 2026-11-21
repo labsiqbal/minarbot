@@ -227,6 +227,7 @@ mod tests {
         crate::files::init(&database.connection)?;
         super::super::initialize(&database)?;
         crate::turns::initialize(&database.connection).map_err(|e| e.message)?;
+        crate::connectors::initialize(&database.connection).map_err(|e| e.message)?;
         crate::automation::initialize(&database.connection).map_err(|e| e.message)?;
         crate::harness::initialize(&database.connection).map_err(|e| e.message)?;
         crate::mcp::initialize(&database.connection).map_err(|e| e.message)?;

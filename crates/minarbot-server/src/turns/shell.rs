@@ -56,6 +56,9 @@ pub fn decide(db: &Connection, turn: &str, approval: &str, v: &Value) -> Result<
             "Only literal command prefixes support Always allow.",
         ));
     }
+    if row["kind"] == "email" {
+        crate::connectors::mailbox::decide_draft(db, &row, v["decision"] == "allow")?;
+    }
     db.execute(
         "UPDATE harness_approvals SET state='decided',decision=?,revision=revision+1 WHERE id=?",
         [string(v, "decision"), approval],

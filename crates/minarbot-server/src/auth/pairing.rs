@@ -504,7 +504,7 @@ async fn check(state: &AppState, mut request: Request, next: Next) -> Result<Res
 }
 
 pub(crate) async fn gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    if state.auth.is_some() {
+    if state.auth.is_some() || request.uri().path() == crate::connectors::mailbox::INBOUND {
         return next.run(request).await;
     }
     let path = request.uri().path().to_owned();
