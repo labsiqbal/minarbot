@@ -1,0 +1,72 @@
+.agent-email-settings__form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.agent-email-settings__form .k-field { flex: 1 1 220px; }
+.agent-inbox .k-page-head { flex-wrap: wrap; }
+.agent-inbox__address {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.agent-inbox__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.agent-inbox__list ul { margin: 0; padding: 0; list-style: none; }
+.agent-inbox__list li + li { border-top: 1px solid var(--color-border-tertiary); }
+.agent-inbox__list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  color: var(--color-text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.agent-inbox__list button:hover,
+.agent-inbox__list button[aria-current] { background: var(--color-bg-tertiary); }
+.agent-inbox__list button:focus-visible { outline-offset: -2px; }
+.agent-inbox__list button strong { grid-column: 1 / -1; color: var(--color-text-primary); }
+.agent-inbox__list button :is(strong, span) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-inbox time { font-size: 12px; font-variant-numeric: tabular-nums; }
+.agent-inbox__reader {
+  min-width: 0;
+  padding: 16px 20px;
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-pane);
+  overflow-wrap: anywhere;
+}
+.agent-inbox__reader-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.agent-inbox__reader-head h2 { margin: 4px 0 0; font-size: 16px; }
+.agent-inbox .agent-inbox__reader dl {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 12px;
+  padding: 0;
+  border: 0;
+  font-size: 12px;
+}
+.agent-inbox .agent-inbox__reader dl :is(dt, dd) { padding: 0; border: 0; text-align: left; }
+.agent-inbox__reader dt { color: var(--color-text-secondary); }
+.agent-inbox__body {
+  margin: 16px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border-tertiary);
+  white-space: pre-wrap;
+}
+@media (min-width: 1101px) {
+  .agent-inbox__layout.has-message { grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr); }
+}
+@media (max-width: 1100px) {
+  .agent-inbox__layout.has-message .agent-inbox__list { display: none; }
+}

@@ -28,6 +28,10 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/engine-logins/{id}/check', 'Checks sign-in for a local engine login.'],
     ['/api/engine-logins/{id}/remove', 'Removes an unused local engine login.'],
     ['/api/turns/{id}/inspect', 'Reads redacted local run diagnostics for the owner.'],
+    ['/api/email/settings', 'Configures the agent receiving domain and issues the relay secret.'],
+    ['/api/email/inbound', 'Receives signed raw email from the relay.'],
+    ['/api/agents/{id}/email', 'Lists the selected agent inbox.'],
+    ['/api/agents/{id}/email/messages/{message}', 'Reads a message in the selected agent inbox.'],
   ]);
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));

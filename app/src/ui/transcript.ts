@@ -41,6 +41,7 @@ export function pendingApprovalSubject(turn: PendingInputTurn) {
     case 'command': return 'shell command';
     case 'file': return 'file change';
     case 'network': return 'network access request';
+    case 'email': return 'email draft';
     default: return 'tool request';
   }
 }

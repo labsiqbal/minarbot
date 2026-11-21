@@ -221,7 +221,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 room_context
             ));
         }
-        let journal = replay(db, id)?;
+        let journal = replay(state, db, id)?;
         messages.extend(journal);
         for steer in dispatch::guidance(db, id)? {
             messages.push(json!({"role":"user","content":steer["text"]}));
@@ -546,7 +546,17 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                             return Ok(());
                         }
                         let value = json!({"error":e.message,"status":e.status});
-                        tools::journal(&guard.connection, &turn, &call, &value)?;
+                        if crate::connectors::mailbox::is_tool(string(&call["function"], "name")) {
+                            crate::connectors::mailbox::journal(
+                                state,
+                                &guard.connection,
+                                &turn,
+                                &call,
+                                &value,
+                            )?;
+                        } else {
+                            tools::journal(&guard.connection, &turn, &call, &value)?;
+                        }
                         value
                     }
                     result => result?,
@@ -783,7 +793,7 @@ fn append_screenshot(
     }
     Ok(())
 }
-fn replay(db: &Connection, turn: &str) -> Result<Vec<Value>> {
+fn replay(state: &AppState, db: &Connection, turn: &str) -> Result<Vec<Value>> {
     let mut entries:Vec<(i64,i64,u8,Value)>=all(db,"SELECT call,result,after_output,coalesce(after_action,0) AS after_action FROM flow_tool_calls WHERE turn=? ORDER BY seq",[turn])?.into_iter().map(|r|(r["after_action"].as_i64().unwrap_or(0),r["after_output"].as_i64().unwrap_or(0),0,r)).collect();
     for (position,g) in all(db,"SELECT g.call,g.after_action,g.workspace,f.id,f.name,length(f.bytes) AS size,f.scope FROM generated_files g JOIN files f ON f.id=g.file WHERE g.turn=? ORDER BY g.seq",[turn])?.into_iter().enumerate() {
         let mut result = json!({"id":g["id"],"name":g["name"],"size":g["size"],"url":format!("/api/{}/files/{}",string(&g,"scope").replace(':',"/"),string(&g,"id"))});
@@ -820,10 +830,15 @@ fn replay(db: &Connection, turn: &str) -> Result<Vec<Value>> {
     entries.sort_by_key(|(action, output, kind, _)| (*action, *output, *kind));
     let mut messages = Vec::new();
     for (_, _, _, row) in entries {
-        let call: Value =
+        let mut call: Value =
             serde_json::from_str(string(&row, "call")).map_err(|_| Failure::storage())?;
+        let result = if crate::connectors::mailbox::is_tool(string(&call["function"], "name")) {
+            crate::connectors::mailbox::replay(state, turn, &mut call, &row["result"])?
+        } else {
+            row["result"].clone()
+        };
         messages.push(json!({"role":"assistant","content":null,"tool_calls":[call.clone()]}));
-        messages.push(json!({"role":"tool","tool_call_id":call["id"],"content":row["result"]}));
+        messages.push(json!({"role":"tool","tool_call_id":call["id"],"content":result}));
         append_screenshot(db, turn, string(&call, "id"), true, &mut messages)?;
     }
     Ok(messages)

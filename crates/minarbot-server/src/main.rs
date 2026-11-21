@@ -361,9 +361,11 @@ fn navigation(path: &str) -> bool {
             "data",
             "backup",
             "mcp-server",
+            "email",
         ]
         .contains(section),
         ["agents" | "rooms" | "projects", value] => id(value),
+        ["agents", agent, "inbox"] => id(agent),
         ["agents", agent, "conversations", thread] => id(agent) && id(thread),
         ["machines", machine, "agents", agent] => id(machine) && id(agent),
         _ => false,
@@ -838,7 +840,7 @@ mod tests {
     #[test]
     fn navigation_matches_node_paths() {
         assert!(navigation("/settings/engines"));
-        for path in ["/", "/routines", "/workflows", "/settings/appearance", "/agents/00000000-0000-4000-8000-000000000000", "/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001"] { assert!(navigation(path), "{path}"); }
+        for path in ["/", "/routines", "/workflows", "/settings/appearance", "/settings/email", "/agents/00000000-0000-4000-8000-000000000000", "/agents/00000000-0000-4000-8000-000000000000/inbox", "/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001"] { assert!(navigation(path), "{path}"); }
         for path in [
             "/settings/nope",
             "/agents/malformed",

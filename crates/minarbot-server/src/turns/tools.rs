@@ -122,6 +122,9 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         _ => false,
     });
     specs.extend(crate::automation::tools(db, turn)?);
+    if crate::connectors::mailbox::available(state, db, turn)? {
+        specs.extend(crate::connectors::mailbox::specs()?);
+    }
     if !turn["channel"].is_null() {
         specs.retain(|t| t["function"]["name"] != "delegate_task");
         specs.splice(0..0, super::coordination::tools(db, turn)?);
@@ -164,6 +167,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         return Err(error(503, "Update trial is pending."));
     }
     let name = string(&call["function"], "name");
+    if crate::connectors::mailbox::is_tool(name) {
+        return crate::connectors::mailbox::run(state, turn, call).await;
+    }
     let args: Value =
         serde_json::from_str(string(&call["function"], "arguments")).map_err(|_| {
             error(

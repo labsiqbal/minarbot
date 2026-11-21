@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { DropdownMenu } from 'radix-ui';
-import { Ellipsis, Eye, EyeOff, Pencil, Trash2 } from 'lucide-react';
+import { Ellipsis, Eye, EyeOff, Inbox, Pencil, Trash2 } from 'lucide-react';
 import type { Agent } from './AgentProfileDialog';
 import { Button, IconButton, useConfirm } from './ui/kit';
 
@@ -36,11 +36,12 @@ export function useDeleteAgent(request: Request, onDeleted: (id: string) => Prom
   } };
 }
 
-export function AgentActions({ agent, children, request, onEdit, onDelete, onChanged, onError }: {
-  agent: Agent; children: ReactNode; request: Request; onEdit: () => void;
+export function AgentActions({ agent, children, request, onEdit, onInbox, onDelete, onChanged, onError }: {
+  agent: Agent; children: ReactNode; request: Request; onEdit: () => void; onInbox: () => void;
   onDelete: () => Promise<void>; onChanged: () => Promise<void>; onError: (error: unknown) => void;
 }) {
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false);
+  const openingInbox = useRef(false);
   async function act(action: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
@@ -51,8 +52,9 @@ export function AgentActions({ agent, children, request, onEdit, onDelete, onCha
       {children}
       <DropdownMenu.Trigger asChild><IconButton className="agent-actions" label={`Actions for ${agent.name}`}><Ellipsis size={16} aria-hidden /></IconButton></DropdownMenu.Trigger>
     </div>
-    <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={4}>
+    <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={4} onCloseAutoFocus={event => { if (openingInbox.current) { event.preventDefault(); openingInbox.current = false; } }}>
       <DropdownMenu.Item className="k-menu__item" disabled={busy} onSelect={onEdit}><Pencil size={15} aria-hidden />Edit</DropdownMenu.Item>
+      <DropdownMenu.Item className="k-menu__item" disabled={busy} onSelect={() => { openingInbox.current = true; onInbox(); }}><Inbox size={15} aria-hidden />Inbox</DropdownMenu.Item>
       <DropdownMenu.Item className="k-menu__item" disabled={busy} onSelect={() => void act(async () => { await request(`/api/agents/${agent.id}/visibility`, { id: crypto.randomUUID(), revision: agent.visibility_revision ?? 0, hidden: !agent.hidden }); await onChanged(); })}>{agent.hidden ? <Eye size={15} aria-hidden /> : <EyeOff size={15} aria-hidden />}{agent.hidden ? 'Restore' : 'Hide'}</DropdownMenu.Item>
       <DropdownMenu.Separator className="k-menu__sep" />
       <DropdownMenu.Item className="k-menu__item is-danger" disabled={busy} onSelect={() => void act(onDelete)}><Trash2 size={15} aria-hidden />Delete</DropdownMenu.Item>

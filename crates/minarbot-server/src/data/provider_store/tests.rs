@@ -79,6 +79,7 @@ impl Fixture {
         crate::data::initialize(&database)?;
         crate::files::init(&database.connection)?;
         crate::turns::initialize(&database.connection).map_err(|error| error.message)?;
+        crate::connectors::initialize(&database.connection).map_err(|error| error.message)?;
         let computer = Arc::new(crate::computer::Manager::new(&config)?);
         let state = AppState {
             database: Arc::new(Mutex::new(database)),
