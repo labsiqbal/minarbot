@@ -5,6 +5,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, chmodSync } f
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, request as httpRequest, type Server } from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
 import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { fakePeerTokenIssuer } from './test-support/peer-token-issuer.ts';
@@ -22,6 +23,97 @@ const pair = async (a: App, b: App) => { const code = await call(b, '/api/pairin
 async function listen(server: Server) { await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address(); assert(address && typeof address !== 'string'); return { origin: `http://127.0.0.1:${address.port}` }; }
 async function close(server: Server) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 
+test('paired machine recovers after restart while roster sync times out on a shared link', { timeout: 60_000 }, async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-peer-throttle-'));
+  const a = await startApp({ database: join(dir, 'a.sqlite'), machines: { healthIntervalMs: 1000 } });
+  t.after(() => a.close());
+  const options = { database: join(dir, 'b.sqlite') };
+  let b = await startApp(options);
+  t.after(() => b.close());
+  let route = '', slow = false, probeTimedOut = false, rosterBytes = 0;
+  const proxy = createServer((req, res) => {
+    if (probeTimedOut && req.url === '/api/environment') {
+      res.writeHead(504).end();
+      return;
+    }
+    const upstream = httpRequest(b.origin + req.url, { method: req.method, headers: { ...req.headers, host: new URL(b.origin).host } }, async source => {
+      const chunks: Buffer[] = [];
+      try {
+        for await (const chunk of source) chunks.push(chunk);
+      } catch {
+        res.destroy();
+        return;
+      }
+      let body = Buffer.concat(chunks);
+      if (req.url === '/api/environment' || req.url === '/api/pairing/redeem') {
+        const value = JSON.parse(body.toString());
+        (value.environment ?? value).origin = route;
+        body = Buffer.from(JSON.stringify(value));
+      }
+      if (slow) await delay(120);
+      if (res.destroyed) return;
+      if (slow && req.url === '/api/peer/agents' && body.length > 100 && source.statusCode === 200) {
+        body = Buffer.concat([body, Buffer.from(' '.repeat(120 * 1024))]);
+        rosterBytes = body.length;
+        res.writeHead(source.statusCode ?? 502, { 'Content-Type': 'application/json', 'Content-Length': body.length });
+        // Desktop traffic uses 15 KiB/s of the 25 KiB/s uplink.
+        for (let offset = 0; offset < body.length && !res.destroyed; offset += 1024) {
+          await delay(100);
+          if (!res.destroyed) res.write(body.subarray(offset, offset + 1024));
+        }
+        res.end();
+      } else {
+        res.writeHead(source.statusCode ?? 502, { 'Content-Type': 'application/json', 'Content-Length': body.length });
+        res.end(body);
+      }
+    });
+    upstream.once('error', () => res.destroy());
+    req.pipe(upstream);
+  });
+  route = (await listen(proxy)).origin;
+  t.after(() => close(proxy));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  await call(b, '/api/agents', {
+    id: randomUUID(), runtime: 'api', name: 'Remote agent', role: 'Personal agent',
+    model: 'fixture', instructions: 'Help.',
+  }, 201);
+  const code = await call(b, '/api/pairing-codes', command());
+  const paired = await call(a, '/api/machines', { ...command(), origin: route, code: code.code });
+  assert.equal(paired.agentCount, 1);
+  assert.equal(paired.status, 'online');
+  await b.close();
+  await a.refreshMachines();
+  assert.equal((await list(a))[0].status, 'offline');
+
+  slow = true;
+  b = await startApp(options);
+  const restarted = performance.now();
+  const deadline = restarted + 8_000;
+  let peer = (await list(a))[0];
+  while ((peer.status !== 'online' || !rosterBytes) && performance.now() < deadline) {
+    await delay(50);
+    peer = (await list(a))[0];
+  }
+  t.diagnostic(`Peer status after ${Math.round(performance.now() - restarted)} ms at 10 KiB/s plus 120 ms latency: ${peer.status}, roster ${rosterBytes} bytes`);
+  assert(rosterBytes > 100 * 1024, 'Roster takes over 10 seconds on the shared link');
+  assert.equal(peer.status, 'online');
+  assert(peer.lastSeen > paired.lastSeen);
+  assert.equal(peer.agentCount, paired.agentCount);
+
+  await a.refreshMachines();
+  peer = (await list(a))[0];
+  assert.equal(peer.status, 'online', 'Roster deadline leaves authenticated liveness intact');
+  assert.deepEqual(peer.agents, paired.agents);
+
+  probeTimedOut = true;
+  await a.refreshMachines();
+  const stale = (await list(a))[0];
+  assert.equal(stale.status, 'stale');
+  assert(stale.lastSeen >= peer.lastSeen);
+  assert.deepEqual(stale.agents, paired.agents);
+});
+
 test('peer transport accepts proxy host headers while owner machine routes retain the local host boundary', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-peer-host-'));
   const app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: fakePeerTokenIssuer() });
@@ -32,6 +124,7 @@ test('peer transport accepts proxy host headers while owner machine routes retai
   try {
     assert.equal(await send('/api/environment'), 200);
     assert.equal(await send('/api/peer/agents'), 401);
+    assert.equal((await fetch(app.origin + '/api/peer/agents', { headers: { 'X-Minarbot-Peer-Probe': '1' } })).status, 401);
     assert.equal(await send('/api/pairing/redeem', {}), 400);
     assert.equal(await send('/api/machines/reciprocal', {}), 401);
     assert.equal(await send('/api/peer/unpair', {}), 401);

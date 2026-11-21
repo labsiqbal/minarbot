@@ -1145,7 +1145,7 @@ const collapsedKey = 'minarbot:sidebar-collapsed';
 const machineGroupsKey = 'minarbot:sidebar-machine-groups';
 const sidebarTabKey = 'minarbot:sidebar-tab';
 type SidebarTab = 'agents' | 'projects';
-const machineStatus = { online: 'Online', offline: 'Offline', unauthorized: 'Unauthorized', 'version-mismatch': 'Version mismatch' };
+const machineStatus = { online: 'Online', stale: 'Stale', offline: 'Offline', unauthorized: 'Unauthorized', 'version-mismatch': 'Version mismatch' };
 
 function MachineGroup({ name, subtitle, count, status, expanded, onExpandedChange, local, children }: {
   name: string; subtitle?: string; count: number; status?: keyof typeof machineStatus; expanded: boolean;

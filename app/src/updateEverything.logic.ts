@@ -72,7 +72,9 @@ export function collectServerUpdateTargets(state: UpdateState, machines: readonl
     const peer = peers.find(row => row.machine === machine.id);
     const current = peer?.current?.version ?? machine.version;
     let skipped = null;
-    if (!['online', 'version-mismatch'].includes(machine.status)) skipped = machine.status === 'unauthorized' ? 'Access revoked' : 'Offline';
+    if (machine.status === 'unauthorized') skipped = 'Access revoked';
+    else if (machine.status === 'stale') skipped = 'Status stale';
+    else if (machine.status === 'offline') skipped = 'Offline';
     else if (!machine.allowUpdates) skipped = 'Remote updates off';
     else if (feed && !newer(feed.version, current)) skipped = 'Up to date';
     else if (peer?.lastAttempt && !terminalUpdate(peer.lastAttempt.status)) skipped = 'Already updating';

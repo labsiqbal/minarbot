@@ -10,6 +10,7 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,
 };
+use futures_util::{stream, StreamExt, TryStreamExt};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
@@ -422,6 +423,9 @@ fn no_secrets(value: &Value, tokens: &[&str]) -> Result<()> {
 }
 const UPDATE_STATUS: &str = "/api/peer/updates";
 const UPDATE_APPLY: &str = "/api/peer/updates/apply";
+const PEER_AGENTS: &str = "/api/peer/agents";
+const PEER_PROBE_HEADER: &str = "x-minarbot-peer-probe";
+const MAX_STALE_AGE_MS: i64 = 90_000;
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(300);
 const RELEASE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 fn update_deadline(bytes: u64) -> Duration {
@@ -491,7 +495,8 @@ async fn remote_request(
     peer_update_timeout: Option<Duration>,
 ) -> Result<Value> {
     let client = peer_client()?;
-    remote_with_client(s, origin, path, token, body, peer_update_timeout, &client).await
+    let mode = peer_update_timeout.map_or(RemoteRequest::Standard, RemoteRequest::Update);
+    remote_with_client(s, origin, path, token, body, mode, &client).await
 }
 
 fn peer_client() -> Result<reqwest::Client> {
@@ -503,17 +508,32 @@ fn peer_client() -> Result<reqwest::Client> {
         .map_err(|_| Failure::storage())
 }
 
+#[derive(Clone, Copy)]
+enum RemoteRequest {
+    Standard,
+    Probe,
+    Update(Duration),
+}
+
+fn probe_timeout() -> Failure {
+    Failure::new(504, "peer_check_timeout", "Peer status check timed out.")
+}
+
 async fn remote_with_client(
     s: &AppState,
     origin: &str,
     path: &str,
     token: Option<&str>,
     body: Option<&Value>,
-    peer_update_timeout: Option<Duration>,
+    mode: RemoteRequest,
     client: &reqwest::Client,
 ) -> Result<Value> {
-    let track_transport = peer_update_timeout.is_some();
-    let timeout = peer_update_timeout.unwrap_or(Duration::from_secs(10));
+    let track_transport = matches!(mode, RemoteRequest::Update(_));
+    let probe = matches!(mode, RemoteRequest::Probe);
+    let timeout = match mode {
+        RemoteRequest::Update(timeout) => timeout,
+        _ => Duration::from_secs(10),
+    };
     let update = path == UPDATE_APPLY;
     let unavailable = || {
         if update {
@@ -555,19 +575,27 @@ async fn remote_with_client(
         if let Some(token) = token {
             req = req.bearer_auth(token);
         }
-        if path == "/api/peer/agents" {
+        if path == PEER_AGENTS {
             req = req
                 .header("X-Minarbot-Messaging-Policy", "1")
                 .header("X-Minarbot-Provider-Accounts", "1");
+            if probe {
+                req = req.header(PEER_PROBE_HEADER, "1");
+            }
         }
         let mut response = peer_http(s, req).await.map_err(|failure| {
             if track_transport {
                 interrupted("headers", failure)
+            } else if probe && failure.status == 504 {
+                probe_timeout()
             } else {
                 unavailable()
             }
         })?;
         let status = response.status();
+        if probe && status == reqwest::StatusCode::GATEWAY_TIMEOUT {
+            return Err(probe_timeout());
+        }
         if !status.is_success() && !update {
             return Err(rejection(status.as_u16(), false, None));
         }
@@ -589,6 +617,8 @@ async fn remote_with_client(
         while let Some(chunk) = response.chunk().await.map_err(|err| {
             if track_transport {
                 interrupted("body", PeerError::network(err))
+            } else if probe && err.is_timeout() {
+                probe_timeout()
             } else {
                 Failure::storage()
             }
@@ -609,6 +639,8 @@ async fn remote_with_client(
         .map_err(|_| {
             if track_transport {
                 interrupted("deadline", PeerError::Timeout.failure())
+            } else if probe {
+                probe_timeout()
             } else {
                 unavailable()
             }
@@ -854,7 +886,13 @@ async fn add(s: &AppState, v: &Value) -> Result<Value> {
             "Return pairing is not confirmed. Retry the same request or unpair this machine.",
         )
     })?;
-    check_machine(s, &row(s, text(&peer, "id"))?).await?;
+    check_machine(
+        s,
+        &row(s, text(&peer, "id"))?,
+        &peer_client()?,
+        RemoteRequest::Standard,
+    )
+    .await?;
     visible(s, &row(s, text(&peer, "id"))?)
 }
 async fn redeem(s: &AppState, v: &Value) -> Result<Value> {
@@ -932,7 +970,7 @@ async fn reciprocal(s: &AppState, v: &Value, header: Option<&str>) -> Result<Val
     if check["id"] != peer["id"] || check["origin"] != peer["origin"] {
         return Err(error(401, "Remote machine identity changed."));
     }
-    let roster = remote(s, origin, "/api/peer/agents", Some(&token), None).await?;
+    let roster = remote(s, origin, PEER_AGENTS, Some(&token), None).await?;
     let cached = agents(&roster)?;
     let providers = provider_report(&roster, &cached)?;
     no_secrets(
@@ -978,9 +1016,13 @@ async fn peer_agents(
     header: Option<&str>,
     policy: bool,
     report_providers: bool,
+    probe: bool,
 ) -> Result<Value> {
     let auth = authorize(s, header).await?;
     if with_db(s,|db|one(db,"SELECT 1 FROM paired_machines WHERE local_token_id=? UNION ALL SELECT 1 FROM peer_pairing_pending WHERE token_id=? AND expires>?",params![text(&auth,"id"),text(&auth,"id"),s.config.now()]))?.is_none(){return Err(error(401,"Unauthorized peer request."));}
+    if probe {
+        return Ok(json!({"reachable":true}));
+    }
     let mut result = with_db(s, |db| {
         let mut roster = rows(db,"SELECT id,name,role,model,runtime,provider_account,CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.agent=agents.id AND t.status IN('queued','running') AND t.paused=0) THEN 'working' ELSE 'idle' END AS status FROM agents ORDER BY rowid",[])?;
         let mut result = json!({});
@@ -1127,7 +1169,7 @@ async fn update_peer(s: &AppState, machine: &str) -> Result<Value> {
         return Ok(r);
     }
     // The cached status lags a peer restart; check live before refusing an update.
-    check_machine(s, &r).await?;
+    check_machine(s, &r, &peer_client()?, RemoteRequest::Standard).await?;
     let r = permitted_peer(s, machine)?;
     if !reachable(&r) {
         return Err(PeerError::ConnectionLost.detail("Paired machine is offline."));
@@ -1224,7 +1266,7 @@ async fn poll_update(
             UPDATE_APPLY,
             Some(token),
             Some(body),
-            Some(Duration::from_secs(10)),
+            RemoteRequest::Update(Duration::from_secs(10)),
             &client,
         )
         .await;
@@ -1466,45 +1508,122 @@ pub async fn download_release(
     }
     request.send().await.map_err(PeerError::network)
 }
-async fn check_machine(s: &AppState, r: &Value) -> Result<()> {
+fn cache_roster(s: &AppState, r: &Value, roster: &Value, secrets: &[&str]) -> Result<()> {
+    let cached = agents(roster)?;
+    let providers = provider_report(roster, &cached)?;
+    no_secrets(&json!({"cached":cached,"providers":providers}), secrets)?;
+    tx(s, |db| {
+        let id = text(r, "environment_id");
+        let token_id = text(r, "local_token_id");
+        let changed = db.execute(
+            "UPDATE paired_machines SET agents=? WHERE environment_id=? AND local_token_id=?",
+            params![cached.to_string(), id, token_id],
+        )?;
+        if changed == 0 {
+            return Ok(());
+        }
+        cache_provider_report(db, id, providers.as_ref())?;
+        if let Some(allowed) = roster["messagingAllowed"].as_bool() {
+            db.execute("INSERT INTO computer_peer_messaging VALUES(?,?) ON CONFLICT(token_id) DO UPDATE SET allowed=excluded.allowed",params![token_id,allowed as i64])?;
+        } else {
+            db.execute(
+                "DELETE FROM computer_peer_messaging WHERE token_id=?",
+                [token_id],
+            )?;
+        }
+        Ok(())
+    })
+}
+
+fn mark_online(s: &AppState, r: &Value, peer: &Value) -> Result<i64> {
+    let seen = s.config.now();
+    with_db(s, |db| {
+        db.execute(
+            "UPDATE paired_machines SET status='online',name=?,version=?,last_seen=? WHERE environment_id=? AND local_token_id=?",
+            params![text(peer, "name"), text(peer, "version"), seen, text(r, "environment_id"), text(r, "local_token_id")],
+        )?;
+        Ok(seen)
+    })
+}
+
+fn failed_status(failure: &Failure, prior: &str, seen: Option<i64>, now: i64) -> &'static str {
+    let timed_out = failure.code == "peer_check_timeout";
+    if [401, 409].contains(&failure.status) || (timed_out && prior == "unauthorized") {
+        return "unauthorized";
+    }
+    if timed_out && seen.is_some_and(|last_seen| now.saturating_sub(last_seen) <= MAX_STALE_AGE_MS)
+    {
+        return "stale";
+    }
+    "offline"
+}
+
+async fn check_machine(
+    s: &AppState,
+    r: &Value,
+    client: &reqwest::Client,
+    mode: RemoteRequest,
+) -> Result<()> {
+    let origin = text(r, "origin");
+    let mut seen = r["last_seen"].as_i64();
     let result = async {
-        let origin = text(r, "origin");
-        let peer = descriptor(&remote(s, origin, "/api/environment", None, None).await?)?;
+        let peer = descriptor(
+            &remote_with_client(s, origin, "/api/environment", None, None, mode, client).await?,
+        )?;
         if peer["id"] != r["environment_id"] || peer["origin"] != r["origin"] {
             return Err(error(401, "Remote machine identity changed."));
         }
         let token = crypt(s, text(r, "token"), origin, false)?;
-        let roster = remote(s, origin, "/api/peer/agents", Some(&token), None).await?;
-        let cached = agents(&roster)?;
-        let providers = provider_report(&roster, &cached)?;
-        let back = crypt(s, text(r, "return_token"), &format!("{origin}:return"), false)?;
-        no_secrets(&json!({"peer":peer,"cached":cached,"providers":providers}), &[&token, &back])?;
-        tx(s, |db| {
-            let changed = db.execute("UPDATE paired_machines SET name=?,version=?,last_seen=?,agents=? WHERE environment_id=? AND local_token_id=?",params![text(&peer,"name"),text(&peer,"version"),s.config.now(),cached.to_string(),text(r,"environment_id"),text(r,"local_token_id")])?;
-            if changed == 0 {
-                return Ok(());
-            }
-            cache_provider_report(db, text(r,"environment_id"), providers.as_ref())?;
-            if let Some(allowed) = roster["messagingAllowed"].as_bool() {
-                db.execute("INSERT INTO computer_peer_messaging VALUES(?,?) ON CONFLICT(token_id) DO UPDATE SET allowed=excluded.allowed",params![text(r,"local_token_id"),allowed as i64])?;
-            } else {
-                db.execute("DELETE FROM computer_peer_messaging WHERE token_id=?",[text(r,"local_token_id")])?;
-            }
-            Ok(())
-        })
-    }.await;
-    let status = match result {
-        Ok(()) => "online",
-        Err(e) if [401, 409].contains(&e.status) => "unauthorized",
-        _ => "offline",
-    };
-    with_db(s, |db| {
-        db.execute(
-            "UPDATE paired_machines SET status=? WHERE environment_id=? AND local_token_id=?",
-            params![status, text(r, "environment_id"), text(r, "local_token_id")],
+        let back = crypt(
+            s,
+            text(r, "return_token"),
+            &format!("{origin}:return"),
+            false,
         )?;
+        no_secrets(&peer, &[&token, &back])?;
+        let response =
+            remote_with_client(s, origin, PEER_AGENTS, Some(&token), None, mode, client).await?;
+
+        if matches!(mode, RemoteRequest::Probe) && response == json!({"reachable":true}) {
+            seen = Some(mark_online(s, r, &peer)?);
+            let roster = remote_with_client(
+                s,
+                origin,
+                PEER_AGENTS,
+                Some(&token),
+                None,
+                RemoteRequest::Standard,
+                client,
+            )
+            .await;
+            return match roster {
+                Ok(roster) => {
+                    let _ = cache_roster(s, r, &roster, &[&token, &back]);
+                    Ok(())
+                }
+                Err(failure) if failure.status == 401 => Err(failure),
+                Err(_) => Ok(()),
+            };
+        }
+
+        // Older peers ignore the probe header and send the roster as usual.
+        cache_roster(s, r, &response, &[&token, &back])?;
+        mark_online(s, r, &peer)?;
         Ok(())
-    })
+    }
+    .await;
+    if let Err(failure) = result {
+        let status = failed_status(&failure, text(r, "status"), seen, s.config.now());
+        with_db(s, |db| {
+            // A slow check must not overwrite a newer successful check.
+            db.execute(
+                "UPDATE paired_machines SET status=? WHERE environment_id=? AND local_token_id=? AND last_seen IS ?",
+                params![status, text(r, "environment_id"), text(r, "local_token_id"), seen],
+            )?;
+            Ok(())
+        })?;
+    }
+    Ok(())
 }
 pub async fn health(s: &AppState) -> Result<()> {
     let now = now(s).await?;
@@ -1531,11 +1650,18 @@ pub async fn health(s: &AppState) -> Result<()> {
     for r in revoked {
         let _ = revoke(s, text(&r, "token_id")).await;
     }
-    for r in with_db(s, |db| {
+    let peers = with_db(s, |db| {
         rows(db, "SELECT * FROM paired_machines WHERE state='paired'", [])
-    })? {
-        check_machine(s, &r).await?;
-    }
+    })?;
+    let client = peer_client()?;
+    stream::iter(peers)
+        .map(|peer| {
+            let client = &client;
+            async move { check_machine(s, &peer, client, RemoteRequest::Probe).await }
+        })
+        .buffer_unordered(8)
+        .try_collect::<Vec<()>>()
+        .await?;
     Ok(())
 }
 async fn unpair(s: &AppState, v: &Value) -> Result<Value> {
@@ -1640,7 +1766,7 @@ pub async fn handle(
                 }
                 json!({"machines":list(s)?})
             }
-            "/api/peer/agents" => {
+            PEER_AGENTS => {
                 peer_agents(
                     s,
                     auth.as_deref(),
@@ -1651,6 +1777,7 @@ pub async fn handle(
                         == Some("1"),
                     crate::text_header(request.headers(), "x-minarbot-provider-accounts")
                         == Some("1"),
+                    crate::text_header(request.headers(), PEER_PROBE_HEADER) == Some("1"),
                 )
                 .await?
             }
@@ -1833,6 +1960,45 @@ pub(crate) fn pairing_code(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn machine_status_ages_out_timeout_and_keeps_authorization_failures_distinct() -> Result<()> {
+        let seen = Some(1_000);
+        let expires = 1_000 + MAX_STALE_AGE_MS;
+        let timeout = probe_timeout();
+        assert_eq!(failed_status(&timeout, "online", seen, 31_000), "stale");
+        assert_eq!(failed_status(&timeout, "stale", seen, expires), "stale");
+        assert_eq!(
+            failed_status(&timeout, "stale", seen, expires + 1),
+            "offline"
+        );
+        assert_eq!(failed_status(&timeout, "offline", None, expires), "offline");
+        assert_eq!(
+            failed_status(&timeout, "unauthorized", seen, expires),
+            "unauthorized"
+        );
+        for status in [401, 409] {
+            assert_eq!(
+                failed_status(
+                    &error(status, "Authorization failed."),
+                    "stale",
+                    seen,
+                    expires
+                ),
+                "unauthorized"
+            );
+        }
+        assert_eq!(
+            failed_status(
+                &PeerError::ConnectionLost.failure(),
+                "online",
+                seen,
+                expires
+            ),
+            "offline"
+        );
+        Ok(())
+    }
 
     #[test]
     fn peer_origins_require_https_or_loopback_without_url_extras() -> Result<()> {
