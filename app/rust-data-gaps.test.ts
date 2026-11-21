@@ -142,7 +142,8 @@ test('Rust workspace and sidebar preserve UTF-16 slices; script grants replay an
     assert.equal((await request(file)).text, text.slice(0, 8000)); assert.equal((await request(file + '&offset=8000')).text, text.slice(8000));
     const db = testDatabase(database), turn = randomUUID();
     db.prepare("INSERT INTO turns(id,agent,text,status,reply,created) VALUES(?,?,?,'done',?,?)").run(turn, agent, '', 'x'.repeat(179) + '😀tail', new Date().toISOString());
-    assert.equal((await request('/api/sidebar/summary')).summaries[0].preview, ('x'.repeat(179) + '😀tail').slice(0, 180));
+    const summary = (await request('/api/sidebar/summary')).summaries.find((row: { agent: string }) => row.agent === agent);
+    assert.equal(summary?.preview, ('x'.repeat(179) + '😀tail').slice(0, 180));
     const child = randomUUID(), delivery = randomUUID(), thread = await request(`/api/agents/${agent}/threads`, { id: randomUUID(), name: 'Reply' });
     const reply = 'x'.repeat(999) + '😀tail';
     db.prepare("INSERT INTO turns(id,agent,thread,text,status,reply,created) VALUES(?,?,?,'Task','done',?,?)").run(child, agent, thread.id, reply, new Date().toISOString());

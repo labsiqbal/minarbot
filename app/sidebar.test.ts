@@ -9,6 +9,9 @@ import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import { restoreWorkspace } from './test-support/backup.ts';
 
+const guideId = '00000000-0000-4000-8000-000000000005';
+const isUserSummary = (row: { agent: string }) => row.agent !== guideId;
+
 test('sidebar validates unique membership, names, IDs and bounded settings', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-sidebar-valid-'));
   const app = await startApp({ database: join(directory, 'state.sqlite') });
@@ -44,7 +47,8 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
   }
   try {
     assert.deepEqual(await request('/api/sidebar'), { revision: 0, sections: [] });
-    assert.deepEqual(await request('/api/sidebar/summary'), { summaries: [] });
+    const initialSummary = await request('/api/sidebar/summary');
+    assert.deepEqual({ ...initialSummary, summaries: initialSummary.summaries.filter(isUserSummary) }, { summaries: [] });
     await request('/api/sidebar/summary?limit=1', undefined, 400);
     assert.equal((await fetch(app.origin + '/api/sidebar/summary', { headers: { Origin: 'https://foreign.test' } })).status, 403);
     const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' }, 201);
@@ -109,7 +113,8 @@ test('sidebar summary bounds entries and text, redacts credentials, and selects 
   try {
     const add = db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,?,'fixture','PRIVATE_INSTRUCTIONS')");
     const [first, second, room, third] = Array.from({ length: 4 }, () => randomUUID());
-    for (const agent of [first, second, third, ...Array.from({ length: 498 }, () => randomUUID())]) add.run(agent, agent);
+    const agents = [first, second, third, ...Array.from({ length: 498 }, () => randomUUID())];
+    for (const agent of agents) add.run(agent, agent);
     db.prepare("INSERT INTO channels(id,name,instructions) VALUES(?,'Room','Help')").run(room);
     const turn = db.prepare('INSERT INTO turns(id,agent,text,reply,created,status,error,channel) VALUES(?,?,?,?,?,?,?,?)');
     turn.run(randomUUID(), first, 'old', null, '2026-11-14T00:00:00.000Z', 'running', 'PRIVATE_ERROR', null);
@@ -130,15 +135,18 @@ test('sidebar summary bounds entries and text, redacts credentials, and selects 
       return response.json();
     };
     const result = await summary();
-    assert.equal(result.summaries.length, 501);
-    assert.deepEqual(result.summaries[1], { agent: second, preview: '', time: null, status: 'idle', needs_you: 0 });
-    assert.equal(result.summaries[0].status, 'running');
-    assert.equal(result.summaries[0].preview.length, 180);
-    assert.equal(result.summaries[0].time, '2026-11-14T01:00:00.000Z');
+    const userSummaries = result.summaries.filter(isUserSummary);
+    assert.equal(userSummaries.length, 501);
+    assert.deepEqual(userSummaries.slice(0, 500).map((row: { agent: string }) => row.agent), agents.slice(0, 500));
+    assert.deepEqual(result.summaries[500], { agent: guideId, preview: '', time: null, status: 'idle', needs_you: 0 });
+    assert.deepEqual(userSummaries[1], { agent: second, preview: '', time: null, status: 'idle', needs_you: 0 });
+    assert.equal(userSummaries[0].status, 'running');
+    assert.equal(userSummaries[0].preview.length, 180);
+    assert.equal(userSummaries[0].time, '2026-11-14T01:00:00.000Z');
     assert.deepEqual(result.summaries.at(-1), { agent: 'remote@machine', preview: 'Latest reply', time: '1970-01-01T00:00:02.000Z', status: 'done', needs_you: 0 });
-    assert.deepEqual(Object.keys(result.summaries[0]).sort(), ['agent','needs_you','preview','status','time']);
+    assert.deepEqual(Object.keys(userSummaries[0]).sort(), ['agent','needs_you','preview','status','time']);
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|hide-me|abcdefghijklmnop|saved-provider-credential|AGENT_DELIVERY_SECRET|UNPAIRED_SECRET|unused prompt/);
     for (let i = 0; i < 501; i++) remote.run(`remote-${i}`, 'machine', `r-${i}`, 'hello', null, 4000, null);
-    assert.equal((await summary()).summaries.length, 1000);
+    assert.equal((await summary()).summaries.filter(isUserSummary).length, 1000);
   } finally { db.close(); await app.close(); rmSync(directory, { recursive: true, force: true }); }
 });
