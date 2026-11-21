@@ -1,0 +1,205 @@
+{
+  "version": "0.16.0",
+  "binarySHA256": "d5d116c28087a8a61ca08ad2a42b9d44d49619f391f57ff896c08b0aa519b4fd",
+  "checkoutCommit": "e479c1988c04987b270a66ff64feb0b2976a35bb",
+  "suiteSHA256": "efdbe2b5b085bde168c5a495b459fb9c957892bd32513c8d30e9df0e66219aed",
+  "startedAt": "2026-11-21T20:55:15.989Z",
+  "runtime": {
+    "name": "claude",
+    "version": "2.1.328 (Claude Code)",
+    "account": "device",
+    "model": "default",
+    "reason": null
+  },
+  "repeat": 1,
+  "complete": true,
+  "results": [
+    {
+      "task": "cart-bug",
+      "category": "bug-fix",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 27.16,
+      "tokens": 1962,
+      "knownTokens": 1962,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "expiry-bug",
+      "category": "bug-fix",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 13.36,
+      "tokens": 888,
+      "knownTokens": 888,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "handover-doc",
+      "category": "document",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 16.58,
+      "tokens": 1005,
+      "knownTokens": 1005,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "paginate-feature",
+      "category": "feature",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 22.87,
+      "tokens": 2163,
+      "knownTokens": 2163,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "sales-csv",
+      "category": "csv",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 14.57,
+      "tokens": 1027,
+      "knownTokens": 1027,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "slug-feature",
+      "category": "feature",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 26.12,
+      "tokens": 2005,
+      "knownTokens": 2005,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    }
+  ],
+  "finishedAt": "2026-11-21T20:57:20.515Z"
+}
