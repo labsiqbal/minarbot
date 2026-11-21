@@ -1,0 +1,1 @@
+Build a tip calculator in index.html. Bill input #bill, percent input #percent, button "Calculate", result #total as two decimals. 100 at 15% gives 115.00. Put logic in tip.mjs exporting total(bill, percent); reject negatives. Add native Node tests in tip.test.mjs. No dependencies.

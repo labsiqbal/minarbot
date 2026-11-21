@@ -1,0 +1,1 @@
+Build a tiny counter in index.html: heading "Counter", initial 0 in #count, buttons "Add" and "Reset". Add raises count by one; Reset returns zero. Put counter logic in counter.mjs exporting increment(number) and reset(), with native Node tests in counter.test.mjs. No dependencies.

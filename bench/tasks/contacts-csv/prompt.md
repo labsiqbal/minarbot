@@ -1,0 +1,1 @@
+Clean contacts.csv into contacts.json: trim names, lowercase and trim emails, remove duplicate emails keeping first, drop missing email. Array of {name,email}, sorted by email. Also save summary.json with inputRows, outputRows, droppedRows.
