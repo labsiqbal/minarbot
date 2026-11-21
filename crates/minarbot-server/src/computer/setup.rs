@@ -234,18 +234,22 @@ async fn prepare(state: &AppState, explicit: bool) -> Result<Phase> {
         status.runtime = runtime.as_ref().map(Runtime::label);
         status.missing = requirements.iter().map(|item| item.programs[0]).collect();
     }
-    let backend = if let Some(runtime) = runtime {
-        if !explicit && !enabled {
-            return Ok(Phase::ImageMissing);
+    let container = match runtime {
+        Some(runtime) if explicit || enabled => {
+            let chosen = or_host(
+                container_backend(state, runtime).await,
+                missing().is_empty(),
+            )?;
+            if chosen.is_none() {
+                setup.status.lock().map_err(|_| Failure::storage())?.runtime = None;
+            }
+            chosen
         }
-        let cache =
-            minarbot_launcher::files::sidecar(&state.config.database, ".computer-image.json");
-        let digest = crate::updates::computer_image(state, &cache).await?;
-        let image = format!("{REPOSITORY}@{digest}");
-        if !runtime.has_image(&image).await {
-            runtime.pull(&image).await?;
-        }
-        Backend::Container { runtime, image }
+        Some(_) => return Ok(Phase::ImageMissing),
+        None => None,
+    };
+    let backend = if let Some(backend) = container {
+        backend
     } else {
         if explicit && !requirements.is_empty() {
             let mut install = install.ok_or_else(|| {
@@ -279,9 +283,41 @@ async fn prepare(state: &AppState, explicit: bool) -> Result<Phase> {
     Ok(Phase::Ready)
 }
 
+/// A release without a published image, or a failed pull, must not take Computer
+/// away from a host that already has every desktop program: fall back to the host.
+fn or_host(container: Result<Backend>, host_ready: bool) -> Result<Option<Backend>> {
+    match container {
+        Ok(backend) => Ok(Some(backend)),
+        Err(_) if host_ready => Ok(None),
+        Err(failure) => Err(failure),
+    }
+}
+
+async fn container_backend(state: &AppState, runtime: Runtime) -> Result<Backend> {
+    let cache = minarbot_launcher::files::sidecar(&state.config.database, ".computer-image.json");
+    let digest = crate::updates::computer_image(state, &cache).await?;
+    let image = format!("{REPOSITORY}@{digest}");
+    if !runtime.has_image(&image).await {
+        runtime.pull(&image).await?;
+    }
+    Ok(Backend::Container { runtime, image })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_image_falls_back_to_a_ready_host() -> Result<()> {
+        let unavailable = || Err(error(503, "GitHub release manifest is unavailable."));
+        assert!(or_host(unavailable(), true)?.is_none());
+        assert!(or_host(unavailable(), false).is_err());
+        assert!(matches!(
+            or_host(Ok(Backend::Host), false)?,
+            Some(Backend::Host)
+        ));
+        Ok(())
+    }
     use crate::computer::desktop;
     use axum::{body::Body, http::Request};
 
