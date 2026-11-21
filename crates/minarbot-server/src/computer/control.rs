@@ -1,4 +1,4 @@
-use super::{error, Result};
+use super::{error, vault, Result};
 use crate::{
     files::{keys, one, rows, text, timestamp},
     web::Failure,
@@ -16,7 +16,7 @@ fn tx<T>(s: &AppState, work: impl FnOnce(&Connection) -> Result<T>) -> Result<T>
 fn permission(c: &Connection, agent: &str) -> Result<Value> {
     Ok(one(
         c,
-        "SELECT enabled,revision FROM agent_computers WHERE agent=?",
+        "SELECT enabled,revision,EXISTS(SELECT 1 FROM computer_shared_profiles WHERE agent=agent_computers.agent) shared_profile FROM agent_computers WHERE agent=?",
         [agent],
     )?
     .unwrap_or(json!({"enabled":0,"revision":0})))
@@ -71,7 +71,7 @@ fn control(c: &Connection, agent: &str, now: i64) -> Result<Value> {
     .ok_or_else(Failure::storage)
 }
 fn waits(c: &Connection, agent: &str) -> Result<Vec<Value>> {
-    rows(c,"SELECT w.* FROM computer_waits w JOIN turns t ON t.id=w.turn WHERE w.agent=? AND w.state='waiting' AND t.status NOT IN('done','cancelled')",[agent])
+    rows(c,"SELECT w.*,v.entry AS secret_entry,v.origin AS secret_origin FROM computer_waits w JOIN turns t ON t.id=w.turn LEFT JOIN vault_requests v ON v.turn=w.turn AND v.call_id=w.call_id WHERE w.agent=? AND w.state='waiting' AND t.status NOT IN('done','cancelled')",[agent])
 }
 pub fn enabled(s: &AppState, agent: &str) -> Result<bool> {
     Ok(s.computer.enabled && db(s, |c| permission(c, agent))?["enabled"] == 1)
@@ -95,7 +95,7 @@ pub fn assert_recoverable(c: &Connection, turn: &str) -> Result<()> {
     Ok(())
 }
 pub fn turn_wait(c: &Connection, turn: &str) -> Result<Option<Value>> {
-    one(c,"SELECT w.* FROM computer_waits w JOIN turns t ON t.id=w.turn WHERE w.turn=? AND w.state='waiting' AND t.status NOT IN('done','cancelled')",[turn])
+    one(c,"SELECT w.*,v.entry AS secret_entry,v.origin AS secret_origin FROM computer_waits w JOIN turns t ON t.id=w.turn LEFT JOIN vault_requests v ON v.turn=w.turn AND v.call_id=w.call_id WHERE w.turn=? AND w.state='waiting' AND t.status NOT IN('done','cancelled')",[turn])
 }
 fn read_db(s: &AppState, c: &Connection, agent: &str) -> Result<Value> {
     let mut value = s.computer.status(agent, s.config.now())?;
@@ -109,6 +109,7 @@ fn read_db(s: &AppState, c: &Connection, agent: &str) -> Result<Value> {
     }
     value["enabled"] = json!(p["enabled"] == 1);
     value["revision"] = p["revision"].clone();
+    value["sharedProfile"] = json!(p["shared_profile"] == 1);
     value["control"] = control(c, agent, s.config.now())?;
     value["requests"] = json!(waits(c, agent)?);
     Ok(value)
@@ -143,12 +144,20 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
     if v.get("alwaysOn").is_some() {
         return configure_always_on(s, agent, v).await;
     }
-    if !keys(v, &["id", "revision", "enabled"]) || !command_id(v) || !v["enabled"].is_boolean() {
+    if !keys(v, &["id", "revision", "enabled", "sharedProfile"])
+        || !command_id(v)
+        || !v["enabled"].is_boolean()
+        || v.get("sharedProfile")
+            .is_some_and(|value| !value.is_boolean())
+    {
         return Err(error(400, "Invalid computer setting."));
     }
-    let request =
-        json!({"agent":agent,"id":v["id"],"revision":v["revision"],"enabled":v["enabled"]})
-            .to_string();
+    let mut request =
+        json!({"agent":agent,"id":v["id"],"revision":v["revision"],"enabled":v["enabled"]});
+    if let Some(shared) = v.get("sharedProfile") {
+        request["sharedProfile"] = shared.clone();
+    }
+    let request = request.to_string();
     if v["enabled"] == true && !s.computer.enabled {
         return Err(error(
             403,
@@ -171,6 +180,27 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
         if permission(c, agent)?["revision"] != v["revision"] {
             return Err(error(409, "Computer setting changed. Load latest status."));
         }
+        if let Some(shared) = v["sharedProfile"].as_bool() {
+            if (permission(c, agent)?["shared_profile"] == 1) != shared
+                && (s.computer.get(agent)?.is_some() || !waits(c, agent)?.is_empty())
+            {
+                return Err(error(
+                    409,
+                    "Stop Computer and resolve pending requests before switching profiles.",
+                ));
+            }
+            if shared {
+                c.execute(
+                    "INSERT OR IGNORE INTO computer_shared_profiles VALUES(?)",
+                    [agent],
+                )?;
+            } else {
+                c.execute(
+                    "DELETE FROM computer_shared_profiles WHERE agent=?",
+                    [agent],
+                )?;
+            }
+        }
         c.execute("INSERT INTO agent_computers VALUES(?,?,?) ON CONFLICT(agent) DO UPDATE SET enabled=excluded.enabled,revision=excluded.revision",params![agent,if v["enabled"]==true{1}else{0},v["revision"].as_i64().unwrap_or(0)+1])?;
         if v["enabled"] == false {
             c.execute("DELETE FROM computer_always_on WHERE agent=?", [agent])?;
@@ -182,6 +212,9 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
         )?;
         Ok(())
     })?;
+    if let Some(shared) = v["sharedProfile"].as_bool() {
+        s.computer.set_shared_profile(agent, shared)?;
+    }
     if v["enabled"] == false {
         s.computer.stop(agent).await?;
     }
@@ -291,11 +324,16 @@ pub async fn transition(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
             ],
         )?;
         if op != "take" {
-            for wait in waits
-                .into_iter()
-                .filter(|w| op != "dismiss" || w["turn"] == v["turn"])
-            {
-                let note = if op == "dismiss" {
+            for wait in waits.into_iter().filter(|w| {
+                if op == "dismiss" {
+                    w["turn"] == v["turn"]
+                } else {
+                    w["secret_entry"].is_null()
+                }
+            }) {
+                let note = if op == "dismiss" && !wait["secret_entry"].is_null() {
+                    "The owner declined the secure form. Continue without the value or explain what is blocked."
+                } else if op == "dismiss" {
                     "The user declined to take control. Continue without the human-only step or explain what is blocked."
                 } else {
                     "The user handed control back. The screen may have changed; take a screenshot first."
@@ -400,14 +438,53 @@ pub async fn action(
     assert_enabled(s, agent)?;
     db(s, |c| assert_recoverable(c, turn))?;
     let name = text(&call["function"], "name");
-    super::actions::validate(name, args, s.computer.width, s.computer.height)?;
+    let command = super::actions::validate(name, args, s.computer.width, s.computer.height)?;
+    if name == "computer_list_vault" {
+        let result = db(s, |c| vault::choices(s, c, agent))?;
+        tx(s, |c| {
+            journal(c, turn, call, &result, after_output, after_action)
+        })?;
+        return Ok(Outcome {
+            result,
+            image: None,
+            paused: false,
+        });
+    }
     let current = db(s, |c| control(c, agent, s.config.now()))?;
-    if current["mode"] == "user" || name == "computer_request_user" {
-        let result = json!({"status":"waiting_for_user","message":if name=="computer_request_user"{"The user must take control before this human-only step can continue."}else{"The user is controlling your computer. Wait until they hand it back."}});
+    let secret_request = if name == "computer_request_secret" && current["mode"] == "agent" {
+        let [entry, origin] = command.as_slice() else {
+            return Err(Failure::storage());
+        };
+        if db(s, |c| {
+            crate::data::exists(c, "SELECT 1 FROM vault_entries WHERE name=?", [entry])
+        })? {
+            return Err(error(409, "Choose an unused Vault entry name."));
+        }
+        let token = uuid::Uuid::new_v4().to_string();
+        let desktop = s.computer.secure_target(agent, origin, &token).await?;
+        Some((entry, origin, desktop, token))
+    } else {
+        None
+    };
+    if current["mode"] == "user" || name == "computer_request_user" || secret_request.is_some() {
+        let message = if secret_request.is_some() {
+            "Waiting for the owner to complete the secure form in Minarbot."
+        } else if name == "computer_request_user" {
+            "The user must take control before this human-only step can continue."
+        } else {
+            "The user is controlling your computer. Wait until they hand it back."
+        };
+        let result = json!({"status":"waiting_for_user","message":message});
         let wait = tx(s, |c| {
             let paused=one(c,"UPDATE turns SET status='queued',paused=1,revision=revision+1 WHERE id=? AND status='running' RETURNING revision",[turn])?.ok_or_else(||error(409,"Computer task stopped before waiting."))?;
             c.execute("INSERT INTO computer_waits VALUES(?,?,?,?,'waiting',?) ON CONFLICT(turn) DO UPDATE SET call_id=excluded.call_id,reason=excluded.reason,state='waiting',pause_revision=excluded.pause_revision",params![turn,agent,text(call,"id"),if name=="computer_request_user"{text(args,"reason")}else{""},paused["revision"].as_i64()])?;
-            c.execute("INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES(?,?,?,?,?,?)",params![turn,text(call,"id"),call.to_string(),result.to_string(),after_output,after_action])?;
+            if let Some((entry, origin, desktop, token)) = secret_request {
+                c.execute(
+                    "INSERT OR REPLACE INTO vault_requests VALUES(?,?,?,?,?,?)",
+                    params![turn, text(call, "id"), entry, origin, desktop, token],
+                )?;
+            }
+            journal(c, turn, call, &result, after_output, after_action)?;
             crate::harness::config::CardWait::checkpoint(s, c, turn)
         })?;
         if let Some(wait) = wait {
@@ -417,6 +494,37 @@ pub async fn action(
             result,
             image: None,
             paused: true,
+        });
+    }
+    if name == "computer_screenshot" && s.computer.screenshots_hidden(agent)? {
+        return Err(error(409, "Screenshots are hidden after secure fill. Ask the owner to check Computer or restart it to start a new session."));
+    }
+    if name == "computer_fill_secret" {
+        let [entry, field] = command.as_slice() else {
+            return Err(Failure::storage());
+        };
+        let (origin, value) = db(s, |c| {
+            let resolved = vault::resolve(s, c, agent, entry, field, s.config.now())?;
+            super::transaction(c, |c| {
+                mark_uncertain(c, turn, text(call, "id"))?;
+                journal(
+                    c,
+                    turn,
+                    call,
+                    &json!({"error":"Secure fill outcome is uncertain. Do not repeat this input."}),
+                    after_output,
+                    after_action,
+                )
+            })?;
+            Ok(resolved)
+        })?;
+        let filled = s.computer.secure_fill(agent, &origin, None, value).await?;
+        let result = secret_result(entry, field, filled, false);
+        tx(s, |c| complete_secret(c, turn, text(call, "id"), &result))?;
+        return Ok(Outcome {
+            result,
+            image: None,
+            paused: false,
         });
     }
     let environment = db(s, |c| {
@@ -449,7 +557,14 @@ pub async fn action(
     };
     let mut result = json!({"status":"done"});
     if let Some(title) = title {
-        result["pageTitle"] = title.into();
+        result["pageTitle"] = db(s, |c| {
+            Ok(crate::mcp::secrets::redact(
+                &title,
+                &vault::redactions(s, c)?,
+                false,
+            ))
+        })?
+        .into();
         result["note"] = "Page finished loading. Take a screenshot to see it.".into();
     }
     if image.is_some() {
@@ -473,4 +588,147 @@ pub async fn action(
         image,
         paused: false,
     })
+}
+
+fn journal(
+    c: &Connection,
+    turn: &str,
+    call: &Value,
+    result: &Value,
+    after_output: i64,
+    after_action: i64,
+) -> Result<()> {
+    c.execute(
+        "INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES(?,?,?,?,?,?)",
+        params![turn,text(call,"id"),call.to_string(),result.to_string(),after_output,after_action],
+    )?;
+    Ok(())
+}
+
+fn mark_uncertain(c: &Connection, turn: &str, call: &str) -> Result<()> {
+    c.execute(
+        "INSERT INTO computer_actions VALUES(?,?,'uncertain',NULL)",
+        params![turn, call],
+    )?;
+    Ok(())
+}
+
+fn complete_secret(c: &Connection, turn: &str, call: &str, result: &Value) -> Result<()> {
+    c.execute(
+        "UPDATE computer_actions SET state='done' WHERE turn=? AND call_id=?",
+        [turn, call],
+    )?;
+    c.execute(
+        "UPDATE flow_tool_calls SET result=? WHERE turn=? AND call_id=?",
+        params![result.to_string(), turn, call],
+    )?;
+    Ok(())
+}
+
+fn secret_result(entry: &str, field: &str, filled: bool, saved: bool) -> Value {
+    let status = if filled {
+        "done"
+    } else if saved {
+        "saved_not_filled"
+    } else {
+        "not_filled"
+    };
+    let message = if filled {
+        "Filled the focused field. Screenshots are hidden for this desktop session."
+    } else {
+        "Focus an editable field on the saved origin before filling."
+    };
+    json!({"status":status,"placeholder":vault::placeholder(entry, field),"message":message})
+}
+
+pub(super) async fn respond_secret(s: &AppState, body: &Value) -> Result<()> {
+    let (agent, turn, call, value) = (
+        text(body, "agent"),
+        text(body, "turn"),
+        text(body, "call"),
+        text(body, "value"),
+    );
+    if !keys(body, &["agent", "turn", "call", "value"])
+        || crate::web::id(agent).is_none()
+        || crate::web::id(turn).is_none()
+        || !(1..=200).contains(&call.len())
+        || !vault::value(value)
+    {
+        return Err(error(400, "Enter a valid value."));
+    }
+    let _gate = s.computer.control_gate(agent)?.lock_owned().await;
+    assert_enabled(s, agent)?;
+    let wait = db(s, |c| {
+        let wait = one(
+            c,
+            "SELECT v.*,w.pause_revision FROM vault_requests v
+            JOIN computer_waits w ON w.turn=v.turn AND w.call_id=v.call_id
+            JOIN turns t ON t.id=w.turn
+            WHERE w.turn=? AND w.agent=? AND w.call_id=? AND w.state='waiting'
+            AND t.status='queued' AND t.paused=1 AND t.revision=w.pause_revision",
+            [turn, agent, call],
+        )?
+        .ok_or_else(|| error(409, "This secure request is no longer active."))?;
+        if control(c, agent, s.config.now())?["mode"] != "agent" {
+            return Err(error(409, "Hand control back before filling this value."));
+        }
+        assert_recoverable(c, turn)?;
+        let key = vault::key(s, c, true)?;
+        super::transaction(c, |c| {
+            vault::store_requested(
+                c,
+                &key,
+                text(&wait, "entry"),
+                agent,
+                text(&wait, "origin"),
+                value,
+            )?;
+            mark_uncertain(c, turn, call)?;
+            c.execute(
+                "UPDATE flow_tool_calls SET result=? WHERE turn=? AND call_id=?",
+                params![
+                    json!({"error":"Secure fill outcome is uncertain. Do not repeat this input."})
+                        .to_string(),
+                    turn,
+                    call
+                ],
+            )?;
+            Ok(())
+        })?;
+        Ok(wait)
+    })?;
+    let filled = s
+        .computer
+        .secure_fill(
+            agent,
+            text(&wait, "origin"),
+            Some((text(&wait, "desktop"), text(&wait, "target"))),
+            value.to_owned(),
+        )
+        .await;
+    let uncertain = filled.is_err();
+    tx(s, |c| {
+        if let Ok(filled) = filled {
+            complete_secret(
+                c,
+                turn,
+                call,
+                &secret_result(text(&wait, "entry"), "value", filled, true),
+            )?;
+        }
+        c.execute("UPDATE computer_waits SET state='returned' WHERE turn=? AND call_id=? AND state='waiting'", [turn,call])?;
+        if uncertain {
+            c.execute("UPDATE turns SET status='interrupted',error='Value saved. Secure fill outcome is uncertain. Check Computer before starting a new task.',paused=0,revision=revision+1 WHERE id=? AND status='queued' AND paused=1 AND revision=?", params![turn,wait["pause_revision"].as_i64()])?;
+        } else {
+            c.execute("UPDATE turns SET paused=0,revision=revision+1,error=NULL WHERE id=? AND status='queued' AND paused=1 AND revision=?", params![turn,wait["pause_revision"].as_i64()])?;
+        }
+        Ok(())
+    })?;
+    if uncertain {
+        return Err(error(
+            503,
+            "Value saved. Secure fill outcome is uncertain. Check Computer before trying again.",
+        ));
+    }
+    Ok(())
 }

@@ -350,6 +350,11 @@ fn create(
     } else {
         field(v, "text", 16000)?
     };
+    let text = crate::mcp::secrets::redact(
+        &text,
+        &crate::computer::vault::redactions(state, db)?,
+        false,
+    );
     let mode = v
         .get("dispatchMode")
         .and_then(Value::as_str)

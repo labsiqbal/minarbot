@@ -141,6 +141,12 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
             "Update is being verified. Retry after restart.",
         ));
     }
+    if matches!(
+        path,
+        "/api/vault" | "/api/vault/delete" | "/api/vault/respond"
+    ) {
+        return computer::vault::local(state, request).await;
+    }
     if path.starts_with("/api/scripts/") {
         return Box::pin(automation::scripts::local(state, request)).await;
     }
@@ -712,6 +718,10 @@ async fn main() -> db::Result<()> {
         .transpose()?;
     let trial_pending = updates::trial(&config);
     let computer = Arc::new(computer::Manager::new(&config)?);
+    {
+        let guard = database.lock().map_err(|_| "Database lock poisoned")?;
+        computer.load_browser_profiles(&guard.connection)?;
+    }
     let state = AppState {
         database,
         config: Arc::new(config),

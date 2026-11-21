@@ -16,6 +16,7 @@ import { createServer as createNetServer } from 'node:net';
 const computerToolNames = [
   'computer_screenshot', 'computer_click', 'computer_type', 'computer_key',
   'computer_scroll', 'computer_open_url', 'computer_request_user',
+  'computer_list_vault', 'computer_fill_secret', 'computer_request_secret',
 ];
 
 async function desktopFixture() {

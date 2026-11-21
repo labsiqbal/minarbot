@@ -1,3 +1,4 @@
+use super::desktop_secret::ChromePipe;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::json;
@@ -77,6 +78,7 @@ struct Program {
 struct Supervisor {
     environment: BTreeMap<OsString, OsString>,
     programs: Vec<Program>,
+    chrome: Option<ChromePipe>,
 }
 
 impl Supervisor {
@@ -108,6 +110,7 @@ impl Supervisor {
         Ok(Self {
             environment,
             programs: Vec::new(),
+            chrome: None,
         })
     }
 
@@ -225,7 +228,8 @@ impl Supervisor {
     }
 
     fn launch_chrome(&mut self, no_sandbox: bool) -> Result<Arc<Mutex<Vec<u8>>>> {
-        let mut command = self.command("google-chrome");
+        let mut command = self.command("sh");
+        let pipe = ChromePipe::configure(&mut command)?;
         command.args([
             "--user-data-dir=/home/desktop/chrome",
             "--no-first-run",
@@ -247,6 +251,7 @@ impl Supervisor {
             command.arg("--no-sandbox");
         }
         let mut child = command.arg("about:blank").stderr(Stdio::piped()).spawn()?;
+        self.chrome = Some(pipe);
         let mut stderr = child
             .stderr
             .take()
@@ -377,6 +382,20 @@ impl Supervisor {
         let deadline = Duration::from_secs(10);
         match request.operation.as_str() {
             "input" => self.tool("xdotool", &request.args, deadline).await,
+            "secret-target" | "secret-fill" => {
+                let [origin, target, fields @ ..] = request.args.as_slice() else {
+                    return Err("Invalid secure input.".into());
+                };
+                let value = match (request.operation.as_str(), fields) {
+                    ("secret-target", []) => None,
+                    ("secret-fill", [value]) => Some(value.as_str()),
+                    _ => return Err("Invalid secure input.".into()),
+                };
+                let chrome = self.chrome.as_ref().ok_or("Browser is unavailable.")?;
+                let matched =
+                    tokio::time::timeout(deadline, chrome.focused(origin, target, value)).await??;
+                Ok(vec![u8::from(matched)])
+            }
             "capture" => {
                 let file = format!("/tmp/minarbot-{}.png", request.id);
                 let result = async {

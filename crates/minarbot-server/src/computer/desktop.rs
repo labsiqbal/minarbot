@@ -48,9 +48,8 @@ fn birth(pid: u32) -> Option<String> {
     let s = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     s.rsplit_once(") ")?.1.split(' ').nth(19).map(str::to_owned)
 }
-pub fn sandbox(profile: &Path, proxy: &Path, executable: &Path) -> Vec<String> {
+pub fn sandbox(profile: &Path, dir: &Path, proxy: &Path, executable: &Path) -> Vec<String> {
     use super::desktop_supervisor::{BINARY, PROXY};
-    let dir = profile.parent().unwrap_or(profile);
     let mut a = [
         "--die-with-parent",
         "--new-session",
@@ -142,6 +141,9 @@ struct Fixture {
     id: String,
 }
 pub struct Desktop {
+    id: String,
+    sensitive: AtomicBool,
+    _profile_lock: Option<fs::File>,
     fixture: Option<Fixture>,
     helper: AsyncMutex<Helper>,
     gate: AsyncMutex<()>,
@@ -177,6 +179,7 @@ pub struct Manager {
     input_rates: Mutex<HashMap<String, (i64, u32)>>,
     input_slots: Mutex<HashMap<String, Arc<Semaphore>>>,
     starts: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    shared_profiles: Mutex<std::collections::HashSet<String>>,
     #[cfg(test)]
     launcher: Option<PathBuf>,
 }
@@ -224,6 +227,7 @@ impl Manager {
             input_rates: Mutex::new(HashMap::new()),
             input_slots: Mutex::new(HashMap::new()),
             starts: Mutex::new(HashMap::new()),
+            shared_profiles: Mutex::new(std::collections::HashSet::new()),
             #[cfg(test)]
             launcher: None,
         };
@@ -403,13 +407,60 @@ impl Manager {
         }
         Ok(())
     }
-    fn prepare(&self, agent: &str, display: i64) -> Result<PathBuf> {
+    pub fn load_browser_profiles(&self, db: &Connection) -> crate::db::Result<()> {
+        let mut profiles = db.prepare("SELECT agent FROM computer_shared_profiles")?;
+        for id in profiles.query_map([], |row| row.get::<_, String>(0))? {
+            self.set_shared_profile(&id?, true)
+                .map_err(|error| error.message)?;
+        }
+        Ok(())
+    }
+    pub fn set_shared_profile(&self, agent: &str, shared: bool) -> Result<()> {
+        let mut agents = self
+            .shared_profiles
+            .lock()
+            .map_err(|_| Failure::storage())?;
+        if shared {
+            agents.insert(agent.to_owned());
+        } else {
+            agents.remove(agent);
+        }
+        Ok(())
+    }
+    fn browser_profile(&self, agent: &str) -> Result<(PathBuf, Option<fs::File>)> {
+        if !self
+            .shared_profiles
+            .lock()
+            .map_err(|_| Failure::storage())?
+            .contains(agent)
+        {
+            return Ok((self.root.join(agent).join("chrome"), None));
+        }
+        directory(&self.root)?;
+        let guard = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .open(self.root.join("owner-chrome.lock"))
+            .map_err(|_| Failure::storage())?;
+        rustix::fs::flock(&guard, rustix::fs::FlockOperation::NonBlockingLockExclusive).map_err(
+            |_| {
+                error(
+                    409,
+                    "Another Computer is using the shared browser profile. Stop it first.",
+                )
+            },
+        )?;
+        Ok((self.root.join("owner-chrome"), Some(guard)))
+    }
+    fn prepare(&self, agent: &str, profile: &Path, display: i64) -> Result<()> {
         directory(&self.root)?;
         let dir = self.root.join(agent);
-        let profile = dir.join("chrome");
         for p in [
             &dir,
-            &profile,
+            profile,
             &dir.join("home"),
             &dir.join("x11"),
             &profile.join("Default"),
@@ -456,7 +507,7 @@ impl Manager {
         for p in ["vnc.sock".into(), format!("X{display}")] {
             let _ = fs::remove_file(dir.join("x11").join(p));
         }
-        Ok(profile)
+        Ok(())
     }
     pub async fn start(&self, agent: &str, now: i64) -> Result<Arc<Desktop>> {
         self.start_with_environment(agent, now, &HashMap::new())
@@ -493,20 +544,23 @@ impl Manager {
         }
         let executable = std::env::current_exe()
             .map_err(|_| error(503, "Desktop supervisor is unavailable."))?;
+        let (profile, profile_lock) = self.browser_profile(agent)?;
         let display = self.reserve(agent)?;
-        let profile = match self.prepare(agent, display) {
-            Ok(v) => v,
-            Err(e) => {
-                self.release(agent)?;
-                return Err(e);
-            }
-        };
+        if let Err(err) = self.prepare(agent, &profile, display) {
+            self.release(agent)?;
+            return Err(err);
+        }
         let launcher = Path::new("/usr/bin/bwrap");
         #[cfg(test)]
         let launcher = self.launcher.as_deref().unwrap_or(launcher);
         let mut command = Command::new(launcher);
         command
-            .args(sandbox(&profile, &self.proxy_path, &executable))
+            .args(sandbox(
+                &profile,
+                &self.root.join(agent),
+                &self.proxy_path,
+                &executable,
+            ))
             .env_clear()
             .envs(environment)
             .envs([
@@ -576,6 +630,9 @@ impl Manager {
         };
         let (disconnected, _) = watch::channel(0);
         let d = Arc::new(Desktop {
+            id: uuid::Uuid::new_v4().to_string(),
+            sensitive: AtomicBool::new(false),
+            _profile_lock: profile_lock,
             fixture,
             helper: AsyncMutex::new(Helper {
                 child,
@@ -736,6 +793,59 @@ impl Manager {
         }
         result
     }
+    pub fn screenshots_hidden(&self, agent: &str) -> Result<bool> {
+        Ok(self
+            .get(agent)?
+            .is_some_and(|d| d.sensitive.load(Ordering::SeqCst)))
+    }
+    pub async fn secure_target(&self, agent: &str, origin: &str, target: &str) -> Result<String> {
+        let d = self
+            .get(agent)?
+            .ok_or_else(|| error(409, "Open the page and focus its field first."))?;
+        let _gate = d.gate.lock().await;
+        let reply = Self::request(&d, "secret-target", &[origin.into(), target.into()]).await;
+        if reply.ok().as_deref() != Some(&[1]) {
+            return Err(error(409, "Focus an editable field on the requested site."));
+        }
+        Ok(d.id.clone())
+    }
+    pub async fn secure_fill(
+        &self,
+        agent: &str,
+        origin: &str,
+        target: Option<(&str, &str)>,
+        value: String,
+    ) -> Result<bool> {
+        let Some(d) = self.get(agent)? else {
+            return Ok(false);
+        };
+        let _gate = d.gate.lock().await;
+        if target.is_some_and(|(desktop, _)| d.id != desktop) {
+            return Ok(false);
+        }
+        let token = target.map_or("", |(_, token)| token);
+        let already_hidden = d.sensitive.swap(true, Ordering::SeqCst);
+        let reply = Self::request(&d, "secret-fill", &[origin.into(), token.into(), value])
+            .await
+            .map_err(|_| {
+                error(
+                    503,
+                    "Secure fill outcome is uncertain. Check Computer before trying again.",
+                )
+            })?;
+        d.activity.store(crate::config::now(), Ordering::SeqCst);
+        match reply.as_slice() {
+            [1] => Ok(true),
+            [0] => {
+                d.sensitive.store(already_hidden, Ordering::SeqCst);
+                Ok(false)
+            }
+            _ => Err(error(
+                503,
+                "Secure fill outcome is uncertain. Check Computer before trying again.",
+            )),
+        }
+    }
     pub async fn screenshot(&self, agent: &str, jpeg: bool) -> Result<Vec<u8>> {
         let d = self
             .get(agent)?
@@ -747,6 +857,9 @@ impl Manager {
             .map_err(|_| error(429, "Computer is busy."))?;
         let _busy = Busy::new(&d.busy);
         let _gate = d.gate.lock().await;
+        if d.sensitive.load(Ordering::SeqCst) {
+            return Err(error(409, "Screenshots are hidden after secure fill. View Computer directly or stop it to start a new session."));
+        }
         let bytes = Self::request(&d, "capture", &[]).await?;
         if jpeg {
             if let Some((old, encoded)) = d.jpeg.lock().map_err(|_| Failure::storage())?.as_ref() {
@@ -873,6 +986,9 @@ impl Manager {
                         .collect(),
                 ] {
                     Self::request(&d, "input", &cmd).await?;
+                }
+                if d.sensitive.load(Ordering::SeqCst) {
+                    return Ok((None, None));
                 }
                 let title = Self::request(
                     &d,

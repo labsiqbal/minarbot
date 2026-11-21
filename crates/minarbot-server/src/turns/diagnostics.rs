@@ -6,6 +6,7 @@ pub fn secrets(state: &AppState, db: &Connection) -> Result<Vec<String>> {
         .filter_map(|account| account.key)
         .collect::<Vec<_>>();
     values.extend(crate::mcp::secrets::project(state, db, None)?);
+    values.extend(crate::computer::vault::redactions(state, db)?);
     if let Some(token) = state.config.remaining_data.script_token.clone() {
         values.push(token);
     }
