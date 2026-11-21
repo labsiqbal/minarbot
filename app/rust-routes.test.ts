@@ -24,6 +24,7 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/provider-accounts/{id}/delete', 'Removes a saved local provider account.'],
     ['/api/settings/web-search', 'Reads or saves the local SearXNG URL.'],
     ['/api/settings/web-search/test', 'Tests a SearXNG URL with one JSON search.'],
+    ['/api/settings/computer', 'Reads or starts local Computer setup.'],
     ['/api/engine-logins', 'Lists and creates local engine login profiles.'],
     ['/api/engine-logins/{id}/check', 'Checks sign-in for a local engine login.'],
     ['/api/engine-logins/{id}/remove', 'Removes an unused local engine login.'],
