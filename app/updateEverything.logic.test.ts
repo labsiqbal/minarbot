@@ -27,15 +27,15 @@ const attempt = (id: string, status: string, reason?: string): UpdateAttempt => 
 
 describe('collectServerUpdateTargets', () => {
   it('updates eligible peers and names skipped machines while connected server is already up to date', () => {
-    const ids = ['ready', 'manual', 'offline', 'disabled', 'current', 'ahead', 'busy'];
+    const ids = ['ready', 'manual', 'offline', 'stale', 'disabled', 'current', 'ahead', 'busy'];
     const rows = collectServerUpdateTargets({ ...state, available: undefined, feed: state.available }, [
-      peer('ready'), peer('manual'), peer('offline', { status: 'offline' }), peer('disabled', { allowUpdates: false }),
+      peer('ready'), peer('manual'), peer('offline', { status: 'offline' }), peer('stale', { status: 'stale' }), peer('disabled', { allowUpdates: false }),
       peer('current', { version: '0.13.0' }), peer('ahead', { version: '0.14.0' }), peer('busy'),
     ], ids.map(id => ({ machine: id, available: true, launcherAvailable: id !== 'manual', ...(id === 'busy'
       ? { lastAttempt: attempt('other-run', 'starting') } : {}) })), 'Studio');
     assert.deepEqual(rows.map(row => [row.name, row.skipped]), [
       ['Studio', 'Up to date'], ['ready', null], ['manual', 'Updates unavailable'], ['offline', 'Offline'],
-      ['disabled', 'Remote updates off'], ['current', 'Up to date'], ['ahead', 'Up to date'], ['busy', 'Already updating'],
+      ['stale', 'Status stale'], ['disabled', 'Remote updates off'], ['current', 'Up to date'], ['ahead', 'Up to date'], ['busy', 'Already updating'],
     ]);
   });
 });
