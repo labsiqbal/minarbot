@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS workflow_parallel_members(run TEXT NOT NULL,group_seq
 CREATE TABLE IF NOT EXISTS webhooks(routine TEXT PRIMARY KEY REFERENCES routines(id),route TEXT UNIQUE NOT NULL,secret TEXT NOT NULL,event_name TEXT NOT NULL,filters TEXT NOT NULL,revision INTEGER NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS webhook_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS webhook_receipts(routine TEXT NOT NULL REFERENCES routines(id),route TEXT NOT NULL,delivery TEXT NOT NULL,digest TEXT NOT NULL,received INTEGER NOT NULL,result TEXT NOT NULL,PRIMARY KEY(route,delivery)) STRICT;
+CREATE INDEX IF NOT EXISTS webhook_receipts_digest ON webhook_receipts(route,digest);
 CREATE TABLE IF NOT EXISTS workflow_webhook_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS workflow_webhook_revocations(route TEXT PRIMARY KEY,workflow TEXT NOT NULL REFERENCES workflows(id),revision INTEGER NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS workflow_webhook_receipts(route TEXT NOT NULL,delivery TEXT NOT NULL,digest TEXT NOT NULL,workflow TEXT NOT NULL REFERENCES workflows(id),received INTEGER NOT NULL,result TEXT NOT NULL,PRIMARY KEY(route,delivery)) STRICT;

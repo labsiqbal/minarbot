@@ -113,6 +113,23 @@ sudo apt install tigervnc-standalone-server xfwm4 xfdesktop4 xfce4-panel xdotool
 
 Also install [Google Chrome](https://www.google.com/chrome/) so that `google-chrome` is on the `PATH`. Add `MINARBOT_AGENT_DESKTOP=1` to `launcher.env`, restart Minarbot, then turn on **Computer** in the agent's settings. By default two computers run at once per machine, and each stops after 15 idle minutes.
 
+Enable **Always-on Computer** in the agent’s settings to start its Computer, skip idle shutdown and start it again when the server starts. It uses one of the same concurrent Computer slots. An explicit stop lasts until you start that Computer again or restart the server.
+
+Chrome uses the same profile after each start. For encryption at rest on Linux, put `agent-desktops` on an encrypted filesystem such as a LUKS volume. Set `MINARBOT_DESKTOP_DATA_DIR` to an existing absolute subdirectory inside that volume and mount it before starting Minarbot. To keep existing logins, move the `agent-desktops` directory into that location while Minarbot is stopped. Minarbot uses Chrome’s basic password store. On an unencrypted filesystem, profile data, including cookies and local storage, has filesystem permissions only. Volume encryption covers the desktop profile and home while the volume is locked. Browser data is readable by the desktop while it runs. Provision encryption separately for backups and the server database.
+
+### Routine templates
+
+Choose **Routines** → **New from template**. Register the URL from **Webhook settings** with the source. Paste the source’s signing secret into Minarbot to enable delivery. Schedule uses the routine’s time and timezone settings.
+
+| Template | Source configuration |
+| --- | --- |
+| Slack message | Events API message subscriptions. Save the app’s signing secret in Minarbot before registering the URL. Bot messages are ignored. |
+| Linear issue | Issue webhooks and their signing secret. |
+| Sentry alert | Internal integration issue alert action and the integration’s client secret. |
+| GitHub issue | Repository webhook with content type \`application/json\` and the Issues event. Use the same secret on both sides. |
+
+External services need a reachable HTTPS endpoint. Use a relay or reverse proxy that forwards only the assigned webhook path and preserves the raw body and signature headers. Keep the Minarbot UI and other API routes private. Signing secrets are encrypted with a host-local key. Re-enter secrets after moving the database to another host. Event payloads become reference data in the routine’s conversation and go to its model provider. **Pause** stops new deliveries from starting runs.
+
 ## Run from source
 
 You need Node.js 22.23.4 or later, npm, and a Rust toolchain.

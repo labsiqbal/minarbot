@@ -31,6 +31,7 @@ pub fn initialize(db: &Connection) -> Result<()> {
         ("routines", "report_to", "TEXT NOT NULL DEFAULT 'run'"),
         ("routines", "schedule_json", "TEXT"),
         ("routines", "schedule_zone", "TEXT"),
+        ("routines", "webhook_source", "TEXT"),
         ("workflow_runs", "retry_settings", "TEXT"),
         ("workflow_steps", "parallel_group", "INTEGER"),
         ("workflow_steps", "parallel_branch", "INTEGER"),

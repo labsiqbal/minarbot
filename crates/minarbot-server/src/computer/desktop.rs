@@ -172,6 +172,7 @@ pub struct Manager {
     proxy_stop: watch::Sender<bool>,
     _proxy_task: Option<tokio::task::JoinHandle<()>>,
     closing: AtomicBool,
+    pub(super) always_on_gate: AsyncMutex<()>,
     pub controls: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     input_rates: Mutex<HashMap<String, (i64, u32)>>,
     input_slots: Mutex<HashMap<String, Arc<Semaphore>>>,
@@ -218,6 +219,7 @@ impl Manager {
             proxy_stop: stop,
             _proxy_task: None,
             closing: AtomicBool::new(false),
+            always_on_gate: AsyncMutex::new(()),
             controls: Mutex::new(HashMap::new()),
             input_rates: Mutex::new(HashMap::new()),
             input_slots: Mutex::new(HashMap::new()),
@@ -309,6 +311,26 @@ impl Manager {
         Ok(
             json!({"available":self.enabled,"state":state,"stopsInMs":d.map(|d|(d.activity.load(Ordering::SeqCst)+self.idle-now).max(0)),"width":self.width,"height":self.height}),
         )
+    }
+    pub(super) fn at_capacity(&self, agent: &str, pinned: usize) -> Result<bool> {
+        if pinned >= self.max {
+            return Ok(true);
+        }
+        let leases = self.leases.lock().map_err(|_| Failure::storage())?;
+        let Some(db) = leases.as_ref() else {
+            return Ok(false);
+        };
+        let leases = crate::files::rows(
+            db,
+            "SELECT agent,pid,birth FROM leases WHERE scope=?",
+            [self.root.to_string_lossy()],
+        )?;
+        let active = leases.iter().filter(|row| {
+            row["agent"] != agent
+                && birth(row["pid"].as_u64().unwrap_or(0) as u32).as_deref()
+                    == row["birth"].as_str()
+        });
+        Ok(active.count() >= self.max)
     }
     fn reserve(&self, agent: &str) -> Result<i64> {
         let mut guard = self.leases.lock().map_err(|_| Failure::storage())?;
@@ -881,7 +903,7 @@ impl Manager {
         d.activity.store(crate::config::now(), Ordering::SeqCst);
         result
     }
-    pub async fn maintain(&self, now: i64) -> Result<()> {
+    pub async fn maintain(&self, now: i64, always_on: impl Fn(&str) -> Result<bool>) -> Result<()> {
         let rows = self
             .desktops
             .lock()
@@ -890,6 +912,16 @@ impl Manager {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect::<Vec<_>>();
         for (agent, d) in rows {
+            let gate = self.control_gate(&agent)?;
+            let Ok(_guard) = gate.try_lock() else {
+                continue;
+            };
+            if !self
+                .get(&agent)?
+                .is_some_and(|current| Arc::ptr_eq(&current, &d))
+            {
+                continue;
+            }
             let exited = if let Some(fixture) = &d.fixture {
                 fixture
                     .bridge
@@ -906,7 +938,8 @@ impl Manager {
             if exited
                 || (!d.starting.load(Ordering::SeqCst)
                     && d.busy.load(Ordering::SeqCst) == 0
-                    && now - d.activity.load(Ordering::SeqCst) >= self.idle)
+                    && now - d.activity.load(Ordering::SeqCst) >= self.idle
+                    && !always_on(&agent)?)
             {
                 self.stop(&agent).await?;
             }

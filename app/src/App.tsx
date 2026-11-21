@@ -90,6 +90,7 @@ import './ui/kit.css';
 import './ui/density.css';
 import './Routines.css';
 import { RoutineSchedule, scheduleLabel, type RoutineTiming } from './RoutineSchedule';
+import { RoutineTemplatePicker, routineTemplates, type RoutineTemplate, type WebhookSource } from './RoutineTemplates';
 import '@fontsource-variable/inter';
 
 import { WorkspacePanel, MemoryPanel, WorkflowPanel, WorkflowDirectory, GeneralSettings, PresentationSettings, SharedDataPanel, UsagePanel, BackupPanel, AgentTemplateImport, AgentTemplateExport, McpServerPanel, McpPanel, HubConnection, ConnectedAppsPanel, SkillsPanel, panelPrefetchers, settingsPrefetch } from './lazyPanels';
@@ -559,9 +560,9 @@ function WorkflowConversation({ agent, threadId, configured, onOpenAgent, onOpen
   return <Chat key={thread.id} agent={agent} thread={thread} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />;
 }
 
-type Routine = { trigger: 'schedule' | 'webhook' | 'manual' | 'script'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number; project?: string | null; project_name?: string | null; report_to?: string; report_section?: string | null; schedule?: import('../shared/routine-schedule').Spec | null; schedule_zone?: string | null; routineReport?: { run: string; status: string; thread: string }; owner_name?: string; flow_agents?: number; last_source?: string | null; last_scheduled_at?: number | null; last_status?: string | null; last_paused?: number | null; last_no_update?: number | null; last_created?: string | null; last_thread?: string | null };
+type Routine = { webhook_source?: WebhookSource | null; trigger: 'schedule' | 'webhook' | 'manual' | 'script'; id: string; agent: string; name: string; prompt: string; next_at: number; interval_ms: number | null; enabled: number; revision: number; project?: string | null; project_name?: string | null; report_to?: string; report_section?: string | null; schedule?: import('../shared/routine-schedule').Spec | null; schedule_zone?: string | null; routineReport?: { run: string; status: string; thread: string }; owner_name?: string; flow_agents?: number; last_source?: string | null; last_scheduled_at?: number | null; last_status?: string | null; last_paused?: number | null; last_no_update?: number | null; last_created?: string | null; last_thread?: string | null };
 type RoutineRun = { paused: number; source: string; no_update: number; turn: string; thread: string; scheduled_at: number | null; created: string; missed: number; status: string; reply: string | null; error: string | null };
-type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; trigger?: 'schedule' | 'webhook' | 'manual' | 'script'; name: string; prompt: string; nextAt?: number; intervalSeconds?: number | null; schedule?: import('../shared/routine-schedule').Spec; zone?: string; project?: string | null; reportTo?: string; enabled: boolean } };
+type RoutineCommand = { routineId: string | null; data: { id: string; revision?: number; webhookSource?: WebhookSource; trigger?: 'schedule' | 'webhook' | 'manual' | 'script'; name: string; prompt: string; nextAt?: number; intervalSeconds?: number | null; schedule?: import('../shared/routine-schedule').Spec; zone?: string; project?: string | null; reportTo?: string; enabled: boolean } };
 const routineReportLabel = (routine: Routine) => routine.report_section ? `${routine.project_name ?? 'Project'} / # ${routine.report_section}` : routine.report_to === 'direct' ? "Owner agent's direct chat" : "Only in the run's own conversation";
 function SectionRoutines({channel,onOpen}:{channel:string;onOpen?:(agent:string,thread:string)=>void}) {
   const [rows,setRows]=useState<Routine[] | null>(null),[error,setError]=useState('');
@@ -593,6 +594,7 @@ function pendingRoutine(agent: string): RoutineCommand | null {
   try {
     const value = JSON.parse(sessionStorage.getItem(`minarbot:routine-command:${agent}`) ?? 'null'), data = value?.data;
     return value && typeof data?.id === 'string' && typeof data.name === 'string' && typeof data.prompt === 'string' && typeof data.enabled === 'boolean'
+      && (data.webhookSource === undefined || typeof data.webhookSource === 'string' && data.webhookSource !== 'schedule' && Object.hasOwn(routineTemplates, data.webhookSource) && data.trigger === 'webhook')
       && (data.schedule && typeof data.schedule === 'object' && typeof data.schedule.kind === 'string' && typeof data.zone === 'string'
         || Number.isSafeInteger(data.nextAt) && data.nextAt > 0 && data.nextAt <= 253370764799999 && (data.intervalSeconds === null || Number.isSafeInteger(data.intervalSeconds)))
       && (value.routineId === null || typeof value.routineId === 'string') ? value : null;
@@ -643,10 +645,13 @@ type WebhookConfig = { route: string; revision: number; url: string; event_name:
 function WebhookSettings({ routine, onBack }: { routine: Routine; onBack: () => void }) {
   type Command = { id: string; revision: number; rotate: boolean; eventName: string; filters: unknown[] };
   const key = `minarbot:webhook:${routine.id}`, path = `/api/routines/${routine.id}/webhook`;
+  const source = routine.webhook_source;
   const [pending, setPending] = useState<Command | null>(() => {
+    if (source) return null;
     try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.rotate === 'boolean' && typeof value.eventName === 'string' && Array.isArray(value.filters) ? value : null; } catch { return null; }
   });
   const [hook, setHook] = useState<WebhookConfig | null | undefined>(undefined), [secret, setSecret] = useState('');
+  const configured = !!hook && hook.revision > 0;
   const [events, setEvents] = useState<{ delivery: string; received: number; result: { outcome: string; reason?: string } }[]>([]);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [conflict, setConflict] = useState(false), [reload, setReload] = useState(0);
   const mounted = useRef(true), loadVersion = useRef(0);
@@ -660,37 +665,48 @@ function WebhookSettings({ routine, onBack }: { routine: Routine; onBack: () => 
   }, [path, routine.id, reload]);
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || conflict || hook === undefined) return;
-    let request: Command;
+    const fields = new FormData(event.currentTarget);
+    const signingSecret = fields.get('signingSecret');
+    let request: Command | { id: string; revision: number; filters: unknown[]; signingSecret?: string };
     try {
-      const fields = new FormData(event.currentTarget);
-      request = pending ?? { id: crypto.randomUUID(), revision: hook?.revision ?? 0, rotate: !hook || fields.get('rotate') === 'on', eventName: String(fields.get('eventName')), filters: JSON.parse(String(fields.get('filters'))) };
-      if (!Array.isArray(request.filters)) throw new Error('Filter must be a JSON list.');
-      sessionStorage.setItem(key, JSON.stringify(request));
+      const base = { id: crypto.randomUUID(), revision: hook?.revision ?? 0, filters: pending?.filters ?? JSON.parse(String(fields.get('filters'))) };
+      if (!Array.isArray(base.filters)) throw new Error('Filter must be a JSON list.');
+      if (source) {
+        request = { ...base, ...(typeof signingSecret === 'string' && signingSecret ? { signingSecret } : {}) };
+      } else {
+        const command = pending ?? { ...base, rotate: !hook || fields.get('rotate') === 'on', eventName: String(fields.get('eventName')) };
+        sessionStorage.setItem(key, JSON.stringify(command));
+        setPending(command);
+        request = command;
+      }
     } catch { setError('Filter must be a valid JSON list and browser storage must be available.'); return; }
-    loadVersion.current++; setPending(request); setBusy(true); setError(''); setSecret('');
+    loadVersion.current++; setBusy(true); setError(''); setSecret('');
     try {
       const result = await api<WebhookConfig>(path, request);
       const latest = await api<WebhookConfig | null>(path);
       if (!mounted.current) return;
       if (!latest || latest.revision !== result.revision || latest.route !== result.route) throw new HttpError(409, 'Webhook changed. Reload before using the secret.');
-      sessionStorage.removeItem(key); setPending(null); setHook(latest); setSecret(result.secret ?? '');
+      if (!source) sessionStorage.removeItem(key);
+      setPending(null); setHook(latest); setSecret(source ? '' : result.secret ?? '');
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setConflict(true); }
+      if (source) setConflict(error instanceof HttpError && error.status === 409);
+      else if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setConflict(true); }
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
   return <div className="k-page bs-root">
-    <PageHeader title={`Webhook ${routine.name}`} description="The local URL receives signed events while Minarbot is running. Payloads are sent to the provider. This URL is not available from the internet."
+    <PageHeader title={source ? `${routineTemplates[source].name} webhook` : `Webhook ${routine.name}`} description={source ? undefined : 'The local URL receives signed events while Minarbot is running. Payloads are sent to the provider. This URL is not available from the internet.'}
       actions={<><Button variant="ghost" onClick={onBack}>Back</Button><IconButton label="Reload webhook" disabled={busy} onClick={() => { setSecret(''); setReload(value => value + 1); }}><RefreshCw size={15} aria-hidden /></IconButton></>} />
     {hook && <Field label="Webhook URL"><Input readOnly value={hook.url} onFocus={event => event.target.select()} /></Field>}
     {secret && <Field label="New secret" hint="Copy this to the sender’s secret storage. The secret is not saved in the browser and will not be shown again after the page closes."><Input readOnly value={secret} autoComplete="off" spellCheck={false} onFocus={event => event.target.select()} /></Field>}
     {hook === undefined ? <p role="status">Loading webhook...</p> : <form className="k-fieldset" key={`${hook?.route ?? 'new'}:${hook?.revision ?? 0}:${reload}`} onSubmit={save}>
-      <Field label="Event name" hint="Leave empty for all events."><Input name="eventName" maxLength={256} readOnly={!!pending} defaultValue={pending?.eventName ?? hook?.event_name ?? ''} /></Field>
-      <Field label="Payload filters" hint={<>JSON filter list, example: {'[{"pointer":"/environment","equals":"production"}]'}. All filters must match.</>}><Textarea name="filters" rows={4} readOnly={!!pending} defaultValue={JSON.stringify(pending?.filters ?? hook?.filters ?? [], null, 2)} /></Field>
-      {hook && <label className="k-check"><input type="checkbox" name="rotate" disabled={!!pending} defaultChecked={pending?.rotate ?? false} />Rotate secret. The old secret becomes invalid immediately.</label>}
+      {source ? <Field label="Signing secret"><Input name="signingSecret" type="password" autoComplete="new-password" spellCheck={false} required={!configured} minLength={16} maxLength={512} placeholder={configured ? 'Enter new secret to rotate' : undefined} /></Field> :
+        <Field label="Event name" hint="Leave empty for all events."><Input name="eventName" maxLength={256} readOnly={!!pending} defaultValue={pending?.eventName ?? hook?.event_name ?? ''} /></Field>}
+      <Field label="Payload filters" hint={source ? undefined : <>JSON filter list, example: {'[{"pointer":"/environment","equals":"production"}]'}. All filters must match.</>}><Textarea name="filters" rows={4} readOnly={!!pending} defaultValue={JSON.stringify(pending?.filters ?? hook?.filters ?? [], null, 2)} /></Field>
+      {hook && !source && <label className="k-check"><input type="checkbox" name="rotate" disabled={!!pending} defaultChecked={pending?.rotate ?? false} />Rotate secret. The old secret becomes invalid immediately.</label>}
       {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Save is not confirmed yet">Try again with the same request.</RecoveryAlert>}
-      <div><Button type="submit" variant="primary" busy={busy} disabled={busy || conflict}>{busy ? 'Saving...' : pending ? 'Retry saving webhook' : hook ? 'Save webhook' : 'Create URL and secret'}</Button></div>
+      <div><Button type="submit" variant="primary" busy={busy} disabled={busy || conflict}>{busy ? 'Saving...' : pending ? 'Retry saving webhook' : configured ? 'Save webhook' : source ? 'Enable webhook' : 'Create URL and secret'}</Button></div>
     </form>}
     {error && <Alert tone="error">{error}</Alert>}
     <Section title="Received events">{!events.length ? <EmptyState title="No saved events">Reload to see new events.</EmptyState> : <Card>{events.map(event => <Row key={`${event.delivery}:${event.received}`} title={event.delivery} meta={<><span>{new Date(event.received).toLocaleString('en-US')}</span><Badge>{event.result.outcome === 'queued' ? 'Accepted for execution' : 'Ignored'}</Badge></>}>{event.result.reason && <span className="k-field__hint">{event.result.reason}</span>}</Row>)}</Card>}</Section>
@@ -771,7 +787,8 @@ function FlowEditor({ routine, onOpen }: { routine: Routine; onOpen: (thread: st
 }
 
 function routineTriggerLabel(routine: Routine) {
-  if (routine.trigger !== 'schedule') return routine.trigger === 'webhook' ? 'Webhook' : routine.trigger === 'script' ? 'Local script' : 'Manual';
+  if (routine.trigger === 'webhook') return routine.webhook_source ? routineTemplates[routine.webhook_source].name : 'Webhook';
+  if (routine.trigger !== 'schedule') return routine.trigger === 'script' ? 'Local script' : 'Manual';
   return scheduleLabel(routine.schedule, routine.next_at, routine.interval_ms, routine.schedule_zone);
 }
 function relativeRun(value: string | number) {
@@ -795,6 +812,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [reload, setReload] = useState(0);
   const [filters, setFilters] = useState({ search: '', agent: initialAgent ?? '', enabled: '', trigger: '', project: '' }), [cursors, setCursors] = useState(['']);
   const [editing, setEditing] = useState<Routine | null | undefined>(undefined), [detail, setDetail] = useState<Routine | null>(null), [webhook, setWebhook] = useState<Routine | null>(null);
+  const [pickingTemplate, setPickingTemplate] = useState(false), [template, setTemplate] = useState<RoutineTemplate>();
   const heading = useRef<HTMLHeadingElement>(null), confirm = useConfirm(), flight = useRef(false), mounted = useRef(true), loadVersion = useRef(0);
   const after = cursors.at(-1)!;
   const path = `/api/routines?${new URLSearchParams({ ...filters, after })}`;
@@ -855,17 +873,23 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
   const recovery = <>{blocked && <Alert tone="error" title="Routine recovery could not be read" actions={<Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button>}>Check routine settings and run history before discarding.</Alert>}{pending && <RecoveryAlert inFlight={busy} tone="warn" title="Request is not confirmed yet" actions={<><Button disabled={busy} busy={busy} onClick={() => void command(pending)}>Retry request</Button><Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button></>}>Retry the original request to check its result without duplicating work.</RecoveryAlert>}{error && <Alert tone="error" actions={<Button size="sm" onClick={() => { setError(''); setReload(value => value + 1); }}>Reload routines</Button>}>{error}</Alert>}{notice && <p role="status" className="k-field__hint">{notice}</p>}</>;
   const hasFilters = Object.values(filters).some(Boolean) || !!after;
   const showFilters = !!page?.routines.length || hasFilters;
-  const newRoutine = agents.length > 0 && <Button disabled={locked} variant="primary" icon={<Plus size={14} aria-hidden />} onClick={() => setEditing(null)}>{agents.some(agent => pendingRoutine(agent.id)) ? 'Resume saving' : 'New routine'}</Button>;
+  const recovering = agents.some(agent => pendingRoutine(agent.id));
+  const newRoutine = agents.length > 0 && <Button disabled={locked} variant="primary" icon={<Plus size={14} aria-hidden />} onClick={() => { setTemplate(undefined); setEditing(null); }}>{recovering ? 'Resume saving' : 'New routine'}</Button>;
   const editingOwner = editing ? owner(editing.agent) : agents.find(agent => pendingRoutine(agent.id)) ?? owner(filters.agent) ?? agents[0];
   return <>
     {webhook ? <WebhookSettings key={webhook.id} routine={webhook} onBack={() => setWebhook(null)} /> : detail ? <RoutineDetail routine={detail} locked={locked || !fresh} recovery={recovery} onBack={() => { setDetail(null); setReload(value => value + 1); }} onEdit={() => setEditing(detail)} onRun={() => run(detail)} onToggle={() => toggle(detail)} onDelete={() => void remove(detail)} onWebhook={() => setWebhook(detail)} onOpen={onOpen} /> : <div className="k-page bs-root routines-hub">
-      <PageHeader headingRef={heading} title="Routines" actions={showFilters && newRoutine} />
+      <PageHeader headingRef={heading} title="Routines" actions={agents.length > 0 && <><Button disabled={locked || recovering} onClick={() => setPickingTemplate(true)}>New from template</Button>{showFilters && newRoutine}</>} />
       {showFilters && <div className="routine-filters"><Field label="Search routines"><Input type="search" maxLength={80} value={filters.search} onChange={event => filter('search', event.target.value)} placeholder="Search by name" /></Field><Field label="Agent"><Select value={filters.agent} onChange={value => filter('agent', value)} options={[{ value: '', label: 'All agents' }, ...agents.map(agent => ({ value: agent.id, label: agent.name }))]} /></Field><Field label="Status"><Select value={filters.enabled} onChange={value => filter('enabled', value)} options={[{ value: '', label: 'All statuses' }, { value: '1', label: 'Enabled' }, { value: '0', label: 'Disabled' }]} /></Field><Field label="Project"><Select value={filters.project} onChange={value => filter('project', value)} options={[{ value: '', label: 'All projects' }, { value: 'none', label: 'No project' }, ...projects.map(project => ({ value: project.id, label: project.name }))]} /></Field><Field label="Trigger"><Select value={filters.trigger} onChange={value => filter('trigger', value)} options={[{ value: '', label: 'All triggers' }, { value: 'once', label: 'Once' }, { value: 'recurring', label: 'Recurring schedule' }, { value: 'webhook', label: 'Webhook' }, { value: 'manual', label: 'Manual' }, { value: 'script', label: 'Local script' }]} /></Field></div>}
       {recovery}
       {!page ? <><span className="sr-only" role="status">Loading routines...</span><SkeletonRows /></> : !page.routines.length ? <EmptyState icon={<CalendarClock size={20} aria-hidden />} title={hasFilters ? 'No matching routines' : 'No routines yet'} action={hasFilters ? <Button onClick={() => { setFilters({ search: '', agent: '', enabled: '', trigger: '', project: '' }); setCursors(['']); }}>Clear filters</Button> : newRoutine}></EmptyState> : <div className="k-table-wrap"><table className="k-table routine-table"><thead><tr><th>Routine</th><th>Owner</th><th>Project</th><th>Report to</th><th>Trigger</th><th>Last run</th><th>Next run</th><th>Enabled</th></tr></thead><tbody>{page.routines.map(row => <tr key={row.id}><td><button type="button" className="routine-name k-link" disabled={!fresh} onClick={() => { setNotice(''); setDetail(row); }}>{row.name}</button>{Number(row.flow_agents) > 1 && <Badge>{row.flow_agents} agents</Badge>}</td><td><span className="routine-owner">{owner(row.agent) && <AgentAvatar agent={owner(row.agent)!} size={24} />}<span>{row.owner_name}</span></span></td><td>{row.project_name ?? <span className="k-field__hint">No project</span>}</td><td>{routineReportLabel(row)}</td><td>{routineTriggerLabel(row)}</td><td>{row.last_status && row.last_thread ? <button type="button" className="routine-run k-link" onClick={() => onOpen(row.agent, row.last_thread!)}><span>{runStatus({ status: row.last_status, paused: row.last_paused, no_update: row.last_no_update })}</span><time dateTime={row.last_created!}>{relativeRun(row.last_created!)}</time></button> : <span className="k-field__hint">Never run</span>}</td><td>{row.enabled && row.trigger === 'schedule' ? <time title={new Date(row.next_at).toLocaleString('en-US')} dateTime={new Date(row.next_at).toISOString()}>{relativeRun(row.next_at)}</time> : <span className="k-field__hint">{row.enabled ? 'On demand' : 'Paused'}</span>}</td><td><Switch checked={!!row.enabled} disabled={locked || !fresh} label={`Enable ${row.name}`} onChange={() => toggle(row)} /></td></tr>)}</tbody></table></div>}
       {(cursors.length > 1 || !!page?.next_after) && <div className="k-pager"><IconButton label="Previous routines" disabled={cursors.length < 2} onClick={() => setCursors(values => values.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Next routines" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(values => [...values, page.next_after!]); }}><ChevronRight size={16} aria-hidden /></IconButton></div>}
     </div>}
-    {editing !== undefined && editingOwner && <RoutineForm key={editing?.id ?? 'new'} owner={editingOwner} agents={agents} projects={projects} routine={editing} onSaved={updated => { setDetail(current => current?.id === updated.id ? { ...current, ...updated } : current); setEditing(undefined); setReload(value => value + 1); }} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />}
+    {pickingTemplate && <RoutineTemplatePicker onClose={() => setPickingTemplate(false)} onPick={value => { setTemplate(value); setPickingTemplate(false); setEditing(null); }} />}
+    {editing !== undefined && editingOwner && <RoutineForm key={editing?.id ?? 'new'} owner={editingOwner} agents={agents} projects={projects} routine={editing} template={editing ? undefined : template} onSaved={updated => {
+      if (!editing && updated.webhook_source) { setDetail(updated); setWebhook(updated); }
+      else setDetail(current => current?.id === updated.id ? { ...current, ...updated } : current);
+      setEditing(undefined); setReload(value => value + 1);
+    }} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />}
   </>;
 }
 function RoutineDetail({ routine, locked, recovery, onBack, onEdit, onRun, onToggle, onDelete, onWebhook, onOpen }: { routine: Routine; locked: boolean; recovery: ReactNode; onBack: () => void; onEdit: () => void; onRun: () => void; onToggle: () => void; onDelete: () => void; onWebhook: () => void; onOpen: (owner: string, thread: string) => void }) {
@@ -888,7 +912,7 @@ function RoutineDetail({ routine, locked, recovery, onBack, onEdit, onRun, onTog
     </Tabs>
   </div>;
 }
-function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { owner: Agent; agents: Agent[]; projects: import('../shared/local-project').LocalProject[]; routine: Routine | null; onBack: () => void; onSaved: (routine: Routine) => void }) {
+function RoutineForm({ owner, agents, projects, routine, template, onBack, onSaved }: { owner: Agent; agents: Agent[]; projects: import('../shared/local-project').LocalProject[]; routine: Routine | null; template?: RoutineTemplate; onBack: () => void; onSaved: (routine: Routine) => void }) {
   const [agent, setAgent] = useState(owner);
   const key = `minarbot:routine-command:${agent.id}`;
   const pending = useRef<RoutineCommand | null>(pendingRoutine(owner.id));
@@ -899,7 +923,9 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
   const revision = initial?.data.revision ?? routine?.revision;
   const [conflict, setConflict] = useState(false);
   const snapshot = initial?.data;
-  const savedTrigger = snapshot?.trigger ?? routine?.trigger ?? 'schedule';
+  const preset = template ? routineTemplates[template] : undefined;
+  const webhookSource = snapshot?.webhookSource ?? routine?.webhook_source ?? (template && template !== 'schedule' ? template : undefined);
+  const savedTrigger = snapshot?.trigger ?? routine?.trigger ?? (webhookSource ? 'webhook' : 'schedule');
   const [trigger, setTrigger] = useState<Routine['trigger']>(savedTrigger);
   const [enabled, setEnabled] = useState(snapshot?.enabled ?? (routine ? !!routine.enabled : true));
   const [project,setProject] = useState(snapshot?.project ?? routine?.project ?? null), [reportTo,setReportTo] = useState(snapshot?.reportTo ?? routine?.report_to ?? 'direct');
@@ -913,6 +939,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
     event.preventDefault(); if (busy || conflict || blocked || !pending.current && trigger === 'schedule' && !timing) return;
     const fields = new FormData(event.currentTarget);
     const request: RoutineCommand = pending.current ?? { routineId, data: { id: crypto.randomUUID(), ...(routineId ? { revision } : {}), name: String(fields.get('name')).trim(), prompt: String(fields.get('prompt')).trim(), trigger,
+      ...(!routineId && webhookSource && trigger === 'webhook' ? { webhookSource } : {}),
       ...(trigger === 'schedule' && timing ? timing : { nextAt: scheduleStart, intervalSeconds: routine?.interval_ms === null || !routine ? null : routine.interval_ms / 1000 }), project, reportTo, enabled } };
     try { sessionStorage.setItem(key, JSON.stringify(request)); } catch { setError('Save status was not saved in the browser. Check site storage.'); return; }
     pending.current = request; setBusy(true); setError('');
@@ -929,7 +956,7 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
     } finally { if (mounted.current) setBusy(false); }
   }
   return <Dialog open size="lg" onOpenChange={open => { if (!open && !busy) onBack(); }} title={initial?.routineId || routine ? 'Edit routine' : 'New routine'}
-    description="Each run opens a separate conversation and can share its result. Minarbot must be running for schedules."
+    description={preset ? undefined : 'Each run opens a separate conversation and can share its result. Minarbot must be running for schedules.'}
     footer={<><span className="k-dialog__foot-start"><Checkbox checked={enabled} onChange={setEnabled} disabled={!!pending.current || busy || blocked} label="Enabled" /></span><Button disabled={busy} onClick={onBack}>{conflict ? 'Discard changes and reload' : 'Cancel'}</Button><Button type="submit" form="routine-form" variant="primary" busy={busy} disabled={busy || conflict || blocked || !pending.current && trigger === 'schedule' && !timing}>{busy ? 'Saving...' : pending.current ? 'Retry save' : 'Save routine'}</Button></>}>
     <form id="routine-form" className="k-fieldset bs-root" onSubmit={save}>
       {blocked && <Alert tone="error" title="Routine recovery could not be read" actions={<Button onClick={async () => {
@@ -937,10 +964,10 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
         try { sessionStorage.removeItem(key); setBlocked(false); } catch { setError('Browser storage is unavailable. Check site storage before saving.'); }
       }}>Discard recovery</Button>}>Check saved routines before discarding this request.</Alert>}
       <div className="k-grid-2"><Field label="Owner agent" hint={routineId ? 'The owner cannot change after creation.' : undefined}><Select value={agent.id} disabled={!!routineId || !!pending.current || busy || blocked} onChange={id => { const next = agents.find(item => item.id === id); if (next) {setAgent(next); if(project && !projects.find(item=>item.id===project)?.members.some(member=>member.agent===next.id)) {setProject(null);setReportTo('direct');}} }} options={agents.map(item => ({ value: item.id, label: item.name, disabled: item.id !== agent.id && !!pendingRoutine(item.id) }))} /></Field>
-      <Field label="Name"><Input name="name" required maxLength={80} readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} placeholder="Morning briefing" /></Field></div>
-      <Field label="Instructions"><Textarea name="prompt" required maxLength={16000} readOnly={!!pending.current} defaultValue={snapshot?.prompt ?? routine?.prompt} rows={3} placeholder="What should this routine do?" /></Field>
-      <Field label="Trigger"><Select value={trigger} disabled={!!pending.current || busy} onChange={value=>setTrigger(value as Routine['trigger'])} options={[{ value: 'schedule', label: 'Schedule' }, { value: 'manual', label: 'Manual' }, { value: 'webhook', label: 'Webhook' }, { value: 'script', label: 'Local script' }]} /></Field>
-      {trigger === 'webhook' && <Alert>After saving, open Webhook settings to create a URL and secret. Changing this trigger removes the old URL and secret.</Alert>}
+      <Field label="Name"><Input name="name" required maxLength={80} readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name ?? preset?.name} placeholder="Morning briefing" /></Field></div>
+      <Field label="Instructions"><Textarea name="prompt" required maxLength={16000} readOnly={!!pending.current} defaultValue={snapshot?.prompt ?? routine?.prompt ?? preset?.prompt} rows={3} placeholder="What should this routine do?" /></Field>
+      <Field label="Trigger"><Select value={trigger} disabled={!!pending.current || busy} onChange={value=>setTrigger(value as Routine['trigger'])} options={[{ value: 'schedule', label: 'Schedule' }, { value: 'manual', label: 'Manual' }, { value: 'webhook', label: webhookSource ? routineTemplates[webhookSource].name : 'Webhook' }, { value: 'script', label: 'Local script' }]} /></Field>
+      {trigger === 'webhook' && !webhookSource && <Alert>After saving, open Webhook settings to create a URL and secret. Changing this trigger removes the old URL and secret.</Alert>}
       {trigger === 'script' && <Alert>After saving, allow Local script access in the routine overview. Scripts use the existing server token and this routine's ID.</Alert>}
       <RoutineSchedule initial={scheduleInitial} initialNextAt={scheduleStart} initialInterval={snapshot?.intervalSeconds === undefined ? routine?.interval_ms ?? null : snapshot.intervalSeconds === null ? null : snapshot.intervalSeconds*1000} initialZone={snapshot?.zone ?? routine?.schedule_zone} legacy={!snapshot?.schedule && !routine?.schedule} disabled={!!pending.current || busy || blocked} active={trigger === 'schedule'} onChange={setTiming} />
       <div className="k-grid-2"><Field label="Project" hint="Project runs use its folders and access grants."><Select value={project ?? ''} disabled={!!pending.current || busy || blocked} onChange={value=>{setProject(value || null);setReportTo(value ? 'run' : 'direct');}} options={[{value:'',label:'No project'},...projects.map(item=>({value:item.id,label:item.name,disabled:!item.members.some(member=>member.agent===agent.id),hint:item.members.some(member=>member.agent===agent.id) ? undefined : 'Owner agent must be a member'}))]} /></Field><Field label="Report to" hint="Reports never start replies from other agents."><Select value={reportTo} disabled={!!pending.current || busy || blocked} onChange={setReportTo} options={[{value:'direct',label:"Owner agent's direct chat"},{value:'run',label:"Only in the run's own conversation"},...(projects.find(item=>item.id===project)?.sections.filter(section=>!section.archived).map(section=>({value:section.id,label:`${projects.find(item=>item.id===project)!.name} / # ${section.name}`})) ?? [])]} /></Field></div>

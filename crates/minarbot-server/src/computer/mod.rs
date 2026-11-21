@@ -197,10 +197,20 @@ pub fn maintenance(state: AppState) -> Vec<tokio::task::JoinHandle<()>> {
                 .unwrap_or(900000)
                 .clamp(1, 10000) as u64;
             let mut timer = tokio::time::interval(std::time::Duration::from_millis(interval));
+            let mut restore = desktop.computer.enabled;
             loop {
                 timer.tick().await;
                 if !crate::updates::pending(&desktop) {
-                    let _ = desktop.computer.maintain(desktop.config.now()).await;
+                    if restore {
+                        restore = false;
+                        control::restore_always_on(&desktop).await;
+                    }
+                    let _ = desktop
+                        .computer
+                        .maintain(desktop.config.now(), |agent| {
+                            control::always_on(&desktop, agent)
+                        })
+                        .await;
                 }
             }
         }),

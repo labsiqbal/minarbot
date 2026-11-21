@@ -293,10 +293,10 @@ async fn viewer_capture_does_not_extend_idle_lease_and_supervisor_is_reused() ->
             .count(),
         12
     );
-    check(manager.maintain(1500).await)?;
+    check(manager.maintain(1500, |_| Ok(false)).await)?;
     assert!(check(manager.get(FIRST))?.is_some());
     let mut viewer = desktop.disconnected.subscribe();
-    check(manager.maintain(1900).await)?;
+    check(manager.maintain(1900, |_| Ok(false)).await)?;
     viewer.changed().await?;
     assert_eq!(check(manager.status(FIRST, 1900))?["state"], "off");
     let other = check(manager.start(SECOND, 2000).await)?;
@@ -310,7 +310,7 @@ async fn viewer_capture_does_not_extend_idle_lease_and_supervisor_is_reused() ->
     assert!(stopped.message.contains("helper stopped"));
     tokio::time::timeout(Duration::from_secs(3), async {
         while check(manager.get(SECOND))?.is_some() {
-            check(manager.maintain(2001).await)?;
+            check(manager.maintain(2001, |_| Ok(false)).await)?;
             tokio::task::yield_now().await;
         }
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
@@ -689,7 +689,11 @@ async fn websocket_relay_checks_frames_and_revokes_viewers_on_idle_or_death() ->
                 child.kill().await?;
             }
         }
-        check(computer.maintain(if death { 1 } else { 1000 }).await)?;
+        check(
+            computer
+                .maintain(if death { 1 } else { 1000 }, |_| Ok(false))
+                .await,
+        )?;
         assert_eq!(check(computer.status(FIRST, 1000))?["state"], "off");
         assert!(computer
             .viewers
