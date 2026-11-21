@@ -49,7 +49,7 @@ pub fn instructions(
         return Ok(crate::mcp::guide::instructions());
     }
     let mut specs = specs(state, db, turn)?;
-    if !state.computer.enabled
+    if !state.computer.enabled()
         || !exists(
             db,
             "SELECT 1 FROM agent_computers WHERE agent=? AND enabled=1",

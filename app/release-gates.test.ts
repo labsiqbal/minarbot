@@ -2,7 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, verify } from 'node:crypto';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
@@ -184,7 +184,7 @@ console.log(JSON.stringify({comments: [{body: 'Claimed by Fixture, branch ' + (a
   } finally { rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
 });
 
-function githubFixture(t: TestContext) {
+function githubFixture(t: TestContext, withImage = false) {
   const f = fixture();
   const sandbox = mkdtempSync(join(tmpdir(), 'release-github-'));
   t.after(() => { rmSync(f.dir, { recursive: true, force: true }); rmSync(sandbox, { recursive: true, force: true }); });
@@ -211,6 +211,37 @@ const name = 'Minarbot-' + version + '-x86_64.AppImage';
 writeFileSync(join(out, name), 'AppImage fixture ' + version);
 writeFileSync(join(out, 'latest-linux.yml'), 'version: ' + version + '\\npath: ' + name + '\\n');
 `);
+  if (withImage) {
+    mkdirSync(join(f.dir, 'computer/image'), { recursive: true });
+    mkdirSync(join(f.dir, 'crates/minarbot-server'), { recursive: true });
+    writeFileSync(join(f.dir, 'crates/minarbot-server/whatsapp-rust.LICENSE'), 'Fixture WhatsApp notice');
+    mkdirSync(join(f.dir, 'target/release'), { recursive: true });
+    writeFileSync(join(f.dir, 'computer/image/Containerfile'), 'FROM scratch');
+    writeFileSync(join(f.dir, 'target/release/minarbot-server'), 'Fixture supervisor');
+    mkdirSync(join(f.dir, 'app/t3'));
+    for (const file of ['LICENSE', 'agent-delegation.LICENSE', 't3/NOTICE']) writeFileSync(join(f.dir, 'app', file), 'Fixture notice');
+    writeFileSync(join(sandbox, 'podman'), `#!${process.execPath}
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const [remote, command, ...args] = process.argv.slice(2);
+assert.equal(remote, '--remote=false');
+assert.equal(process.env.MINARBOT_GHCR_TOKEN, undefined);
+if (command === 'info') console.log('true');
+else if (command === 'login') {
+  assert.deepEqual(args.slice(2), ['--username', 'fixture', '--password-stdin', 'ghcr.io']);
+  assert.equal(readFileSync(0, 'utf8'), 'fixture-token\\n');
+} else if (command === 'build') {
+  assert.equal(readFileSync(join(args.at(-1), 'minarbot-server'), 'utf8'), 'Fixture supervisor');
+  assert.equal(readFileSync(join(args.at(-1), 'whatsapp-rust.LICENSE'), 'utf8'), 'Fixture WhatsApp notice');
+  assert.match(args.at(-2), /^ghcr\\.io\\/labsiqbal\\/minarbot-computer:[a-f0-9]{40}$/);
+} else {
+  assert.equal(command, 'push');
+  assert.equal(args[2], '--digestfile');
+  writeFileSync(args[3], 'sha256:' + 'a'.repeat(64) + '\\n');
+}
+`, { mode: 0o700 });
+  }
   f.git('add', '.');
   f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'Internal notes never go public');
   const output = join(sandbox, 'uploaded');
@@ -242,14 +273,24 @@ if (action === 'view') {
   console.log(JSON.stringify(release));
   process.exit(0);
 }
+if (action === 'download') {
+  assert.equal(args[5], '--dir');
+  for (let i = 7; i < args.length; i += 2) {
+    assert.equal(args[i], '--pattern');
+    copyFileSync(join(out, args[i + 1]), join(args[6], args[i + 1]));
+  }
+  process.exit(0);
+}
+const ciDraft = action === 'create' && args[5] === '--draft';
 if (action === 'create' || action === 'upload') {
   if (action === 'create') {
     assert.equal(release, undefined);
-    assert.deepEqual(args.slice(5, 11), ['--target', commit, '--title', 'Minarbot 1.0.0', '--notes', 'Public notes']);
+    assert.deepEqual(args.slice(ciDraft ? 6 : 5, ciDraft ? 12 : 11), ['--target', commit, '--title', 'Minarbot 1.0.0', '--notes', 'Public notes']);
     release = { isDraft: true, targetCommitish: commit, name: 'Minarbot 1.0.0', body: 'Public notes', assets: [] };
   }
   assert.equal(release.isDraft, true);
-  for (const [i, path] of args.slice(action === 'create' ? 11 : 5).entries()) {
+  if (ciDraft) writeFileSync(state, JSON.stringify(release));
+  for (const [i, path] of args.slice(action === 'create' ? ciDraft ? 12 : 11 : 5).entries()) {
     const name = basename(path);
     assert(!release.assets.some(asset => asset.name === name), 'duplicate upload');
     if (i === 1 && process.env.FIXTURE_UPLOAD_FAIL) {
@@ -262,7 +303,7 @@ if (action === 'create' || action === 'upload') {
     release.assets.push({ name, state: 'uploaded', digest: 'sha256:' + hash('sha256', readFileSync(path)) });
     writeFileSync(state, JSON.stringify(release));
   }
-  if (action === 'create') writeFileSync(state, JSON.stringify({ ...release, isDraft: false }));
+  if (action === 'create' && !ciDraft) writeFileSync(state, JSON.stringify({ ...release, isDraft: false }));
 } else if (action === 'delete-asset') {
   const name = args[5];
   assert.equal(release.isDraft, true);
@@ -271,22 +312,22 @@ if (action === 'create' || action === 'upload') {
   writeFileSync(state, JSON.stringify(release));
 } else {
   assert.equal(action, 'edit');
-  assert.deepEqual(args.slice(5), ['--draft=false']);
+  assert.deepEqual(args.slice(5), release.assets.some(asset => asset.name === 'ci-checksums.json') ? ['--draft=false', '--latest'] : ['--draft=false']);
   assert.equal(release.isDraft, true);
   assert(release.assets.length >= 3);
   writeFileSync(state, JSON.stringify({ ...release, isDraft: false }));
 }
 `, { mode: 0o700 });
   const run = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [
-    join(f.dir, 'scripts/release.mjs'), '--releases', f.options.releases, ...args,
-  ], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${sandbox}:${process.env.PATH}`, HOME: sandbox, MINARBOT_RELEASE_SIGNING_KEY: key, ...env } });
+    join(f.dir, 'scripts/release.mjs'), ...(args.some(arg => arg.endsWith('-ci')) ? [] : ['--releases', f.options.releases]), ...args,
+  ], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${sandbox}:${process.env.PATH}`, HOME: sandbox, MINARBOT_RELEASE_SIGNING_KEY: key, MINARBOT_GHCR_USER: '', MINARBOT_GHCR_TOKEN: '', ...env } });
   const calls = () => existsSync(join(output, 'calls')) ? readFileSync(join(output, 'calls'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]) : [];
   return { ...f, run, calls, output, key, publicKey, commit, id: `1.0.0-${commit.slice(0, 8)}` };
 }
 
 test('release CLI uploads exact signed ustar assets and the version-matched desktop build', t => {
   const f = githubFixture(t);
-  const result = f.run(['--desktop', '--notes', 'Public notes', '--signing-key', f.key], { MINARBOT_RELEASE_SIGNING_KEY: '/wrong/path' });
+  const result = f.run(['--desktop', '--no-image', '--notes', 'Public notes', '--signing-key', f.key], { MINARBOT_RELEASE_SIGNING_KEY: '/wrong/path' });
   assert.equal(result.status, 0, result.stderr);
   const uploaded = (name: string) => readFileSync(join(f.output, name));
   const archive = 'minarbot-1.0.0-linux-x86_64.tar.gz';
@@ -307,9 +348,57 @@ test('release CLI uploads exact signed ustar assets and the version-matched desk
   assert.match(uploaded('latest-linux.yml').toString(), /path: Minarbot-1\.0\.0-x86_64\.AppImage/);
 });
 
+test('release gates image publishing on GHCR credentials and signs the pushed digest', t => {
+  const f = githubFixture(t, true), args = ['--notes', 'Public notes'];
+  const noCredentials = f.run(args);
+  assert.equal(noCredentials.status, 1);
+  assert.match(noCredentials.stderr, /MINARBOT_GHCR_TOKEN.*--no-image/);
+  assert.equal(existsSync(f.options.releases), false);
+  assert.deepEqual(f.calls(), []);
+  const result = f.run(args, { MINARBOT_GHCR_USER: 'fixture', MINARBOT_GHCR_TOKEN: 'fixture-token' });
+  assert.equal(result.status, 0, result.stderr);
+  const bytes = readFileSync(join(f.output, 'computer-image.json'));
+  const signature = readFileSync(join(f.output, 'computer-image.json.sig'), 'utf8');
+  assert(verify(null, bytes, f.publicKey, Buffer.from(signature, 'base64')));
+  const legacy = JSON.parse(readFileSync(join(f.output, 'latest.json'), 'utf8'));
+  assert.equal(legacy.computer_image, undefined);
+  assert.deepEqual(JSON.parse(bytes.toString()), { ...legacy, computer_image: 'sha256:' + 'a'.repeat(64) });
+});
+
+test('CI draft and signing retain multi-platform assets and publish a signed Computer digest', t => {
+  const f = githubFixture(t, true);
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-ci-fixture-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const stage = join(directory, 'stage'), artifacts = join(directory, 'artifacts');
+  mkdirSync(join(stage, 'bin'), { recursive: true });
+  mkdirSync(artifacts);
+  cpSync(join(f.dir, 'target/release/minarbot-server'), join(stage, 'bin/minarbot-server'));
+  const archive = 'minarbot-1.0.0-linux-x86_64.tar.gz';
+  execFileSync('tar', ['-czf', join(artifacts, archive), '-C', stage, '.']);
+  for (const name of [
+    'minarbot-1.0.0-linux-aarch64.tar.gz', 'minarbot-1.0.0-macos-x86_64.tar.gz', 'minarbot-1.0.0-macos-aarch64.tar.gz',
+    'Minarbot-1.0.0-x86_64.AppImage', 'Minarbot-1.0.0-arm64.AppImage', 'latest-linux.yml', 'latest-linux-arm64.yml',
+    'Minarbot-1.0.0-macos-arm64.dmg', 'Minarbot-1.0.0-macos-x64.dmg',
+    'Minarbot-1.0.0-windows-x64.exe', 'Minarbot-1.0.0-windows-x64.exe.blockmap', 'latest.yml',
+  ]) writeFileSync(join(artifacts, name), name);
+  const draft = f.run(['--draft-ci', artifacts, '--notes', 'Public notes'], { MINARBOT_GHCR_USER: 'fixture', MINARBOT_GHCR_TOKEN: 'fixture-token' });
+  assert.equal(draft.status, 0, draft.stderr);
+  const signed = f.run(['--sign-ci', '1.0.0']);
+  assert.equal(signed.status, 0, signed.stderr);
+  const readSigned = (name: string) => {
+    const bytes = readFileSync(join(f.output, name));
+    assert(verify(null, bytes, f.publicKey, Buffer.from(readFileSync(join(f.output, name + '.sig'), 'utf8'), 'base64')));
+    return JSON.parse(bytes.toString());
+  };
+  const latest = readSigned('latest.json');
+  assert.equal(latest.archive, archive);
+  assert.deepEqual(Object.keys(latest.assets).sort(), readdirSync(artifacts).filter(name => name !== 'ci-checksums.json').sort());
+  assert.deepEqual(readSigned('computer-image.json'), { ...latest, computer_image: 'sha256:' + 'a'.repeat(64) });
+});
+
 test('release CLI keeps a failed upload local and resumes the draft idempotently without rebuilding', t => {
   const f = githubFixture(t);
-  const failed = f.run(['--desktop', '--notes', 'Public notes'], { FIXTURE_UPLOAD_FAIL: '1' });
+  const failed = f.run(['--desktop', '--no-image', '--notes', 'Public notes'], { FIXTURE_UPLOAD_FAIL: '1' });
   assert.equal(failed.status, 1);
   assert.match(failed.stderr, /fixture upload offline/);
   assert.match(failed.stderr, new RegExp(`Local release ${f.id}[\\s\\S]*--github-only ${f.id}`));
@@ -336,7 +425,7 @@ test('release CLI keeps a failed upload local and resumes the draft idempotently
 
 test('release CLI skips GitHub for local-only releases and blocks dirty trees, failed gates, and implicit notes', t => {
   const f = githubFixture(t);
-  const release = ['--notes', 'Public notes'];
+  const release = ['--no-image', '--notes', 'Public notes'];
   writeFileSync(join(f.dir, 'dirty'), 'dirty');
   assert.match(f.run(release).stderr, /dirty worktree/);
   rmSync(join(f.dir, 'dirty'));
@@ -353,7 +442,7 @@ test('release CLI skips GitHub for local-only releases and blocks dirty trees, f
 test('release CLI refuses wrong-mode, non-Ed25519 and mismatched signing keys before GitHub access', t => {
   const f = githubFixture(t);
   chmodSync(f.key, 0o640);
-  const first = f.run(['--notes', 'Public notes']);
+  const first = f.run(['--no-image', '--notes', 'Public notes']);
   assert.equal(first.status, 1);
   assert.match(first.stderr, /mode 0600/);
   chmodSync(f.key, 0o600);

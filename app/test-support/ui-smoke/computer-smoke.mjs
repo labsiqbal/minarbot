@@ -13,14 +13,21 @@ async function attachVncFixture(screenshot) {
   const context = desktop.getContext('2d'); context.drawImage(image, 0, 0, 1280, 800);
   const pixels = context.getImageData(0, 0, 1280, 800).data;
   const Native = window.WebSocket; window.__nativeWebSocket = Native;
-  class FakeWebSocket {
+  class FakeWebSocket extends EventTarget {
     static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
     constructor(url, protocols) {
+      super();
       if (!String(url).includes('/computer/vnc?')) return new Native(url, protocols);
       this.url = String(url); this.protocol = Array.isArray(protocols) ? protocols[0] ?? '' : String(protocols ?? ''); this.readyState = 0; this.binaryType = 'arraybuffer';
       this.onopen = null; this.onmessage = null; this.onclose = null; this.onerror = null; this._stage = 0; this._bytes = new Uint8Array();
       window.__vncFake.connections++; window.__vncFake.sockets.push(this);
-      setTimeout(() => { if (this.readyState !== 0) return; this.readyState = 1; this.onopen?.({}); this._emit(new TextEncoder().encode('RFB 003.008\n')); }, 10);
+      setTimeout(() => {
+        if (this.readyState !== 0) return;
+        this.readyState = 1;
+        this._dispatch(new Event('open'));
+        if (this.protocol === 'minarbot-vnc-v1') this._emit(new Uint8Array(16 * 1024));
+        this._emit(new TextEncoder().encode('RFB 003.008\n'));
+      }, 10);
     }
     send(value) {
       const data = value instanceof ArrayBuffer ? new Uint8Array(value) : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
@@ -41,8 +48,13 @@ async function attachVncFixture(screenshot) {
         } else if ([4, 5, 6, 255].includes(message[0])) window.__vncFake.input.push([...message]);
       }
     }
-    _emit(data) { queueMicrotask(() => { if (this.readyState === 1) this.onmessage?.({ data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) }); }); }
-    close() { if (this.readyState === 3) return; this.readyState = 3; window.__vncFake.sockets = window.__vncFake.sockets.filter(socket => socket !== this); queueMicrotask(() => this.onclose?.({})); }
+    _dispatch(event) {
+      const handler = this[`on${event.type}`];
+      this.dispatchEvent(event);
+      handler?.call(this, event);
+    }
+    _emit(data) { queueMicrotask(() => { if (this.readyState === 1) this._dispatch(new MessageEvent('message', { data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) })); }); }
+    close() { if (this.readyState === 3) return; this.readyState = 3; window.__vncFake.sockets = window.__vncFake.sockets.filter(socket => socket !== this); queueMicrotask(() => this._dispatch(new CloseEvent('close', { code: 1000 }))); }
   }
   window.__vncFake = { connections: 0, frames: 0, input: [], sockets: [], closeAll: () => [...window.__vncFake.sockets].forEach(socket => socket.close()) };
   window.WebSocket = FakeWebSocket;

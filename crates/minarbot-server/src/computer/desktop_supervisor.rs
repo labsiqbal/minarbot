@@ -6,7 +6,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     io::{self, BufRead, Read, Write},
-    os::unix::process::CommandExt,
+    os::unix::{fs::DirBuilderExt, process::CommandExt},
     path::Path,
     process::Stdio,
     sync::{Arc, Mutex},
@@ -24,9 +24,13 @@ use tokio::{
 type Result<T> = crate::db::Result<T>;
 pub(super) const BINARY: &str = "/minarbot-server";
 pub(super) const PROXY: &str = "/run/minarbot/proxy.sock";
+pub(super) const BROWSER_CLASS: &str = "^(google-chrome(-stable)?|chromium(-browser)?)$";
+const CONTAINER_PROXY: &str = "/run/minarbot-proxy/proxy.sock";
 const HOME: &str = "/home/desktop";
 const PROXY_URL: &str = "http://127.0.0.1:3128";
 const MAX_OUTPUT: u64 = 1024 * 1024;
+// 128 project values of 16 KiB each, with up to six bytes per JSON-escaped byte.
+const MAX_ENVIRONMENT_LINE: u64 = 13 * 1024 * 1024;
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn seed_desktop() -> io::Result<()> {
@@ -227,9 +231,9 @@ impl Supervisor {
         Ok(())
     }
 
-    fn launch_chrome(&mut self, no_sandbox: bool) -> Result<Arc<Mutex<Vec<u8>>>> {
+    fn launch_chrome(&mut self, binary: &str, no_sandbox: bool) -> Result<Arc<Mutex<Vec<u8>>>> {
         let mut command = self.command("sh");
-        let pipe = ChromePipe::configure(&mut command)?;
+        let pipe = ChromePipe::configure(&mut command, binary)?;
         command.args([
             "--user-data-dir=/home/desktop/chrome",
             "--no-first-run",
@@ -292,8 +296,14 @@ impl Supervisor {
         let geometry =
             std::env::var("MINARBOT_DESKTOP_GEOMETRY").unwrap_or_else(|_| "1280x800".into());
         super::options::dimensions(&geometry)?;
+        let xvnc =
+            super::runtime::program(&["Xvnc", "Xtigervnc"]).ok_or("TigerVNC is unavailable.")?;
         self.launch(
-            "Xvnc",
+            if xvnc.ends_with("Xvnc") {
+                "Xvnc"
+            } else {
+                "Xtigervnc"
+            },
             &[
                 &display,
                 "-geometry",
@@ -336,8 +346,13 @@ impl Supervisor {
             &["--sm-client-disable", "--disable-wm-check"],
             true,
         )?;
-        let search = ["search", "--onlyvisible", "--class", "google-chrome"];
-        let diagnostics = self.launch_chrome(false)?;
+        let chrome =
+            super::runtime::program(&["google-chrome", "google-chrome-stable", "chromium"])
+                .ok_or("Chrome or Chromium is unavailable.")?;
+        let binary = chrome.to_str().ok_or("Invalid browser path.")?;
+        let search = ["search", "--onlyvisible", "--class", BROWSER_CLASS];
+        let root = rustix::process::geteuid().is_root();
+        let diagnostics = self.launch_chrome(binary, root)?;
         if let Err(error) = self.wait_for(&search, true).await {
             self.check()?;
             let sandbox_failure = diagnostics.lock().is_ok_and(|bytes| {
@@ -356,7 +371,7 @@ impl Supervisor {
                 signal_group(&previous.child, rustix::process::Signal::KILL);
                 let _ = previous.child.wait().await;
             }
-            self.launch_chrome(true)?;
+            self.launch_chrome(binary, true)?;
             self.wait_for(&search, true).await?;
             writeln!(io::stdout(), "chrome-no-sandbox")?;
         }
@@ -365,7 +380,7 @@ impl Supervisor {
                 "search",
                 "--onlyvisible",
                 "--class",
-                "google-chrome",
+                BROWSER_CLASS,
                 "windowactivate",
                 "--sync",
             ],
@@ -420,6 +435,19 @@ impl Supervisor {
     }
 
     async fn stop(&mut self) {
+        if let (Some(chrome), Some(browser)) = (
+            self.chrome.as_ref(),
+            self.programs
+                .last_mut()
+                .filter(|program| program.name == "Chrome"),
+        ) {
+            // Keep X11 and D-Bus available while Chrome flushes its profile.
+            let _ = timeout(Duration::from_millis(1500), async {
+                let _ = chrome.close().await;
+                browser.child.wait().await
+            })
+            .await;
+        }
         for program in self.programs.iter().rev() {
             signal_group(&program.child, rustix::process::Signal::TERM);
         }
@@ -446,10 +474,10 @@ struct Request {
     args: Vec<String>,
 }
 
-async fn forward(listener: TcpListener) {
+async fn forward(listener: TcpListener, path: &'static str) {
     while let Ok((mut client, _)) = listener.accept().await {
         tokio::spawn(async move {
-            if let Ok(mut upstream) = UnixStream::connect(PROXY).await {
+            if let Ok(mut upstream) = UnixStream::connect(path).await {
                 let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
             }
         });
@@ -457,22 +485,41 @@ async fn forward(listener: TcpListener) {
 }
 
 pub(crate) async fn run() -> Result<()> {
-    if std::env::current_exe()?.as_os_str() != BINARY
-        || std::env::args_os().nth(2).as_deref() != Some(std::ffi::OsStr::new(PROXY))
-        || std::env::args_os().len() != 3
-    {
+    let path = match std::env::args().nth(2).as_deref() {
+        Some(PROXY) => PROXY,
+        Some(CONTAINER_PROXY) => CONTAINER_PROXY,
+        _ => return Err("Invalid desktop proxy path.".into()),
+    };
+    if std::env::current_exe()?.as_os_str() != BINARY || std::env::args_os().len() != 3 {
         return Err("The desktop supervisor requires its sandbox and filtering proxy.".into());
     }
     let listener = TcpListener::bind(("127.0.0.1", 3128)).await?;
-    let proxy = tokio::spawn(forward(listener));
+    let proxy = tokio::spawn(forward(listener, path));
     let mut supervisor = Supervisor::new()?;
     let mut term = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
     let (send, mut requests) = mpsc::channel(1);
     let (finished, mut eof) = oneshot::channel();
+    let (configure, environment) = oneshot::channel();
     std::thread::spawn(move || {
         let mut stdin = io::stdin().lock();
         let mut line = Vec::new();
+        if path == CONTAINER_PROXY {
+            // Keep project secrets out of OCI configuration, CLI arguments, and runtime logs.
+            let read =
+                Read::take(&mut stdin, MAX_ENVIRONMENT_LINE + 1).read_until(b'\n', &mut line);
+            if !read.is_ok_and(|size| (1..=MAX_ENVIRONMENT_LINE).contains(&(size as u64)))
+                || line.last() != Some(&b'\n')
+            {
+                return;
+            }
+            let Ok(values) = serde_json::from_slice::<BTreeMap<String, String>>(&line) else {
+                return;
+            };
+            if configure.send(values).is_err() {
+                return;
+            }
+        }
         loop {
             line.clear();
             let read = Read::take(&mut stdin, 65_537).read_until(b'\n', &mut line);
@@ -488,7 +535,17 @@ pub(crate) async fn run() -> Result<()> {
         let _ = finished.send(());
     });
     let ready = tokio::select! {
-        result = supervisor.start() => Some(result),
+        result = async {
+            if path == CONTAINER_PROXY {
+                let runtime_dir = "/tmp/minarbot-runtime";
+                std::fs::DirBuilder::new().mode(0o700).create(runtime_dir)?;
+                supervisor.environment.insert("XDG_RUNTIME_DIR".into(), runtime_dir.into());
+                for (key, value) in environment.await? {
+                    supervisor.environment.entry(key.into()).or_insert(value.into());
+                }
+            }
+            supervisor.start().await
+        } => Some(result),
         _ = term.recv() => None,
         _ = interrupt.recv() => None,
         _ = &mut eof => None,

@@ -1,0 +1,22 @@
+FROM docker.io/library/debian:trixie-slim
+LABEL org.opencontainers.image.source="https://github.com/labsiqbal/minarbot"
+
+# Debian packages retain their copyright and license files under /usr/share/doc.
+# Google Chrome Stable comes from Google's official Linux package.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        ca-certificates curl dbus-x11 fonts-liberation scrot tigervnc-standalone-server \
+        xdotool xfce4 xfce4-goodies \
+    && curl --fail --silent --show-error --location \
+        https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+        --output /tmp/google-chrome-stable.deb \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/google-chrome-stable.deb \
+    && rm -rf /var/lib/apt/lists/* /tmp/google-chrome-stable.deb \
+    && mkdir -p /home/desktop/chrome /run/minarbot /run/minarbot-proxy /usr/share/doc/minarbot
+
+COPY minarbot-server /minarbot-server
+COPY LICENSE agent-delegation.LICENSE NOTICE whatsapp-rust.LICENSE /usr/share/doc/minarbot/
+WORKDIR /home/desktop
+ENV HOME=/home/desktop USER=minarbot LANG=C.UTF-8 \
+    XDG_CONFIG_HOME=/home/desktop/.config XDG_CACHE_HOME=/home/desktop/.cache
+ENTRYPOINT ["/minarbot-server", "--desktop-supervisor", "/run/minarbot-proxy/proxy.sock"]

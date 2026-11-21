@@ -5,9 +5,9 @@ const FIRST: &str = "10000000-0000-4000-8000-000000000001";
 const SECOND: &str = "10000000-0000-4000-8000-000000000002";
 const THIRD: &str = "10000000-0000-4000-8000-000000000003";
 
-struct Scratch(PathBuf);
+pub(in crate::computer) struct Scratch(pub(in crate::computer) PathBuf);
 impl Scratch {
-    fn new() -> TestResult<Self> {
+    pub(in crate::computer) fn new() -> TestResult<Self> {
         let path = std::env::temp_dir().join(format!("bs-desk-{}", uuid::Uuid::new_v4().simple()));
         fs::create_dir(&path)?;
         Ok(Self(path))
@@ -82,6 +82,192 @@ fn check<T>(result: super::Result<T>) -> TestResult<T> {
 }
 
 #[tokio::test]
+#[ignore = "requires a local container runtime and image; run scripts/test-computer-image.sh"]
+async fn container_desktop_proxy_profile_and_idle() -> TestResult<()> {
+    use axum::{
+        extract::Request,
+        response::{Html, IntoResponse},
+        Router,
+    };
+    use std::sync::atomic::AtomicBool;
+    let runtime = Runtime::detect()
+        .await
+        .ok_or("Rootless Podman or local Docker is required")?;
+    let image = std::env::var("MINARBOT_TEST_COMPUTER_IMAGE")?;
+    let scratch = Scratch::new()?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    let loaded = Arc::new(AtomicBool::new(false));
+    let clicked = Arc::new(AtomicBool::new(false));
+    let restored = Arc::new(AtomicBool::new(false));
+    let filled = Arc::new(AtomicBool::new(false));
+    let (load, click, restore, fill) = (
+        loaded.clone(),
+        clicked.clone(),
+        restored.clone(),
+        filled.clone(),
+    );
+    let router = Router::new().fallback(move |request: Request| {
+        let (load, click, restore, fill) =
+            (load.clone(), click.clone(), restore.clone(), fill.clone());
+        async move {
+            let has_cookie = || request.headers().get("cookie").is_some_and(|cookie| cookie == "profile=kept");
+            match request.uri().path() {
+                "/loaded" => load.store(has_cookie(), Ordering::SeqCst),
+                "/clicked" => click.store(true, Ordering::SeqCst),
+                "/filled" => fill.store(true, Ordering::SeqCst),
+                "/verify" => restore.store(has_cookie(), Ordering::SeqCst),
+                _ => {
+                    return (
+                        [("set-cookie", "profile=kept; Max-Age=86400; Path=/")],
+                        Html(
+                            r#"<!doctype html><title>Computer fixture</title>
+                         <button style="background:#e905af;width:300px;height:210px"
+                           onclick="document.getElementById('login').focus(); fetch('/clicked')">Click fixture</button>
+                         <input id="login" aria-label="Fixture login"
+                           oninput="if (this.value === 'synthetic-fixture-value') fetch('/filled')">
+                         <script>fetch('/loaded')</script>"#,
+                        ),
+                    )
+                        .into_response()
+                }
+            }
+            axum::http::StatusCode::NO_CONTENT.into_response()
+        }
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, router).await });
+    let launcher = scratch.supervisor()?;
+    let mut manager = scratch.manager(&launcher, 1)?;
+    manager.proxy_target = Some(proxy::TestTarget {
+        hostname: "computer-fixture.test".into(),
+        port,
+        https_port: None,
+    });
+    manager
+        .setup
+        .set_backend(Backend::Container { runtime, image });
+    let outcome = async {
+        async fn observed(flag: &AtomicBool, action: &str) -> TestResult<()> {
+            tokio::time::timeout(Duration::from_secs(15), async {
+                while !flag.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            })
+            .await
+            .map_err(|_| format!("Container fixture did not observe {action}."))?;
+            Ok(())
+        }
+        let url = format!("http://computer-fixture.test:{port}");
+        let open = |agent: &'static str, suffix: &'static str| {
+            let destination = format!("{url}{suffix}");
+            let manager = &manager;
+            async move {
+                check(
+                    manager
+                        .action(
+                            agent,
+                            "computer_open_url",
+                            &json!({"url":destination}),
+                            crate::config::now(),
+                        )
+                        .await,
+                )
+            }
+        };
+        open(FIRST, "/").await?;
+        observed(&loaded, "the page load with its cookie").await?;
+        // Locate the rendered button independently of browser and desktop chrome.
+        let (x, y) = tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                let screen = check(manager.screenshot(FIRST, false).await)?;
+                let frame = image::load_from_memory(&screen)?.into_rgb8();
+                assert_eq!(frame.dimensions(), (960, 600));
+                let mut button = frame
+                    .enumerate_pixels()
+                    .filter(|(_, _, pixel)| pixel.0 == [233, 5, 175]);
+                if let Some(((left, top, _), (right, bottom, _))) = button.next().zip(button.last())
+                {
+                    return TestResult::Ok((
+                        (left + right) * manager.width / (2 * frame.width()),
+                        (top + bottom) * manager.height / (2 * frame.height()),
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .map_err(|_| "Container fixture button was not visible.")??;
+        check(
+            manager
+                .action(
+                    FIRST,
+                    "computer_click",
+                    &json!({"x":x,"y":y}),
+                    crate::config::now(),
+                )
+                .await,
+        )?;
+        observed(&clicked, "the click").await?;
+        let desktop = check(manager.secure_target(FIRST, &url, "fixture-target").await)?;
+        assert!(check(
+            manager
+                .secure_fill(
+                    FIRST,
+                    &url,
+                    Some((&desktop, "fixture-target")),
+                    "synthetic-fixture-value".into(),
+                )
+                .await,
+        )?);
+        observed(&filled, "secure fill").await?;
+        assert_eq!(
+            manager
+                .start(SECOND, crate::config::now())
+                .await
+                .err()
+                .map(|failure| failure.status),
+            Some(429)
+        );
+        check(
+            manager
+                .maintain(crate::config::now() + 1001, |_| Ok(false))
+                .await,
+        )?;
+        assert_eq!(
+            check(manager.status(FIRST, crate::config::now()))?["state"],
+            "off"
+        );
+        check(manager.start(SECOND, crate::config::now()).await)?;
+        check(manager.stop(SECOND).await)?;
+        open(FIRST, "/verify").await?;
+        observed(&restored, "the per-agent profile after restart").await?;
+        check(manager.stop(FIRST).await)?;
+        check(manager.set_shared_profile(FIRST, true))?;
+        check(manager.set_shared_profile(SECOND, true))?;
+        loaded.store(false, Ordering::SeqCst);
+        restored.store(false, Ordering::SeqCst);
+        open(FIRST, "/").await?;
+        observed(&loaded, "the shared-profile page load").await?;
+        assert_eq!(
+            manager
+                .start(SECOND, crate::config::now())
+                .await
+                .err()
+                .map(|failure| failure.status),
+            Some(409)
+        );
+        check(manager.stop(FIRST).await)?;
+        open(SECOND, "/verify").await?;
+        observed(&restored, "the shared profile in another Computer").await?;
+        Ok(())
+    }
+    .await;
+    manager.close().await;
+    server.abort();
+    outcome
+}
+
+#[tokio::test]
 async fn sandbox_start_failure_releases_lease() -> TestResult<()> {
     let scratch = Scratch::new()?;
     let early_exit = scratch.script("exit 1")?;
@@ -133,12 +319,8 @@ async fn desktop_mounts_and_preferences_stay_private() -> TestResult<()> {
     fs::remove_file(defaults.join("Preferences"))?;
     check(manager.start(FIRST, 0).await)?;
     let executable = std::env::current_exe()?;
-    let args = sandbox(
-        &profile,
-        &manager.root.join(FIRST),
-        &manager.proxy_path,
-        &executable,
-    );
+    let proxy_path = manager.proxy_path.get().ok_or("desktop proxy path")?;
+    let args = sandbox(&profile, &manager.root.join(FIRST), proxy_path, &executable);
     assert!(args.windows(3).any(|mount| mount[0] == "--ro-bind"
         && Path::new(&mount[1]) == executable
         && mount[2] == "/minarbot-server"));
@@ -166,7 +348,7 @@ async fn desktop_mounts_and_preferences_stay_private() -> TestResult<()> {
             profile,
             agent.join("x11"),
             agent.join("x11"),
-            manager.proxy_path.clone(),
+            proxy_path.clone(),
             executable
         ]
     );
@@ -508,6 +690,131 @@ fn viewer_state(scratch: &Scratch, manager: Manager) -> TestResult<crate::AppSta
         whatsapp: Default::default(),
         trial_pending: Arc::new(AtomicBool::new(false)),
     })
+}
+
+#[tokio::test]
+async fn always_on_container_restores_with_shared_profile_after_device_is_ready() -> TestResult<()>
+{
+    use crate::computer::{control, options::DesktopOptions};
+
+    let scratch = Scratch::new()?;
+    let runtime = scratch.script(
+        r#"
+shift # --remote=false
+case "$1" in
+    ps) exit 0 ;;
+    run)
+        printf '%s\n' "$@" > container-args
+        IFS= read -r environment || exit 1
+        [ "$environment" = '{}' ] || exit 1
+        echo ready
+        while IFS= read -r line; do :; done
+        ;;
+    *) exit 1 ;;
+esac
+"#,
+    )?;
+    let backend = Backend::Container {
+        runtime: Runtime::Podman(runtime.clone()),
+        image: "fixture".into(),
+    };
+    let manager = scratch.manager(&runtime, 1)?;
+    manager.setup.set_backend(backend.clone());
+    let mut state = viewer_state(&scratch, manager)?;
+    Arc::get_mut(&mut state.config)
+        .ok_or("unshared config")?
+        .computer
+        .desktop = Some(DesktopOptions {
+        idle_ms: Some(1000),
+        ..Default::default()
+    });
+    let shared = check(
+        control::configure(
+            &state,
+            FIRST,
+            &json!({"id":uuid::Uuid::new_v4().to_string(),"revision":1,"enabled":true,"sharedProfile":true}),
+        )
+        .await,
+    )?;
+    assert_eq!(shared["sharedProfile"], true);
+    let pinned = check(
+        control::configure(
+            &state,
+            FIRST,
+            &json!({"id":uuid::Uuid::new_v4().to_string(),"revision":shared["revision"],"alwaysOn":true}),
+        )
+        .await,
+    )?;
+    assert_eq!(pinned["state"], "running");
+    assert_eq!(pinned["alwaysOn"], true);
+    assert!(pinned["stopsInMs"].is_null());
+    state.computer.close().await;
+
+    let mut manager = scratch.manager(&runtime, 1)?;
+    manager.setup = Setup::new(None, true);
+    {
+        let database = state.database.lock().map_err(|_| "database lock")?;
+        manager.load_browser_profiles(&database.connection)?;
+    }
+    let state = crate::AppState {
+        computer: Arc::new(manager),
+        ..state
+    };
+    let tasks = crate::computer::maintenance(state.clone());
+    let result = async {
+        assert_eq!(check(control::read(&state, FIRST))?["available"], false);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        state.computer.setup.set_backend(backend);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while check(control::read(&state, FIRST))?["state"] != "running" {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        })
+        .await??;
+        check(
+            state
+                .computer
+                .maintain(1001, |agent| control::always_on(&state, agent))
+                .await,
+        )?;
+        assert_eq!(check(control::read(&state, FIRST))?["state"], "running");
+        assert_eq!(
+            state
+                .computer
+                .start(SECOND, 0)
+                .await
+                .err()
+                .map(|e| e.status),
+            Some(429)
+        );
+        let args = fs::read_to_string(scratch.0.join("container-args"))?;
+        for (path, mount) in [
+            (
+                state.computer.root.join(FIRST).join("home"),
+                "/home/desktop:Z",
+            ),
+            (
+                state.computer.root.join("owner-chrome"),
+                "/home/desktop/chrome:Z",
+            ),
+            (
+                state.computer.root.join(FIRST).join("x11"),
+                "/run/minarbot:Z",
+            ),
+        ] {
+            let expected = format!("{}:{mount}", path.display());
+            assert!(args.lines().any(|arg| arg == expected));
+        }
+        Ok(())
+    }
+    .await;
+    for task in tasks {
+        task.abort();
+        let _ = task.await;
+    }
+    state.computer.close().await;
+    result
 }
 
 #[tokio::test]

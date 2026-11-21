@@ -19,14 +19,14 @@ async fn chrome_fills_only_the_original_focused_field() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
     let origin = format!("http://{}", listener.local_addr()?);
     let server = tokio::spawn(async move {
-        axum::serve(listener, Router::new().route("/", get(|| async {
+        axum::serve(listener, Router::new().fallback(get(|| async {
             Html(r#"<input id="first" autofocus><input id="second"><script>
                 first.addEventListener('input', () => document.title = first.value === 'synthetic-fixture-value' ? 'matched' : 'wrong');
             </script>"#)
         }))).await
     });
     let mut command = tokio::process::Command::new("sh");
-    let chrome = ChromePipe::configure(&mut command)?;
+    let chrome = ChromePipe::configure(&mut command, "google-chrome")?;
     let mut child = command
         .args([
             "--headless",

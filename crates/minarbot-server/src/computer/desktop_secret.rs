@@ -20,7 +20,7 @@ struct Session {
 }
 
 impl ChromePipe {
-    pub(super) fn configure(command: &mut tokio::process::Command) -> Result<Self> {
+    pub(super) fn configure(command: &mut tokio::process::Command, binary: &str) -> Result<Self> {
         let (supervisor, browser) = UnixStream::pair()?;
         supervisor.set_nonblocking(true)?;
         let stdin: std::os::fd::OwnedFd = browser.try_clone()?.into();
@@ -32,7 +32,7 @@ impl ChromePipe {
                 "-c",
                 r#"exec 3<&0 4>&1 </dev/null >/dev/null; exec "$@""#,
                 "minarbot-chrome",
-                "google-chrome",
+                binary,
                 "--remote-debugging-pipe",
             ]);
         Ok(Self {
@@ -87,6 +87,15 @@ impl ChromePipe {
             }
         }
         Ok(false)
+    }
+
+    pub(super) async fn close(&self) -> Result<()> {
+        self.io
+            .lock()
+            .await
+            .call(None, "Browser.close", json!({}))
+            .await?;
+        Ok(())
     }
 }
 
