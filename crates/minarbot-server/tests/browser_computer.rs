@@ -1,6 +1,7 @@
 use axum::{extract::State, response::Html, routing::any, Json, Router};
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     fs,
     io::{BufRead, BufReader, Write},
     path::PathBuf,
@@ -51,8 +52,7 @@ struct Fixture {
 }
 #[derive(Default)]
 struct Provider {
-    pending: Option<(&'static str, Value)>,
-    result: Option<Value>,
+    results: HashMap<String, Value>,
     tools: Vec<String>,
 }
 
@@ -100,15 +100,11 @@ impl Fixture {
     }
 
     async fn start_turn(&self, tool: &'static str, args: Value) -> Result<Uuid> {
-        {
-            let mut provider = self.provider.lock().map_err(|_| "fixture provider lock")?;
-            provider.pending = Some((tool, args));
-            provider.result = None;
-        }
         let turn = Uuid::new_v4();
+        let request = json!({"id":turn.to_string(),"tool":tool,"args":args});
         self.request(
             &self.path("/turns"),
-            Some(json!({"id":turn.to_string(),"text":"Use fixture tool."})),
+            Some(json!({"id":turn.to_string(),"text":format!("Fixture action {request}")})),
         )
         .await?;
         Ok(turn)
@@ -146,8 +142,8 @@ impl Fixture {
         self.provider
             .lock()
             .map_err(|_| "fixture provider lock")?
-            .result
-            .take()
+            .results
+            .remove(&id.to_string())
             .ok_or_else(|| format!("provider saw no result for {name}").into())
     }
 }
@@ -166,23 +162,31 @@ async fn provider(
         .flatten()
         .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_owned))
         .collect();
-    if let Some((name, args)) = state.pending.take() {
-        return Json(json!({"choices":[{"message":{"tool_calls":[{
-            "id":"fixture-call","type":"function","function":{"name":name,"arguments":args.to_string()}
-        }]},"finish_reason":"tool_calls"}]}));
-    }
-    if let Some(message) = body["messages"]
-        .as_array()
-        .into_iter()
-        .flatten()
+    let messages = body["messages"].as_array().into_iter().flatten();
+    let request = messages
+        .clone()
         .rev()
-        .find(|m| m["role"] == "tool")
-    {
-        let content = &message["content"];
-        state.result = content
-            .as_str()
-            .and_then(|text| serde_json::from_str(text).ok())
-            .or_else(|| Some(content.clone()));
+        .filter(|m| m["role"] == "user")
+        .filter_map(|message| message["content"].as_str()?.strip_prefix("Fixture action "))
+        .find_map(|text| serde_json::from_str::<Value>(text).ok());
+    if let Some(request) = request {
+        if let (Some(id), Some(name)) = (request["id"].as_str(), request["tool"].as_str()) {
+            if let Some(message) = messages
+                .clone()
+                .find(|message| message["role"] == "tool" && message["tool_call_id"] == id)
+            {
+                let content = &message["content"];
+                let result = content
+                    .as_str()
+                    .and_then(|text| serde_json::from_str(text).ok())
+                    .unwrap_or_else(|| content.clone());
+                state.results.insert(id.into(), result);
+            } else if state.tools.iter().any(|tool| tool == name) {
+                return Json(json!({"choices":[{"message":{"tool_calls":[{
+                    "id":id,"type":"function","function":{"name":name,"arguments":request["args"].to_string()}
+                }]},"finish_reason":"tool_calls"}]}));
+            }
+        }
     }
     Json(json!({"choices":[{"message":{"content":"Checked."},"finish_reason":"stop"}]}))
 }
