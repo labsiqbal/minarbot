@@ -50,18 +50,31 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             .await;
     crate::computer::hub::finish_effect(state, resumed, "unknown").await?;
     result?;
-    let connector_turn = {
+    let (connector_turn, codegraph_project) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let turn = one(&guard.connection, "SELECT * FROM turns WHERE id=?", [id])?
             .ok_or_else(Failure::storage)?;
-        if (super::messaging::channel(&guard.connection, id)?.is_none()
+        let setup = super::profile::setup(&guard.connection, &turn)?;
+        let codegraph = if !setup
+            && crate::automation::model(&guard.connection, id)?.is_none()
+            && exists(
+                &guard.connection,
+                "SELECT 1 FROM agents WHERE id=? AND runtime='api'",
+                [string(&turn, "agent")],
+            )? {
+            crate::mcp::codegraph::project(state, &guard.connection, &turn)?
+        } else {
+            None
+        };
+        let connector = if (super::messaging::channel(&guard.connection, id)?.is_none()
             || tools::project_context(&guard.connection, &turn)?.is_some())
-            && !super::profile::setup(&guard.connection, &turn)?
+            && !setup
         {
             Some(turn)
         } else {
             None
-        }
+        };
+        (connector, codegraph)
     };
     let connector_tools = if let Some(turn) = connector_turn {
         crate::connectors::composio::tools(state, &turn).await?
@@ -69,6 +82,16 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         vec![]
     };
     let compacted = super::compaction::run(state, id).await?;
+    let mut codegraph = match codegraph_project {
+        Some(project) => match crate::mcp::codegraph::Bridge::open(project).await {
+            Ok(bridge) => Some(bridge),
+            Err(e) => {
+                eprintln!("[server] {}", e.message);
+                None
+            }
+        },
+        None => None,
+    };
     let (turn, profile, mut messages, tools) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
@@ -78,6 +101,9 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         let profile = data::agents::read(db, string(&turn, "agent"))?;
         let mut tools = tools::offered(state, db, &turn)?;
         tools.extend(crate::connectors::composio::specs(&connector_tools));
+        if let Some(bridge) = &codegraph {
+            tools.extend(bridge.specs());
+        }
         let early_replies = super::messaging::capture(db, id)?;
         room::admit(db, id)?;
         let mut system =
@@ -502,6 +528,11 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                     if string(&call["function"], "name").starts_with("composio__") {
                         crate::connectors::composio::call(state, &turn, &call, &connector_tools)
                             .await
+                    } else if string(&call["function"], "name").starts_with("codegraph_") {
+                        let bridge = codegraph
+                            .as_mut()
+                            .ok_or_else(|| error(403, "CodeGraph is unavailable for this turn."))?;
+                        bridge.call(state, &turn, &call).await
                     } else {
                         tools::run(state, &turn, &call).await
                     }

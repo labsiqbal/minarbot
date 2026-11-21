@@ -2,7 +2,7 @@ import { usePolling } from './hooks/usePolling';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ChevronRight, Ellipsis, Folder, FolderOpen, Hash, Plus, X } from 'lucide-react';
 import type { LocalProject } from '../shared/local-project';
-import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, TabPanel, Tabs, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
+import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, Switch, TabPanel, Tabs, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 import { AgentAvatar } from './AgentAvatar';
 import { SourceControl } from './SourceControl';
 import { Collapsible } from 'radix-ui';
@@ -18,8 +18,16 @@ const storage = 'minarbot:project-command';
 const message = (error: unknown) => error instanceof Error ? error.message : 'Project could not load. Try again.';
 export function useProjects(request: Request) {
   const [projects,setProjects] = useState<LocalProject[]>([]), [root,setRoot] = useState(''), [error,setError] = useState(''), [busy,setBusy] = useState(false), [pending,setPending] = useState<Command | null>(null), [invalid,setInvalid] = useState(false);
+  const [codegraphAvailable, setCodegraphAvailable] = useState(false);
   const generation = useRef(0), flight = useRef(false), commandRef = useRef<Command | null>(null), confirm = useConfirm();
-  const reload = useCallback(async (signal?: AbortSignal) => { const current=++generation.current; const result = await request<{projects: LocalProject[]; root: string}>('/api/projects'); if(!signal?.aborted && current===generation.current){setProjects(result.projects);setRoot(result.root);} },[request]);
+  const reload = useCallback(async (signal?: AbortSignal) => {
+    const current = ++generation.current;
+    const result = await request<{ projects: LocalProject[]; root: string; codegraphAvailable: boolean }>('/api/projects');
+    if (signal?.aborted || current !== generation.current) return;
+    setProjects(result.projects);
+    setRoot(result.root);
+    setCodegraphAvailable(result.codegraphAvailable);
+  }, [request]);
   useEffect(() => { try { const raw = sessionStorage.getItem(storage); if(raw) { const value = JSON.parse(raw); if(!value || typeof value.path !== 'string' || !/^\/api\/projects(?:\/[a-f0-9-]{36}\/(?:edit|archive|delete|thread|sections(?:\/[a-f0-9-]{36}\/edit)?))?$/.test(value.path) || !value.body || !/^[a-f0-9-]{36}$/i.test(value.body.id)) throw new Error(); commandRef.current=value;setPending(value); } } catch {setInvalid(true);} return()=>{generation.current++;}; },[reload]);
   usePolling(async signal => { try { await reload(signal); } catch(error) { if (!signal.aborted) setError(message(error)); } }, { interval: 5000 }, [reload]);
   async function execute(path: string, body: Record<string,unknown>): Promise<boolean> {
@@ -29,7 +37,7 @@ export function useProjects(request: Request) {
     try {sessionStorage.setItem(storage,JSON.stringify(command));commandRef.current=command;setPending(command);await request(command.path,command.body);await reload();sessionStorage.removeItem(storage);commandRef.current=null;setPending(null);return true;} catch(error){setError(message(error));return false;} finally{flight.current=false;setBusy(false);}
   }
   const recovery = <>{error && <Alert tone="error" actions={<Button size="sm" onClick={() => void reload().then(()=>setError('')).catch(error=>setError(message(error)))}>Reload projects</Button>}>{error}</Alert>}{(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Saved project request could not be read' : 'Project change is not confirmed'} actions={<>{pending && <Button size="sm" disabled={busy} onClick={()=>void execute(pending.path,pending.body)}>Retry project change</Button>}<Button size="sm" disabled={busy} onClick={async()=>{if(await confirm({title:'Clear project request?',description:'Check project state first. Changes already saved and folders already created remain. Clearing this request does not undo them.',confirm:'Clear request'}))try{sessionStorage.removeItem(storage);commandRef.current=null;setPending(null);setInvalid(false);await reload();}catch(error){setError(message(error));}}}>Clear request</Button></>} />}</>;
-  return {projects,root,reload,execute,busy,locked:busy || !!pending || invalid,recovery};
+  return {projects,root,codegraphAvailable,reload,execute,busy,locked:busy || !!pending || invalid,recovery};
 }
 export type ProjectState = ReturnType<typeof useProjects>;
 
@@ -65,6 +73,12 @@ export function ProjectHome({project,agents,state,request,onChat,onThread,onDele
     <Section title="Folders" actions={!editing&&<Button size="sm" icon={<Plus size={14} aria-hidden/>} disabled={state.locked} onClick={()=>{setEditing(true);setBrowser(true);}}>Add folder</Button>}>{(editing?folders:project.folders).length ? <Card>{(editing?folders:project.folders).map(path=><Row key={path} leading={<Folder size={18} aria-hidden/>} title={<span className="project-path">{path}</span>} meta={path===(editing?folders:project.folders)[0]?'Default folder for sections':'Available to project sections and conversations'} trailing={editing&&<IconButton label={`Remove folder ${path}`} disabled={state.locked} onClick={()=>setFolders(values=>values.filter(value=>value!==path))}><X size={14} aria-hidden/></IconButton>}/>)}</Card>:<p className="k-field__hint">No folders</p>}
       {editing&&<><Field label="Add existing folder" ><Input value={folderPath} disabled={state.locked} onChange={event=>setFolderPath(event.target.value)}/></Field><div className="k-row-actions"><Button size="sm" disabled={state.locked||!folderPath||folders.length>=32} onClick={()=>{if(!folders.includes(folderPath))setFolders(values=>[...values,folderPath]);setFolderPath('');}}>Add folder</Button><Button size="sm" disabled={state.locked} onClick={()=>setBrowser(true)}>Browse folders</Button></div>{browser&&<FolderBrowser request={request} onClose={()=>setBrowser(false)} onChoose={path=>{setFolderPath(path);setBrowser(false);}}/>}<div className="k-row-actions"><Button variant="primary" disabled={state.locked || !name.trim()} busy={state.busy} onClick={()=>void save()}>Save project</Button><Button disabled={state.busy} onClick={()=>{setEditing(false);setMembers(project.members);setFolders(project.folders);}}>Cancel</Button></div></>}
     </Section>
+    {state.codegraphAvailable && <Card><Row title="CodeGraph" trailing={
+      <Switch label="CodeGraph" checked={project.codegraphEnabled ?? false} disabled={state.locked || editing}
+        onChange={enabled => void state.execute(`/api/projects/${project.id}/edit`, {
+          id: crypto.randomUUID(), revision: project.revision, codegraphEnabled: enabled,
+        })} />
+    } /></Card>}
     <Section title="Sections" actions={<Button size="sm" icon={<Plus size={14} aria-hidden/>} disabled={state.locked} onClick={()=>setNewSection(true)}>New section</Button>}><Card>{project.sections.map(section=><Row key={section.id} leading={<Hash size={16} aria-hidden/>} title={section.name} meta={section.archived?'Archived':undefined} onClick={()=>onChat(section.id)}/>)}</Card></Section>
     <Section title="Conversations" actions={<ActionMenu label="New conversation" trigger={<Button size="sm" icon={<Plus size={14} aria-hidden/>}>New conversation</Button>} items={project.members.length ? project.members.map(member=>({label:agents.find(agent=>agent.id===member.agent)?.name??'Agent',disabled:state.locked,onSelect:()=>{void (async()=>{const id=crypto.randomUUID();const ok=await state.execute(`/api/projects/${project.id}/thread`,{id,revision:project.revision,agent:member.agent,folder,name:'Project conversation'});if(ok){try{const fresh=await request<LocalProject>(`/api/projects/${project.id}`);const thread=fresh.threads.find(thread=>!project.threads.some(old=>old.id===thread.id));if(thread)onThread(thread.agent,thread.id);}catch(error){setError(message(error));}}})();}})) : [{label:'Add member',onSelect:()=>setEditing(true)}]}/>}>{project.folders.length>0&&<Select label="Conversation folder" value={folder} onChange={setFolder} options={project.folders.map(path=>({value:path,label:path}))}/>}{project.threads.length?<Card>{project.threads.map(thread=><Row key={thread.id} title={thread.name} meta={agents.find(agent=>agent.id===thread.agent)?.name} onClick={()=>onThread(thread.agent,thread.id)}/>)}</Card>:<p className="k-field__hint">No conversations</p>}</Section>
     {folder&&<ProjectSourceControl key={folder} project={project.id} folder={folder} request={request}/>}

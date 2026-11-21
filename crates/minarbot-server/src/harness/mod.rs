@@ -2,7 +2,7 @@ pub mod config;
 mod fs;
 pub(crate) mod model_catalog;
 pub(crate) mod pdf;
-mod process;
+pub(crate) mod process;
 mod protocol;
 mod snapshot;
 mod store;

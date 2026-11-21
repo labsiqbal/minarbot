@@ -1,4 +1,5 @@
 pub(crate) mod client;
+pub(crate) mod codegraph;
 mod connections;
 pub(crate) mod execution;
 mod features;

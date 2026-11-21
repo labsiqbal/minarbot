@@ -45,7 +45,7 @@ pub fn read(db: &Connection, id: &str) -> Result<Value> {
     }
     let latest=one(db,"SELECT CAST((julianday(max(created))-2440587.5)*86400000 AS INTEGER) AS created FROM turns WHERE channel IN(SELECT channel FROM local_project_sections WHERE project=?) OR thread IN(SELECT thread FROM local_project_threads WHERE project=?)",[id,id])?.and_then(|v|v["created"].as_i64()).unwrap_or(0);
     Ok(
-        json!({"id":id,"name":p["name"],"description":p["description"],"archived":p["archived"]==1,"allowInstallationApps":p["allow_installation_apps"]==1,"revision":p["revision"],"updated":p["updated"].as_i64().unwrap_or(0).max(latest),"folders":all(db,"SELECT directory FROM local_project_folders WHERE project=? ORDER BY rowid",[id])?.into_iter().map(|v|v["directory"].clone()).collect::<Vec<_>>(),"members":members,"channel":p["channel"],"sections":sections,"threads":all(db,"SELECT t.id,t.agent,t.name,p.folder,EXISTS(SELECT 1 FROM conversation_attention a WHERE a.thread=t.id) AS needs_you FROM local_project_threads p JOIN threads t ON t.id=p.thread WHERE p.project=? AND t.deleted=0 ORDER BY t.rowid DESC LIMIT 100",[id])?}),
+        json!({"id":id,"name":p["name"],"description":p["description"],"archived":p["archived"]==1,"allowInstallationApps":p["allow_installation_apps"]==1,"codegraphEnabled":p["codegraph_enabled"]==1,"revision":p["revision"],"updated":p["updated"].as_i64().unwrap_or(0).max(latest),"folders":all(db,"SELECT directory FROM local_project_folders WHERE project=? ORDER BY rowid",[id])?.into_iter().map(|v|v["directory"].clone()).collect::<Vec<_>>(),"members":members,"channel":p["channel"],"sections":sections,"threads":all(db,"SELECT t.id,t.agent,t.name,p.folder,EXISTS(SELECT 1 FROM conversation_attention a WHERE a.thread=t.id) AS needs_you FROM local_project_threads p JOIN threads t ON t.id=p.thread WHERE p.project=? AND t.deleted=0 ORDER BY t.rowid DESC LIMIT 100",[id])?}),
     )
 }
 fn fields(v: &Value, keys: &[&str]) -> Result<()> {
@@ -270,6 +270,7 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
                 "confirmWrite",
                 "folders",
                 "allowInstallationApps",
+                "codegraphEnabled",
                 "confirmed",
             ],
         },
@@ -380,6 +381,18 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
                 )?;
             }
             "edit" => {
+                if let Some(enabled) = v.get("codegraphEnabled") {
+                    let enabled = enabled
+                        .as_bool()
+                        .ok_or_else(|| error(400, "Invalid CodeGraph setting."))?;
+                    if enabled && !crate::mcp::codegraph::available(state) {
+                        return Err(error(409, "CodeGraph is unavailable on this host."));
+                    }
+                    db.execute(
+                        "UPDATE local_projects SET codegraph_enabled=? WHERE id=?",
+                        rusqlite::params![enabled, pid],
+                    )?;
+                }
                 if let Some(allow) = v.get("allowInstallationApps") {
                     if !allow.is_boolean() || allow == true && v["confirmed"] != true {
                         return Err(error(400, "Confirm allowing installation apps."));
@@ -649,7 +662,7 @@ pub fn route(
         ["api", "projects"] if get => {
             let rows=all(db,"SELECT id FROM local_projects WHERE deleted=0 AND archived=0 ORDER BY updated DESC,rowid DESC",[])?;
             Ok(
-                json!({"projects":rows.iter().map(|v|read(db,string(v,"id"))).collect::<Result<Vec<_>>>()?,"root":folders::root(state)?}),
+                json!({"projects":rows.iter().map(|v|read(db,string(v,"id"))).collect::<Result<Vec<_>>>()?,"root":folders::root(state)?,"codegraphAvailable":crate::mcp::codegraph::available(state)}),
             )
         }
         ["api", "projects"] => create(state, db, v),

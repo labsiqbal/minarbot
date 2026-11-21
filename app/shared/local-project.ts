@@ -4,6 +4,7 @@ export type LocalProject = {
   description: string;
   archived: boolean;
   allowInstallationApps: boolean;
+  codegraphEnabled?: boolean;
   revision: number;
   updated: number;
   folders: string[];

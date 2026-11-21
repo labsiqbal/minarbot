@@ -77,6 +77,11 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
             ("local_projects", "archived", "INTEGER NOT NULL DEFAULT 0"),
             (
                 "local_projects",
+                "codegraph_enabled",
+                "INTEGER NOT NULL DEFAULT 0 CHECK(codegraph_enabled IN(0,1))",
+            ),
+            (
+                "local_projects",
                 "allow_installation_apps",
                 "INTEGER NOT NULL DEFAULT 0",
             ),
