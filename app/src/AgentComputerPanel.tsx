@@ -4,7 +4,7 @@ import { Monitor } from 'lucide-react';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import type { DesktopStatus } from '../shared/computer';
 import type { ComputerControl, ComputerWait } from '../shared/computer';
-export type ComputerStatus = DesktopStatus & { enabled: boolean; revision: number; control: ComputerControl; requests: ComputerWait[] };
+export type ComputerStatus = DesktopStatus & { enabled: boolean; sharedProfile?: boolean; revision: number; control: ComputerControl; requests: ComputerWait[] };
 export type ComputerRequest = <T>(path: string, body?: unknown) => Promise<T>;
 
 export function AgentComputerPanel({ agent, request, onOpen }: { agent: string; request: ComputerRequest; onOpen: () => void }) {

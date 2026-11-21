@@ -9,7 +9,9 @@ pub fn validate(name: &str, value: &Value, width: u32, height: u32) -> Result<Ve
         "computer_scroll" => (&["dx", "dy"], &["dx", "dy"]),
         "computer_open_url" => (&["url"], &["url"]),
         "computer_request_user" => (&["reason"], &["reason"]),
-        "computer_screenshot" => (&[], &[]),
+        "computer_list_vault" | "computer_screenshot" => (&[], &[]),
+        "computer_fill_secret" => (&["entry", "which"], &["entry", "which"]),
+        "computer_request_secret" => (&["entry", "origin"], &["entry", "origin"]),
         _ => return Err(error(400, "Invalid computer action.")),
     };
     let object = value
@@ -138,6 +140,22 @@ pub fn validate(name: &str, value: &Value, width: u32, height: u32) -> Result<Ve
             }
             vec![url.to_string()]
         }
+        "computer_fill_secret" | "computer_request_secret" => {
+            let entry = value["entry"]
+                .as_str()
+                .filter(|s| super::vault::valid_name(s))
+                .ok_or_else(|| error(400, "Invalid Vault entry name."))?;
+            let target = if name == "computer_fill_secret" {
+                value["which"]
+                    .as_str()
+                    .filter(|s| ["username", "password", "totp", "value"].contains(s))
+                    .ok_or_else(|| error(400, "Invalid Vault field."))?
+                    .to_owned()
+            } else {
+                super::vault::origin(value["origin"].as_str().unwrap_or_default())?
+            };
+            vec![entry.into(), target]
+        }
         "computer_request_user" => {
             value["reason"]
                 .as_str()
@@ -155,6 +173,7 @@ pub fn validate(name: &str, value: &Value, width: u32, height: u32) -> Result<Ve
 }
 pub fn tools(width: u32, height: u32) -> Value {
     let tool = |name: &str, description: String, properties: Value, required: Value| json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}});
+    let entry = json!({"type":"string","pattern":"^[a-z0-9-]{1,64}$"});
     json!([
         tool("computer_screenshot",format!("See your own {width}x{height} desktop, returned as a PNG image scaled to 960x600. Input coordinates use original {width}x{height} pixels. Starts your desktop on demand."),json!({}),json!([])),
         tool("computer_click","Click your desktop at original screen coordinates.".into(),json!({"x":{"type":"integer","minimum":0,"maximum":width-1},"y":{"type":"integer","minimum":0,"maximum":height-1},"button":{"type":"integer","enum":[1,2,3],"description":"1 left, 2 middle, 3 right."}}),json!(["x","y"])),
@@ -162,7 +181,10 @@ pub fn tools(width: u32, height: u32) -> Value {
         tool("computer_key","Press a key or chord on your desktop. Keys: single ASCII letters/digits, Return, Escape, Tab, space, BackSpace, Delete, arrows, Home, End, Page_Up, Page_Down, F1-F12; modifiers Control_L, Alt_L, Shift_L, Super_L.".into(),json!({"keys":{"type":"array","minItems":1,"maxItems":5,"items":{"type":"string"}}}),json!(["keys"])),
         tool("computer_scroll","Scroll your desktop in wheel ticks: positive dx right, positive dy down. Each axis -20..20.".into(),json!({"dx":{"type":"integer","minimum":-20,"maximum":20},"dy":{"type":"integer","minimum":-20,"maximum":20}}),json!(["dx","dy"])),
         tool("computer_open_url","Navigate Chrome on your desktop to an http/https URL.".into(),json!({"url":{"type":"string","maxLength":2000}}),json!(["url"])),
-        tool("computer_request_user","Ask the user to take control for a login, CAPTCHA, payment, or other human-only step.".into(),json!({"reason":{"type":"string","minLength":1,"maxLength":500}}),json!(["reason"]))
+        tool("computer_request_user","Ask the user to take control for a login, CAPTCHA, payment, or other human-only step.".into(),json!({"reason":{"type":"string","minLength":1,"maxLength":500}}),json!(["reason"])),
+        tool("computer_list_vault","List the Vault entry names, site origins and fields granted to you.".into(),json!({}),json!([])),
+        tool("computer_fill_secret","Fill a granted Vault field into the focused Chrome input on its saved origin. Refer to the tool's placeholder. Never ask for the value in chat. Screenshots are hidden after a fill; use keyboard to finish or ask the user to check Computer.".into(),json!({"entry":entry,"which":{"type":"string","enum":["username","password","totp","value"]}}),json!(["entry","which"])),
+        tool("computer_request_secret","Ask the owner for a missing value in a secure Minarbot form. First focus the intended Chrome input. If approved, save a new Vault entry and fill the value. Use an unused entry name and the site's HTTPS origin.".into(),json!({"entry":entry,"origin":{"type":"string","maxLength":2000}}),json!(["entry","origin"]))
     ])
 }
 #[cfg(test)]

@@ -485,7 +485,9 @@ async fn execute(
     };
     let instructions = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        turns::harness::instructions(state, &guard.connection, turn, runtime, &native_model)?
+        let instructions =
+            turns::harness::instructions(state, &guard.connection, turn, runtime, &native_model)?;
+        redact(&instructions, &secrets, false)
     };
     let mut prompt = messages
         .iter()
@@ -501,6 +503,7 @@ async fn execute(
         })
         .collect::<Vec<_>>()
         .join("\n\n");
+    prompt = redact(&prompt, &secrets, false);
     prompt = format!(
         "{}\n\n{prompt}",
         if saved.is_some() {
@@ -1595,6 +1598,10 @@ pub async fn run(
             state,
             &guard.connection,
             None,
+        )?);
+        secrets.extend(crate::computer::vault::redactions(
+            state,
+            &guard.connection,
         )?);
     }
     let operation = |clock| {

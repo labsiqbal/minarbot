@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS vault_key(id INTEGER PRIMARY KEY CHECK(id=1), name TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS vault_entries(
+    name TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN('login','secret')),
+    revision INTEGER NOT NULL, payload BLOB NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS vault_grants(
+    entry TEXT NOT NULL REFERENCES vault_entries(name) ON DELETE CASCADE,
+    agent TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    PRIMARY KEY(entry, agent)
+) STRICT;
+CREATE TABLE IF NOT EXISTS vault_requests(
+    turn TEXT PRIMARY KEY REFERENCES computer_waits(turn) ON DELETE CASCADE,
+    call_id TEXT NOT NULL, entry TEXT NOT NULL, origin TEXT NOT NULL, desktop TEXT NOT NULL, target TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS computer_shared_profiles(
+    agent TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE
+) STRICT;

@@ -139,7 +139,12 @@ pub async fn tool(
     let clock = super::diagnostics::Clock::start(state, turn, call_id);
     let result = tools::run(state, &row, &call).await;
     drop(clock);
-    let result = result?;
+    let mut result = result?;
+    let vault_secrets = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        crate::computer::vault::redactions(state, &guard.connection)?
+    };
+    crate::mcp::secrets::redact_content(&mut result, &vault_secrets);
     if name.starts_with("computer_") {
         use base64::Engine;
         let guard = state.database.lock().map_err(|_| Failure::storage())?;

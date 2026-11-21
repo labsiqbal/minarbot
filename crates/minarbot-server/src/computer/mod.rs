@@ -3,6 +3,7 @@ pub mod actions;
 #[allow(dead_code)]
 pub mod control;
 mod desktop;
+mod desktop_secret;
 pub(crate) mod desktop_supervisor;
 pub mod devices;
 pub mod host_metrics;
@@ -15,6 +16,7 @@ pub mod options;
 pub mod remote;
 #[allow(dead_code)]
 pub mod resources;
+pub(crate) mod vault;
 mod vnc;
 pub use desktop::Manager;
 mod proxy;
@@ -33,10 +35,12 @@ use serde_json::Value;
 pub type Result<T> = std::result::Result<T, Failure>;
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
     db.execute_batch(include_str!("local.sql"))?;
-    initialize_canonical(db)
+    initialize_canonical(db)?;
+    vault::recover_requests(db)
 }
 pub fn initialize_canonical(db: &rusqlite::Connection) -> crate::db::Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
+    vault::initialize(db)?;
     machines::initialize(db)?;
     hub::initialize(db)?;
     remote::initialize(db)
@@ -128,6 +132,12 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
         }
         if crate::updates::pending(&state) && path != "/api/environment" {
             return Err(error(503, "Update is being verified. Retry after restart."));
+        }
+        if path.starts_with("/api/agents/")
+            && path.contains("/computer")
+            && request.headers().contains_key("authorization")
+        {
+            return Err(error(403, "Computer requires the local owner in Minarbot."));
         }
         if crate::text_header(request.headers(), "authorization")
             .is_some_and(|v| v.starts_with("Bearer bsi_"))

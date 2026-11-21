@@ -83,6 +83,9 @@ pub(crate) fn unavailable(mail: bool) -> Failure {
 }
 impl Options {
     fn service(&self, name: &str, mail: bool) -> Result<String> {
+        if name.starts_with("vault-aead/") {
+            return Ok("minarbot-vault".into());
+        }
         let installation = self
             .installation_id
             .as_ref()

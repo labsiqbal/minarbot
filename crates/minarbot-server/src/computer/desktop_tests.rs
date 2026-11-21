@@ -133,7 +133,12 @@ async fn desktop_mounts_and_preferences_stay_private() -> TestResult<()> {
     fs::remove_file(defaults.join("Preferences"))?;
     check(manager.start(FIRST, 0).await)?;
     let executable = std::env::current_exe()?;
-    let args = sandbox(&profile, &manager.proxy_path, &executable);
+    let args = sandbox(
+        &profile,
+        &manager.root.join(FIRST),
+        &manager.proxy_path,
+        &executable,
+    );
     assert!(args.windows(3).any(|mount| mount[0] == "--ro-bind"
         && Path::new(&mount[1]) == executable
         && mount[2] == "/minarbot-server"));
@@ -712,5 +717,229 @@ async fn websocket_relay_checks_frames_and_revokes_viewers_on_idle_or_death() ->
     }
     computer.close().await;
     server.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn vault_provider_turns_fill_and_prompt_without_leaking() -> TestResult<()> {
+    use axum::{routing::post, Json, Router};
+    use std::sync::atomic::AtomicUsize;
+
+    const LOGIN: &str = "vault-fixture-password-with-quotes-\"";
+    const ASKED: &str = "vault-new-fixture-value";
+
+    let scratch = Scratch::new()?;
+    let launcher = scratch.script(
+        r#"
+echo ready
+sequence=0
+while IFS= read -r line; do
+    sequence=$((sequence + 1))
+    data=''
+    case "$line" in
+      *'"operation":"secret-target"'*) data='AQ==';;
+      *'"operation":"secret-fill"'*'vault-fixture-password-with-quotes-'*) touch login-filled; data='AQ==';;
+      *'"operation":"secret-fill"'*'vault-new-fixture-value'*) touch prompt-filled; data='AQ==';;
+      *'"operation":"secret-fill"'*) data='AA==';;
+      *'"operation":"capture"'*) touch capture-unexpected;;
+    esac
+    printf '{"id":%s,"data":"%s"}\n' "$sequence" "$data"
+done
+"#,
+    )?;
+    let mut state = viewer_state(&scratch, scratch.manager(&launcher, 2)?)?;
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let sequence = Arc::new(AtomicUsize::new(0));
+    let router = Router::new().route(
+        "/chat/completions",
+        post({
+            let requests = requests.clone();
+            move |Json(request): Json<Value>| {
+                let sequence = sequence.clone();
+                let requests = requests.clone();
+                async move {
+                    if let Ok(mut requests) = requests.lock() {
+                        requests.push(request);
+                    }
+                    let step = sequence.fetch_add(1, Ordering::SeqCst);
+                    let (name, arguments) = match step {
+                        0 | 5 => ("computer_fill_secret", json!({"entry":"fixture","which":"password"})),
+                        1 => ("computer_screenshot", json!({})),
+                        3 => ("computer_request_secret", json!({"entry":"missing","origin":"https://example.test"})),
+                        _ => {
+                            let echo = if step == 2 { LOGIN } else { ASKED };
+                            return Json(json!({"choices":[{"message":{"content":format!("Fixture echo {echo}")},"finish_reason":"stop"}]}));
+                        }
+                    };
+                    Json(json!({"choices":[{"message":{"tool_calls":[{
+                        "id":format!("fixture-{step}"),"type":"function","function":{
+                            "name":name,"arguments":arguments.to_string()
+                        }
+                    }]},"finish_reason":"tool_calls"}]}))
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let config = Arc::get_mut(&mut state.config).ok_or("Own test configuration")?;
+    config.data.base_url = Some(format!("http://{}", listener.local_addr()?));
+    config.data.validate()?;
+    config.remaining_data.test_keyring = Some(Default::default());
+    state.turns = crate::turns::Runtime::new()?;
+    let provider = tokio::spawn(async move { axum::serve(listener, router).await });
+
+    let first = uuid::Uuid::new_v4().to_string();
+    let second = uuid::Uuid::new_v4().to_string();
+    let other = uuid::Uuid::new_v4().to_string();
+    {
+        let guard = state.database.lock().map_err(|_| "Test DB unavailable")?;
+        let db = &guard.connection;
+        crate::harness::initialize(db).map_err(|e| e.message)?;
+        crate::automation::initialize(db).map_err(|e| e.message)?;
+        crate::connectors::initialize(db).map_err(|e| e.message)?;
+        crate::mcp::initialize(db).map_err(|e| e.message)?;
+        db.execute(
+            "INSERT INTO agents(id,name,model,instructions) VALUES(?,'Other','fixture','')",
+            [SECOND],
+        )?;
+        db.execute("INSERT INTO agent_computers VALUES(?,1,1)", [SECOND])?;
+        db.execute("UPDATE agents SET model='fixture'", [])?;
+        for (id, agent) in [(&first, FIRST), (&second, FIRST), (&other, SECOND)] {
+            db.execute(
+                "INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,'Sign in to the fixture.','running','2026-11-22T00:00:00Z')",
+                [id.as_str(), agent],
+            )?;
+        }
+    }
+    let vault_request = |path: &str, body: Value, authorization: bool| -> TestResult<_> {
+        let mut request = axum::extract::Request::builder()
+            .uri(path)
+            .method("POST")
+            .header("host", "127.0.0.1")
+            .header("origin", &state.origin)
+            .header("content-type", "application/json");
+        if authorization {
+            request = request.header("authorization", "Bearer fixture-external");
+        }
+        Ok(crate::dispatch(
+            axum::extract::State(state.clone()),
+            request.body(axum::body::Body::from(body.to_string()))?,
+        ))
+    };
+    let add = json!({
+        "name":"fixture","kind":"login","revision":0,"url":"https://example.test/sign-in",
+        "username":"vault-fixture-username","password":LOGIN,"notes":"vault-fixture-notes","agents":[FIRST]
+    });
+    assert_eq!(
+        vault_request("/api/vault", add.clone(), true)?
+            .await
+            .status(),
+        403
+    );
+    assert_eq!(vault_request("/api/vault", add, false)?.await.status(), 200);
+    check(state.computer.start(FIRST, 0).await)?;
+    check(crate::turns::execution::run(&state, &first).await)?;
+    assert!(scratch.0.join("login-filled").exists());
+    assert!(!scratch.0.join("capture-unexpected").exists());
+    check(crate::turns::execution::run(&state, &second).await)?;
+    {
+        let guard = state.database.lock().map_err(|_| "Test DB unavailable")?;
+        let wait = check(crate::computer::control::turn_wait(
+            &guard.connection,
+            &second,
+        ))?
+        .ok_or("Secure form did not pause")?;
+        assert_eq!(wait["secret_entry"], "missing");
+        assert_eq!(wait["secret_origin"], "https://example.test");
+    }
+    let answer = json!({"turn":second,"agent":FIRST,"call":"fixture-3","value":ASKED});
+    assert_eq!(
+        vault_request("/api/vault/respond", answer.clone(), false)?
+            .await
+            .status(),
+        200
+    );
+    assert!(scratch.0.join("prompt-filled").exists());
+    assert_eq!(
+        vault_request("/api/vault/respond", answer, false)?
+            .await
+            .status(),
+        409
+    );
+    check(crate::turns::execution::run(&state, &second).await)?;
+    check(crate::turns::execution::run(&state, &other).await)?;
+    state.computer.close().await;
+    provider.abort();
+
+    let requests = requests.lock().map_err(|_| "Test recorder unavailable")?;
+    assert_eq!(requests.len(), 7);
+    for request in requests.iter() {
+        assert!(!request
+            .to_string()
+            .contains("vault-fixture-password-with-quotes-"));
+        assert!(!request.to_string().contains(ASKED));
+    }
+    assert!(requests[1]
+        .to_string()
+        .contains("{{vault:fixture.password}}"));
+    assert!(requests[2].to_string().contains("Screenshots are hidden"));
+    assert!(requests[4].to_string().contains("{{vault:missing.value}}"));
+    assert!(requests[6]
+        .to_string()
+        .contains("Vault entry unavailable to this agent."));
+
+    let db = state.database.lock().map_err(|_| "Test DB unavailable")?;
+    let db = &db.connection;
+    for id in [&first, &second, &other] {
+        let stored: (String, String) =
+            db.query_row("SELECT status,reply FROM turns WHERE id=?", [id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+        assert_eq!(stored.0, "done");
+        assert!(!stored.1.contains("vault-fixture-password-with-quotes-"));
+        assert!(!stored.1.contains(ASKED));
+    }
+    db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+    let bytes = fs::read(&state.config.database)?;
+    for secret in [
+        "vault-fixture-password-with-quotes-",
+        "vault-fixture-username",
+        "vault-fixture-notes",
+        ASKED,
+    ] {
+        assert!(!bytes
+            .windows(secret.len())
+            .any(|field| field == secret.as_bytes()));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn shared_browser_profile_preserves_state_and_has_one_writer() -> TestResult<()> {
+    let scratch = Scratch::new()?;
+    let launcher = scratch.supervisor()?;
+    let manager = scratch.manager(&launcher, 3)?;
+    check(manager.set_shared_profile(FIRST, true))?;
+    check(manager.set_shared_profile(SECOND, true))?;
+    check(manager.start(FIRST, 0).await)?;
+    assert_eq!(
+        manager.start(SECOND, 0).await.err().map(|e| e.status),
+        Some(409)
+    );
+    check(manager.start(THIRD, 0).await)?;
+    let shared = manager.root.join("owner-chrome");
+    fs::write(shared.join("Default/session-fixture"), "session")?;
+    check(manager.stop(FIRST).await)?;
+    check(manager.start(SECOND, 0).await)?;
+    assert_eq!(
+        fs::read_to_string(shared.join("Default/session-fixture"))?,
+        "session"
+    );
+    assert!(!manager
+        .root
+        .join(THIRD)
+        .join("chrome/Default/session-fixture")
+        .exists());
+    manager.close().await;
     Ok(())
 }

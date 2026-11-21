@@ -50,3 +50,23 @@ pub(crate) fn redact(text: &str, secrets: &[String], streaming: bool) -> String 
     }
     value
 }
+
+pub(crate) fn redact_content(value: &mut Value, secrets: &[String]) {
+    if secrets.is_empty() {
+        return;
+    }
+    match value {
+        Value::String(value) => *value = redact(value, secrets, false),
+        Value::Array(values) => values
+            .iter_mut()
+            .for_each(|value| redact_content(value, secrets)),
+        Value::Object(fields) => fields.iter_mut().for_each(|(name, value)| {
+            // Preserve message routing identifiers and binary image payloads.
+            if !["id", "type", "role", "name", "tool_call_id", "image_url"].contains(&name.as_str())
+            {
+                redact_content(value, secrets);
+            }
+        }),
+        _ => {}
+    }
+}

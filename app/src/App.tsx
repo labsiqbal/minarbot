@@ -93,6 +93,7 @@ const WorkspacePanel = lazy(() => import('./WorkspacePanel').then(module => ({ d
 const MemoryPanel = lazy(() => import('./MemoryPanel').then(module => ({ default: module.MemoryPanel })).catch(panelLoadFailure));
 const WorkflowPanel = lazy(() => import('./WorkflowPanel').then(module => ({ default: module.WorkflowPanel })).catch(panelLoadFailure));
 const WorkflowDirectory = lazy(() => import('./WorkflowDirectory').then(module => ({ default: module.WorkflowDirectory })).catch(panelLoadFailure));
+const VaultSettings = lazy(() => import('./VaultSettings').then(module => ({ default: module.VaultSettings })).catch(panelLoadFailure));
 const GeneralSettings = lazy(() => import('./GeneralSettings').then(module => ({ default: module.GeneralSettings })).catch(panelLoadFailure));
 const PresentationSettings = lazy(() => import('./PresentationSettings').then(module => ({ default: module.PresentationSettings })).catch(panelLoadFailure));
 const SharedDataPanel = lazy(() => import('./SharedDataPanel').then(module => ({ default: module.SharedDataPanel })).catch(panelLoadFailure));
@@ -1135,7 +1136,7 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
 const settingsGroups: { label: string; items: { id: SettingsSection; label: string; icon: typeof Settings }[] }[] = [
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
-  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'minarbot.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
+  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'minarbot.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }, { id: 'vault', icon: KeyRound, label: 'Vault' }] },
   { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'devices', icon: Smartphone, label: 'Devices' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
@@ -1505,6 +1506,7 @@ function App() {
             : settings === 'connected-apps' ? <Suspense fallback={<p className="empty" role="status">Loading connected apps...</p>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
             : settings === 'mcp-server' ? <Suspense fallback={<p className="empty" role="status">Loading MCP server...</p>}><McpServerPanel request={api} /></Suspense>
             : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Loading MCP connections...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'vault' ? <Suspense fallback={<p className="empty" role="status">Loading Vault...</p>}><VaultSettings agents={directory.agents} request={api} /></Suspense>
             : settings === 'data' ? <Suspense fallback={<p className="empty" role="status">Loading shared data...</p>}><SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'usage' ? <Suspense fallback={<p className="empty" role="status">Loading usage...</p>}><UsagePanel request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'backup' ? <Suspense fallback={<p className="empty" role="status">Loading backup...</p>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>

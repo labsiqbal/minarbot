@@ -2,6 +2,7 @@ import { readClipboardText } from './ui/clipboard';
 import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
+import { SecureComputerRequest } from './SecureComputerRequest';
 import { useComputerSettings } from './AgentComputerSettings';
 import RFB from '@novnc/novnc';
 import { ClipboardType, Ellipsis, ExternalLink, Monitor, RefreshCw, X } from 'lucide-react';
@@ -78,10 +79,10 @@ export function useComputerControl(agent: string, request: ComputerRequest, susp
 export function ComputerRequestCard({ agent, name, wait, request }: { agent: string; name: string; wait: ComputerWait; request: ComputerRequest }) {
   const controls = useComputerControl(agent, request);
   return <div ref={controls.ref} className="bs-root computer-request"><Card>
-    <p><strong>{name} needs you to take over: {wait.reason || 'The user is controlling this computer.'}</strong></p>
+    <p><strong>{wait.secret_entry ? `${name} needs a secure value for ${wait.secret_origin}` : `${name} needs you to take over: ${wait.reason || 'The user is controlling this computer.'}`}</strong></p>
     <div className="k-inline">{controls.status?.control.mode === 'user'
       ? <Button size="sm" busy={controls.busy} disabled={controls.locked} onClick={() => void controls.control('hand-back')}>Hand back to agent</Button>
-      : <><Button size="sm" variant="primary" busy={controls.busy} disabled={!controls.status || controls.locked} onClick={() => void controls.control('take')}>Take control</Button><Button size="sm" disabled={!controls.status || controls.locked} onClick={() => void controls.control('dismiss', wait.turn)}>Dismiss</Button></>}
+      : <>{wait.secret_entry ? <SecureComputerRequest key={wait.call_id} agent={agent} wait={wait} request={request} disabled={!controls.status || controls.locked} /> : <Button size="sm" variant="primary" busy={controls.busy} disabled={!controls.status || controls.locked} onClick={() => void controls.control('take')}>Take control</Button>}<Button size="sm" disabled={!controls.status || controls.locked} onClick={() => void controls.control('dismiss', wait.turn)}>Dismiss</Button></>}
     </div>
   </Card>{controls.recovery}</div>;
 }
@@ -258,7 +259,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose, 
         {onClose && <IconButton label="Close" onClick={onClose}><X size={16} aria-hidden /></IconButton>}
       </div>
     </header>
-    {!!waits.length && <div className="computer-viewer__requests">{waits.map(wait => <div className="computer-viewer__request" key={wait.turn}><span>{name} needs you to take over: {wait.reason || 'Computer access is waiting for you.'}</span>{!user && <Button size="sm" variant="ghost" disabled={locked} onClick={() => void controls.control('dismiss', wait.turn)}>Dismiss</Button>}</div>)}</div>}
+    {!!waits.length && <div className="computer-viewer__requests">{waits.map(wait => <div className="computer-viewer__request" key={wait.turn}><span>{wait.secret_entry ? `${name} needs a secure value for ${wait.secret_origin}` : `${name} needs you to take over: ${wait.reason || 'Computer access is waiting for you.'}`}</span>{wait.secret_entry && !user && <SecureComputerRequest key={wait.call_id} agent={agent} wait={wait} request={request} disabled={locked} />}{!user && <Button size="sm" variant="ghost" disabled={locked} onClick={() => void controls.control('dismiss', wait.turn)}>Dismiss</Button>}</div>)}</div>}
     {controls.recovery}{settings.recovery}
     {!running && user && <p className="computer-viewer__idle-control">You still hold control. <Button size="sm" variant="ghost" busy={controls.busy} disabled={locked} onClick={() => void controls.control('hand-back')}>Hand back</Button></p>}
     <div ref={screen} className={`computer-viewer__screen${running && user ? ' is-controlled' : ''}`} title={running && user ? 'Shift+Escape returns to controls' : undefined} role={running ? 'application' : undefined} aria-label={running ? `${name}'s computer. Click to send keys. Shift+Escape returns to controls.` : undefined}>

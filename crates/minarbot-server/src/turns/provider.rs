@@ -44,7 +44,7 @@ pub async fn call(
         return Err(error(503, "Update trial is pending."));
     }
     let mut messages = messages.to_vec();
-    let (account, seq) = {
+    let (account, seq, vault_secrets) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let row = one(
@@ -70,6 +70,10 @@ pub async fn call(
             }
         }
 
+        let vault_secrets = crate::computer::vault::redactions(state, db)?;
+        for message in &mut messages {
+            crate::mcp::secrets::redact_content(message, &vault_secrets);
+        }
         let origin = url::Url::parse(&account.base)
             .map_err(|_| error(502, MALFORMED))?
             .origin()
@@ -82,7 +86,7 @@ pub async fn call(
         db.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES (?,?,?,?,?,?,?,?, 'pending',?)",params![turn,row["agent"].as_str(),model,origin,purpose,phase,account.family,account.id,iso(db,state.config.now())?])?;
         let seq = db.last_insert_rowid();
         state.events.turn(db, turn)?;
-        (account, seq)
+        (account, seq, vault_secrets)
     };
     let streamed = account.stream;
     let max_tokens = account.max_tokens;
@@ -201,7 +205,8 @@ pub async fn call(
                     if phase == "compaction" {
                         Ok(())
                     } else {
-                        stream::text(state, seq, text, false)
+                        let text = crate::mcp::secrets::redact(text, &vault_secrets, true);
+                        stream::text(state, seq, &text, false)
                     }
                 },
             )
@@ -248,7 +253,15 @@ pub async fn call(
                 string(call, "id"),
                 string(&call["function"], "name"),
             )?;
-            return Ok(Answer::Tool(call.clone()));
+            let mut call = call.clone();
+            if !vault_secrets.is_empty() {
+                let raw = string(&call["function"], "arguments");
+                let mut args: Value =
+                    serde_json::from_str(raw).map_err(|_| error(502, MALFORMED))?;
+                crate::mcp::secrets::redact_content(&mut args, &vault_secrets);
+                call["function"]["arguments"] = json!(args.to_string());
+            }
+            return Ok(Answer::Tool(call));
         }
         let text = choice["message"]["content"]
             .as_str()
@@ -261,10 +274,11 @@ pub async fn call(
         {
             return Err(error(502, INCOMPLETE));
         }
+        let text = crate::mcp::secrets::redact(text, &vault_secrets, false);
         if phase != "compaction" {
-            stream::text(state, seq, text, true)?;
+            stream::text(state, seq, &text, true)?;
         }
-        Ok(Answer::Text(text.to_owned()))
+        Ok(Answer::Text(text))
     };
     let operation = crate::computer::hub::run_effect(&effect, operation);
     let result = if let Some(timeout) = explicit_timeout {
