@@ -140,7 +140,9 @@ impl Fixture {
 
     async fn tool(&self, name: &'static str, args: Value) -> Result<Value> {
         let id = self.start_turn(name, args).await?;
-        self.await_turn(id, "done").await?;
+        self.await_turn(id, "done")
+            .await
+            .map_err(|error| format!("{name}: {error}"))?;
         self.provider
             .lock()
             .map_err(|_| "fixture provider lock")?
@@ -241,7 +243,7 @@ async fn agent_tools_drive_visible_chrome_and_keep_refs_and_profiles_fenced() ->
     let url = format!("http://{hostname}:{port}");
     let config = json!({
         "database":f.dir.join("state.sqlite"),"port":0,
-        "baseURL":format!("http://127.0.0.1:{port}/v1"),"apiKey":"fixture",
+        "baseURL":format!("http://127.0.0.1:{port}/v1"),"apiKey":"browser-test-provider-key",
         "desktop":{"enabled":true,"leaseDir":f.dir.join("lease"),"testOnlyProxyTarget":{"hostname":hostname,"port":port}}
     });
     write!(
