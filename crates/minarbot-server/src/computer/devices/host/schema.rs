@@ -1,11 +1,10 @@
-use crate::db::Result;
+use crate::db::{self, Result};
 use rusqlite::{Connection, OptionalExtension};
 
-fn columns(db: &Connection, table: &str) -> Result<Vec<String>> {
-    let mut statement = db.prepare("SELECT name FROM pragma_table_info(?)")?;
-    let rows = statement.query_map([table], |row| row.get(0))?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
-}
+const BASELINE_VERSION: i64 = 3;
+const MIGRATIONS: &[&str] = &[
+    // Append SQL steps in user_version order starting at v4.
+];
 
 pub(super) fn initialize(db: &mut Connection) -> Result<()> {
     if db.query_row(
@@ -22,43 +21,17 @@ pub(super) fn initialize(db: &mut Connection) -> Result<()> {
         "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000",
     )?;
     let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let version: u32 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if !matches!(version, 0 | 2 | 3) {
-        return Err("Unsupported device database version".into());
+    let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version == 0 && db::empty_schema(&tx)? {
+        tx.execute_batch(include_str!("current.sql"))?;
+        tx.pragma_update(None, "user_version", BASELINE_VERSION)?;
     }
-    if version == 0 {
-        tx.execute_batch(include_str!("v2.sql"))?;
-    }
-    if version <= 2 {
-        tx.execute_batch(include_str!("v3.sql"))?;
-        tx.pragma_update(None, "user_version", 3)?;
-    }
-    for (table, column, definition) in [
-        ("device_journal", "uncertain_reason", "TEXT"),
-        (
-            "device_outbox",
-            "report_json",
-            "TEXT CHECK(report_json IS NULL OR json_valid(report_json))",
-        ),
-        (
-            "device_wait_secrets",
-            "ack_json",
-            "TEXT CHECK(ack_json IS NULL OR json_valid(ack_json))",
-        ),
-        (
-            "device_wait_secrets",
-            "cleanup_pending",
-            "INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_pending IN(0,1))",
-        ),
-    ] {
-        let columns = columns(&tx, table)?;
-        if !columns.is_empty() && !columns.iter().any(|c| c == column) {
-            tx.execute_batch(&format!(
-                "ALTER TABLE {table} ADD COLUMN {column} {definition}"
-            ))?;
-        }
-    }
-    tx.execute_batch(include_str!("supplemental.sql"))?;
+    db::migrate_user_version(
+        &tx,
+        BASELINE_VERSION,
+        MIGRATIONS,
+        "Unsupported device database version",
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -66,6 +39,62 @@ pub(super) fn initialize(db: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn columns(db: &Connection, table: &str) -> Result<Vec<String>> {
+        let mut statement = db.prepare("SELECT name FROM pragma_table_info(?)")?;
+        let rows = statement.query_map([table], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    fn snapshot(db: &Connection) -> Result<(Vec<SchemaEntry>, i64, i64)> {
+        let mut stmt =
+            db.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name")?;
+        let rows = stmt.query_map([], |row| {
+            let sql: Option<String> = row.get(3)?;
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                sql.map(|sql| sql.split_whitespace().collect::<Vec<_>>().join(" ")),
+            ))
+        })?;
+        Ok((
+            rows.collect::<rusqlite::Result<_>>()?,
+            db.pragma_query_value(None, "user_version", |row| row.get(0))?,
+            db.pragma_query_value(None, "application_id", |row| row.get(0))?,
+        ))
+    }
+
+    type SchemaEntry = (String, String, String, Option<String>);
+
+    #[test]
+    fn direct_device_schema_matches_the_pre_collapse_schema() -> Result<()> {
+        let old = Connection::open_in_memory()?;
+        old.execute_batch(include_str!("fixtures/pre-collapse.sql"))?;
+        let mut db = Connection::open_in_memory()?;
+        initialize(&mut db)?;
+        let before = snapshot(&db)?;
+        assert_eq!(before, snapshot(&old)?);
+        db.execute(
+            "INSERT INTO device_state VALUES (1,'host','authority',8,4,5,'[]')",
+            [],
+        )?;
+        let cookie: i64 = db.pragma_query_value(None, "schema_version", |row| row.get(0))?;
+        initialize(&mut db)?;
+        assert_eq!(snapshot(&db)?, before);
+        assert_eq!(
+            db.pragma_query_value(None, "schema_version", |row| row.get::<_, i64>(0))?,
+            cookie
+        );
+        assert_eq!(
+            db.query_row("SELECT journal_sequence FROM device_state", [], |row| row
+                .get::<_, i64>(
+                0
+            ))?,
+            5
+        );
+        Ok(())
+    }
 
     #[test]
     fn device_schema_stays_separate_and_idempotent() -> Result<()> {
@@ -91,41 +120,13 @@ mod tests {
     }
 
     #[test]
-    fn upgrades_v2_without_rewriting_device_state() -> Result<()> {
-        let mut db = Connection::open_in_memory()?;
-        minarbot_launcher::data_format::mark(&db)?;
-        db.execute_batch(include_str!("v2.sql"))?;
-        db.pragma_update(None, "user_version", 2)?;
-        db.execute(
-            "INSERT INTO device_state VALUES (1,'host','authority',8,4,5,'[]')",
-            [],
-        )?;
-        initialize(&mut db)?;
-        initialize(&mut db)?;
-        assert_eq!(
-            db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))?,
-            3
-        );
-        assert_eq!(
-            db.query_row(
-                "SELECT device_generation,journal_sequence FROM device_state",
-                [],
-                |r| Ok((r.get::<_, u32>(0)?, r.get::<_, u32>(1)?))
-            )?,
-            (8, 5)
-        );
-        assert!(columns(&db, "device_wait_secrets")?.contains(&"ack_json".to_owned()));
-        Ok(())
-    }
-
-    #[test]
     fn marks_new_device_data_and_refuses_unmarked_data() -> Result<()> {
         let mut fresh = Connection::open_in_memory()?;
         initialize(&mut fresh)?;
         assert!(minarbot_launcher::data_format::is_marked(&fresh)?);
         initialize(&mut fresh)?;
         let mut old = Connection::open_in_memory()?;
-        old.execute_batch(include_str!("v2.sql"))?;
+        old.execute_batch("CREATE TABLE device_state(id INTEGER PRIMARY KEY)")?;
         old.pragma_update(None, "user_version", 2)?;
         let error = initialize(&mut old)
             .err()

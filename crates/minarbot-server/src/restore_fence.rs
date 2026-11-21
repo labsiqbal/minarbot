@@ -200,7 +200,7 @@ impl Recovery<'_> {
             [],
             |row| row.get(0),
         )?;
-        if !(3..=SCHEMA_VERSION).contains(&schema) {
+        if !(crate::db::BASELINE_VERSION..=SCHEMA_VERSION).contains(&schema) {
             return Err(Failure::new(
                 409,
                 "restore_schema_upgrade_required",

@@ -106,22 +106,6 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
         }
         column(db, "turns", "attention_finished_at", "INTEGER")?;
         db.execute_batch("UPDATE turns SET status='interrupted',error='The process stopped before the result was saved. Check the provider before sending again.' WHERE status='running'; UPDATE provider_calls SET status='interrupted' WHERE status='pending';")?;
-        for a in all(
-            db,
-            "SELECT * FROM agents WHERE id NOT IN(SELECT id FROM agent_creations)",
-            [],
-        )
-        .map_err(|_| "Cannot read agent creations")?
-        {
-            db.execute(
-                "INSERT INTO agent_creations VALUES(?,?)",
-                rusqlite::params![
-                    string(&a, "id"),
-                    json!({"name":a["name"],"model":a["model"],"instructions":a["instructions"]})
-                        .to_string()
-                ],
-            )?;
-        }
         for c in all(
             db,
             "SELECT * FROM channels WHERE id NOT IN(SELECT id FROM channel_creations)",

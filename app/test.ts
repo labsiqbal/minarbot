@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { markMinarbotData, testDatabase } from './test-support/database.ts';
+import { testDatabase } from './test-support/database.ts';
 import assert from 'node:assert/strict';
 import { createServer, get, request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -334,6 +334,11 @@ test('automatic routing shares four workers with execution', async () => {
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` }, { directory: dir, servers: [provider] });
+  async function waitForFourWorkers() {
+    const deadline = performance.now() + 10000;
+    while (waiting.length < 4 && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(waiting.length, 4);
+  }
   async function post(path: string, body: unknown) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     assert(response.ok); return response.json();
@@ -347,12 +352,10 @@ test('automatic routing shares four workers with execution', async () => {
       const path = `/api/channels/${channel.id}/turns`; paths.push(path);
       await post(path, { id: randomUUID(), text: `Work ${i}`, automatic: true });
     }
-    for (let i = 0; waiting.length < 4 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.equal(waiting.length, 4);
+    await waitForFourWorkers();
     assert.equal((await (await fetch(app.origin + paths[4])).json())[0].status, 'queued');
     waiting.shift()!();
-    for (let i = 0; waiting.length < 4 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.equal(waiting.length, 4);
+    await waitForFourWorkers();
     assert.equal(active, 4);
     released = true;
     waiting.splice(0).forEach(respond => respond());
@@ -374,22 +377,11 @@ test('automatic routing shares four workers with execution', async () => {
 });
 
 
-test('legacy agent migration preserves create retries across later edits', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'minarbot-legacy-'));
+test('agent and channel create retries survive edits and restart', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-create-retry-'));
   const database = join(dir, 'state.sqlite');
-  const original = { id: randomUUID(), name: 'Legacy', model: 'fixture', instructions: 'Original instructions.' };
-  const db = testDatabase(database);
-  markMinarbotData(db);
-  db.exec('CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, model TEXT NOT NULL, instructions TEXT NOT NULL) STRICT');
-  db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(original.id, original.name, original.model, original.instructions);
-  const legacyChannel = { id: randomUUID(), name: 'Legacy room', instructions: 'Original purpose.', lead: original.id, members: [original.id] };
-  db.exec('CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL, lead TEXT) STRICT; CREATE TABLE channel_members (channel TEXT NOT NULL, agent TEXT NOT NULL, PRIMARY KEY(channel,agent)) STRICT');
-  db.prepare('INSERT INTO channels VALUES (?,?,?,?)').run(legacyChannel.id, legacyChannel.name, legacyChannel.instructions, legacyChannel.lead);
-  db.prepare('INSERT INTO channel_members VALUES (?,?)').run(legacyChannel.id, original.id);
-  db.exec(`CREATE TABLE turns (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
-    agent TEXT NOT NULL, channel TEXT, text TEXT NOT NULL, reply TEXT, status TEXT NOT NULL, error TEXT, created TEXT NOT NULL) STRICT`);
-  for (const channel of [legacyChannel.id, null]) db.prepare("INSERT INTO turns(id,agent,channel,text,reply,status,created) VALUES (?,?,?,?,?,'done',?)").run(randomUUID(), original.id, channel, 'Old request', 'Old result', new Date().toISOString());
-  db.close();
+  const original = { id: randomUUID(), name: 'Original agent', model: 'fixture', instructions: 'Original instructions.' };
+  const channel = { id: randomUUID(), name: 'Original room', instructions: 'Original purpose.', lead: original.id, members: [original.id] };
   let app = await startApp({ database });
   async function post(path: string, data: unknown) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
@@ -397,18 +389,26 @@ test('legacy agent migration preserves create retries across later edits', async
   }
   try {
     const current = await post('/api/agents', { ...original, runtime: 'api' }); assert.equal(current.revision, 1);
-    const oldRoom = await post('/api/channels', legacyChannel); assert.equal(oldRoom.revision, 1); assert.equal(oldRoom.archived, 0);
-    assert.equal(oldRoom.activity, 1); assert.equal(oldRoom.read_position, 0);
-    await post(`/api/channels/${legacyChannel.id}/read`, { id: randomUUID(), position: 1 });
-    await post(`/api/channels/${legacyChannel.id}/edit`, { ...legacyChannel, id: randomUUID(), revision: 1, archived: true, name: 'Archived legacy' });
-    const retryRoom = await post('/api/channels', legacyChannel); assert.equal(retryRoom.archived, 1); assert.equal(retryRoom.name, 'Archived legacy');
+    const room = await post('/api/channels', channel); assert.equal(room.revision, 1); assert.equal(room.archived, 0);
+    await app.close();
+    const db = testDatabase(database);
+    try {
+      db.prepare("INSERT INTO turns(id,agent,channel,text,reply,status,created) VALUES (?,?,?,?,?,'done',?)")
+        .run(randomUUID(), original.id, channel.id, 'Request', 'Result', new Date().toISOString());
+    } finally { db.close(); }
+    app = await startApp({ database });
+    const savedRoom = await post('/api/channels', channel);
+    assert.equal(savedRoom.activity, 1); assert.equal(savedRoom.read_position, 0);
+    await post(`/api/channels/${channel.id}/read`, { id: randomUUID(), position: 1 });
+    await post(`/api/channels/${channel.id}/edit`, { ...channel, id: randomUUID(), revision: 1, archived: true, name: 'Archived room' });
+    const retryRoom = await post('/api/channels', channel); assert.equal(retryRoom.archived, 1); assert.equal(retryRoom.name, 'Archived room');
 
     const path = `/api/agents/${original.id}/edit`;
     const first = { ...original, id: randomUUID(), revision: 1, name: 'First edit' };
     const firstResult = await post(path, first);
     await post(path, { ...first, id: randomUUID(), revision: 2, name: 'Second edit' });
     await app.close(); app = await startApp({ database });
-    const readRoom = await post('/api/channels', legacyChannel); assert.equal(readRoom.activity, 1); assert.equal(readRoom.read_position, 1);
+    const readRoom = await post('/api/channels', channel); assert.equal(readRoom.activity, 1); assert.equal(readRoom.read_position, 1);
     assert.deepEqual(await post(path, first), firstResult);
     const retried = await post('/api/agents', { ...original, runtime: 'api' });
     assert.equal(retried.id, original.id); assert.equal(retried.name, 'Second edit'); assert.equal(retried.revision, 3);
