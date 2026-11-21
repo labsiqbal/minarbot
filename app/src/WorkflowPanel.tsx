@@ -1,4 +1,6 @@
+import { useCachedData, useQueryPolling, useQueryVersion } from './hooks/useCachedQuery';
 import { usePolling } from './hooks/usePolling';
+import { queryCache } from './hooks/queryCache';
 import { Markdown } from './Markdown';
 import { EventConnection } from './EventConnection';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -29,17 +31,20 @@ function WorkflowVersions({ workflow, request, locked, refresh, onRestore }: {
   workflow: Workflow; request: <T>(path: string, data?: unknown) => Promise<T>; locked: boolean; refresh: number; onRestore: (version: number) => void;
 }) {
   const [cursors, setCursors] = useState<number[]>([]), [error, setError] = useState(''), [retry, setRetry] = useState(0);
-  const [page, setPage] = useState<{ versions: { revision: number; graph: WorkflowGraph }[]; next_before: number | null } | null>(null);
   const confirm = useConfirm();
   const before = cursors.at(-1);
+  const path = `/api/workflows/${workflow.id}/versions${before ? `?before=${before}` : ''}`;
+  const { data: page } = useCachedData<{ versions: { revision: number; graph: WorkflowGraph }[]; next_before: number | null }>(path);
+  const version = useQueryVersion();
   useEffect(() => {
-    let stopped = false; setPage(null); setError('');
-    void request<NonNullable<typeof page>>(`/api/workflows/${workflow.id}/versions${before ? `?before=${before}` : ''}`).then(data => { if (!stopped) setPage(data); }).catch(error => { if (!stopped) setError(error.message); });
+    let stopped = false; setError('');
+    void queryCache.refresh(path, () => request<NonNullable<typeof page>>(path)).catch(error => { if (!stopped) setError(error.message); });
     return () => { stopped = true; };
-  }, [workflow.id, workflow.revision, before, refresh, retry]);
+  }, [path, workflow.revision, refresh, retry, request, version]);
   return <Section title="Saved versions">
     <p className="k-field__hint">Restore the graph as a new revision. The workflow name and runs already started stay unchanged.</p>
-    {error ? <Alert tone="error" actions={<Button size="sm" onClick={() => setRetry(value => value + 1)}>Reload versions</Button>}>{error}</Alert> : !page ? <><span className="sr-only" role="status">Loading versions...</span><SkeletonRows /></> : <Card>{page.versions.map(version => <Row key={version.revision} title={`Version ${version.revision}`} meta={<><span>{version.graph.nodes.length} steps</span><span>Start: {version.graph.entry}</span>{version.revision === workflow.revision && <Badge>Current</Badge>}</>}
+    {error ? <Alert tone="error" actions={<Button size="sm" onClick={() => setRetry(value => value + 1)}>Reload versions</Button>}>{error}</Alert> : null}
+    {!page ? !error && <><span className="sr-only" role="status">Loading versions...</span><SkeletonRows /></> : <Card>{page.versions.map(version => <Row key={version.revision} title={`Version ${version.revision}`} meta={<><span>{version.graph.nodes.length} steps</span><span>Start: {version.graph.entry}</span>{version.revision === workflow.revision && <Badge>Current</Badge>}</>}
       trailing={<ActionMenu label={`Version ${version.revision} actions`} trigger={<IconButton label={`Version ${version.revision} actions`}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: `Restore version ${version.revision}`, disabled: locked || version.revision === workflow.revision, onSelect: async () => { if (await confirm({ title: `Restore graph version ${version.revision} as a new revision?`, description: 'Runs already started stay unchanged.', confirm: 'Restore version' })) onRestore(version.revision); } }]} />}>
       <Collapsible title={<>View graph version {version.revision}</>}><CodeBlock label={`Graph version ${version.revision}`}>{JSON.stringify(version.graph, null, 2)}</CodeBlock></Collapsible>
     </Row>)}</Card>}
@@ -94,15 +99,14 @@ export function WorkflowPanel({ owner, agents, request, onBack, renderConversati
     catch { return { command: null, invalid: true }; }
   });
   const [pending, setPending] = useState<Command | null>(recovery.command);
-  const [page, setPage] = useState<{ workflows: Workflow[]; next_after: string | null } | null>(null), [cursors, setCursors] = useState(['']);
+  const [cursors, setCursors] = useState(['']);
   const [editing, setEditing] = useState<Workflow | 'new' | null>(pending?.kind === 'save' ? pending.workflow ?? 'new' : initial === 'new' && !pending ? 'new' : null);
-  const [selected, setSelected] = useState<Workflow | null>(pending?.workflow ?? (initial && initial !== 'new' ? initial : null)), [runs, setRuns] = useState<{ seq: number; id: string; status: string; created: string }[] | null>(null);
+  const [selected, setSelected] = useState<Workflow | null>(pending?.workflow ?? (initial && initial !== 'new' ? initial : null));
   const [runId, setRunId] = useState(pending?.kind === 'run' ? String(pending.body.id) : pending && ['approve', 'cancel', 'retry'].includes(pending.kind) ? pending.path.split('/')[3] : ''), [run, setRun] = useState<Run | null>(null), [input, setInput] = useState('');
   const [runCursors, setRunCursors] = useState<number[]>([]), beforeRun = runCursors.at(-1);
   const [conversation, setConversation] = useState<{ thread: string; agent: string; node: string } | null>(null);
   const stepButtons = useRef(new Map<number, HTMLButtonElement>()), returnStep = useRef<number | null>(null), conversationBack = useRef<HTMLButtonElement>(null);
   useEffect(() => { setRunCursors([]); }, [selected?.id]);
-  useEffect(() => { setRuns(null); }, [selected?.id, beforeRun]);
   useEffect(() => {
     if (conversation) conversationBack.current?.focus();
     else if (returnStep.current !== null) stepButtons.current.get(returnStep.current)?.focus();
@@ -116,22 +120,27 @@ export function WorkflowPanel({ owner, agents, request, onBack, renderConversati
   function navigate() { navigation.current++; setHookSecret(null); onNavigate(); }
   useEffect(() => () => { mounted.current = false; navigation.current++; }, []);
   const after = cursors[cursors.length - 1];
+  const path = `${listPath}${after ? `?after=${after}` : ''}`;
+  const runsPath = selected ? `/api/workflows/${selected.id}/runs${beforeRun ? `?before=${beforeRun}` : ''}` : '';
+  const { data: page, fresh } = useCachedData<{ workflows: Workflow[]; next_after: string | null }>(path);
+  const { data: runs } = useCachedData<{ seq: number; id: string; status: string; created: string }[]>(runsPath);
+  const version = useQueryVersion();
   useEffect(() => {
-    let stopped = false; setPage(null);
+    let stopped = false;
     void Promise.all([
-      request<{ workflows: Workflow[]; next_after: string | null }>(`${listPath}${after ? `?after=${after}` : ''}`),
+      queryCache.refresh(path, () => request<NonNullable<typeof page>>(path)),
       selected ? request<Workflow>(`/api/workflows/${selected.id}`) : Promise.resolve(null),
-    ]).then(([data, current]) => { if (!stopped) { setPage(data); if (current) setSelected(current); setError(''); } }).catch(error => { if (!stopped) setError(String(error.message)); });
+    ]).then(([, current]) => { if (!stopped) { if (current) setSelected(current); setError(''); } }).catch(error => { if (!stopped) setError(String(error.message)); });
     return () => { stopped = true; };
-  }, [after, refresh, listPath, selected?.id]);
+  }, [path, refresh, selected?.id, request, version]);
   useEffect(() => { heading.current?.focus(); }, [editing, selected?.id]);
-  usePolling(async signal => {
+  useQueryPolling(async signal => {
     try {
-      const rows = await request<NonNullable<typeof runs>>(`/api/workflows/${selected!.id}/runs${beforeRun ? `?before=${beforeRun}` : ''}`);
+      await queryCache.refresh(runsPath, () => request<NonNullable<typeof runs>>(runsPath));
       const detail = runId ? await request<Run>(`/api/workflow-runs/${runId}`) : null;
-      if (!signal.aborted) { setRuns(rows); setRun(detail); }
+      if (!signal.aborted) setRun(detail);
     } catch (error) { if (!signal.aborted) setError(error instanceof Error ? error.message : 'History has not loaded.'); }
-  }, { interval: 1200, enabled: !!selected }, [selected?.id, runId, refresh, beforeRun]);
+  }, { interval: 1200, enabled: !!selected }, [runsPath, runId, refresh, request]);
   async function execute(command: Command) {
     if (busy || inFlight.current) return false;
     const version = navigation.current;
@@ -200,7 +209,7 @@ export function WorkflowPanel({ owner, agents, request, onBack, renderConversati
       {!selected && <Button variant="primary" disabled={locked} onClick={() => { navigate(); setEditing('new'); }}>Create workflow</Button>}
     </>} />{banner}
     {!selected ? <Section title="Workflow library">
-      {!page ? <><span className="sr-only" role="status">Loading workflow...</span><SkeletonRows /></> : !page.workflows.length ? <EmptyState title="No workflows on this page yet" /> : <Card>{page.workflows.map(item => <Row key={item.id} title={item.name} meta={<><Badge>Version {item.revision}</Badge><span>{item.graph.nodes.length} steps</span></>} onClick={() => { navigate(); setSelected(item); setRunId(''); setRun(null); setRuns(null); setInput(''); }} trailing={<ActionMenu label={`${item.name} actions`} trigger={<IconButton label={`${item.name} actions`}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: `Edit ${item.name}`, disabled: locked, onSelect: () => { navigate(); setEditing(item); } }]} />} />)}</Card>}
+      {!page ? <><span className="sr-only" role="status">Loading workflow...</span><SkeletonRows /></> : !page.workflows.length ? <EmptyState title="No workflows on this page yet" /> : <Card>{page.workflows.map(item => <Row key={item.id} title={item.name} meta={<><Badge>Version {item.revision}</Badge><span>{item.graph.nodes.length} steps</span></>} onClick={() => { navigate(); setSelected(item); setRunId(''); setRun(null); setInput(''); }} trailing={<ActionMenu label={`${item.name} actions`} trigger={<IconButton label={`${item.name} actions`}><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: `Edit ${item.name}`, disabled: locked || !fresh, onSelect: () => { navigate(); setEditing(item); } }]} />} />)}</Card>}
       {(cursors.length > 1 || page?.next_after) && <div className="k-pager"><IconButton label="Previous workflows" disabled={cursors.length < 2} onClick={() => setCursors(value => value.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Next workflows" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(value => [...value, page.next_after!]); }}><ChevronRight size={16} aria-hidden /></IconButton></div>}
     </Section> : <>{selected.deleted ? <Alert tone="warn">Workflow has been deleted. Saved results can still be read.</Alert> : <Section title="Start a run" actions={<ActionMenu label="Workflow actions" trigger={<IconButton label="Workflow actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Delete workflow', danger: true, disabled: locked, onSelect: async () => { if (await confirm({ title: `Delete workflow ${selected.name}?`, description: 'Schedules are stopped and the webhook URL is revoked. Saved results remain available. Active runs must be stopped first.', confirm: 'Delete workflow', danger: true })) void execute({ kind: 'delete', workflow: selected, path: `/api/workflows/${selected.id}/delete`, body: { id: crypto.randomUUID(), revision: selected.revision } }); } }]} />}>
       <form className="k-fieldset" onSubmit={event => { event.preventDefault(); if (!locked) void execute({ kind: 'run', workflow: selected, path: `/api/workflows/${selected.id}/run`, body: { id: crypto.randomUUID(), revision: selected.revision, input } }); }}><Field label="Workflow input"><Textarea maxLength={16000} value={input} readOnly={locked} onChange={event => setInput(event.target.value)} /></Field><div className="k-inline"><Button type="submit" variant="primary" disabled={locked}>Run version {selected.revision}</Button></div></form>

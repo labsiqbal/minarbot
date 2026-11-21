@@ -1,4 +1,5 @@
-import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useEffect, useRef, useState } from 'react';
 import './machines-data.css';
 import { Alert, Button, Card, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows, Tabs, TabPanel, Tooltip } from './ui/kit';
@@ -9,13 +10,15 @@ type Report = { transcription: { calls: number; pending: number; uncertain: numb
 const statuses: Record<string, string> = { pending: 'Waiting for response', received: 'Response received', failed: 'Failed or canceled', interrupted: 'Disconnected, result unknown' };
 const amount = (value: number | string | null) => value === null ? '-' : BigInt(value).toLocaleString('en-US');
 export function UsagePanel({ request }: { request: <T>(path: string) => Promise<T>; onClose: () => void }) {
-  const [report, setReport] = useState<Report | null>(null), [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
+  const [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
   const [tab, setTab] = useState('calls');
   const [cursors, setCursors] = useState<number[]>([]), before = cursors.at(-1);
+  const path = `/api/usage${before ? `?before=${before}` : ''}`;
+  const { data: report } = useCachedData<Report>(path);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus(); }, [before]);
-  usePolling(async signal => {
-    try { const data = await request<Report>(`/api/usage${before ? `?before=${before}` : ''}`); if (!signal.aborted) { setReport(data); setError(''); } }
+  useQueryPolling(async signal => {
+    try { await queryCache.refresh(path, () => request<Report>(path)); if (!signal.aborted) setError(''); }
     catch (reason) { if (!signal.aborted) setError(reason instanceof Error ? reason.message : 'Usage could not load.'); }
   }, { interval: 5000 }, [before, request, refresh]);
   return <div className="k-page bs-root set4-page">

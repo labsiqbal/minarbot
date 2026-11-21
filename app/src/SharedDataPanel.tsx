@@ -1,4 +1,5 @@
-import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Database, Ellipsis } from 'lucide-react';
 import { ActionMenu, Alert, Button, Card, CodeBlock, Collapsible, EmptyState, Field, IconButton, PageHeader, Row, Section, SkeletonRows, Tooltip, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
@@ -9,19 +10,21 @@ type QueryResult = { columns: string[]; rows: unknown[][]; truncated: boolean; c
 type Pending = { id: string; revision: number; table: string };
 const key = 'minarbot:shared-data-drop';
 export function SharedDataPanel({ request, agents }: { agents: { id: string; name: string }[]; request: <T>(path: string, data?: unknown) => Promise<T>; onClose: () => void }) {
-  const [listing, setListing] = useState<Listing | null>(null), [after, setAfter] = useState(''), [reload, setReload] = useState(0);
+  const [after, setAfter] = useState(''), [reload, setReload] = useState(0);
   const [sql, setSQL] = useState(''), [result, setResult] = useState<QueryResult | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending | null>(() => { try { const p = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return p && typeof p.id === 'string' && /^[0-9a-f-]{36}$/i.test(p.id) && typeof p.table === 'string' && p.table.length > 0 && p.table.length <= 128 && Number.isSafeInteger(p.revision) && p.revision >= 0 ? p : null; } catch { return null; } });
   const confirm = useConfirm();
   const heading = useRef<HTMLHeadingElement>(null), version = useRef(0);
   useEffect(() => { heading.current?.focus(); return () => { version.current++; }; }, []);
-  usePolling(async signal => {
+  const path = `/api/data?after=${encodeURIComponent(after)}`;
+  const { data: listing, fresh } = useCachedData<Listing>(path);
+  useQueryPolling(async signal => {
     const active = ++version.current;
-    try { const value = await request<Listing>(`/api/data?after=${encodeURIComponent(after)}`); if (!signal.aborted && active === version.current) { setListing(value); setError(''); } }
+    try { await queryCache.refresh(path, () => request<Listing>(path)); if (!signal.aborted && active === version.current) setError(''); }
     catch (error) { if (!signal.aborted && active === version.current) setError(error instanceof Error ? error.message : 'Tables could not load.'); }
   }, { interval: 5000, enabled: !busy }, [after, reload, request]);
   async function execute(table?: string) {
-    if (busy || !listing) return;
+    if (busy || !listing || (!pending && !fresh)) return;
     let command = pending;
     if (table && !command) {
       if (!await confirm({ title: `Delete table ${table} and all its data?`, description: 'This action cannot be undone.', confirm: 'Delete table', danger: true })) return;
@@ -48,7 +51,7 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
     <Section id="shared-data-tables" title={<Tooltip content={<span className="bs-root set4-tooltip">{"Agent-shared tables; schema owned by creator. Do not store secrets or private data here."}</span>}><span tabIndex={0}>Tables</span></Tooltip>}>
       {!listing ? error ? <EmptyState title="Data is unavailable." /> : <><span className="sr-only" role="status">Loading tables...</span><SkeletonRows /></> : <>
         {!listing.tables.length ? <EmptyState icon={<Database size={18} />} title="No tables" /> : <Card>{listing.tables.map(table => <div key={table.name}>
-          <Row title={table.name} leading={<Database size={16} aria-hidden />} meta={`${agents.find(agent => agent.id === table.owner)?.name ?? table.owner}`} trailing={<ActionMenu label={`Menu ${table.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${table.name}`} disabled={busy || !!pending}><Ellipsis size={16} aria-hidden /></button>} items={[
+          <Row title={table.name} leading={<Database size={16} aria-hidden />} meta={`${agents.find(agent => agent.id === table.owner)?.name ?? table.owner}`} trailing={<ActionMenu label={`Menu ${table.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${table.name}`} disabled={busy || !!pending || !fresh}><Ellipsis size={16} aria-hidden /></button>} items={[
             { label: `Delete table ${table.name}`, danger: true, onSelect: () => void execute(table.name) },
           ]} />} />
           <div className="set4-schema"><Collapsible title="Schema"><CodeBlock label={`Columns in ${table.name}`}>{table.columns.map(column => `${column.name}: ${column.type || 'untyped'}`).join('\n')}</CodeBlock></Collapsible></div>
@@ -61,7 +64,7 @@ export function SharedDataPanel({ request, agents }: { agents: { id: string; nam
     </Section>
     {listing && <Collapsible title="SQL query">
       <Field label={<Tooltip content={<span className="bs-root set4-tooltip">{"Read-only SQL. No writes or schema changes."}</span>}><span tabIndex={0}>SQL query</span></Tooltip>}><Textarea rows={4} placeholder={'SELECT * FROM "table_name" LIMIT 50'} value={sql} maxLength={16000} disabled={busy || !!pending} onChange={event => setSQL(event.target.value)} /></Field>
-      <div className="k-row-actions"><Button variant="primary" disabled={busy || !!pending || !sql.trim()} busy={busy} onClick={() => void execute()}>{busy ? 'Processing...' : 'Run query'}</Button></div>
+      <div className="k-row-actions"><Button variant="primary" disabled={busy || !!pending || !fresh || !sql.trim()} busy={busy} onClick={() => void execute()}>{busy ? 'Processing...' : 'Run query'}</Button></div>
     </Collapsible>}
     {result !== null && <Collapsible title="Last query results" defaultOpen>
       {result.columns.length > 0 ? <div className="k-table-wrap"><table className="k-table">

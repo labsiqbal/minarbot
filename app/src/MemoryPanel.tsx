@@ -1,3 +1,5 @@
+import { useCachedData, useQueryVersion } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { memoryCommand, memoryDraft, type MemoryCommand, type MemoryDraft, type MemoryEntry } from './memory-command.ts';
@@ -16,7 +18,7 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
     catch { return { pending: null, draft: null, error: 'Saved changes could not be read. Discard recovery to continue.' }; }
   });
   const [pending, setPending] = useState<MemoryCommand | null>(recovery.pending), [blocked, setBlocked] = useState(recovery.error);
-  const [page, setPage] = useState<Page | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [query, setQuery] = useState(''), [search, setSearch] = useState(''), [cursors, setCursors] = useState<string[]>([]), [refresh, setRefresh] = useState(0);
   const [entry, setEntry] = useState<Entry | null>(recovery.draft?.entry ?? null), [text, setText] = useState(recovery.draft?.text ?? ''), [essential, setEssential] = useState(recovery.draft?.essential ?? false), [busy, setBusy] = useState(false);
   const [automatic, setAutomatic] = useState(recovery.draft?.automatic ?? false);
@@ -26,12 +28,15 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
   const dirty = text !== (entry?.text ?? '') || essential !== !!entry?.essential || automatic !== (entry?.selection_locked === 0);
   useEffect(() => { mounted.current = true; heading.current?.focus(); return () => { mounted.current = false; generation.current++; }; }, []);
   const [loadError, setLoadError] = useState('');
+  const queryPath = `${path}?${new URLSearchParams({ query: search, after })}`;
+  const { data: page, fresh } = useCachedData<Page>(queryPath);
+  const version = useQueryVersion();
   const root = useVisiblePolling(useCallback(async current => {
     if (busy) return;
-    try { const value = await request<Page>(`${path}?${new URLSearchParams({ query: search, after })}`); if (current()) { setPage(value); setLoadError(''); } }
+    try { await queryCache.refresh(queryPath, () => request<Page>(queryPath)); if (current()) setLoadError(''); }
     catch (error) { if (current()) setLoadError(error instanceof Error ? error.message : 'Memory could not load.'); }
-  }, [path, after, search, refresh, request, busy]));
-  useEffect(() => { generation.current++; setPage(null); }, [path, after, search]);
+  }, [queryPath, refresh, request, busy, version]));
+  useEffect(() => { generation.current++; }, [path, after, search]);
   function draft(value: MemoryDraft) {
     try { sessionStorage.setItem(draftKey, JSON.stringify(value)); setDraftStored(true); }
     catch { setDraftStored(false); setError('Draft has not been saved in the browser. Copy the text before leaving this page.'); }
@@ -39,7 +44,7 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
   }
   function clear() { sessionStorage.removeItem(draftKey); setEntry(null); setText(''); setEssential(false); setAutomatic(false); }
   async function choose(value: Entry | null) {
-    if (locked || dirty && !await confirm({ title: 'Discard unsaved note changes?', confirm: 'Discard changes', danger: true })) return;
+    if (locked || (value && !fresh) || dirty && !await confirm({ title: 'Discard unsaved note changes?', confirm: 'Discard changes', danger: true })) return;
     draft({ entry: value, text: value?.text ?? '', essential: !!value?.essential, automatic: value?.selection_locked === 0 }); editor.current?.focus();
   }
   async function discard() {
@@ -96,11 +101,11 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
         <Field label="Search memory"><Input value={query} maxLength={200} disabled={busy} onChange={event => setQuery(event.target.value)} /></Field>
         <div className="k-row-actions"><Button type="submit" disabled={busy}>Search</Button></div>
       </form>
-      {!page ? !error && <><p className="k-field__hint" role="status">Loading memory...</p><SkeletonRows /></> : <>
+      {!page ? !error && <><span className="sr-only" role="status">Loading memory...</span><SkeletonRows /></> : <>
         {page.items.length ? <Card>{page.items.map(row => <Row key={row.id}
           title={<span style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{row.text}</span>}
           meta={<>{row.essential ? 'Always included' : 'Searched when needed'} · {row.selection_locked === 0 ? 'Selection managed by agent' : 'Selection locked by user'}</>}
-          trailing={<Button size="sm" disabled={locked} onClick={() => void choose(row)}>Edit note</Button>} />)}</Card> : <EmptyState title="No matching notes yet." />}
+          trailing={<Button size="sm" disabled={locked || !fresh} onClick={() => void choose(row)}>Edit note</Button>} />)}</Card> : <EmptyState title="No matching notes yet." />}
         {(cursors.length > 0 || page.next_after) && <div className="k-pager">
           <IconButton label="Previous page" disabled={busy || !cursors.length} onClick={() => setCursors(v => v.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton>
           <IconButton label="Next page" disabled={busy || !page.next_after} onClick={() => setCursors(v => [...v, page.next_after!])}><ChevronRight size={16} aria-hidden /></IconButton>

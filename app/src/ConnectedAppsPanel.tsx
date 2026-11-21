@@ -1,4 +1,5 @@
-import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { getNonce } from 'get-nonce';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Blocks, ChevronLeft, ChevronRight, Ellipsis, Search } from 'lucide-react';
@@ -16,21 +17,34 @@ export function ConnectedAppsPanel({ agents, request, project, onInstallationApp
   const confirm = useConfirm(), heading = useRef<HTMLHeadingElement>(null), mounted = useRef(false), sending = useRef(false);
   const [recovery] = useState(() => { try { return { pending: restoreConnectedAppCommand(sessionStorage.getItem(storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
   const [pending,setPending] = useState(recovery.pending), [invalid,setInvalid] = useState(recovery.invalid);
-  const [catalog,setCatalog] = useState<Catalog | null>(null), [accounts,setAccounts] = useState<Account[] | null>(null), [grants,setGrants] = useState<Grant[] | null>(null), [policies,setPolicies] = useState<Policy[] | null>(null), [keyStatus,setKeyStatus] = useState<KeyStatus | null>(null), [key,setKey] = useState(''), [replacing,setReplacing] = useState(false);
+  const [key,setKey] = useState(''), [replacing,setReplacing] = useState(false);
   const [agent,setAgent] = useState(agents[0]?.id ?? ''), [search,setSearch] = useState(''), [query,setQuery] = useState(''), [category,setCategory] = useState(''), [cursors,setCursors] = useState(['']);
   const [refresh,setRefresh] = useState(0), [error,setError] = useState(''), [busy,setBusy] = useState(false), [link,setLink] = useState('');
   const [setup, setSetup] = useState(false), [selected, setSelected] = useState('');
   useEffect(() => { if (selected) heading.current?.focus(); }, [selected]);
   const keySave=pending?.path==='/api/connected-apps/key', locked = busy || !!pending || invalid, after=cursors.at(-1)!;
   useEffect(() => { mounted.current=true; heading.current?.focus(); return ()=>{mounted.current=false;}; },[]);
-  const loadScope = useRef(''), [loadError, setLoadError] = useState('');
-  usePolling(async signal => {
-    const scope = JSON.stringify([agent, query, category, after, refresh]);
-    if (loadScope.current !== scope) { loadScope.current = scope; setCatalog(null); setAccounts(null); setKeyStatus(null); setGrants(null); setPolicies(null); }
-    const params = new URLSearchParams({ search: query, category, after });
+  const [loadError, setLoadError] = useState('');
+  const prefix = project ? `/api/projects/${project.id}` : '/api';
+  const params = new URLSearchParams({ search: query, category, after });
+  const keyPath = '/api/connected-apps/key', catalogPath = `/connected-apps?${params}`;
+  const accountsPath = '/connected-apps/accounts', grantsPath = `/agents/${agent}/connected-apps`, policiesPath = `/agents/${agent}/connected-app-policies`;
+  const { data: keyStatus, fresh: keyFresh } = useCachedData<KeyStatus>(keyPath);
+  const { data: catalog } = useCachedData<Catalog>(prefix + catalogPath);
+  const { data: accountList } = useCachedData<{ items: Account[] }>(prefix + accountsPath);
+  const { data: grantList, fresh: grantsFresh } = useCachedData<{ items: Grant[] }>(prefix + grantsPath);
+  const { data: policyList } = useCachedData<{ items: Policy[] }>(prefix + policiesPath);
+  const accounts = accountList?.items ?? null, grants = grantList?.items ?? null, policies = agent ? policyList?.items ?? null : [];
+  useQueryPolling(async signal => {
     try {
-      const [status, catalog, accounts, grants, policies] = await Promise.all([request<KeyStatus>('/api/connected-apps/key').then(status => { if (!signal.aborted) setKeyStatus(status); return status; }), request<Catalog>(`/api/connected-apps?${params}`), request<{ items: Account[] }>('/api/connected-apps/accounts'), agent ? request<{ items: Grant[] }>(`/api/agents/${agent}/connected-apps`) : Promise.resolve({ items: [] }), agent ? request<{ items: Policy[] }>(`/api/agents/${agent}/connected-app-policies`) : Promise.resolve({ items: [] })]);
-      if (!signal.aborted) { setKeyStatus(status); setCatalog(catalog); setAccounts(accounts.items); setGrants(grants.items); setPolicies(policies.items); setLoadError(''); }
+      await Promise.all([
+        queryCache.refresh(keyPath, () => request<KeyStatus>(keyPath)),
+        queryCache.refresh(prefix + catalogPath, () => request<Catalog>('/api' + catalogPath)),
+        queryCache.refresh(prefix + accountsPath, () => request<NonNullable<typeof accountList>>('/api' + accountsPath)),
+        agent ? queryCache.refresh(prefix + grantsPath, () => request<NonNullable<typeof grantList>>('/api' + grantsPath)) : null,
+        agent ? queryCache.refresh(prefix + policiesPath, () => request<NonNullable<typeof policyList>>('/api' + policiesPath)) : null,
+      ]);
+      if (!signal.aborted) setLoadError('');
     } catch (error) { if (!signal.aborted) setLoadError(error instanceof Error ? error.message : 'Connected apps could not load.'); }
   }, { interval: 15000 }, [agent, query, category, after, refresh, request]);
   async function execute(command:ConnectedAppCommand,connect=false) {
@@ -49,11 +63,11 @@ export function ConnectedAppsPanel({ agents, request, project, onInstallationApp
   }
   async function discard(){if(!await confirm({title:'Discard saved request?',description:'The change may already have succeeded. Connected accounts and access reload before another change.',confirm:'Discard request',danger:true}))return;try{sessionStorage.removeItem(storage);setPending(null);setInvalid(false);setRefresh(n=>n+1);}catch{setError('Browser recovery data could not be removed.');}}
   async function saveKey() {
-    if(sending.current || invalid || !keyStatus || !key.trim() || pending && !keySave)return;
+    if(sending.current || invalid || !keyStatus || !key.trim() || (!pending && !keyFresh) || pending && !keySave)return;
     await execute(pending ?? {path:'/api/connected-apps/key',body:{id:crypto.randomUUID(),revision:keyStatus.revision}});
   }
   async function removeKey() {
-    if(sending.current || locked || keyStatus?.source!=='settings')return;
+    if(sending.current || locked || !keyFresh || keyStatus?.source!=='settings')return;
     if(!await confirm({title:'Remove Composio API key?',description:'Connected accounts, agent access, pending approvals, and saved "Always allow" choices will be reset. Existing accounts remain in the old Composio project.',confirm:'Remove key',danger:true}))return;
     await execute({path:'/api/connected-apps/key/remove',body:{id:crypto.randomUUID(),revision:keyStatus.revision}});
   }
@@ -91,7 +105,7 @@ export function ConnectedAppsPanel({ agents, request, project, onInstallationApp
         {accounts === null ? !error && !loadError && <SkeletonRows count={1} /> : !accounts.some(row=>row.toolkit===selected) ? <EmptyState title="No connected accounts" /> : <Card>{accounts.filter(row=>row.toolkit===selected).map(row=><Row key={row.id} title={row.id} meta={<Badge tone={row.status==='ACTIVE'?'success':'neutral'}>{row.status==='ACTIVE'?'Connected':row.status}</Badge>} trailing={<ActionMenu label={`Manage account ${row.id}`} items={[{label:'Disconnect',danger:true,onSelect:async()=>{if(await confirm({title:`Disconnect ${title(row.toolkit)}?`,description:'Agent access is revoked. Completed app actions cannot be undone.',confirm:'Disconnect',danger:true}))void execute({path:`/api/connected-apps/disconnect/${row.id}`,body:{id:crypto.randomUUID()}});}}]} trigger={<IconButton label={`Manage account ${row.id}`} tooltip="More actions" disabled={locked}><Ellipsis size={16} aria-hidden /></IconButton>} />} />)}</Card>}
       </Section>
       <Section title="Agent access" actions={!!agents.length && <Select size="sm" label="Agent for connected apps" value={agent} disabled={locked} onChange={setAgent} options={agents.map(row=>({value:row.id,label:row.name}))} />}>
-        {!agent ? <EmptyState title="No agents yet" /> : grants===null ? !error && !loadError && <SkeletonRows count={1} /> : !connected.includes(selected) ? <EmptyState title="No connected account" /> : <Card><Row title={title(selected)} trailing={<Switch label={`Allow ${agents.find(row=>row.id===agent)?.name} to use ${title(selected)}`} checked={!!selectedGrant?.enabled} disabled={locked} onChange={enabled=>void execute({path:`/api/agents/${agent}/connected-apps/${selected}`,body:{id:crypto.randomUUID(),revision:selectedGrant?.revision ?? 0,enabled}})} />} /></Card>}
+        {!agent ? <EmptyState title="No agents yet" /> : grants===null ? !error && !loadError && <SkeletonRows count={1} /> : !connected.includes(selected) ? <EmptyState title="No connected account" /> : <Card><Row title={title(selected)} trailing={<Switch label={`Allow ${agents.find(row=>row.id===agent)?.name} to use ${title(selected)}`} checked={!!selectedGrant?.enabled} disabled={locked || !grantsFresh} onChange={enabled=>void execute({path:`/api/agents/${agent}/connected-apps/${selected}`,body:{id:crypto.randomUUID(),revision:selectedGrant?.revision ?? 0,enabled}})} />} /></Card>}
         {project && connected.includes(selected) && <Button size="sm" disabled={locked || !agents.length} onClick={async()=>{if(await confirm({title:`Allow all project members to use ${title(selected)}?`,description:`This grants ${agents.length} current members access. Actions that write or have unknown effects still ask for approval in chat.`,confirm:'Allow all members'}))void execute({path:`/api/connected-apps/grant-all/${selected}`,body:{id:crypto.randomUUID(),confirmed:true}});}}>Allow all members</Button>}
       </Section>
       <Section title="Allowed actions">

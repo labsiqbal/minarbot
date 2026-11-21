@@ -1,4 +1,5 @@
-import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, EmptyState, IconButton, PageHeader, Row, Section, SkeletonRows } from './ui/kit';
 import { Markdown } from './Markdown';
@@ -9,25 +10,28 @@ type Page = { notifications: Notice[]; next_before: number | null; unread: numbe
 export function WorkflowInbox({ request, onBack }: {
   request: <T>(path: string, data?: unknown) => Promise<T>; onBack: () => void;
 }) {
-  const [page, setPage] = useState<Page | null>(null), [cursors, setCursors] = useState<number[]>([]);
+  const [cursors, setCursors] = useState<number[]>([]);
   const [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
   const [result, setResult] = useState<{ name: string; last: string; run: string } | null>(null);
   const [busy, setBusy] = useState(false), [enabled, setEnabled] = useState(false);
   const [permission, setPermission] = useState('Notification' in window ? Notification.permission : 'unsupported');
   const heading = useRef<HTMLHeadingElement>(null), version = useRef(0), seen = useRef<number | null>(null);
   const before = cursors.at(-1);
+  const path = `/api/workflow-notifications${before ? `?before=${before}` : ''}`;
+  const { data: page } = useCachedData<Page>(path);
   useEffect(() => { heading.current?.focus(); }, [result, before]);
   useEffect(() => () => { version.current++; }, []);
   // ponytail: inbox-only delivery; use push infrastructure for notifications after closing the app.
-  useEffect(() => { setPage(null); setError(''); }, [before, refresh, enabled]);
-  usePolling(async signal => {
+  useEffect(() => { setError(''); }, [before, refresh, enabled]);
+  useQueryPolling(async signal => {
+    const cacheVersion = queryCache.version();
     try {
       const [data, latest] = await Promise.all([
-        request<Page>(`/api/workflow-notifications${before ? `?before=${before}` : ''}`),
-        before && enabled ? request<Page>('/api/workflow-notifications') : Promise.resolve(null),
+        queryCache.refresh(path, () => request<Page>(path)),
+        before && enabled ? queryCache.refresh('/api/workflow-notifications', () => request<Page>('/api/workflow-notifications')) : Promise.resolve(null),
       ]);
-      if (signal.aborted) return;
-      setPage(data); setError('');
+      if (signal.aborted || cacheVersion !== queryCache.version()) return;
+      setError('');
       if (!before || latest) {
         const current = latest ?? data, newest = current.notifications[0]?.seq ?? 0;
         if (enabled && seen.current !== null && newest > seen.current && Notification.permission === 'granted') {

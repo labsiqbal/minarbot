@@ -1,6 +1,8 @@
 import { isReconnecting } from './http';
 import { RightPanel, useRightPanel } from './RightPanel';
 import { useDetailsOpen } from './ui/layout';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { usePolling } from './hooks/usePolling';
 import { copyText } from './ui/clipboard';
 import { useEffect, useRef, useState } from 'react';
@@ -18,25 +20,32 @@ import { HostMetricsSection } from './HostMetricsSection';
 type Request = <T>(path: string, data?: unknown) => Promise<T>;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Machine request failed. Try again.';
 const statusLabel = { online: 'Online', offline: 'Offline', unauthorized: 'Unauthorized', 'version-mismatch': 'Version mismatch' };
+const machinesPath = '/api/machines', environmentPath = '/api/environment';
+type MachineList = { machines: PairedMachine[] };
 export function useMachines(request: Request) {
-  const [machines, setMachines] = useState<PairedMachine[]>([]), [failure, setFailure] = useState<unknown>(null), [loaded, setLoaded] = useState(false);
+  const { data } = useCachedData<MachineList>(machinesPath);
+  const [failure, setFailure] = useState<unknown>(null);
   const generation = useRef(0);
   async function reload(signal?: AbortSignal) {
     const current = ++generation.current;
     try {
-      const result = await request<{ machines: PairedMachine[] }>('/api/machines');
+      await queryCache.refresh(machinesPath, () => request<MachineList>(machinesPath));
       if (!signal?.aborted && current === generation.current) {
-        setMachines(result.machines); setLoaded(true); setFailure(null);
+        setFailure(null);
       }
     } catch (error) { if (!signal?.aborted && current === generation.current) setFailure(error); }
   }
   useEffect(() => () => { generation.current++; }, []);
-  usePolling(signal => reload(signal), { interval: 5000 });
-  return { machines, error: failure ? message(failure) : '', reconnecting: isReconnecting(failure), reload, loaded };
+  useQueryPolling(signal => reload(signal), { interval: 5000 });
+  return { machines: data?.machines ?? [], error: failure ? message(failure) : '', reconnecting: isReconnecting(failure), reload, loaded: data !== null };
 }
 export function MachinesPanel({ request, onChanged }: { request: Request; onChanged: () => void }) {
-  const [environment, setEnvironment] = useState<Environment | null>(null), [machines, setMachines] = useState<PairedMachine[] | null>(null);
-  const [name, setName] = useState(''), [origin, setOrigin] = useState(''), [code, setCode] = useState('');
+  const { data: environment } = useCachedData<Environment>(environmentPath);
+  const { data } = useCachedData<MachineList>(machinesPath);
+  const machines = data?.machines ?? null;
+  const [draftName, setName] = useState<string>();
+  const name = draftName ?? environment?.name ?? '';
+  const [origin, setOrigin] = useState(''), [code, setCode] = useState('');
   const [pairingCode, setPairingCode] = useState<{ code: string; expiresAt: number } | null>(null), [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [setup, setSetup] = useState<'install' | 'pair' | 'code' | null>(null), [detail, setDetail] = useState<string | null>(null), [install, setInstall] = useState<{ source: string; token: string; expiresAt: number } | null>(null), [installError, setInstallError] = useState(''), [installBusy, setInstallBusy] = useState(false), [copied, setCopied] = useState(false);
@@ -44,9 +53,12 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   const heading = useRef<HTMLHeadingElement>(null), pendingAdd = useRef<{ id: string; origin: string; code: string } | null>(null);
   const confirm = useConfirm();
   const [loadError, setLoadError] = useState('');
-  async function reload(signal?: AbortSignal) { try { const [local, result] = await Promise.all([request<Environment>('/api/environment'), request<{ machines: PairedMachine[] }>('/api/machines')]); if (signal?.aborted) return; setEnvironment(local); setName(current => environment && current !== environment.name ? current : local.name); setMachines(result.machines); setLoadError(''); } catch (error) { if (!signal?.aborted) setLoadError(message(error)); } }
+  async function reload(signal?: AbortSignal) { try { await Promise.all([
+      queryCache.refresh(environmentPath, () => request<Environment>(environmentPath)),
+      queryCache.refresh(machinesPath, () => request<MachineList>(machinesPath)),
+    ]); if (!signal?.aborted) setLoadError(''); } catch (error) { if (!signal?.aborted) setLoadError(message(error)); } }
   useEffect(() => { heading.current?.focus(); }, []);
-  usePolling(signal => reload(signal), { interval: 5000, enabled: !busy }, [request]);
+  useQueryPolling(signal => reload(signal), { interval: 5000, enabled: !busy }, [request]);
   useEffect(() => { if (!pairingCode) return; const timer = setInterval(() => { const time = Date.now(); setNow(time); if (time >= pairingCode.expiresAt) setPairingCode(null); }, 1000); return () => clearInterval(timer); }, [pairingCode]);
   useEffect(() => { if (!install) return; const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, [install]);
   const installFlight = useRef(0);
@@ -83,7 +95,7 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
     <Section title="This device"><Card><Row leading={<Monitor size={16} aria-hidden />} title={environment?.name ?? 'This device'} meta="This device" onClick={() => setDetail('local')} trailing={<Button variant="ghost" onClick={() => setDetail('local')}>Resources<ChevronRight size={14} aria-hidden /></Button>} /></Card></Section>
     <Dialog open={detail === 'local'} onOpenChange={open => { if (!open) setDetail(null); }} title="This device" size="lg">
       <div className="k-stack set4-detail">
-        {!environment ? <SkeletonRows count={1} /> : <form className="k-stack" onSubmit={event => { event.preventDefault(); void act('name', async () => { const saved = await request<Environment>('/api/environment', { id: crypto.randomUUID(), name }); setEnvironment(saved); setName(saved.name); setNotice('Machine name saved.'); }); }}>
+        {!environment ? <SkeletonRows count={1} /> : <form className="k-stack" onSubmit={event => { event.preventDefault(); void act('name', async () => { const saved = await request<Environment>('/api/environment', { id: crypto.randomUUID(), name }); queryCache.set(environmentPath, saved); setName(undefined); setNotice('Machine name saved.'); }); }}>
           <Field label="Name"><Input value={name} maxLength={120} required disabled={!!busy} onChange={event => setName(event.target.value)} /></Field>
           <div className="machines-form-actions"><span className="k-field__hint machines-origin">{environment.origin}</span><Button type="submit" busy={busy === 'name'} disabled={!!busy || name.trim() === environment.name}>Save name</Button></div>
         </form>}

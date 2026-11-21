@@ -29,7 +29,7 @@
   },
   "src/App.tsx": {
     "minarbot-lifecycle/no-component-effects": {
-      "count": 24
+      "count": 23
     }
   },
   "src/ApprovalCard.tsx": {
@@ -80,7 +80,7 @@
   },
   "src/GeneralSettings.tsx": {
     "minarbot-lifecycle/no-component-effects": {
-      "count": 2
+      "count": 1
     }
   },
   "src/MachinesPanel.tsx": {
@@ -126,7 +126,7 @@
   },
   "src/ProvidersPanel.tsx": {
     "minarbot-lifecycle/no-component-effects": {
-      "count": 3
+      "count": 1
     }
   },
   "src/QuestionCard.tsx": {
@@ -223,7 +223,7 @@
   },
   "src/WorkflowPanel.tsx": {
     "minarbot-lifecycle/no-component-effects": {
-      "count": 8
+      "count": 7
     }
   },
   "src/WorkflowSchedule.tsx": {

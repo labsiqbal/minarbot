@@ -1,5 +1,5 @@
 import { useReturnFocus } from './hooks/useReturnFocus';
-import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
+import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { Tabs as RadixTabs } from 'radix-ui';
 import { Brain, ChevronRight, Ellipsis, Globe } from 'lucide-react';
@@ -13,13 +13,12 @@ import { AgentComputerSettings } from './AgentComputerSettings';
 import { AgentFolderSettings } from './AgentFolderSettings';
 import { AgentVisibility } from './AgentVisibility';
 import { RuntimeIcon } from './runtime-icon';
-import { ActionMenu, Alert, Button, Card, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Row, Segmented, Select, Switch, Tabs, Textarea, Tooltip, useConfirm, type ComboboxSuggestion, type SelectOption } from './ui/kit';
+import { ActionMenu, Alert, Delayed, Button, Card, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Row, Segmented, Select, Switch, Tabs, Textarea, Tooltip, useConfirm, type ComboboxSuggestion, type SelectOption } from './ui/kit';
 
 import './agent-profile.css';
 
-const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateExport })).catch(() => ({ default: () => <Alert tone="error" actions={<Button onClick={() => window.location.reload()}>Reload app</Button>}>Panel could not be loaded</Alert> })));
-const MemoryPanel = lazy(() => import('./MemoryPanel').then(module => ({ default: module.MemoryPanel })));
-const SitesPanel = lazy(() => import('./SitesPanel').then(module => ({ default: module.SitesPanel })));
+import { AgentTemplateExport, AvatarPicker as LookPicker, MemoryPanel, SitesPanel } from './lazyPanels';
+
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
 export type Agent = { workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
@@ -35,7 +34,6 @@ function runtimeLabel(runtime: Runtime, label: string) {
 export function AgentForm({ model, firstRun, connections, connection, onConnectionChange, focusComputer = false, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged, onDelete, request: api, isClientError }: { request: <T>(path: string, data?: unknown) => Promise<T>; isClientError: (error: unknown) => boolean; model: string; firstRun?: FirstAgentDefaults; connections?: FirstRunConnection[]; connection?: string; onConnectionChange?: (value: string) => void; focusComputer?: boolean; profile?: Agent; onCreated: (agent: Agent) => void; onCancel?: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void>; onDelete?: (agent: Agent) => Promise<void> }) {
   const confirm = useConfirm();
   const [look, setLook] = useState<import('./ui/avatar-shapes').AvatarLook | null>(null);
-  const [LookPicker] = useState(() => lazy(() => import('./ui/avatar-shapes').then(module => ({ default: module.AvatarPicker }))));
   const [profile] = useState(liveProfile);
   const creationKey = 'minarbot-agent-creation';
   const nameInput = useRef<HTMLInputElement>(null);
@@ -193,7 +191,7 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
   const profileFields = <>
     {(!profile || onVisibilityChanged) && <div className="agent-profile__avatar">
       {profile ? <AgentAvatar agent={liveProfile!} size={40} /> : <span className="agent-profile__initials">{look ? <MascotAvatar look={look} size={40} /> : <AgentAvatar agent={{ id: '', name: avatarName.trim() || '?' }} size={40} />}</span>}<span className="agent-profile__name">{profile?.name ?? 'Avatar'}</span>
-      <Button ref={avatarChange} onClick={() => setAvatarOpen(true)}>Change</Button>
+      <Button ref={avatarChange} onPointerEnter={LookPicker.prefetch} onFocus={LookPicker.prefetch} onClick={() => setAvatarOpen(true)}>Change</Button>
     </div>}
     <Field label={!profile && setup ? 'Temporary name' : 'Name'} optional={!profile && setup} error={fieldErrors.name}>
       <Input ref={nameInput} name="name" onChange={event => setAvatarName(event.target.value)} required={!setup} maxLength={80} readOnly={locked} defaultValue={profile?.name ?? recovery.command?.name} placeholder="Iris" />
@@ -260,7 +258,7 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
   </form>;
   return <>
     <Dialog open size={profile ? 'lg' : 'md'} onOpenChange={next => { if (!next && !busy) onCancel?.(); }} title={profile ? 'Agent profile' : 'New agent'}
-      actions={profile && <ActionMenu label="Agent profile actions" trigger={<IconButton ref={exportTrigger} label="Agent profile actions" tooltip="More actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Export template', onSelect: () => setExportOpen(true) }, ...(onVisibilityChanged ? [{ label: liveProfile?.hidden ? 'Restore agent' : 'Hide agent', onSelect: () => setVisibilityOpen(true) }] : []), ...(onDelete ? [{ label: 'Delete agent', danger: true, disabled: busy, onSelect: () => void onDelete(profile).catch(error => setError(message(error))) }] : [])]} />}
+      actions={profile && <ActionMenu label="Agent profile actions" trigger={<IconButton ref={exportTrigger} label="Agent profile actions" tooltip="More actions"><Ellipsis size={16} aria-hidden /></IconButton>} items={[{ label: 'Export template', prefetch: AgentTemplateExport.prefetch, onSelect: () => setExportOpen(true) }, ...(onVisibilityChanged ? [{ label: liveProfile?.hidden ? 'Restore agent' : 'Hide agent', onSelect: () => setVisibilityOpen(true) }] : []), ...(onDelete ? [{ label: 'Delete agent', danger: true, disabled: busy, onSelect: () => void onDelete(profile).catch(error => setError(message(error))) }] : [])]} />}
       footer={<>
         {!profile && pending.current && <Button variant="ghost" disabled={busy} onClick={() => void discardPending()} className="k-dialog__foot-start">Discard recovery</Button>}
         {profile && error && onReload && <Button variant="ghost" onClick={onReload} className="k-dialog__foot-start">Discard changes and reload</Button>}
@@ -295,9 +293,9 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
                 <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer && tab === 'advanced'} />
                 <AgentFolderSettings agent={profile.id} request={api} isClientError={isClientError} />
                 <div className="details-list agent-profile__resources">
-                  <button type="button" className="panel-row panel-row--link" onClick={() => openResource('memory')}><Brain size={16} aria-hidden /><span className="panel-row__title">Agent memory</span><ChevronRight size={14} aria-hidden /></button>
+                  <button type="button" className="panel-row panel-row--link" onPointerEnter={MemoryPanel.prefetch} onFocus={MemoryPanel.prefetch} onClick={() => openResource('memory')}><Brain size={16} aria-hidden /><span className="panel-row__title">Agent memory</span><ChevronRight size={14} aria-hidden /></button>
                   <CompactionPanel path={`/api/agents/${profile.id}/compaction`} request={api} />
-                  <button type="button" className="panel-row panel-row--link" onClick={() => openResource('sites')}><Globe size={16} aria-hidden /><span className="panel-row__title">Agent sites</span><ChevronRight size={14} aria-hidden /></button>
+                  <button type="button" className="panel-row panel-row--link" onPointerEnter={SitesPanel.prefetch} onFocus={SitesPanel.prefetch} onClick={() => openResource('sites')}><Globe size={16} aria-hidden /><span className="panel-row__title">Agent sites</span><ChevronRight size={14} aria-hidden /></button>
                 </div>
               </RadixTabs.Content>
             </> : <>
@@ -311,11 +309,11 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
       </div>
     </Dialog>
     {profile && resource && <Dialog open size="lg" title={resource === 'memory' ? 'Agent memory' : 'Agent sites'} onOpenChange={open => { if (!open) closeResource(); }}>
-      <Suspense fallback={<p role="status">Loading...</p>}>{resource === 'memory' ? <MemoryPanel channel={false} archived={false} path={`/api/agents/${profile.id}/memory`} request={api} onClose={closeResource} /> : <SitesPanel agent={profile.id} request={api} />}</Suspense>
+      <Suspense fallback={<Delayed><p role="status">Loading...</p></Delayed>}>{resource === 'memory' ? <MemoryPanel channel={false} archived={false} path={`/api/agents/${profile.id}/memory`} request={api} onClose={closeResource} /> : <SitesPanel agent={profile.id} request={api} />}</Suspense>
     </Dialog>}
     {profile && onVisibilityChanged && <Dialog open={visibilityOpen} title="Availability" onOpenChange={setVisibilityOpen} footer={<Button onClick={() => setVisibilityOpen(false)}>Done</Button>}><AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} /></Dialog>}
-    {profile && exportOpen && <Dialog open size="lg" title="Export template" description={profile.name} onOpenChange={setExportOpen} footer={<Button onClick={() => setExportOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading saved profile...</p>}><AgentTemplateExport id={profile.id} request={api} /></Suspense></Dialog>}
-    {!profile && <Dialog open={avatarOpen} size="md" title="Avatar" onOpenChange={setAvatarOpen} footer={<Button onClick={() => setAvatarOpen(false)}>Done</Button>}><Suspense fallback={<p role="status">Loading avatar picker...</p>}><LookPicker name={avatarName} value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense></Dialog>}
+    {profile && exportOpen && <Dialog open size="lg" title="Export template" description={profile.name} onOpenChange={setExportOpen} footer={<Button onClick={() => setExportOpen(false)}>Done</Button>}><Suspense fallback={<Delayed><p role="status">Loading saved profile...</p></Delayed>}><AgentTemplateExport id={profile.id} request={api} /></Suspense></Dialog>}
+    {!profile && <Dialog open={avatarOpen} size="md" title="Avatar" onOpenChange={setAvatarOpen} footer={<Button onClick={() => setAvatarOpen(false)}>Done</Button>}><Suspense fallback={<Delayed><p role="status">Loading avatar picker...</p></Delayed>}><LookPicker name={avatarName} value={look} onChange={setLook} disabled={busy || locked || invalid} /></Suspense></Dialog>}
     {profile && onVisibilityChanged && avatarOpen && <AvatarEditor agent={profile.id} request={api} onChanged={onVisibilityChanged} onClose={() => setAvatarOpen(false)} />}
   </>;
 }
