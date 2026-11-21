@@ -215,6 +215,54 @@ fn command_prefix(command: &str) -> Option<&str> {
         }))
     .then_some(command)
 }
+
+const CLAUDE_WORKSPACE_SHELL: &str = "Use mcp__minarbot__run_shell for workspace commands. If needed, load it first with ToolSearch (select:mcp__minarbot__run_shell). Use workspace-relative paths or a relative cwd. The sandbox has no host credentials or network.";
+
+#[derive(Debug, PartialEq, Eq)]
+enum ClaudeTool {
+    Allow,
+    UseWorkspaceShell,
+    Approve(&'static str),
+}
+
+fn claude_tool(
+    name: &str,
+    args: &Value,
+    workspace: &Path,
+    writable: bool,
+    workspace_shell: bool,
+) -> ClaudeTool {
+    match name {
+        "Bash" if workspace_shell && args["dangerouslyDisableSandbox"] != true => {
+            ClaudeTool::UseWorkspaceShell
+        }
+        "Bash" => ClaudeTool::Approve("command"),
+        "WebFetch" | "WebSearch" => ClaudeTool::Approve("network"),
+        "ToolSearch" | "TodoWrite" => ClaudeTool::Allow,
+        // Minarbot tools enforce workspace grants and approvals on the server.
+        name if name.starts_with("mcp__minarbot__") => ClaudeTool::Allow,
+        "Read" | "Glob" | "Grep" | "LS" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => {
+            let read = matches!(name, "Read" | "Glob" | "Grep" | "LS");
+            let path = args["file_path"].as_str().or(args["path"].as_str());
+            let glob_outside = name == "Glob"
+                && args["pattern"].as_str().is_some_and(|p| {
+                    Path::new(p).is_absolute() || p.split('/').any(|part| part == "..")
+                });
+            if (read || writable)
+                && !glob_outside
+                && path
+                    .or(read.then_some("."))
+                    .is_some_and(|p| inside(workspace, p))
+            {
+                ClaudeTool::Allow
+            } else {
+                ClaudeTool::Approve("file")
+            }
+        }
+        _ => ClaudeTool::Approve("tool"),
+    }
+}
+
 pub async fn approve(
     state: &AppState,
     turn_id: &str,
@@ -559,7 +607,35 @@ async fn execute(
         let shim = std::env::current_exe().map_err(|_| Failure::storage())?;
         let mut mcp = json!({"mcpServers":{"minarbot":{"type":"stdio","command":shim,"args":["--mcp-stdio"]}}});
         codegraph::Server::configure(codegraph.as_ref(), runtime, &mut mcp);
-        let mut args=vec!["--print".into(),"--output-format".into(),"stream-json".into(),"--input-format".into(),"stream-json".into(),"--verbose".into(),"--include-partial-messages".into(),"--permission-prompt-tool".into(),"stdio".into(),"--permission-mode".into(),"default".into(),"--setting-sources".into(),"".into(),"--strict-mcp-config".into(),"--append-system-prompt".into(),format!("{instructions}\nUse minarbot run_shell for workspace commands. Native Bash requires approval. run_shell provides a separate workspace sandbox without host credentials or network. Discover tools needed for the task together; reuse loaded tools and their receipts."),"--mcp-config".into(),mcp.to_string()];
+        let shell = if crate::platform::LINUX_SANDBOX {
+            CLAUDE_WORKSPACE_SHELL
+        } else {
+            "Use Minarbot file tools for workspace tasks."
+        };
+        let mut args = [
+            "--print",
+            "--output-format",
+            "stream-json",
+            "--input-format",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+            "--permission-prompt-tool",
+            "stdio",
+            "--permission-mode",
+            "default",
+            "--setting-sources",
+            "",
+            "--strict-mcp-config",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        args.extend([
+            "--append-system-prompt".into(),
+            format!("{instructions}\n{shell} Native host Bash requires explicit approval. Discover tools needed for the task together; reuse loaded tools and their receipts."),
+            "--mcp-config".into(),
+            mcp.to_string(),
+        ]);
         if codegraph.is_some() {
             args.extend(["--allowedTools".into(), "mcp__codegraph__*".into()]);
         }
@@ -1010,51 +1086,42 @@ async fn execute(
                                 .or(req.get("input"))
                                 .cloned()
                                 .unwrap_or(json!({}));
-                            let path = args["file_path"].as_str().or(args["path"].as_str());
-                            let read = ["Read", "Glob", "Grep", "LS"].contains(&name);
-                            let write =
-                                ["Write", "Edit", "MultiEdit", "NotebookEdit"].contains(&name);
-                            let glob_outside = name == "Glob"
-                                && args["pattern"].as_str().is_some_and(|p| {
-                                    Path::new(p).is_absolute() || p.split('/').any(|c| c == "..")
-                                });
-                            let allowed = name.starts_with("mcp__minarbot__")
-                                || ["ToolSearch", "TodoWrite"].contains(&name)
-                                || (read || write && binding.write)
-                                    && !glob_outside
-                                    && path
-                                        .or(if read { Some(".") } else { None })
-                                        .is_some_and(|p| inside(workspace, p));
-                            let allow = if allowed {
-                                true
-                            } else {
-                                approve(
-                                    state,
-                                    string(turn, "id"),
-                                    if name == "Bash" {
-                                        "command"
-                                    } else if read || write {
-                                        "file"
-                                    } else if ["WebFetch", "WebSearch"].contains(&name) {
-                                        "network"
-                                    } else {
-                                        "tool"
-                                    },
-                                    args["command"].as_str(),
-                                    &format!("Claude Code: {name}"),
-                                    &args,
-                                    token,
-                                )
-                                .await?
+                            let policy = claude_tool(
+                                name,
+                                &args,
+                                workspace,
+                                binding.write,
+                                crate::platform::LINUX_SANDBOX,
+                            );
+                            let allow = match policy {
+                                ClaudeTool::Allow => true,
+                                ClaudeTool::UseWorkspaceShell => false,
+                                ClaudeTool::Approve(kind) => {
+                                    approve(
+                                        state,
+                                        string(turn, "id"),
+                                        kind,
+                                        args["command"].as_str(),
+                                        &format!("Claude Code: {name}"),
+                                        &args,
+                                        token,
+                                    )
+                                    .await?
+                                }
+                            };
+                            let reason = match policy {
+                                ClaudeTool::UseWorkspaceShell => CLAUDE_WORKSPACE_SHELL,
+                                _ if allow => "Allowed by Minarbot.",
+                                _ => "Not allowed in Minarbot.",
                             };
                             if req["subtype"] == "can_use_tool" {
                                 if allow {
                                     json!({"behavior":"allow","updatedInput":args})
                                 } else {
-                                    json!({"behavior":"deny","message":"Not allowed in Minarbot."})
+                                    json!({"behavior":"deny","message":reason})
                                 }
                             } else {
-                                json!({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":if allow{"allow"}else{"deny"},"permissionDecisionReason":if allow{"Allowed by Minarbot."}else{"Not allowed in Minarbot."}}})
+                                json!({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":if allow{"allow"}else{"deny"},"permissionDecisionReason":reason}})
                             }
                         } else {
                             json!({})
@@ -1790,6 +1857,65 @@ while read -r request; do :; done
         assert_eq!(command_prefix("echo hello; curl attacker"), None);
         assert!(command_prefix(&"x".repeat(512)).is_some());
         assert_eq!(command_prefix(&"x".repeat(513)), None);
+        Ok(())
+    }
+
+    #[test]
+    fn claude_workspace_tools_and_host_approval_policy() -> crate::db::Result<()> {
+        use ClaudeTool::{Allow, Approve, UseWorkspaceShell};
+        let scratch = process::ProbeHome::new()?;
+        let workspace = scratch.0.join("work");
+        std::fs::create_dir(&workspace)?;
+        std::os::unix::fs::symlink(&scratch.0, workspace.join("outside"))?;
+        for (name, input, write, expected) in [
+            ("Bash", json!({"command":"ls -al"}), true, UseWorkspaceShell),
+            (
+                "Bash",
+                json!({"dangerouslyDisableSandbox":true}),
+                true,
+                Approve("command"),
+            ),
+            ("ToolSearch", json!({}), true, Allow),
+            ("TodoWrite", json!({}), true, Allow),
+            ("mcp__minarbot__run_shell", json!({}), true, Allow),
+            (
+                "mcp__minarbot__read_workspace_file",
+                json!({}),
+                false,
+                Allow,
+            ),
+            ("Read", json!({"file_path":"index.js"}), false, Allow),
+            ("Glob", json!({"pattern":"../*"}), true, Approve("file")),
+            ("Grep", json!({"path":"outside"}), true, Approve("file")),
+            ("Edit", json!({"file_path":"index.js"}), true, Allow),
+            (
+                "Write",
+                json!({"file_path":"index.js"}),
+                false,
+                Approve("file"),
+            ),
+            (
+                "Write",
+                json!({"file_path":"../index.js"}),
+                true,
+                Approve("file"),
+            ),
+            ("WebFetch", json!({}), true, Approve("network")),
+            ("WebSearch", json!({}), true, Approve("network")),
+            ("mcp__mail__send", json!({}), true, Approve("tool")),
+            ("mcp__store__purchase", json!({}), true, Approve("tool")),
+            ("mcp__vault__get_secret", json!({}), true, Approve("tool")),
+        ] {
+            assert_eq!(
+                claude_tool(name, &input, &workspace, write, true),
+                expected,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            claude_tool("Bash", &json!({"command":"ls"}), &workspace, true, false),
+            Approve("command")
+        );
         Ok(())
     }
 

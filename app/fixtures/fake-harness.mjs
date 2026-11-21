@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 if (process.argv.includes('--version')) { console.log('fake-harness 1.0.0'); process.exit(0); }
 // Sign-in status: signed in when the engine folder holds the CLI's credential file.
@@ -18,6 +18,27 @@ const hasResume = process.argv.some(value => value === '--resume' || value.start
 let mcpURL = process.env.MINARBOT_MCP_URL;
 let session = (hasResume ? (arg('--resume') ?? process.argv.find(value => value.startsWith('--resume='))?.slice(9)) : undefined) ?? arg('--session-id') ?? randomUUID(), prompt = '', callback = '', stopCallback = '', approvalId = '';
 const notify = (method, params) => send({ method, params: { threadId: session, ...params } });
+function preToolUse(id, name, input) {
+  send({ type: 'control_request', request_id: id, request: { subtype: 'hook_callback', callback_id: callback,
+    input: { session_id: session, cwd: process.cwd(), hook_event_name: 'PreToolUse', tool_name: name, tool_input: input, tool_use_id: id } } });
+}
+const workspaceShell = {
+  command: 'ls -al && for file in *.test.mjs; do head -5 "$file"; done && node --test fixture.test.mjs && printf checked > result.txt',
+  check: true,
+};
+function runWorkspaceShell() {
+  const { command, args } = JSON.parse(arg('--mcp-config')).mcpServers.minarbot;
+  const result = spawnSync(command, args, {
+    input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
+      name: 'run_shell', arguments: workspaceShell,
+    } }) + '\n',
+    encoding: 'utf8', timeout: 5000,
+  });
+  assert.equal(result.status, 0);
+  const receipt = JSON.parse(result.stdout).result;
+  assert.equal(receipt.isError, undefined);
+  assert.equal(receipt.structuredContent.exitCode, 0);
+}
 function delta(text) { if (codex) notify('item/agentMessage/delta', { delta: text }); else send({ type: 'stream_event', session_id: session, uuid: randomUUID(), parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } }); }
 function finish(allowed = true) {
   const check = prompt.includes('NATIVE_CHECK');
@@ -34,8 +55,10 @@ function finish(allowed = true) {
       send({ type: 'assistant', message: { id: 'edit', content: [{ type: 'tool_use', id: 'edit', name: 'Write', input: { file_path: 'result.txt', content: 'checked' } }] } });
       send({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'edit', content: 'File saved.' }] } });
     }
-    send({ type: 'assistant', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', type: 'message', content: [{ type: 'tool_use', id: 'shell', name: 'Bash', input: { command: check ? 'node --test fixture.test.mjs' : 'echo hello' } }], model: 'fake', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 11, output_tokens: 7 } } });
-    send({ type: 'user', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'shell', content: 'fake result', is_error: !allowed }] } });
+    if (!prompt.includes('WORKSPACE_SHELL_FIXTURE')) {
+      send({ type: 'assistant', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', type: 'message', content: [{ type: 'tool_use', id: 'shell', name: 'Bash', input: { command: check ? 'node --test fixture.test.mjs' : 'echo hello' } }], model: 'fake', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 11, output_tokens: 7 } } });
+      send({ type: 'user', uuid: randomUUID(), session_id: session, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'shell', content: 'fake result', is_error: !allowed }] } });
+    }
     delta(allowed ? 'finished' : 'denied');
     if (prompt.includes('FINAL_SECRET')) { delta(' test-mcp-session-'); delta('token'); }
     send({ type: 'result', subtype: 'success', is_error: false, result: 'fake result', session_id: session, uuid: randomUUID(), duration_ms: 5, duration_api_ms: 5, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 11, output_tokens: 7, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, modelUsage: {}, permission_denials: [] });
@@ -43,7 +66,12 @@ function finish(allowed = true) {
 }
 async function run(text) {
   if (text.includes('STREAM_GATE') || text.includes('STREAM_CRASH')) { void streamGate(text); return; }
-  prompt = text; log({ type: 'turn', session, prompt, home: process.env.HOME, claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null }); delta('Harness ');
+  prompt = text; log({ type: 'turn', session, prompt, home: process.env.HOME, claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null });
+  if (!codex && text.includes('WORKSPACE_SHELL_FIXTURE')) {
+    preToolUse('workspace-ls', 'Bash', { command: 'ls -al', description: 'Inspect workspace' });
+    return;
+  }
+  delta('Harness ');
   if (text.includes('FIRST_PARTIAL_GATE')) {
     while (!existsSync('stream-release')) await new Promise(resolve => setTimeout(resolve, 5));
   }
@@ -128,6 +156,24 @@ for await (const line of createInterface({ input: process.stdin })) {
       run(typeof value.message.content === 'string' ? value.message.content : value.message.content.map(block => block.text ?? '').join('\n'));
     }
     if (value.type === 'control_response' && value.response.request_id === 'sv-stop') { log({ type: 'stop-hook', decision: value.response.response?.decision }); run(value.response.response?.reason ?? 'No reminder.'); }
+    if (value.type === 'control_response' && value.response.request_id === 'workspace-ls') {
+      const decision = value.response.response.hookSpecificOutput;
+      assert.equal(decision.permissionDecision, 'deny');
+      assert.match(decision.permissionDecisionReason, /mcp__minarbot__run_shell/);
+      send({ type: 'control_request', request_id: 'workspace-loop', request: {
+        subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'for file in *.test.mjs; do head -5 "$file"; done' },
+      } });
+    }
+    if (value.type === 'control_response' && value.response.request_id === 'workspace-loop') {
+      assert.equal(value.response.response.behavior, 'deny');
+      assert.match(value.response.response.message, /mcp__minarbot__run_shell/);
+      preToolUse('workspace-sandbox', 'mcp__minarbot__run_shell', workspaceShell);
+    }
+    if (value.type === 'control_response' && value.response.request_id === 'workspace-sandbox') {
+      assert.equal(value.response.response.hookSpecificOutput.permissionDecision, 'allow');
+      runWorkspaceShell();
+      finish();
+    }
     if (value.type === 'control_response' && value.response.request_id === approvalId) { const decision = value.response.response?.hookSpecificOutput?.permissionDecision; log({ decision }); finish(decision === 'allow'); }
   }
 }
