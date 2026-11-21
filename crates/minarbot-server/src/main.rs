@@ -52,6 +52,7 @@ pub(crate) struct AppState {
     auth: Option<auth::Auth>,
     events: events::Hub,
     turns: turns::Runtime,
+    whatsapp: Arc<connectors::whatsapp::Runtime>,
     computer: Arc<computer::Manager>,
     pub(crate) trial_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -712,6 +713,7 @@ async fn main() -> db::Result<()> {
         events,
         trial_pending,
         turns: turns::Runtime::new()?,
+        whatsapp: Default::default(),
         computer: computer.clone(),
     };
     automation::scripts::sync(&state).map_err(|e| e.message)?;
@@ -733,6 +735,7 @@ async fn main() -> db::Result<()> {
     });
     let shutdown_state = state.clone();
     let connector_maintenance = connectors::mail::start(state.clone());
+    let whatsapp_maintenance = connectors::whatsapp::start(state.clone());
     let router = Router::new()
         .merge(computer::routes())
         .merge(harness::routes())
@@ -810,6 +813,7 @@ async fn main() -> db::Result<()> {
     maintenance.abort();
     conversation_maintenance.abort();
     connector_maintenance.abort();
+    whatsapp_maintenance.abort();
     for task in computer_maintenance {
         task.abort();
     }

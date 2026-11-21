@@ -142,6 +142,7 @@ impl Fixture {
             config: Arc::new(config),
             events: crate::events::Hub::new(),
             turns: crate::turns::Runtime::new()?,
+            whatsapp: Default::default(),
             trial_pending: Default::default(),
         };
         let fixture = Self {

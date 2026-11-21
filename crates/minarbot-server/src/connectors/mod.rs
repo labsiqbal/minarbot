@@ -6,6 +6,7 @@ pub mod mail;
 pub mod runner;
 mod slack;
 mod telegram;
+pub(crate) mod whatsapp;
 
 use crate::{
     data::{all, closed, error, exists, one, param, string, transaction, uuid},
@@ -24,12 +25,15 @@ use serde_json::{json, Value};
 type Result<T> = std::result::Result<T, Failure>;
 
 pub fn initialize(db: &Connection) -> Result<()> {
-    composio::initialize(db)
+    composio::initialize(db)?;
+    whatsapp::initialize(db)
 }
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/agents/{id}/routines/calendar.ics", any(entry))
         .route("/api/connected-apps", any(entry))
+        .route("/api/whatsapp", any(entry))
+        .route("/api/whatsapp/{action}", any(entry))
         .route("/api/projects/{project}/connected-apps", any(entry))
         .route(
             "/api/projects/{project}/connected-apps/accounts",
@@ -187,6 +191,12 @@ pub(crate) async fn entry(State(state): State<AppState>, request: Request) -> Re
                 path.split('/').nth(3).unwrap_or(""),
                 state.config.now(),
             );
+        }
+        if path == "/api/whatsapp" || path.starts_with("/api/whatsapp/") {
+            return Ok(crate::json_response(
+                200,
+                whatsapp::route(&state, &path, &method, &value)?,
+            ));
         }
         let result = composio::route(&state, &path, &method, &query, &value).await?;
         Ok(crate::json_response(200, result))

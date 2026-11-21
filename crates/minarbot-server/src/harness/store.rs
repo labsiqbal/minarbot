@@ -1690,6 +1690,7 @@ while read -r request; do :; done
             auth: None,
             events: crate::events::Hub::new(),
             turns: turns::Runtime::default(),
+            whatsapp: Default::default(),
             trial_pending: Arc::default(),
         };
         let Err(failure) = run(&state, "turn", "", &[], "answer").await else {

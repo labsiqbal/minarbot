@@ -174,6 +174,7 @@ async fn pdf_invalidation_discards_late_bytes_and_clears_cache() -> TestResult<(
         events: crate::events::Hub::new(),
         computer,
         turns: crate::turns::Runtime::default(),
+        whatsapp: Default::default(),
         trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
     let (started, reading) = tokio::sync::oneshot::channel();

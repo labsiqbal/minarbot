@@ -243,6 +243,29 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
     };
     Ok(crate::json_response(status, value))
 }
+pub(crate) fn connector_workflow_command(
+    state: &AppState,
+    path: &str,
+    value: &Value,
+) -> Result<()> {
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    let parts: Vec<_> = path.split('/').skip(1).collect();
+    transaction(db, || {
+        workflows::route(
+            state,
+            db,
+            path,
+            &parts,
+            &Method::POST,
+            &[],
+            &HeaderMap::new(),
+            value,
+        )?;
+        Ok(())
+    })
+}
+
 pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut events = state.events.subscribe();

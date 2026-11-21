@@ -29,6 +29,17 @@
       "notice": "app/agent-delegation.LICENSE"
     }
   ],
+  "whatsappProtocol": {
+    "package": "whatsapp-rust",
+    "version": "0.7.0",
+    "repository": "https://github.com/oxidezap/whatsapp-rust",
+    "revision": "f8165f282008935732e0b26d6f5cca5038ecd222",
+    "license": "MIT",
+    "notice": "whatsapp-rust.LICENSE",
+    "selection": "Native multi-device QR pairing, group and direct messages, media upload and download, and reconnect. The project published 0.7.0 on 2026-08-07 and last pushed on 2026-11-21 when evaluated.",
+    "storage": "Minarbot provides an encrypted SQLite backend instead of enabling the upstream plaintext SQLite backend.",
+    "localPath": "crates/minarbot-server/src/connectors/whatsapp"
+  },
   "workspaceSourceControlEntries": [
     {
       "sourcePath": "apps/server/src/vcs/GitVcsDriver.ts",

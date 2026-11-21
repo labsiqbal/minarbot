@@ -500,6 +500,7 @@ fn viewer_state(scratch: &Scratch, manager: Manager) -> TestResult<crate::AppSta
         events: crate::events::Hub::new(),
         computer: Arc::new(manager),
         turns: crate::turns::Runtime::default(),
+        whatsapp: Default::default(),
         trial_pending: Arc::new(AtomicBool::new(false)),
     })
 }
