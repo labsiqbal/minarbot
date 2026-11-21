@@ -6,8 +6,8 @@ export type WorkflowNode =
   | { id: string; kind: 'condition'; operator: 'model'; model: string; value: string; yes: string; no: string }
   | { id: string; kind: 'approval'; prompt: string; yes: string; no?: string }
   | { id: string; kind: 'wait'; event: string; timeoutSeconds: number; next: string }
-  | { id: string; kind: 'output'; channel?: string };
-export type WorkflowGraph = { entry: string; maxSteps: number; nodes: WorkflowNode[]; positions?: Record<string, { x: number; y: number }> };
+  | { id: string; kind: 'output'; channel?: string; discordChannel?: string };
+export type WorkflowGraph = { entry: string; maxSteps: number; nodes: WorkflowNode[]; trigger?: { kind: 'discord'; channel: string }; positions?: Record<string, { x: number; y: number }> };
 
 export function removeWorkflowNode(graph: WorkflowGraph, removed: string): WorkflowGraph {
   return { ...graph, ...(graph.positions ? { positions: Object.fromEntries(Object.entries(graph.positions).filter(([id]) => id !== removed)) } : {}), entry: graph.entry === removed ? '' : graph.entry, nodes: graph.nodes.filter(node => node.id !== removed).map(node => {
@@ -43,7 +43,17 @@ export function validateWorkflowDraft(value: unknown): WorkflowGraph { return pa
 
 function parseWorkflow(value: unknown, agents: ReadonlySet<string>, draft: boolean): WorkflowGraph {
   const edge = (value: unknown) => draft && value === '' ? '' : id(value);
-  const graph = object(value); keys(graph, ['entry', 'maxSteps', 'nodes', 'positions']);
+  const discordChannel = (value: unknown) => {
+    if (typeof value !== 'string' || !(draft && value === '' || /^[1-9][0-9]{0,19}$/.test(value) && BigInt(value) <= 18446744073709551615n)) throw new Error('Invalid Discord channel ID.');
+    return value;
+  };
+  const graph = object(value); keys(graph, ['entry', 'maxSteps', 'nodes', 'positions', 'trigger']);
+  let trigger: WorkflowGraph['trigger'];
+  if (graph.trigger !== undefined) {
+    const raw = object(graph.trigger); keys(raw, ['kind', 'channel']);
+    if (raw.kind !== 'discord') throw new Error('Invalid workflow trigger.');
+    trigger = { kind: 'discord', channel: discordChannel(raw.channel) };
+  }
   const entry = edge(graph.entry), maxSteps = graph.maxSteps;
   if (typeof maxSteps !== 'number' || !Number.isFinite(maxSteps) || Math.abs(maxSteps) > Number.MAX_SAFE_INTEGER || (!draft && (!Number.isSafeInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000))) throw new Error('Workflow limit must be 1 to 1000 steps.');
   if (!Array.isArray(graph.nodes) || !graph.nodes.length || graph.nodes.length > 64) throw new Error('Workflow must have 1 to 64 steps.');
@@ -90,9 +100,10 @@ function parseWorkflow(value: unknown, agents: ReadonlySet<string>, draft: boole
         if (typeof node.timeoutSeconds !== 'number' || !Number.isFinite(node.timeoutSeconds) || Math.abs(node.timeoutSeconds) > Number.MAX_SAFE_INTEGER || (!draft && (!Number.isSafeInteger(node.timeoutSeconds) || node.timeoutSeconds < 1 || node.timeoutSeconds > 604800))) throw new Error('Event wait time must be 1 to 604800 seconds.');
         return { id: name, kind: node.kind, event: text(node.event, 256, draft), timeoutSeconds: Number(node.timeoutSeconds), next: edge(node.next) };
       case 'output':
-        keys(node, ['id', 'kind', 'channel']);
+        keys(node, ['id', 'kind', 'channel', 'discordChannel']);
+        if (node.channel !== undefined && node.discordChannel !== undefined) throw new Error('Choose one output destination.');
         if (node.channel !== undefined && (typeof node.channel !== 'string' || (!draft && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(node.channel)) || node.channel.length > 36)) throw new Error('Invalid output channel.');
-        return { id: name, kind: node.kind, ...(node.channel === undefined ? {} : { channel: node.channel }) };
+        return { id: name, kind: node.kind, ...(node.channel === undefined ? {} : { channel: node.channel }), ...(node.discordChannel === undefined ? {} : { discordChannel: discordChannel(node.discordChannel) }) };
       default: throw new Error('Unsupported workflow step type.');
     }
   });
@@ -111,5 +122,5 @@ function parseWorkflow(value: unknown, agents: ReadonlySet<string>, draft: boole
       || point.x < 64 || point.y < 64 || point.x > 20000 || point.y > 20000) throw new Error('Invalid workflow step position.');
     return [name, { x: point.x, y: point.y }];
   }));
-  return { entry, maxSteps: Number(maxSteps), nodes, ...(positions ? { positions } : {}) };
+  return { entry, maxSteps: Number(maxSteps), nodes, ...(trigger ? { trigger } : {}), ...(positions ? { positions } : {}) };
 }

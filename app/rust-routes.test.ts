@@ -28,6 +28,8 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/engine-logins/{id}/check', 'Checks sign-in for a local engine login.'],
     ['/api/engine-logins/{id}/remove', 'Removes an unused local engine login.'],
     ['/api/turns/{id}/inspect', 'Reads redacted local run diagnostics for the owner.'],
+    ['/api/connected-apps/discord', 'Reads connection state and routes for the local Discord bot.'],
+    ['/api/connected-apps/discord/{action}', 'Connects the bot or changes Discord routes from local Settings.'],
   ]);
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));

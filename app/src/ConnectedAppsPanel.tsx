@@ -1,3 +1,4 @@
+import { DiscordSettings } from './DiscordSettings';
 import { usePolling } from './hooks/usePolling';
 import { getNonce } from 'get-nonce';
 import { useEffect, useRef, useState } from 'react';
@@ -84,6 +85,7 @@ export function ConnectedAppsPanel({ agents, request, project, onInstallationApp
         ...(keyStatus?.source==='settings' ? ['separator' as const,{label:'Remove key',danger:true,disabled:locked,onSelect:()=>void removeKey()}] : []),
       ]} />}
     </>} />
+    {!project && !selected && <DiscordSettings agents={agents} request={request} />}
     {(error || loadError) && <Alert tone="error" actions={loadError ? <Button size="sm" onClick={() => setRefresh(n => n + 1)}>Try again</Button> : undefined}>{error || loadError}</Alert>}{recoveryNotice}
     {project && !selected && <Card><Row title="Allow global apps" trailing={<Tooltip content="Member agents may also use apps granted to them in Settings. Project accounts take priority for the same toolkit."><span><Switch label="Allow global apps" checked={project.allowInstallationApps} disabled={locked} onChange={async enabled=>{if(enabled&&!await confirm({title:'Allow installation apps in this project?',description:'Members can use their installation accounts alongside this project’s accounts. Approval choices stay separate for this project.',confirm:'Allow installation apps'}))return;try{await onInstallationAppsChange?.(enabled);}catch(error){setError(error instanceof Error?error.message:'Project setting could not save.');}}}/></span></Tooltip>} /></Card>}
     {catalog?.configured===false ? <EmptyState icon={<Blocks size={20} aria-hidden />} title="Connect apps" action={!project ? <Button disabled={locked||!keyStatus} onClick={()=>void openSetup()}>Set up</Button> : undefined}>{project?'Set up Composio in Settings > Connected apps.':undefined}</EmptyState> : selected ? <>

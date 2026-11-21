@@ -1,5 +1,5 @@
 use super::*;
-pub(super) mod runtime;
+pub(crate) mod runtime;
 pub(super) mod validation;
 pub use runtime::settle;
 fn read(db: &Connection, id: &str) -> Result<Value> {
@@ -53,7 +53,20 @@ fn save(
         return Err(error(409, "Workflow changed. Reload before saving."));
     }
     let g = validation::validate(db, g)?;
-    for n in g["nodes"].as_array().ok_or_else(Failure::storage)? {
+    let nodes = g["nodes"].as_array().ok_or_else(Failure::storage)?;
+    for channel in g["trigger"]["channel"].as_str().into_iter().chain(
+        nodes
+            .iter()
+            .filter_map(|node| node["discordChannel"].as_str()),
+    ) {
+        if crate::connectors::discord::workflow_route(db, channel, owner)?.is_none() {
+            return Err(error(
+                409,
+                "Add a Discord route for this workflow's owner in Settings.",
+            ));
+        }
+    }
+    for n in nodes {
         if n["kind"] == "output" {
             if let Some(c) = n["channel"].as_str() {
                 if !runtime::channel(db, c, owner)? {

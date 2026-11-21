@@ -5,7 +5,7 @@ mod routines;
 mod schedule;
 pub mod scripts;
 mod webhooks;
-mod workflows;
+pub(crate) mod workflows;
 
 use crate::{
     data::{self, all, error, field, integer, iso, one, string, transaction, uuid},

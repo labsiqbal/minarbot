@@ -138,7 +138,7 @@ pub fn validate_files(db: &Connection, files: &Value, scope: &str) -> Result<()>
     }
     Ok(())
 }
-pub(super) fn conversation(
+pub(crate) fn conversation(
     db: &Connection,
     kind: &str,
     owner: &str,

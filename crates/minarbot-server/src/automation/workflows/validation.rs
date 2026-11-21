@@ -67,7 +67,19 @@ pub fn validate_scope(db: &Connection, g: &Value, project: Option<&str>) -> Resu
     .iter()
     .map(|a| string(a, "id").to_owned())
     .collect();
-    keys(g, &["entry", "maxSteps", "nodes", "positions"])?;
+    keys(g, &["entry", "maxSteps", "nodes", "positions", "trigger"])?;
+    if let Some(trigger) = g.get("trigger") {
+        keys(trigger, &["kind", "channel"])?;
+        if project.is_some()
+            || trigger["kind"] != "discord"
+            || !discord_channel(&trigger["channel"])
+        {
+            return Err(error(
+                400,
+                "Discord triggers require a channel, thread, or DM ID on a local host.",
+            ));
+        }
+    }
     let entry = id(&g["entry"])?;
     if !integer(&g["maxSteps"], 1, 1000) {
         return Err(error(400, "Workflow limit must be 1 to 1000 steps."));
@@ -149,13 +161,19 @@ pub fn validate_scope(db: &Connection, g: &Value, project: Option<&str>) -> Resu
                 json!({"id":name,"kind":kind,"event":text(&n["event"],256,false)?,"timeoutSeconds":n["timeoutSeconds"],"next":id(&n["next"])?})
             }
             "output" => {
-                keys(n, &["id", "kind", "channel"])?;
+                keys(n, &["id", "kind", "channel", "discordChannel"])?;
                 let mut x = json!({"id":name,"kind":kind});
                 if let Some(c) = n.get("channel") {
                     if !c.as_str().is_some_and(uuid) {
                         return Err(error(400, "Invalid output channel."));
                     }
                     x["channel"] = c.clone();
+                }
+                if let Some(c) = n.get("discordChannel") {
+                    if project.is_some() || n.get("channel").is_some() || !discord_channel(c) {
+                        return Err(error(400, "Invalid Discord output channel."));
+                    }
+                    x["discordChannel"] = c.clone();
                 }
                 x
             }
@@ -198,6 +216,9 @@ pub fn validate_scope(db: &Connection, g: &Value, project: Option<&str>) -> Resu
         ));
     }
     let mut result = json!({"entry":entry,"maxSteps":g["maxSteps"],"nodes":nodes});
+    if let Some(trigger) = g.get("trigger") {
+        result["trigger"] = trigger.clone();
+    }
     if let Some(p) = g.get("positions") {
         let points = p
             .as_object()
@@ -217,6 +238,10 @@ pub fn validate_scope(db: &Connection, g: &Value, project: Option<&str>) -> Resu
         result["positions"] = p.clone();
     }
     Ok(result)
+}
+fn discord_channel(v: &Value) -> bool {
+    v.as_str()
+        .is_some_and(crate::connectors::discord::snowflake)
 }
 pub fn transition(n: &Value, result: &str) -> Result<String> {
     if n["kind"] != "condition" {

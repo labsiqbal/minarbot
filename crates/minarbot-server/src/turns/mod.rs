@@ -3,7 +3,7 @@ pub(crate) use admission::prepare as prepare_script;
 pub(crate) use admission::route as script_route;
 pub(crate) use history::{inspect, requested_files};
 mod accounts;
-mod admission;
+pub(crate) mod admission;
 mod compaction;
 mod coordination;
 pub(crate) mod diagnostics;
