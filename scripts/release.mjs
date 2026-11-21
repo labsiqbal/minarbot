@@ -10,6 +10,46 @@ import { durableWrite, fileManifest, parseRelease, syncDirectory, verifyRelease 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const releasePublicKey = 'kSIv+agT4RsABust/LmvPVjfWDxZxM0YKL03gts/UEM=';
 export const githubRepository = 'labsiqbal/minarbot';
+const computerRepository = 'ghcr.io/labsiqbal/minarbot-computer';
+const computerDigest = /^sha256:[a-f0-9]{64}$/;
+
+function publishComputerImage(commit, user, token, binary = join(root, 'target/release/minarbot-server')) {
+  const stage = mkdtempSync(join(tmpdir(), 'minarbot-computer-'));
+  try {
+    const env = { ...process.env, DOCKER_CONFIG: stage };
+    delete env.MINARBOT_GHCR_TOKEN;
+    delete env.GH_TOKEN;
+    const runtime = spawnSync('podman', ['--remote=false', 'info', '--format', '{{.Host.Security.Rootless}}'], { env, encoding: 'utf8' }).stdout?.trim() === 'true' ? 'podman' : 'docker';
+    const authFile = join(stage, 'auth.json');
+    const auth = runtime === 'podman' ? ['--authfile', authFile] : [];
+    const prefix = runtime === 'podman' ? ['--remote=false'] : [];
+    const run = (args, options) => execFileSync(runtime, [...prefix, ...args], { env, ...options });
+    const tag = `${computerRepository}:${commit}`;
+    const context = join(stage, 'context');
+    mkdirSync(context);
+    cpSync(join(root, 'computer/image/Containerfile'), join(context, 'Containerfile'));
+    cpSync(binary, join(context, 'minarbot-server'));
+    for (const file of ['LICENSE', 'agent-delegation.LICENSE']) cpSync(join(root, 'app', file), join(context, file));
+    cpSync(join(root, 'app/t3/NOTICE'), join(context, 'NOTICE'));
+    cpSync(join(root, 'crates/minarbot-server/whatsapp-rust.LICENSE'), join(context, 'whatsapp-rust.LICENSE'));
+    run(['login', ...auth, '--username', user, '--password-stdin', 'ghcr.io'], {
+      input: `${token}\n`, stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    run(['build', '--platform', 'linux/amd64', '-f', join(context, 'Containerfile'), '-t', tag, context], { stdio: 'inherit' });
+    const digestFile = join(stage, 'digest');
+    let digest;
+    if (runtime === 'podman') {
+      run(['push', ...auth, '--digestfile', digestFile, tag], { stdio: 'inherit' });
+      digest = readFileSync(digestFile, 'utf8').trim();
+    } else {
+      digest = /digest: (sha256:[a-f0-9]{64}) size: \d+/.exec(run(['push', tag], { encoding: 'utf8' }))?.[1];
+    }
+    if (!computerDigest.test(digest)) throw new Error('GHCR push did not return a Computer image digest.');
+    return digest;
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
+}
 
 export function readIssueComments(issue) {
   return JSON.parse(execFileSync('gh', ['issue', 'view', String(issue), '-R', githubRepository, '--json', 'comments'], { encoding: 'utf8' })).comments;
@@ -85,16 +125,27 @@ async function signedRuntimeAssets(releases, directory, info, keyPath) {
   const cached = existsSync(bundle);
   const stage = cached ? bundle : mkdtempSync(join(directory, '.signing-'));
   try {
-    const [archiveFile, manifestFile, signatureFile] = names.map(name => join(stage, name));
+    const archiveFile = join(stage, archive);
     if (!cached) execFileSync('tar', ['--format=ustar', '-czf', archiveFile, '-C', join(releases, id), '.'], { stdio: 'inherit' });
     const archiveHash = await sha256(archiveFile);
-    const bytes = Buffer.from(JSON.stringify({ version, id, commit, archive, sha256: archiveHash, size: statSync(archiveFile).size, notes, created }));
-    const encoded = releaseSignature(bytes, keyPath);
-    if (cached) {
-      if (!readFileSync(manifestFile).equals(bytes) || readFileSync(signatureFile, 'utf8') !== encoded) throw new Error('Cached signed release assets changed.');
-    } else {
-      durableWrite(manifestFile, bytes);
-      durableWrite(signatureFile, encoded);
+    const manifest = { version, id, commit, archive, sha256: archiveHash, size: statSync(archiveFile).size, notes, created };
+    function writeSigned(name, value) {
+      const manifestFile = join(stage, name), signatureFile = join(stage, `${name}.sig`);
+      const bytes = Buffer.from(JSON.stringify(value)), encoded = releaseSignature(bytes, keyPath);
+      if (cached) {
+        if (!readFileSync(manifestFile).equals(bytes) || readFileSync(signatureFile, 'utf8') !== encoded) throw new Error('Cached signed release assets changed.');
+      } else {
+        durableWrite(manifestFile, bytes);
+        durableWrite(signatureFile, encoded);
+      }
+    }
+    writeSigned('latest.json', manifest);
+    if (info.computerImage) {
+      // Existing installations reject unknown fields in latest.json.
+      names.push('computer-image.json', 'computer-image.json.sig');
+      writeSigned('computer-image.json', { ...manifest, computer_image: info.computerImage });
+    }
+    if (!cached) {
       renameSync(stage, bundle);
       syncDirectory(directory);
     }
@@ -187,6 +238,7 @@ const ciTargets = ['linux-x86_64', 'linux-aarch64', 'macos-x86_64', 'macos-aarch
 const ciChecksums = 'ci-checksums.json';
 const repoArgs = ['-R', githubRepository];
 const signedNames = ['latest.json', 'latest.json.sig'];
+const imageSignedNames = ['computer-image.json', 'computer-image.json.sig'];
 const ciVersion = () => JSON.parse(readFileSync(join(root, 'app/package.json'), 'utf8')).version;
 const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 
@@ -269,7 +321,18 @@ async function draftCI(directory, notes) {
   const tag = `v${info.version}`;
   const names = [...ciAssetNames(info.version), ciChecksums];
   if (readdirSync(directory).some(name => !names.includes(name))) throw new Error('Unexpected CI build output.');
-  durableWrite(join(directory, ciChecksums), JSON.stringify({ ...info, assets: await ciAssets(directory, info.version) }));
+  const assets = await ciAssets(directory, info.version);
+  const { MINARBOT_GHCR_USER: user, MINARBOT_GHCR_TOKEN: token } = process.env;
+  if (!user || !token) throw new Error('Set MINARBOT_GHCR_USER and MINARBOT_GHCR_TOKEN to publish the CI Computer image.');
+  delete process.env.MINARBOT_GHCR_TOKEN;
+  const stage = mkdtempSync(join(tmpdir(), 'minarbot-ci-image-'));
+  let computerImage;
+  try {
+    const archive = join(directory, `minarbot-${info.version}-linux-x86_64.tar.gz`);
+    execFileSync('tar', ['-xzf', archive, '-C', stage, './bin/minarbot-server']);
+    computerImage = publishComputerImage(info.commit, user, token, join(stage, 'bin/minarbot-server'));
+  } finally { rmSync(stage, { recursive: true, force: true }); }
+  durableWrite(join(directory, ciChecksums), JSON.stringify({ ...info, assets, computerImage }));
   if (!draft(tag)) github(['release', 'create', tag, ...repoArgs, '--draft', '--target', info.commit, '--title', `Minarbot ${info.version}`, '--notes', info.notes]);
   const release = draft(tag);
   checkDraft(tag, release, info);
@@ -289,7 +352,7 @@ async function signCI(version, keyPath) {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-ci-sign-'));
   try {
     const required = [...ciAssetNames(version), ciChecksums];
-    const allowed = [...required, ...signedNames];
+    const allowed = [...required, ...signedNames, ...imageSignedNames];
     const remote = new Map(release.assets.map(asset => [asset.name, asset]));
     if (release.assets.some(asset => !allowed.includes(asset.name)) || required.some(name => remote.get(name)?.state !== 'uploaded')) {
       throw new Error('Draft is missing CI assets or has unexpected assets.');
@@ -301,14 +364,23 @@ async function signCI(version, keyPath) {
     for (const name of required) {
       if (remote.get(name).digest !== `sha256:${digests[name]}`) throw new Error(`GitHub asset digest mismatch: ${name}`);
     }
-    if (readFileSync(join(directory, ciChecksums), 'utf8') !== JSON.stringify({ ...info, assets })) throw new Error('CI checksums do not match the downloaded assets.');
+    const checksums = readFileSync(join(directory, ciChecksums), 'utf8');
+    const { computerImage } = JSON.parse(checksums);
+    if (computerImage !== undefined && (typeof computerImage !== 'string' || !computerDigest.test(computerImage))) throw new Error('Invalid CI Computer image digest.');
+    if (checksums !== JSON.stringify({ ...info, assets, computerImage })) throw new Error('CI checksums do not match the downloaded assets.');
     const archive = `minarbot-${version}-linux-x86_64.tar.gz`;
-    const manifest = Buffer.from(JSON.stringify({ ...info, archive, ...assets[archive], assets }));
-    const signature = releaseSignature(manifest, keyPath);
-    durableWrite(join(directory, signedNames[0]), manifest);
-    durableWrite(join(directory, signedNames[1]), signature);
-    digests[signedNames[0]] = createHash('sha256').update(manifest).digest('hex');
-    digests[signedNames[1]] = createHash('sha256').update(signature).digest('hex');
+    const manifest = { ...info, archive, ...assets[archive], assets };
+    function writeSigned([name, signatureName], value) {
+      const bytes = Buffer.from(JSON.stringify(value));
+      const signature = releaseSignature(bytes, keyPath);
+      durableWrite(join(directory, name), bytes);
+      durableWrite(join(directory, signatureName), signature);
+      digests[name] = createHash('sha256').update(bytes).digest('hex');
+      digests[signatureName] = createHash('sha256').update(signature).digest('hex');
+    }
+    writeSigned(signedNames, manifest);
+    if (computerImage) writeSigned(imageSignedNames, { ...manifest, computer_image: computerImage });
+    else allowed.splice(-imageSignedNames.length);
     checkCleanTree();
     const latestDraft = draft(tag);
     checkDraft(tag, latestDraft, info);
@@ -324,7 +396,7 @@ async function signCI(version, keyPath) {
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
-export function buildRelease({ source = join(root, 'app'), releases = join(homedir(), '.local/share/minarbot/releases'), allowDirty = false, notes, build = true, install = true, repository = root, issues = [], readIssueComments: readComments = readIssueComments } = {}) {
+export function buildRelease({ source = join(root, 'app'), releases = join(homedir(), '.local/share/minarbot/releases'), allowDirty = false, notes, build = true, install = true, repository = root, issues = [], readIssueComments: readComments = readIssueComments, computerImage: buildImage } = {}) {
   const git = args => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
   if (!Array.isArray(issues) || issues.some(issue => !Number.isSafeInteger(issue) || issue <= 0)) throw new Error('Invalid issues. Use --issues 30,31 with positive issue numbers.');
   issues = [...new Set(issues)];
@@ -361,6 +433,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
       : [process.execPath];
     execFileSync(gate[0], [...gate.slice(1), join(repository, 'scripts/production-env-gate.mjs'), join(repository, 'target/release/minarbot-server'), join(repository, 'target/release/minarbot-launcher')], { cwd: repository, stdio: 'inherit' });
   }
+  const computerImage = buildImage?.(commit);
   mkdirSync(releases, { recursive: true, mode: 0o700 });
   const stage = mkdtempSync(join(releases, '.staging-'));
   try {
@@ -371,7 +444,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     }
     mkdirSync(join(stage, 'machine'), { mode: 0o700 });
     for (const name of ['install-machine.sh', 'uninstall-machine.sh']) cpSync(join(root, 'scripts', name), join(stage, 'machine', name));
-    const info = parseRelease({ id, version, commit, issues, created: new Date().toISOString(), node: 'rust', notes: notes ?? git(['log', '-5', '--pretty=%s']), files: fileManifest(stage) });
+    const info = parseRelease({ id, version, commit, issues, created: new Date().toISOString(), node: 'rust', notes: notes ?? git(['log', '-5', '--pretty=%s']), files: fileManifest(stage), ...(computerImage && { computerImage }) });
     durableWrite(join(stage, 'release.json'), JSON.stringify(info, null, 2) + '\n', 0o644);
     renameSync(stage, target); syncDirectory(releases);
     mkdirSync(join(releases, 'feed'), { recursive: true, mode: 0o700 });
@@ -407,6 +480,7 @@ async function releaseCommand() {
     releases: { type: 'string' }, notes: { type: 'string' }, issues: { type: 'string' }, desktop: { type: 'boolean' },
     'allow-dirty': { type: 'boolean' }, 'no-github': { type: 'boolean' }, 'github-only': { type: 'string' }, 'signing-key': { type: 'string' },
     'pack-ci': { type: 'string' }, 'draft-ci': { type: 'string' }, 'sign-ci': { type: 'string' }, output: { type: 'string' },
+    'no-image': { type: 'boolean' },
   } });
   const releases = resolve(values.releases ?? join(homedir(), '.local/share/minarbot/releases'));
   const keyPath = values['signing-key'] ?? process.env.MINARBOT_RELEASE_SIGNING_KEY
@@ -423,7 +497,7 @@ async function releaseCommand() {
     return signCI(values[mode], keyPath);
   }
   if (retryId !== undefined) {
-    if ([allowDirty, values['no-github'], values.issues, notes, desktop].some(value => value !== undefined)) {
+    if ([allowDirty, values['no-github'], values['no-image'], values.issues, notes, desktop].some(value => value !== undefined)) {
       throw new Error('--github-only accepts only --releases and --signing-key.');
     }
     checkCleanTree();
@@ -436,7 +510,18 @@ async function releaseCommand() {
   else if (!values['no-github']) console.warn('--allow-dirty publishes locally only.');
   if (githubEnabled && !notes?.trim()) throw new Error('Pass --notes with user-facing release notes for GitHub, or use --no-github.');
   if (values.issues !== undefined && !/^\d+(,\d+)*$/.test(values.issues)) throw new Error('Invalid issues. Use --issues 30,31 with positive issue numbers.');
-  const info = buildRelease({ releases, allowDirty, notes, issues: values.issues?.split(',').map(Number) });
+  let computerImage;
+  if (githubEnabled && !values['no-image']) {
+    const { MINARBOT_GHCR_USER: user, MINARBOT_GHCR_TOKEN: token } = process.env;
+    if (!user || !token) throw new Error('Set MINARBOT_GHCR_USER and MINARBOT_GHCR_TOKEN to publish the Computer image, or pass --no-image.');
+    delete process.env.MINARBOT_GHCR_TOKEN;
+    computerImage = commit => {
+      checkCleanTree();
+      if (execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim() !== commit) throw new Error('Worktree HEAD changed during the release build.');
+      return publishComputerImage(commit, user, token);
+    };
+  }
+  const info = buildRelease({ releases, allowDirty, notes, issues: values.issues?.split(',').map(Number), computerImage });
   console.log(`Published ${info.id} locally`);
 
   const directory = publicationDirectory(releases, info.id);

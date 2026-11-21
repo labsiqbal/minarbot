@@ -152,7 +152,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         specs.push(json!({"type":"function","function":{"name":"list_provider_accounts","description":"List your configured provider account choices without credentials or endpoint paths. Returns account ID, display name, provider family, origin and default model. Use set_provider_account only after the user requests a switch.","parameters":{"type":"object","properties":{},"additionalProperties":false}}}));
         specs.push(json!({"type":"function","function":{"name":"set_provider_model","description":"Change your own primary or backup model only when the user requests it. Supply current revision from read_provider_settings. Current execution keeps its model.","parameters":{"type":"object","properties":{"revision":{"type":"integer","minimum":1},"model":{"type":"string","maxLength":160},"backupModel":{"type":"string","maxLength":160}},"required":["revision"],"additionalProperties":false}}}));
     }
-    if state.computer.enabled
+    if state.computer.enabled()
         && exists(
             db,
             "SELECT 1 FROM agent_computers WHERE agent=? AND enabled=1",
@@ -391,7 +391,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         )?;
         return crate::files::writes::execute(db, &binding, string(turn, "id"), call, actions);
     }
-    if name.starts_with("computer_") {
+    if crate::computer::actions::is_computer_tool(name) {
         let (outputs, actions) = {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
             let db = &guard.connection;

@@ -44,6 +44,7 @@ export const HubConnection = lazyPanel(() => import('./hub/HubConnection'), modu
 export const ConnectedAppsPanel = lazyPanel(() => import('./ConnectedAppsPanel'), module => module.ConnectedAppsPanel);
 export const SkillsPanel = lazyPanel(() => import('./SkillsPanel'), module => module.SkillsPanel);
 export const VaultSettings = lazyPanel(() => import('./VaultSettings'), module => module.VaultSettings);
+export const ComputerSetupPage = lazyPanel(() => import('./ComputerSetupPage'), module => module.ComputerSetupPage);
 export const SitesPanel = lazyPanel(() => import('./SitesPanel'), module => module.SitesPanel);
 export const AvatarPicker = lazyPanel(() => import('./ui/avatar-shapes'), module => module.AvatarPicker);
 
@@ -59,6 +60,7 @@ export const settingsPrefetch: Partial<Record<SettingsSection, () => void>> = {
   data: SharedDataPanel.prefetch,
   backup: BackupPanel.prefetch,
   vault: VaultSettings.prefetch,
+  computer: ComputerSetupPage.prefetch,
 };
 
 export const panelPrefetchers = [

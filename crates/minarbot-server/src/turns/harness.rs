@@ -49,14 +49,16 @@ pub fn instructions(
         return Ok(crate::mcp::guide::instructions());
     }
     let mut specs = specs(state, db, turn)?;
-    if !state.computer.enabled
+    if !state.computer.enabled()
         || !exists(
             db,
             "SELECT 1 FROM agent_computers WHERE agent=? AND enabled=1",
             [string(turn, "agent")],
         )?
     {
-        specs.retain(|t| !string(&t["function"], "name").starts_with("computer_"));
+        specs.retain(|t| {
+            !crate::computer::actions::is_computer_tool(string(&t["function"], "name"))
+        });
     }
     if !super::profile::setup(db, turn)? {
         let features: Vec<Value> = serde_json::from_str(include_str!("../mcp/feature-tools.json"))
@@ -151,7 +153,7 @@ pub async fn tool(
         crate::computer::vault::redactions(state, &guard.connection)?
     };
     crate::mcp::secrets::redact_content(&mut result, &vault_secrets);
-    if name.starts_with("computer_") {
+    if crate::computer::actions::is_computer_tool(name) {
         use base64::Engine;
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;

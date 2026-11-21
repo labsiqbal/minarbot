@@ -74,7 +74,7 @@ fn waits(c: &Connection, agent: &str) -> Result<Vec<Value>> {
     rows(c,"SELECT w.*,v.entry AS secret_entry,v.origin AS secret_origin FROM computer_waits w JOIN turns t ON t.id=w.turn LEFT JOIN vault_requests v ON v.turn=w.turn AND v.call_id=w.call_id WHERE w.agent=? AND w.state='waiting' AND t.status NOT IN('done','cancelled')",[agent])
 }
 pub fn enabled(s: &AppState, agent: &str) -> Result<bool> {
-    Ok(s.computer.enabled && db(s, |c| permission(c, agent))?["enabled"] == 1)
+    Ok(s.computer.enabled() && db(s, |c| permission(c, agent))?["enabled"] == 1)
 }
 pub fn assert_enabled(s: &AppState, agent: &str) -> Result<()> {
     if !crate::platform::LINUX_SANDBOX {
@@ -161,14 +161,11 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
         request["sharedProfile"] = shared.clone();
     }
     let request = request.to_string();
-    if v["enabled"] == true && !s.computer.enabled {
+    if v["enabled"] == true && !s.computer.enabled() {
         if !crate::platform::LINUX_SANDBOX {
             return Err(error(503, crate::platform::COMPUTER_UNAVAILABLE));
         }
-        return Err(error(
-            403,
-            "Enable MINARBOT_AGENT_DESKTOP=1 on the server first.",
-        ));
+        return Err(error(403, "Set up Computer on this device first."));
     }
     let gate = s.computer.control_gate(agent)?;
     let _guard = gate.lock().await;
@@ -246,7 +243,7 @@ async fn configure_always_on(s: &AppState, agent: &str, v: &Value) -> Result<Val
             return Err(error(409, "Computer setting changed. Load latest status."));
         }
         if pin
-            && (!s.computer.enabled
+            && (!s.computer.enabled()
                 || permission["enabled"] != 1
                 || crate::data::agents::hidden(c, agent)?)
         {
@@ -342,7 +339,7 @@ pub async fn transition(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
                 } else if op == "dismiss" {
                     "The user declined to take control. Continue without the human-only step or explain what is blocked."
                 } else {
-                    "The user handed control back. The screen may have changed; take a screenshot first."
+                    "The user handed control back. The screen may have changed; take a screenshot first. Refresh the snapshot before using browser element refs."
                 };
                 c.execute(
                     "UPDATE computer_waits SET state=? WHERE turn=? AND state='waiting'",
@@ -366,6 +363,10 @@ pub async fn transition(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
         )?;
         Ok(())
     })?;
+    if op == "take" {
+        // The next successful browser command must use a fresh snapshot after takeover.
+        s.computer.invalidate_browser(agent)?;
+    }
     s.computer.viewers.revoke(agent)?;
     if let Some(d) = s.computer.get(agent)? {
         d.disconnected.send_modify(|n| *n += 1);
@@ -444,7 +445,17 @@ pub async fn action(
     assert_enabled(s, agent)?;
     db(s, |c| assert_recoverable(c, turn))?;
     let name = text(&call["function"], "name");
-    let command = super::actions::validate(name, args, s.computer.width, s.computer.height)?;
+    let (command, browser) = if name.starts_with("browser_") {
+        (
+            Vec::new(),
+            Some(super::browser_actions::Action::parse(name, args)?),
+        )
+    } else {
+        (
+            super::actions::validate(name, args, s.computer.width, s.computer.height)?,
+            None,
+        )
+    };
     if name == "computer_list_vault" {
         let result = db(s, |c| vault::choices(s, c, agent))?;
         tx(s, |c| {
@@ -505,11 +516,17 @@ pub async fn action(
     if name == "computer_screenshot" && s.computer.screenshots_hidden(agent)? {
         return Err(error(409, "Screenshots are hidden after secure fill. Ask the owner to check Computer or restart it to start a new session."));
     }
+    if browser.as_ref().is_some_and(|action| action.read_only())
+        && s.computer.screenshots_hidden(agent)?
+    {
+        return Err(error(409, "Browser reads are hidden after secure fill. Ask the owner to check Computer or restart it to start a new session."));
+    }
     if name == "computer_fill_secret" {
-        let [entry, field] = command.as_slice() else {
+        let [entry, field, reference @ ..] = command.as_slice() else {
             return Err(Failure::storage());
         };
         let (origin, value) = db(s, |c| {
+            crate::data::environment::authorize_computer(c, turn, agent)?;
             let resolved = vault::resolve(s, c, agent, entry, field, s.config.now())?;
             super::transaction(c, |c| {
                 mark_uncertain(c, turn, text(call, "id"))?;
@@ -524,7 +541,16 @@ pub async fn action(
             })?;
             Ok(resolved)
         })?;
-        let filled = s.computer.secure_fill(agent, &origin, None, value).await?;
+        let filled = s
+            .computer
+            .secure_fill(
+                agent,
+                &origin,
+                None,
+                reference.first().map(String::as_str),
+                value,
+            )
+            .await?;
         let result = secret_result(entry, field, filled, false);
         tx(s, |c| complete_secret(c, turn, text(call, "id"), &result))?;
         return Ok(Outcome {
@@ -533,9 +559,16 @@ pub async fn action(
             paused: false,
         });
     }
-    let environment = db(s, |c| {
-        crate::data::environment::computer_values(s, c, turn, agent)
-    })?;
+    let environment = if browser.is_none() {
+        db(s, |c| {
+            crate::data::environment::computer_values(s, c, turn, agent)
+        })?
+    } else {
+        db(s, |c| {
+            crate::data::environment::authorize_computer(c, turn, agent)
+        })?;
+        Default::default()
+    };
     tx(s, |c| {
         c.execute(
             "INSERT INTO computer_actions VALUES(?,?,'uncertain',NULL)",
@@ -545,40 +578,40 @@ pub async fn action(
         Ok(())
     })?;
     let now = s.config.now();
-    let ((image, title), _guard) = if environment.is_empty() {
-        let result = s.computer.action(agent, name, args, now).await?;
-        (result, guard)
+    let (image, mut result, _guard) = if let Some(browser) = browser {
+        let (image, result) = s.computer.browser_action(agent, browser, now).await?;
+        (image, result, guard)
     } else {
-        let computer = s.computer.clone();
-        let (agent, name, args) = (agent.to_owned(), name.to_owned(), args.clone());
-        let (_in_progress, cancelled) = tokio::sync::oneshot::channel::<()>();
-        tokio::spawn(async move {
-            let result = computer
-                .action_with_environment(&agent, &name, &args, now, &environment, cancelled)
-                .await?;
-            Ok::<_, Failure>((result, guard))
-        })
-        .await
-        .map_err(|_| Failure::storage())??
+        let ((image, title), guard) = if environment.is_empty() {
+            let result = s.computer.action(agent, name, args, now).await?;
+            (result, guard)
+        } else {
+            let computer = s.computer.clone();
+            let (agent, name, args) = (agent.to_owned(), name.to_owned(), args.clone());
+            let (_in_progress, cancelled) = tokio::sync::oneshot::channel::<()>();
+            tokio::spawn(async move {
+                let result = computer
+                    .action_with_environment(&agent, &name, &args, now, &environment, cancelled)
+                    .await?;
+                Ok::<_, Failure>((result, guard))
+            })
+            .await
+            .map_err(|_| Failure::storage())??
+        };
+        let mut result = json!({"status":"done"});
+        if let Some(title) = title {
+            result["pageTitle"] = title.into();
+            result["note"] = "Page finished loading. Take a screenshot to see it.".into();
+        }
+        if image.is_some() {
+            result["note"] =
+                "Desktop screenshot follows as an image. Coordinates use original desktop pixels."
+                    .into();
+        }
+        (image, result, guard)
     };
-    let mut result = json!({"status":"done"});
-    if let Some(title) = title {
-        result["pageTitle"] = db(s, |c| {
-            Ok(crate::mcp::secrets::redact(
-                &title,
-                &vault::redactions(s, c)?,
-                false,
-            ))
-        })?
-        .into();
-        result["note"] = "Page finished loading. Take a screenshot to see it.".into();
-    }
-    if image.is_some() {
-        result["note"] =
-            "Desktop screenshot follows as an image. Coordinates use original desktop pixels."
-                .into();
-    }
     tx(s, |c| {
+        crate::mcp::secrets::redact_content(&mut result, &vault::redactions(s, c)?);
         c.execute(
             "UPDATE computer_actions SET state='done',image=? WHERE turn=? AND call_id=?",
             params![image, turn, text(call, "id")],
@@ -640,9 +673,9 @@ fn secret_result(entry: &str, field: &str, filled: bool, saved: bool) -> Value {
         "not_filled"
     };
     let message = if filled {
-        "Filled the focused field. Screenshots are hidden for this desktop session."
+        "Filled the field. Browser reads and screenshots are hidden for this desktop session."
     } else {
-        "Focus an editable field on the saved origin before filling."
+        "Open the saved origin and use a fresh browser ref or focus an editable field."
     };
     json!({"status":status,"placeholder":vault::placeholder(entry, field),"message":message})
 }
@@ -709,6 +742,7 @@ pub(super) async fn respond_secret(s: &AppState, body: &Value) -> Result<()> {
             agent,
             text(&wait, "origin"),
             Some((text(&wait, "desktop"), text(&wait, "target"))),
+            None,
             value.to_owned(),
         )
         .await;

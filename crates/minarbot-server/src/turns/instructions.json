@@ -43,7 +43,11 @@
         "computer_fill_secret",
         "computer_request_secret"
       ],
-      "Use Computer for browser tasks. Deliver browser pages using the returned panelUrl as an inline link so it opens the navigated Computer. Inspect screenshots before input and after changes. Use only your desktop. Use Vault for credentials and the secure form for missing values. Never ask for a credential in chat. Human-only steps need the user; never invent completion."
+      "Use Computer for browser tasks. Use the returned panelUrl when linking a page in Computer. Use only your desktop. Inspect a screenshot before pixel input and verify the result. Use Vault for credentials and the secure form for missing values. Keep credentials out of chat. Ask the owner for human-only steps."
+    ],
+    [
+      ["browser_snapshot"],
+      "Prefer browser element tools in Chrome. Snapshot before using refs and refresh after navigation, tab switches, or takeover. Use Computer pixel tools for canvas, cross-origin frames, native dialogs, and other apps."
     ],
     [
       [

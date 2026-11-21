@@ -1,8 +1,18 @@
-use super::{error, options::dimensions, proxy, Result};
+use super::{
+    browser_actions,
+    browser_pipe::private_stdio,
+    error,
+    options::dimensions,
+    proxy,
+    runtime::Runtime,
+    setup::{Backend, Setup},
+    Result,
+};
 use crate::{config::Config, web::Failure};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
@@ -11,14 +21,15 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
-        atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
-        Arc, Mutex,
+        atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering},
+        Arc, Mutex, OnceLock,
     },
     time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    net::UnixStream,
+    process::{Child, Command},
     sync::{watch, Mutex as AsyncMutex, Semaphore},
 };
 
@@ -131,9 +142,10 @@ impl Drop for Busy<'_> {
 }
 struct Helper {
     child: Option<Child>,
-    input: Option<ChildStdin>,
-    output: Option<Lines<BufReader<ChildStdout>>>,
+    input: Option<UnixStream>,
+    output: Option<Lines<BufReader<UnixStream>>>,
     sequence: u64,
+    container: Option<(Runtime, String)>,
 }
 struct Fixture {
     bridge: super::options::TestBridge,
@@ -151,6 +163,7 @@ pub struct Desktop {
     pub stopped: AtomicBool,
     pub starting: AtomicBool,
     busy: AtomicUsize,
+    browser_epoch: AtomicU64,
     pub display: i64,
     jpeg: Mutex<Option<(Vec<u8>, Vec<u8>)>>,
     pub disconnected: watch::Sender<u64>,
@@ -160,7 +173,7 @@ pub struct Manager {
     pub hub: super::hub::Hub,
     pub metrics: Mutex<super::host_metrics::Metrics>,
     test_bridge: Option<super::options::TestBridge>,
-    pub enabled: bool,
+    pub(super) setup: Setup,
     pub width: u32,
     pub height: u32,
     pub root: PathBuf,
@@ -169,9 +182,10 @@ pub struct Manager {
     owner: String,
     leases: Mutex<Option<Connection>>,
     desktops: Mutex<HashMap<String, Arc<Desktop>>>,
-    proxy_path: PathBuf,
+    lease_dir: PathBuf,
+    proxy_target: Option<proxy::TestTarget>,
+    proxy_path: OnceLock<PathBuf>,
     proxy_stop: watch::Sender<bool>,
-    _proxy_task: Option<tokio::task::JoinHandle<()>>,
     closing: AtomicBool,
     pub(super) always_on_gate: AsyncMutex<()>,
     pub controls: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
@@ -197,9 +211,10 @@ impl Manager {
                     .to_owned()
             })
             .join("agent-desktops");
-        let enabled = crate::platform::LINUX_SANDBOX && d.enabled.unwrap_or(false);
+        let root = minarbot_launcher::files::absolute(&root).map_err(|error| error.to_string())?;
+        let uid = rustix::process::geteuid().as_raw();
         let (stop, _) = watch::channel(false);
-        let mut manager = Self {
+        Ok(Self {
             viewers: super::vnc::Viewers::default(),
             hub: super::hub::Hub::default(),
             metrics: Mutex::new(super::host_metrics::Metrics::default()),
@@ -208,7 +223,7 @@ impl Manager {
             } else {
                 None
             },
-            enabled,
+            setup: Setup::new(d.enabled, config.harness.test_mode || cfg!(test)),
             width,
             height,
             root,
@@ -217,9 +232,12 @@ impl Manager {
             owner: uuid::Uuid::new_v4().to_string(),
             leases: Mutex::new(None),
             desktops: Mutex::new(HashMap::new()),
-            proxy_path: PathBuf::new(),
+            lease_dir: d
+                .lease_dir
+                .unwrap_or_else(|| std::env::temp_dir().join(format!("minarbot-desktop-{uid}"))),
+            proxy_target: d.test_only_proxy_target,
+            proxy_path: OnceLock::new(),
             proxy_stop: stop,
-            _proxy_task: None,
             closing: AtomicBool::new(false),
             always_on_gate: AsyncMutex::new(()),
             controls: Mutex::new(HashMap::new()),
@@ -229,32 +247,42 @@ impl Manager {
             shared_profiles: Mutex::new(std::collections::HashSet::new()),
             #[cfg(test)]
             launcher: None,
-        };
-        if enabled {
-            let uid = rustix::process::geteuid().as_raw();
-            let lease_dir = d
-                .lease_dir
-                .unwrap_or_else(|| std::env::temp_dir().join(format!("minarbot-desktop-{uid}")));
-            directory(&lease_dir).map_err(|e| e.message)?;
-            let proxy_dir = lease_dir.join(format!("v-{}", uuid::Uuid::new_v4().simple()));
-            directory(&proxy_dir).map_err(|e| e.message)?;
-            manager.proxy_path = proxy_dir.join("proxy.sock");
-            let listener = tokio::net::UnixListener::bind(&manager.proxy_path)?;
-            fs::set_permissions(&manager.proxy_path, fs::Permissions::from_mode(0o600))?;
-            manager._proxy_task = Some(proxy::serve(
-                listener,
-                d.test_only_proxy_target,
-                manager.proxy_stop.subscribe(),
-            ));
-            let db = Connection::open(lease_dir.join("leases.sqlite"))?;
-            fs::set_permissions(
-                lease_dir.join("leases.sqlite"),
-                fs::Permissions::from_mode(0o600),
-            )?;
-            db.execute_batch("PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS leases(display INTEGER PRIMARY KEY,scope TEXT NOT NULL,agent TEXT NOT NULL,owner TEXT NOT NULL,pid INTEGER NOT NULL,birth TEXT NOT NULL,UNIQUE(scope,agent)) STRICT")?;
-            manager.leases = Mutex::new(Some(db));
+        })
+    }
+    pub fn enabled(&self) -> bool {
+        self.setup.backend().is_some()
+    }
+    fn open_storage(&self) -> Result<Connection> {
+        if self.closing.load(Ordering::SeqCst) {
+            return Err(error(503, "Computer is shutting down."));
         }
-        Ok(manager)
+        directory(&self.lease_dir)?;
+        let database = self.lease_dir.join("leases.sqlite");
+        let db = Connection::open(&database)?;
+        fs::set_permissions(database, fs::Permissions::from_mode(0o600))
+            .map_err(|_| Failure::storage())?;
+        db.execute_batch("PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS leases(display INTEGER PRIMARY KEY,scope TEXT NOT NULL,agent TEXT NOT NULL,owner TEXT NOT NULL,pid INTEGER NOT NULL,birth TEXT NOT NULL,UNIQUE(scope,agent)) STRICT")?;
+        let proxy_dir = self
+            .lease_dir
+            .join(format!("v-{}", uuid::Uuid::new_v4().simple()));
+        directory(&proxy_dir)?;
+        let path = proxy_dir.join("proxy.sock");
+        let listener = (|| {
+            let listener = tokio::net::UnixListener::bind(&path)?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+            Ok::<_, std::io::Error>(listener)
+        })()
+        .inspect_err(|_| {
+            let _ = fs::remove_dir_all(proxy_dir);
+        })
+        .map_err(|_| Failure::storage())?;
+        self.proxy_path.set(path).map_err(|_| Failure::storage())?;
+        proxy::serve(
+            listener,
+            self.proxy_target.clone(),
+            self.proxy_stop.subscribe(),
+        );
+        Ok(db)
     }
     pub fn control_gate(&self, agent: &str) -> Result<Arc<AsyncMutex<()>>> {
         Ok(self
@@ -310,7 +338,10 @@ impl Manager {
                 }
             })
             .unwrap_or("off");
-        let mut status = json!({"available":self.enabled,"state":state,"stopsInMs":d.map(|d|(d.activity.load(Ordering::SeqCst)+self.idle-now).max(0)),"width":self.width,"height":self.height});
+        let setup = self.setup.status()?;
+        let mut status = json!({"available":setup["state"]=="ready","setup":setup,"state":state,
+            "stopsInMs":d.map(|d|(d.activity.load(Ordering::SeqCst)+self.idle-now).max(0)),
+            "width":self.width,"height":self.height});
         if !crate::platform::LINUX_SANDBOX {
             status["reason"] = crate::platform::COMPUTER_UNAVAILABLE.into();
         }
@@ -338,6 +369,9 @@ impl Manager {
     }
     fn reserve(&self, agent: &str) -> Result<i64> {
         let mut guard = self.leases.lock().map_err(|_| Failure::storage())?;
+        if guard.is_none() {
+            *guard = Some(self.open_storage()?);
+        }
         let db = guard
             .as_mut()
             .ok_or_else(|| error(403, "Agent computer is disabled."))?;
@@ -476,6 +510,8 @@ impl Manager {
         };
         for (k, x) in [
             ("signin", json!({"allowed":false})),
+            // The supervisor restores tabs with their Minarbot IDs.
+            ("session", json!({"restore_on_startup":5})),
             (
                 "profile",
                 json!({"password_manager_enabled":false,"exit_type":"Normal","exited_cleanly":true}),
@@ -522,9 +558,11 @@ impl Manager {
         if !crate::platform::LINUX_SANDBOX {
             return Err(error(503, crate::platform::COMPUTER_UNAVAILABLE));
         }
-        if !self.enabled || self.closing.load(Ordering::SeqCst) {
-            return Err(error(403, "Agent computer is disabled."));
-        }
+        let backend = self
+            .setup
+            .backend()
+            .filter(|_| !self.closing.load(Ordering::SeqCst))
+            .ok_or_else(|| error(403, "Set up Computer on this device first."))?;
         if crate::web::id(agent).is_none() {
             return Err(error(400, "Invalid agent ID."));
         }
@@ -545,44 +583,74 @@ impl Manager {
             }
             return Ok(d);
         }
-        let executable = std::env::current_exe()
-            .map_err(|_| error(503, "Desktop supervisor is unavailable."))?;
         let (profile, profile_lock) = self.browser_profile(agent)?;
+        let dir = self.root.join(agent);
         let display = self.reserve(agent)?;
-        if let Err(err) = self.prepare(agent, &profile, display) {
-            self.release(agent)?;
-            return Err(err);
+        let mut reservation = StartReservation {
+            manager: self,
+            agent,
+            desktop: None,
+            ready: false,
+        };
+        let proxy = self.proxy_path.get().ok_or_else(Failure::storage)?;
+        let container = match &backend {
+            Backend::Host => None,
+            Backend::Container { runtime, .. } => {
+                let name = format!(
+                    "minarbot-computer-{:x}",
+                    Sha256::digest(self.root.join(agent).as_os_str().as_encoded_bytes())
+                );
+                if !runtime.remove(&name).await {
+                    return Err(error(
+                        503,
+                        "Previous Computer container could not be cleaned up.",
+                    ));
+                }
+                Some((runtime.clone(), name))
+            }
+        };
+        self.prepare(agent, &profile, display)?;
+        if container.is_some() {
+            directory(&dir.join("home").join("chrome"))?;
         }
         let launcher = Path::new("/usr/bin/bwrap");
         #[cfg(test)]
         let launcher = self.launcher.as_deref().unwrap_or(launcher);
-        let mut command = Command::new(launcher);
-        command
-            .args(sandbox(
-                &profile,
-                &self.root.join(agent),
-                &self.proxy_path,
-                &executable,
-            ))
-            .env_clear()
-            .envs(environment)
-            .envs([
-                ("PATH", "/usr/bin:/bin"),
-                ("HOME", "/home/desktop"),
-                ("USER", "minarbot"),
-                ("LANG", "C.UTF-8"),
-                ("XDG_CONFIG_HOME", "/home/desktop/.config"),
-                ("XDG_CACHE_HOME", "/home/desktop/.cache"),
-            ])
-            .env("DISPLAY", format!("unix/:{display}"))
-            .env(
-                "MINARBOT_DESKTOP_GEOMETRY",
-                format!("{}x{}", self.width, self.height),
-            )
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
+        let geometry = format!("{}x{}", self.width, self.height);
+        let display_env = format!("unix/:{display}");
+        let mut command = if let (Backend::Container { image, .. }, Some((runtime, name))) =
+            (backend, &container)
+        {
+            let mut command = runtime.launch(name, &dir, &profile, proxy)?;
+            command.args([
+                "--env",
+                &format!("DISPLAY={display_env}"),
+                "--env",
+                &format!("MINARBOT_DESKTOP_GEOMETRY={geometry}"),
+                &image,
+            ]);
+            command
+        } else {
+            let executable = std::env::current_exe()
+                .map_err(|_| error(503, "Desktop supervisor is unavailable."))?;
+            let mut command = Command::new(launcher);
+            command
+                .args(sandbox(&profile, &dir, proxy, &executable))
+                .env_clear()
+                .envs(environment)
+                .envs([
+                    ("PATH", "/usr/bin:/bin"),
+                    ("HOME", "/home/desktop"),
+                    ("USER", "minarbot"),
+                    ("LANG", "C.UTF-8"),
+                    ("XDG_CONFIG_HOME", "/home/desktop/.config"),
+                    ("XDG_CACHE_HOME", "/home/desktop/.cache"),
+                ])
+                .env("DISPLAY", &display_env)
+                .env("MINARBOT_DESKTOP_GEOMETRY", &geometry);
+            command
+        };
+        command.stderr(Stdio::null()).kill_on_drop(true);
         let (child, input, output, fixture) = if let Some(bridge) = &self.test_bridge {
             let env = command
                 .as_std()
@@ -595,16 +663,12 @@ impl Manager {
                 })
                 .collect::<std::collections::BTreeMap<_, _>>();
             let id = uuid::Uuid::new_v4().to_string();
-            if let Err(error) = bridge
+            bridge
                 .call(
                     "desktop-launch",
-                    json!({"id":id,"env":env,"profile":profile,"proxy":self.proxy_path}),
+                    json!({"id":id,"env":env,"profile":profile,"proxy":proxy}),
                 )
-                .await
-            {
-                self.release(agent)?;
-                return Err(error);
-            }
+                .await?;
             (
                 None,
                 None,
@@ -615,18 +679,17 @@ impl Manager {
                 }),
             )
         } else {
-            let mut child = match command.spawn() {
-                Ok(v) => v,
-                Err(_) => {
-                    self.release(agent)?;
-                    return Err(error(503,"Desktop sandbox could not start. Install bwrap and enable unprivileged user namespaces."));
-                }
-            };
-            let input = child.stdin.take();
-            let output = child.stdout.take().ok_or_else(Failure::storage)?;
+            let (input, output) = private_stdio(&mut command)
+                .map_err(|_| error(503, "Desktop supervisor channel is unavailable."))?;
+            let child = command.spawn().map_err(|_| error(503, if container.is_some() {
+                "Computer container could not start. Check the container runtime."
+            } else {
+                "Desktop sandbox could not start. Install bwrap and enable unprivileged user namespaces."
+            }))?;
+            drop(command);
             (
                 Some(child),
-                input,
+                Some(input),
                 Some(BufReader::new(output).lines()),
                 None,
             )
@@ -642,6 +705,7 @@ impl Manager {
                 input,
                 output,
                 sequence: 0,
+                container,
             }),
             gate: AsyncMutex::new(()),
             slots: Semaphore::new(8),
@@ -649,6 +713,7 @@ impl Manager {
             stopped: AtomicBool::new(false),
             starting: AtomicBool::new(true),
             busy: AtomicUsize::new(0),
+            browser_epoch: AtomicU64::new(0),
             display,
             jpeg: Mutex::new(None),
             disconnected,
@@ -657,13 +722,46 @@ impl Manager {
             .lock()
             .map_err(|_| Failure::storage())?
             .insert(agent.into(), d.clone());
-        let ready=tokio::time::timeout(Duration::from_secs(65),async{if d.fixture.is_some(){return Ok(());}let mut h=d.helper.lock().await;loop{match h.output.as_mut().ok_or_else(Failure::storage)?.next_line().await{Ok(Some(line)) if line=="ready"=>return Ok(()),Ok(Some(line)) if line!="failed"=>continue,_=>return Err(error(503,"Desktop sandbox stopped before becoming ready. Check bwrap and desktop programs."))}}}).await.unwrap_or_else(|_|Err(error(503,"Desktop startup timed out. Check bwrap and installed desktop programs.")));
+        reservation.desktop = Some(d.clone());
+        let ready = tokio::time::timeout(Duration::from_secs(65), async {
+            if d.fixture.is_some() {
+                return Ok(());
+            }
+            let mut h = d.helper.lock().await;
+            if h.container.is_some() {
+                let mut bytes = serde_json::to_vec(environment).map_err(|_| Failure::storage())?;
+                bytes.push(b'\n');
+                h.input
+                    .as_mut()
+                    .ok_or_else(Failure::storage)?
+                    .write_all(&bytes)
+                    .await
+                    .map_err(|_| error(503, "Computer container stopped before becoming ready."))?;
+            }
+            let message = if h.container.is_some() {
+                "Computer container stopped before becoming ready. Check the container runtime."
+            } else {
+                "Desktop sandbox stopped before becoming ready. Check bwrap and desktop programs."
+            };
+            let output = h.output.as_mut().ok_or_else(Failure::storage)?;
+            while let Ok(Some(line)) = output.next_line().await {
+                match line.as_str() {
+                    "ready" => return Ok(()),
+                    "failed" => break,
+                    _ => {}
+                }
+            }
+            Err(error(503, message))
+        })
+        .await
+        .unwrap_or_else(|_| Err(error(503, "Computer startup timed out.")));
         if let Err(e) = ready {
             let _ = self.stop(agent).await;
             return Err(e);
         }
         d.starting.store(false, Ordering::SeqCst);
         d.activity.store(now, Ordering::SeqCst);
+        reservation.ready = true;
         Ok(d)
     }
     pub async fn stop(&self, agent: &str) -> Result<()> {
@@ -673,6 +771,13 @@ impl Manager {
         };
         d.stopped.store(true, Ordering::SeqCst);
         d.disconnected.send_modify(|v| *v += 1);
+        let mut h = d.helper.lock().await;
+        if !self
+            .get(agent)?
+            .is_some_and(|current| Arc::ptr_eq(&current, &d))
+        {
+            return Ok(());
+        }
         let stopped = if let Some(fixture) = &d.fixture {
             tokio::time::timeout(
                 Duration::from_secs(3),
@@ -683,7 +788,6 @@ impl Manager {
             .await
             .map(|v| v.map(|_| ()))
         } else {
-            let mut h = d.helper.lock().await;
             if let Some(mut input) = h.input.take() {
                 let _ = input.shutdown().await;
             }
@@ -696,6 +800,16 @@ impl Manager {
         };
         match stopped {
             Ok(result) => result?,
+            Err(_) if h.container.is_some() => {
+                if let Some((runtime, name)) = &h.container {
+                    if !runtime.remove(name).await {
+                        return Err(error(503, "Computer container is still stopping."));
+                    }
+                    if let Some(child) = &mut h.child {
+                        let _ = child.kill().await;
+                    }
+                }
+            }
             Err(_) => {
                 return Err(error(
                     503,
@@ -703,14 +817,14 @@ impl Manager {
                 ))
             }
         }
+        for file in ["vnc.sock".into(), format!("X{}", d.display)] {
+            let _ = fs::remove_file(self.root.join(agent).join("x11").join(file));
+        }
+        self.release(agent)?;
         self.desktops
             .lock()
             .map_err(|_| Failure::storage())?
             .remove(agent);
-        self.release(agent)?;
-        for file in ["vnc.sock".into(), format!("X{}", d.display)] {
-            let _ = fs::remove_file(self.root.join(agent).join("x11").join(file));
-        }
         Ok(())
     }
     async fn request(d: &Desktop, operation: &str, args: &[String]) -> Result<Vec<u8>> {
@@ -817,6 +931,7 @@ impl Manager {
         agent: &str,
         origin: &str,
         target: Option<(&str, &str)>,
+        reference: Option<&str>,
         value: String,
     ) -> Result<bool> {
         let Some(d) = self.get(agent)? else {
@@ -828,14 +943,19 @@ impl Manager {
         }
         let token = target.map_or("", |(_, token)| token);
         let already_hidden = d.sensitive.swap(true, Ordering::SeqCst);
-        let reply = Self::request(&d, "secret-fill", &[origin.into(), token.into(), value])
-            .await
-            .map_err(|_| {
-                error(
-                    503,
-                    "Secure fill outcome is uncertain. Check Computer before trying again.",
-                )
-            })?;
+        let mut args = vec![origin.into(), token.into(), value];
+        if let Some(reference) = reference {
+            args.extend([
+                reference.into(),
+                d.browser_epoch.load(Ordering::SeqCst).to_string(),
+            ]);
+        }
+        let reply = Self::request(&d, "secret-fill", &args).await.map_err(|_| {
+            error(
+                503,
+                "Secure fill outcome is uncertain. Check Computer before trying again.",
+            )
+        })?;
         d.activity.store(crate::config::now(), Ordering::SeqCst);
         match reply.as_slice() {
             [1] => Ok(true),
@@ -908,6 +1028,41 @@ impl Manager {
         }
         Ok(encoded)
     }
+    pub(super) async fn browser_action(
+        &self,
+        agent: &str,
+        action: browser_actions::Action,
+        now: i64,
+    ) -> Result<(Option<Vec<u8>>, Value)> {
+        let d = self.start(agent, now).await?;
+        d.activity.store(now, Ordering::SeqCst);
+        let _slot = d
+            .slots
+            .try_acquire()
+            .map_err(|_| error(429, "Computer is busy."))?;
+        let _gate = d.gate.lock().await;
+        let _busy = Busy::new(&d.busy);
+        let request = browser_actions::Request {
+            action,
+            epoch: d.browser_epoch.load(Ordering::SeqCst),
+        };
+        let packet = serde_json::to_string(&request).map_err(|_| Failure::storage())?;
+        let response = Self::request(&d, "browser", &[packet]).await;
+        d.activity.store(crate::config::now(), Ordering::SeqCst);
+        let reply: browser_actions::Reply =
+            serde_json::from_slice(&response?).map_err(|_| Failure::storage())?;
+        let image = reply
+            .image
+            .map(|image| STANDARD.decode(image).map_err(|_| Failure::storage()))
+            .transpose()?;
+        Ok((image, reply.result))
+    }
+    pub(super) fn invalidate_browser(&self, agent: &str) -> Result<()> {
+        if let Some(d) = self.get(agent)? {
+            d.browser_epoch.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
+    }
     pub async fn action(
         &self,
         agent: &str,
@@ -964,7 +1119,7 @@ impl Manager {
                         "search",
                         "--onlyvisible",
                         "--class",
-                        "google-chrome",
+                        super::desktop_supervisor::BROWSER_CLASS,
                         "windowactivate",
                         "--sync",
                     ]
@@ -1055,6 +1210,7 @@ impl Manager {
                 })
             };
             if exited
+                || d.stopped.load(Ordering::SeqCst)
                 || (!d.starting.load(Ordering::SeqCst)
                     && d.busy.load(Ordering::SeqCst) == 0
                     && now - d.activity.load(Ordering::SeqCst) >= self.idle
@@ -1076,11 +1232,30 @@ impl Manager {
             let _ = self.stop(&agent).await;
         }
         let _ = self.proxy_stop.send(true);
-        if let Some(p) = self.proxy_path.parent() {
+        if let Some(p) = self.proxy_path.get().and_then(|path| path.parent()) {
             let _ = fs::remove_dir_all(p);
         }
     }
 }
 
+struct StartReservation<'a> {
+    manager: &'a Manager,
+    agent: &'a str,
+    desktop: Option<Arc<Desktop>>,
+    ready: bool,
+}
+impl Drop for StartReservation<'_> {
+    fn drop(&mut self) {
+        if self.ready {
+            return;
+        }
+        if let Some(desktop) = &self.desktop {
+            desktop.stopped.store(true, Ordering::SeqCst);
+        } else {
+            let _ = self.manager.release(self.agent);
+        }
+    }
+}
+
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

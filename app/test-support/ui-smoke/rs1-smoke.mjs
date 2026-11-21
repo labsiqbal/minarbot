@@ -58,7 +58,7 @@ export async function widePanelsSmoke({ check, page, agentChat, visible, hidden,
   await check('RS1 settings icons, search, keyboard and filled current destination', async () => {
     const dialog = await settings('Appearance');
     const nav = dialog.getByRole('navigation', { name: 'Settings', exact: true });
-    const destinations = ['General', 'Appearance', 'Skills', 'Providers', 'Connected apps', 'MCP connections', 'Machines', 'Updates', 'Usage', 'Shared data', 'Backup & restore', 'External access'];
+    const destinations = ['General', 'Appearance', 'Skills', 'Providers', 'Engines', 'Connected apps', 'Email', 'MCP connections', 'Vault', 'Machines', 'Devices', 'Computer', 'Updates', 'Usage', 'Shared data', 'Backup & restore', 'External access'];
     assert.deepEqual(await nav.getByRole('button').allTextContents(), destinations);
     assert(await nav.getByRole('button').evaluateAll(buttons => buttons.every(button => button.firstElementChild?.tagName.toLowerCase() === 'svg' && button.firstElementChild.getAttribute('aria-hidden') === 'true')));
     const selected = nav.getByRole('button', { name: 'Appearance', exact: true });
@@ -95,9 +95,9 @@ export async function widePanelsSmoke({ check, page, agentChat, visible, hidden,
     await search.fill('connections'); await page.keyboard.press('ArrowDown');
     assert(await nav.getByRole('button', { name: 'Providers', exact: true }).evaluate(el => el === document.activeElement));
     await page.keyboard.press('End');
-    assert(await nav.getByRole('button', { name: 'MCP connections', exact: true }).evaluate(el => el === document.activeElement));
+    assert(await nav.getByRole('button', { name: 'Vault', exact: true }).evaluate(el => el === document.activeElement));
     await page.keyboard.press('Home'); await page.keyboard.press('ArrowUp');
-    assert(await nav.getByRole('button', { name: 'MCP connections', exact: true }).evaluate(el => el === document.activeElement));
+    assert(await nav.getByRole('button', { name: 'Vault', exact: true }).evaluate(el => el === document.activeElement));
     await search.fill(''); await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Home'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
     await visible(dialog.getByRole('heading', { name: 'Appearance', exact: true }));

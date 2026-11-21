@@ -44,6 +44,7 @@ export function parseRelease(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || !releaseIdPattern.test(value.id) || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(value.version) || !/^[a-f0-9]{40}$/.test(value.commit) || !value.id.startsWith(value.version + '-') || !value.commit.startsWith(value.id.slice(value.version.length + 1)) || typeof value.created !== 'string' || !Number.isFinite(Date.parse(value.created)) || typeof value.node !== 'string' || typeof value.notes !== 'string' || value.notes.length > 16000 || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) throw new Error('Invalid release metadata.');
   for (const [path, hash] of Object.entries(value.files)) if (!path || path.startsWith('/') || path.split('/').some(p => !p || p === '.' || p === '..') || /[\\\x00-\x1f\x7f]/.test(path) || !/^[a-f0-9]{64}$/.test(hash)) throw new Error('Invalid release file manifest.');
   if (value.issues !== undefined && (!Array.isArray(value.issues) || value.issues.some(issue => !Number.isSafeInteger(issue) || issue <= 0) || new Set(value.issues).size !== value.issues.length)) throw new Error('Invalid release issues.');
+  if (value.computerImage !== undefined && (typeof value.computerImage !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value.computerImage))) throw new Error('Invalid Computer image digest.');
   return value;
 }
 export function verifyRelease(releases, id) {
