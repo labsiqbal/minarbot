@@ -187,6 +187,9 @@ fn decorate(state: &AppState, db: &Connection, turn: &mut Value, channel: bool) 
         question["choices"] = json(&question["choices"])?;
     }
     turn["questions"] = json!(questions);
+    if crate::mcp::guide::eligible(turn) {
+        turn["guide"] = crate::mcp::guide::actions(db, &id, state.config.now())?;
+    }
     turn["agentMessages"] = json!(message_rows(db, &id)?);
     let mut replies = Vec::new();
     for row in rows(

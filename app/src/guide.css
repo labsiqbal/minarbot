@@ -1,0 +1,8 @@
+.k-card.guide-change { display: grid; gap: 12px; min-width: 0; padding: 12px 14px; }
+.guide-change__header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.guide-change__header h3 { font: inherit; font-weight: 600; margin: 0; }
+.guide-change__fields { display: grid; gap: 6px; margin: 0; }
+.guide-change__fields > div { display: grid; grid-template-columns: minmax(5rem, 1fr) minmax(0, 3fr); gap: 10px; }
+.guide-change__fields dt { color: var(--color-text-secondary); }
+.guide-change__fields dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.guide-screen-links { justify-content: flex-start; }

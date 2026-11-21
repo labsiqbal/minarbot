@@ -235,6 +235,9 @@ pub async fn approve(
             [turn_id],
         )?
         .ok_or_else(|| error(409, "Task has stopped."))?;
+        if turn["agent"] == crate::mcp::guide::ID {
+            return Ok(false);
+        }
         let profile = agents::read(db, string(&turn, "agent"))?;
         let binding = turns::harness::workspace(state, db, &turn)?
             .ok_or_else(|| error(403, "Shell requires a workspace."))?;

@@ -318,7 +318,7 @@ fn page(mut rows: Vec<Value>, a: &Value, key: &str) -> Value {
     rows.truncate(limit);
     json!({"items":rows,"next_after":next})
 }
-fn api<'a>(
+pub(crate) fn api<'a>(
     state: &'a AppState,
     path: &'a str,
     body: Option<&'a Value>,
@@ -383,7 +383,7 @@ fn command(c: &Value, id: &str) -> String {
         &h[20..32]
     )
 }
-fn plan(db: &Connection, c: &Value, name: &str, a: &Value, id: &str) -> Result<Value> {
+pub(crate) fn plan(db: &Connection, c: &Value, name: &str, a: &Value, id: &str) -> Result<Value> {
     let mut b = pick(
         a,
         &[
@@ -539,7 +539,7 @@ fn plan(db: &Connection, c: &Value, name: &str, a: &Value, id: &str) -> Result<V
     };
     Ok(json!({"path":path,"body":b}))
 }
-fn clean(state: &AppState, db: &Connection, v: &Value) -> Result<Value> {
+pub(crate) fn clean(state: &AppState, db: &Connection, v: &Value) -> Result<Value> {
     let mut v = v.clone();
     for a in data::providers::accounts(state)? {
         if let Some(key) = a.key.as_deref() {
@@ -723,7 +723,7 @@ pub async fn run(state: &AppState, c: &Value, name: &str, a: &Value) -> Result<V
     }
     Ok(v)
 }
-async fn read(state: &AppState, c: &Value, name: &str, a: &Value) -> Result<Value> {
+pub(crate) async fn read(state: &AppState, c: &Value, name: &str, a: &Value) -> Result<Value> {
     match name {
         "web_fetch" | "web_search" => crate::turns::web::call(state, name, a).await,
         "list_routines" | "read_routine" | "list_workflows" | "read_workflow"

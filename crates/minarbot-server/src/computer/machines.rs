@@ -1024,7 +1024,7 @@ async fn peer_agents(
         return Ok(json!({"reachable":true}));
     }
     let mut result = with_db(s, |db| {
-        let mut roster = rows(db,"SELECT id,name,role,model,runtime,provider_account,CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.agent=agents.id AND t.status IN('queued','running') AND t.paused=0) THEN 'working' ELSE 'idle' END AS status FROM agents ORDER BY rowid",[])?;
+        let mut roster = rows(db,"SELECT id,name,role,model,runtime,provider_account,CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.agent=agents.id AND t.status IN('queued','running') AND t.paused=0) THEN 'working' ELSE 'idle' END AS status FROM agents WHERE id<>? ORDER BY rowid",[crate::mcp::guide::ID])?;
         let mut result = json!({});
         if report_providers {
             let accounts = providers::accounts(s)?;

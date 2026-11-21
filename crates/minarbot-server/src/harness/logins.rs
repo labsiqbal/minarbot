@@ -395,10 +395,12 @@ async fn check(state: &AppState, root: &Path, profile: &Value) -> Result<Respons
 fn remove(root: &Path, db: &Connection, profile: &Value) -> Result<()> {
     let id = string(profile, "id");
     let runtime = string(profile, "runtime");
+    let binding = format!("{PREFIX}{id}");
     if exists(
         db,
-        "SELECT 1 FROM agents WHERE provider_account=? AND id NOT IN (SELECT id FROM deleted_agents) LIMIT 1",
-        [format!("{PREFIX}{id}")],
+        "SELECT 1 FROM agents WHERE provider_account=? AND id NOT IN (SELECT id FROM deleted_agents)
+         AND (id<>? OR EXISTS(SELECT 1 FROM turns WHERE agent=agents.id AND status IN('queued','running'))) LIMIT 1",
+        [&binding, crate::mcp::guide::ID],
     )? {
         return Err(error(409, "Unbind this login from its agents before removing it."));
     }
@@ -412,6 +414,7 @@ fn remove(root: &Path, db: &Connection, profile: &Value) -> Result<()> {
         Err(_) => return Err(Failure::storage()),
     }
     db.execute("DELETE FROM engine_logins WHERE id=?", [id])?;
+    crate::mcp::guide::detach_connection(db, &binding)?;
     Ok(())
 }
 

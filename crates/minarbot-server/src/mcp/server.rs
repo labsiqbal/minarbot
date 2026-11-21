@@ -43,6 +43,13 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
             [caller["turn"].as_str()],
         )?
         .ok_or_else(|| error(403, "MCP authorization failed."))?;
+        if turn["agent"] == super::guide::ID {
+            return if super::guide::eligible(&turn) {
+                super::guide::declarations()
+            } else {
+                Ok(Vec::new())
+            };
+        }
         setup = harness::setup(db, &turn)?;
         web_access = crate::turns::web::access(state, db, string(caller, "agent"))?;
         for spec in harness::specs(state, db, &turn)? {
@@ -175,6 +182,21 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
         .into_iter()
         .find(|t| t["name"] == name)
         .ok_or_else(|| error(403, "MCP authorization failed."))?;
+    if caller["kind"] == "session" && caller["agent"] == super::guide::ID {
+        let turn = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            one(
+                &guard.connection,
+                "SELECT * FROM turns WHERE id=? AND status='running'",
+                [string(&caller, "turn")],
+            )?
+            .ok_or_else(|| error(403, "MCP authorization failed."))?
+        };
+        return Ok(reply(
+            &body["id"],
+            super::guide::call(state, &turn, name, &args).await,
+        ));
+    }
     if decl["scope"].is_string()
         && decl["native"] != true
         && ![

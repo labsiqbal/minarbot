@@ -53,6 +53,7 @@ import { ProvidersPanel } from './ProvidersPanel';
 import { EnginesPanel, isLoginBinding } from './EnginesPanel';
 import { DevicesPanel } from './DevicesPanel';
 import { FirstRun } from './FirstRun';
+import { GuideConnectionDialog, GuideTurnActions, saveGuideConnection, type GuideActions } from './GuideActions';
 import { TurnActivity } from './ui/TurnActivity';
 import { AgentMessage, ChatComposer, ChatEmptyState, ChatHeader, ChatTranscript, ChatTurn, HumanMessage, TurnStatus } from './ui/ChatPrimitives';
 import { isTurnWaitingForInput, liveTurn, livePartial, pendingApprovalSubject, turnPollDelay, type TurnActivityData } from './ui/transcript';
@@ -102,9 +103,9 @@ type Thread = { needs_you?: number; delivery?: boolean; active?: boolean; activi
 type ForkContext = { summary?: string; inherited?: string; turns: { id: string; text: string; reply: string | null }[] };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
-type Turn = { optimistic?: boolean; history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; panelFile?: { seq: number; id: string; name: string; openedAt: string; deleted?: number } | null; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { guide?: GuideActions; optimistic?: boolean; history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; panelFile?: { seq: number; id: string; name: string; openedAt: string; deleted?: number } | null; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 const mergeHistory = (history: Turn[], page: Turn[]) => [...new Map([...history, ...page].map(turn => [turn.id, turn])).values()].sort((a, b) => a.seq - b.seq);
-type Directory = { hubAvailable?: boolean; agents: Agent[]; configured: boolean; defaultModel: string };
+type Directory = { guide?: Agent | null; hubAvailable?: boolean; agents: Agent[]; configured: boolean; defaultModel: string };
 type Environment = { id: string; name: string; origin: string; version: string };
 /** One-line sidebar preview: strip Markdown markers so rows read as plain text. */
 function plainPreview(text?: string) {
@@ -394,7 +395,8 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const runningTurn = !channel ? activeTurns[0] : undefined;
   const runningRoom = channel ? turns?.find(turn => turn.room?.active)?.room : undefined;
   const title = thread?.name ?? agent.name;
-  const editLabel = channel ? 'Section settings' : thread ? 'Conversation settings' : 'Edit profile';
+  const builtin = !channel && (agent as Agent).builtin;
+  const editLabel = builtin ? 'AI connection' : channel ? 'Section settings' : thread ? 'Conversation settings' : 'Edit profile';
   const items: MenuItem[] = [
     ...menuItems.filter(item => !['Export template', 'Delete'].includes(item.label)),
     ...(thread ? [{ label: 'Conversation settings', icon: <SlidersHorizontal size={15} aria-hidden />, onSelect: () => setConversationSettingsOpen(true) }] : onEdit ? [{ label: editLabel, icon: <Pencil size={15} aria-hidden />, onSelect: onEdit }] : []),
@@ -421,6 +423,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
       {turn.harnessApprovals?.map(approval => card('harness', approval.id, <HarnessApprovalCard approval={approval} path={pathToTurn} status={turn.status} archived={archived} request={api} />))}
       {turn.approvals?.map(approval => card('app', approval.id, <ApprovalCard approval={approval} path={pathToTurn} status={turn.status} archived={archived} request={api} />))}
       {turn.computerWait && card('computer', turn.computerWait.call_id, <ComputerRequestCard agent={turn.agent} name={turn.agent_name ?? agent.name} wait={turn.computerWait} request={api} />)}
+      {turn.guide && <GuideTurnActions actions={turn.guide} request={api} disabled={!!(agent as Agent).hidden} onChanged={refreshTurns} />}
       {turn.questions?.map(question => card('question', question.id, <QuestionCard question={question} path={pathToTurn} status={turn.status} archived={archived} request={api} />))}
     </>;
   };
@@ -449,7 +452,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
             {turns === null ? <p className="empty-chat__sub" role="status">Loading conversation...</p>
               : turns.length === 0 && before ? <p className="empty-chat__sub" role="status">Start of history reached. Select Newer messages to return.</p>
               : turns.length === 0 && thread?.fork ? null
-              : turns.length === 0 ? <ChatEmptyState agent={agent} title={thread?.fork ? `Continue with ${agent.name}` : undefined}>{'role' in agent ? agent.role : null}</ChatEmptyState>
+              : turns.length === 0 ? <ChatEmptyState agent={agent} title={thread?.fork ? `Continue with ${agent.name}` : undefined}>{builtin ? 'What work do you want to set up?' : 'role' in agent ? agent.role : null}</ChatEmptyState>
               : turns.filter(turn => !queued(turn) && !(turn.status === 'cancelled' && !turn.error?.startsWith('Stopped') && !turn.activity?.calls.length && !turn.room) && (!turn.room || turn.room.root === turn.id || !turns.some(root => root.id === turn.room!.root))).map(turn => {
                 const approvalSubject = pendingApprovalSubject(turn);
                 return <ChatTurn key={turn.id} id={`turn-${turn.id}`} className={`turn-block${turn.id === turns.at(-1)?.id ? ' is-latest' : ''}`}>
@@ -493,8 +496,8 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
       <footer className="composer-area">
         {!channel && (agent as Agent).hidden ? <HiddenAgentBanner agent={agent as Agent} request={api} onChanged={onRestored} /> : archived && <p className="composer__note">Archived</p>}
         {!canSend && !archived && <p className="composer__note composer__note--blocked">
-          {needsProvider && <a className="k-link" href={routePath({ ...parseRoute(window.location.pathname + window.location.search), settings: needsEngineLogin ? 'engines' : 'providers' })}>{needsEngineLogin ? 'Check engine login' : 'Connect a provider'}</a>}
-          {blockedAgent?.blocked_reason && <span>{blockedAgent.blocked_reason}</span>}
+          {builtin && onEdit ? <Button size="sm" onClick={onEdit}>Choose AI connection</Button> : needsProvider && <a className="k-link" href={routePath({ ...parseRoute(window.location.pathname + window.location.search), settings: needsEngineLogin ? 'engines' : 'providers' })}>{needsEngineLogin ? 'Check engine login' : 'Connect a provider'}</a>}
+          {!builtin && blockedAgent?.blocked_reason && <span>{blockedAgent.blocked_reason}</span>}
           {!targets.length && 'No available members.'}
         </p>}
         {firstMessage && canSend && <p className="composer__note">Send first message</p>}
@@ -504,7 +507,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
         <ChatComposer attachments={attachments.composer} hasAttachments={!!attached.length} onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={channel ? `Message #${channel.section_name ?? channel.name}` : `Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
           recipient={channel && activeTurns.length > 0 ? <Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /> : undefined}
           stopAction={runningRoom && !archived ? <RoomStop key={runningRoom.root} room={runningRoom} path={path} archived={archived} onStopped={() => { refreshTurns(); composer.current?.focus(); }} /> : runningTurn && !archived ? <CancelTurn key={runningTurn.id} primary turn={runningTurn.id} path={path} request={api} onCancelled={() => { refreshTurns(); composer.current?.focus(); }} /> : undefined}
-          input={{ id: 'message', ...(firstMessage && { placeholder: 'Try: Say hello' }), value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
+          input={{ id: 'message', ...(builtin && !turns?.length ? { placeholder: 'Describe your work or ask about Minarbot' } : firstMessage && { placeholder: 'Try: Say hello' }), value: pending?.text ?? draft, readOnly: blocked || !!pending || busy, onChange: event => { setDraft(event.target.value); try { sessionStorage.setItem(draftKey, event.target.value); } catch { setError('Draft was not saved in the browser. Copy the message before switching agents.'); } } }}
           busy={busy} retry={!!pending}
           sendDisabled={!!pastedFiles.length || attachments.uploading || blocked || archived || busy || (!pending && (!canSend || !draft.trim() && !attached.length))}
           sendLabel={busy ? 'Sending...' : pending ? 'Retry send' : dispatchTarget ? 'Queue message' : 'Send message'}
@@ -1200,6 +1203,9 @@ function App() {
     await load(true); await projectState.reload();
   });
   const [directory, setDirectory] = useState<Directory | null>(null);
+  const [guideConnectionOpen, setGuideConnectionOpen] = useState(false);
+  const guide = directory?.guide;
+  const sidebarAgents = directory ? [...directory.agents, ...(guide ? [guide] : [])] : [];
   const defaultAgent = directory?.agents.find(agent => !agent.hidden && (agent.runnable ?? !!directory.configured));
   const selected = route.agent ?? defaultAgent?.id ?? '';
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -1291,7 +1297,7 @@ function App() {
     setChannels(current => current.map(item => item.id === room.id ? { ...item, activity: Math.max(item.activity, updated.activity), read_position: Math.max(item.read_position, updated.read_position) } : item));
     await projectState.reload();
   }
-  const agent = directory?.agents.find(agent => agent.id === selected);
+  const agent = sidebarAgents.find(agent => agent.id === selected);
   const storedChannel = channels.find(channel => channel.id === selectedChannel);
   const sectionProject = projectState.projects.find(project => project.id === storedChannel?.project);
   const section = sectionProject?.sections.find(section => section.id === selectedChannel);
@@ -1326,7 +1332,7 @@ function App() {
     else navigate({ agent: owner, ...(thread ? { thread } : {}) });
     setDialog(null); focusComposer();
   };
-  const invalidRoute = !!directory && (!!route.agent && !directory.agents.some(agent => agent.id === route.agent) || !!route.room && !channels.some(channel => channel.id === route.room) || !!route.project && !!projectState.root && !project || !!route.machine && remoteMachinesState.loaded && !remoteMachinesState.machines.some(machine => machine.id === route.machine && machine.agents.some(agent => agent.id === route.remoteAgent)));
+  const invalidRoute = !!directory && (!!route.agent && (!sidebarAgents.some(agent => agent.id === route.agent) || route.agent === guide?.id && !!route.thread) || !!route.room && !channels.some(channel => channel.id === route.room) || !!route.project && !!projectState.root && !project || !!route.machine && remoteMachinesState.loaded && !remoteMachinesState.machines.some(machine => machine.id === route.machine && machine.agents.some(agent => agent.id === route.remoteAgent)));
   useRouteFallback(!route.notFound && !invalidRoute && !!directory && !route.agent && !route.room && !route.project && !route.view && !route.machine, { agent: defaultAgent?.id, settings: route.settings }, navigate);
   const notFound = route.notFound || invalidRoute || routeThread?.missing;
   const settingsName = settingsGroups.flatMap(group => group.items).find(item => item.id === route.settings)?.label;
@@ -1343,9 +1349,9 @@ function App() {
   };
   const matches = (name: string, preview = '', role = '') => !query || `${name} ${role} ${preview}`.toLocaleLowerCase().includes(query);
   const retainedAgent = view === 'chat' && !selectedProject && !projectThread && !selectedChannel ? selected : '';
-  const hiddenAgents = (directory?.agents ?? []).filter(item => item.hidden);
+  const hiddenAgents = sidebarAgents.filter(item => item.hidden);
   const matchingHiddenAgents = hiddenAgents.filter(item => !onlyNeedsYou || needsYou(item.id)).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
-  const localAgents = (directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).filter(item => !onlyNeedsYou || needsYou(item.id)).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
+  const localAgents = sidebarAgents.filter(item => !item.hidden || item.id === retainedAgent).filter(item => !onlyNeedsYou || needsYou(item.id)).filter(item => matches(item.name, summaryFor(item.id)?.preview, item.role));
   const restoreFlight = useRef(false);
   const [restoring, setRestoring] = useState('');
   async function restoreAgent(item: Agent) {
@@ -1358,13 +1364,13 @@ function App() {
     finally { restoreFlight.current = false; setRestoring(''); }
   }
   const agentRow = (id: string) => {
-    const item = directory?.agents.find(agent => agent.id === id);
+    const item = sidebarAgents.find(agent => agent.id === id);
     if (!item) return null;
     const current = !notFound && view === 'chat' && !selectedProject && !projectThread && !selectedChannel && item.id === selected, summary = summaryFor(item.id);
     const count = needsYou(item.id), status = count ? 'Needs you' : summary?.status === 'running' ? 'Working' : 'Idle';
     return collapsed
       ? <button key={item.id} type="button" className={`bot-rail-item${current ? ' is-selected' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgentRow(item.id)} title={item.name} aria-label={`${item.name} ${status}`}><AgentAvatar agent={item} size={36} /></button>
-      : <AgentActions key={item.id} agent={item} request={api} onChanged={() => load(true)} onInbox={() => { navigate({ agent: item.id, inbox: true }); setDialog(null); setNarrowOpen(false); }} onEdit={() => { openAgent(item.id); setDialog('edit'); }} onDelete={() => deleteAgent(item)} onError={error => setAgentActionError(message(error))}><button type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${status}${count ? `, ${count}` : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgentRow(item.id)}>
+      : <AgentActions key={item.id} agent={item} request={api} onChanged={() => load(true)} onInbox={() => { navigate({ agent: item.id, inbox: true }); setDialog(null); setNarrowOpen(false); }} onEdit={() => { openAgent(item.id); if (item.builtin) setGuideConnectionOpen(true); else setDialog('edit'); }} onDelete={() => deleteAgent(item)} onError={error => setAgentActionError(message(error))}><button type="button" className={`bot-row${current ? ' is-selected' : ''}`} aria-label={`${item.name} ${status}${count ? `, ${count}` : ''}${item.provider_available === false ? ' - Provider account unavailable' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => openAgentRow(item.id)}>
         <span className="bot-row__avatar"><AgentAvatar agent={item} size={36} /><span className={`status-dot ${count || item.provider_available === false ? 'is-attention' : summary?.status === 'running' ? 'is-working' : 'is-idle'}`} aria-hidden /></span>
         <span className="bot-row__text"><span className="bot-row__name">{item.name}</span><span className="bot-row__preview" title={plainPreview(summary?.preview) || undefined}>{item.hidden ? 'Hidden' : plainPreview(summary?.preview) || item.role || ''}</span></span>{count ? <NeedsYouBadge count={count} /> : summary?.time && <time className="bot-row__time" dateTime={summary.time}>{relativeTime(summary.time)}</time>}
       </button></AgentActions>;
@@ -1372,8 +1378,8 @@ function App() {
   const remoteMachines = remoteMachinesState.machines.filter(machine => !onlyNeedsYou && (!onlyOnline || machine.status === 'online')).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const anyMatchingAgents = localAgents.length > 0 || matchingHiddenAgents.length > 0 || remoteMachines.some(machine => machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)));
   const switcherItems: SwitcherItem[] = [
-    ...(agent && !route.inbox && !route.room && !route.project && !route.machine && !route.view ? [{ id: 'new-conversation', label: 'New conversation', detail: 'Ctrl/Cmd+Shift+O', icon: <Plus size={16} aria-hidden />, group: 'Create', onSelect: () => { setSettings(null); switcherFrame(() => window.dispatchEvent(new Event('minarbot:new-conversation'))); } }] : []),
-    ...(directory?.agents.filter(agent => !agent.hidden).map(agent => ({ id: `agent:${agent.id}`, label: agent.name, icon: <AgentAvatar agent={agent} size={24} />, group: 'Agents', onSelect: () => { setSettings(null); openAgent(agent.id); } })) ?? []),
+    ...(agent && !agent.builtin && !route.inbox && !route.room && !route.project && !route.machine && !route.view ? [{ id: 'new-conversation', label: 'New conversation', detail: 'Ctrl/Cmd+Shift+O', icon: <Plus size={16} aria-hidden />, group: 'Create', onSelect: () => { setSettings(null); switcherFrame(() => window.dispatchEvent(new Event('minarbot:new-conversation'))); } }] : []),
+    ...sidebarAgents.filter(agent => !agent.hidden).map(agent => ({ id: `agent:${agent.id}`, label: agent.name, icon: <AgentAvatar agent={agent} size={24} />, group: 'Agents', onSelect: () => { setSettings(null); openAgent(agent.id); } })),
     ...hiddenAgents.map(agent => ({ id: `restore:${agent.id}`, label: `Restore ${agent.name}`, group: 'Hidden agents', icon: <AgentAvatar agent={agent} size={24} />, onSelect: () => { setSettings(null); setSidebarTab('agents'); void restoreAgent(agent); } })),
     ...remoteMachines.flatMap(machine => machine.agents.map(agent => ({ id: `remote:${machine.id}:${agent.id}`, label: agent.name, icon: <AgentAvatar agent={agent} size={24} />, detail: machine.name, group: 'Agents', onSelect: () => { setSettings(null); openThread(`${agent.id}@${machine.id}`, ''); } }))),
     ...projectState.projects.map(project => ({ id: `project:${project.id}`, label: project.name, group: 'Projects', onSelect: () => { setSettings(null); openProject(project.id); } })),
@@ -1402,8 +1408,12 @@ function App() {
   else if (route.thread && !routeThread?.thread) content = <PageView>{routeThread?.error ? <Alert tone="error">{routeThread.error} Retrying…</Alert> : <p role="status">Loading conversation...</p>}</PageView>;
   else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat onOpenAgent={openThread} key={thread.id} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project conversation unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
+  else if (agent?.builtin) content = <Chat key={agent.id} agent={agent} configured={!!agent.runnable} onRestored={() => load(true)}
+    onEdit={() => setGuideConnectionOpen(true)} onOpenAgent={openThread} onOpenChannel={openChannel} />;
   else if (agent) content = <AgentConversations attention={attention ? new Set(attentionByAgent.get(agent.id)?.keys()) : undefined} onRestored={() => load(true)} onExport={() => setAgentContent({ agent, kind: 'export' })} onManageRoutines={id => { setRoutineAgent(id); setView('routines'); }} onOpenChannel={openChannel} key={agent.id} agent={agent} firstRun={firstRunAgent === agent.id} workflowAgents={directory.agents} configured={directory.configured} initialThread={route.thread ?? ''} onSelectThread={(thread, replace) => { navigate(current => ({ ...current, agent: agent.id, thread: thread || undefined, result: current.thread === (thread || undefined) ? current.result : undefined }), replace); focusComposer(); }} onOpenAgent={openThread} onEdit={() => setDialog('edit')} />;
-  else content = <FirstRun request={api} isClientError={error => error instanceof HttpError && error.status < 500} settingsOpen={!!settings} onOpenEngines={() => setSettings('engines')} onCreated={item => { setFirstRunAgent(item.id); created(item); focusComposer(); }} />;
+  else content = <FirstRun request={api} guide={guide} onGuide={async (item, connection) => { if (!item.runnable) { await saveGuideConnection(api, item, connection); await load(true); } openAgent(item.id); focusComposer(); }} isClientError={error => error instanceof HttpError && error.status < 500} settingsOpen={!!settings} onOpenEngines={() => setSettings('engines')} onCreated={item => { setFirstRunAgent(item.id); created(item); focusComposer(); }} />;
+  const providerReady = directory?.configured || guide?.runnable;
+  const providerStatus = activityError ? 'Status not updated. Trying again.' : providerReady ? 'Provider configured' : 'Provider not configured';
   const navigation = <aside ref={sidebar.ref} className="sidebar bs-root" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation" onClick={event => { if (narrowSidebar && (event.target as HTMLElement).closest('.bot-row, .project-navigation__name, .project-navigation__room')) setNarrowOpen(false); }}>
       <div className="sidebar__titlebar">
         <span className="sidebar__bots-label">Minarbot</span>
@@ -1412,7 +1422,7 @@ function App() {
           <IconButton label="Workflows" onPointerEnter={WorkflowDirectory.prefetch} onFocus={WorkflowDirectory.prefetch} aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
           <IconButton label="Automation calendar" aria-current={view === 'calendar' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('calendar'); setNarrowOpen(false); setDialog(null); }}><CalendarDays size={16} aria-hidden /></IconButton>
           <ActionMenu label="Create new" trigger={<IconButton label="Create new"><Plus size={16} aria-hidden /></IconButton>} items={[
-            ...(agent ? [{ label: 'New conversation', icon: <MessageSquare size={15} aria-hidden />, hint: 'Ctrl/Cmd+Shift+O', onSelect: () => { openAgent(selected); switcherFrame(() => window.dispatchEvent(new Event('minarbot:new-conversation'))); } }] : []),
+            ...(agent && !agent.builtin ? [{ label: 'New conversation', icon: <MessageSquare size={15} aria-hidden />, hint: 'Ctrl/Cmd+Shift+O', onSelect: () => { openAgent(selected); switcherFrame(() => window.dispatchEvent(new Event('minarbot:new-conversation'))); } }] : []),
             { label: 'New agent', icon: <Plus size={15} aria-hidden />, onSelect: () => setDialog('agent'), disabled: !directory },
             { label: 'Import template', prefetch: AgentTemplateImport.prefetch, icon: <Download size={15} aria-hidden />, onSelect: () => setWorkspaceDialog('import'), disabled: !directory },
             { label: 'New project', icon: <FolderOpen size={15} aria-hidden />, onSelect: () => setDialog('project'), disabled: !directory },
@@ -1423,7 +1433,7 @@ function App() {
       </div>
       <div className="sidebar__tabs">
       <Tabs<SidebarTab> label="Sidebar" value={sidebarTab} onChange={setSidebarTab} tabs={[
-        { value: 'agents', label: 'Agents', count: (directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).length + remoteMachinesState.machines.reduce((count, machine) => count + machine.agents.length, 0) },
+        { value: 'agents', label: 'Agents', count: sidebarAgents.filter(item => !item.hidden || item.id === retainedAgent).length + remoteMachinesState.machines.reduce((count, machine) => count + machine.agents.length, 0) },
         { value: 'projects', label: 'Projects', count: projectState.projects.length },
       ]}>
       <div className="sidebar__search">
@@ -1440,7 +1450,7 @@ function App() {
       <div className="sidebar__scroll">
         <TabPanel value="agents">
         <nav className="machine-groups" aria-label="Machines">
-        {(!(query || onlyNeedsYou) || localAgents.length > 0) && <MachineGroup name="This device" subtitle={environment?.name} count={(directory?.agents ?? []).filter(item => !item.hidden || item.id === retainedAgent).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
+        {(!(query || onlyNeedsYou) || localAgents.length > 0) && <MachineGroup name="This device" subtitle={environment?.name} count={sidebarAgents.filter(item => !item.hidden || item.id === retainedAgent).length} expanded={query ? searchMachineGroups.local !== false : machineGroups.local !== false} onExpandedChange={expanded => setMachineExpanded('local', expanded)} local>
           <div className="bot-list sidebar-agents">
             <nav className="bot-list" aria-label="Choose agent">{localAgents.map(item => agentRow(item.id))}
             {directory && !directory.agents.length && <button type="button" className="bot-list__empty" onClick={() => setDialog('agent')}><span className="bot-list__empty-plus"><Plus size={14} aria-hidden /></span><span><span className="bot-row__name">New agent</span></span></button>}
@@ -1478,7 +1488,7 @@ function App() {
       <SidebarUpdateCapsule updates={updates} />
       <div className="sidebar__footer">
         <div className="sidebar__fade" />
-        <Tooltip content={activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not configured'}><button type="button" className="provider-status" aria-label={activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not configured'} onClick={() => setSettings('providers')}><i className={directory?.configured && !activityError ? 'is-on' : ''} aria-hidden /></button></Tooltip>
+        <Tooltip content={providerStatus}><button type="button" className="provider-status" aria-label={providerStatus} onClick={() => setSettings('providers')}><i className={providerReady && !activityError ? 'is-on' : ''} aria-hidden /></button></Tooltip>
         <IconButton label="Quick switcher (Ctrl/Cmd+K)" onClick={() => switcher.setOpen(true)}><Search size={16} aria-hidden /></IconButton>
         <IconButton label="Help" onClick={() => setWorkspaceDialog('help')}><BookOpen size={16} aria-hidden /></IconButton>
         <RadixDialog.Trigger asChild><IconButton label="Settings" onPointerEnter={GeneralSettings.prefetch} onFocus={GeneralSettings.prefetch} className="sidebar-settings" onClick={() => { setSettings('general'); setNarrowOpen(false); }}><Settings size={16} aria-hidden /></IconButton></RadixDialog.Trigger>
@@ -1500,6 +1510,10 @@ function App() {
     {dialog === 'project' && directory && <CreateProject state={projectState} agents={directory.agents} request={api} onClose={() => setDialog(null)} onCreated={item => { openSection(item.channel); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
     {dialog === 'edit' && directory && !channel && agent && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onDelete={item => deleteAgent(item)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
+    {guideConnectionOpen && guide && <GuideConnectionDialog agent={guide} request={api}
+      onSaved={async () => { await load(true); setGuideConnectionOpen(false); focusComposer(); }} onClose={() => setGuideConnectionOpen(false)}
+      onProviders={() => { setGuideConnectionOpen(false); setSettings('providers'); }}
+      onEngines={() => { setGuideConnectionOpen(false); setSettings('engines'); }} />}
     {workspaceDialog && <Dialog open size="lg" title={workspaceDialog === 'help' ? 'Keyboard shortcuts' : 'Import template'} onOpenChange={open => { if (!open) setWorkspaceDialog(null); }}><div className="legacy"><Suspense fallback={<Delayed><p role="status">Loading...</p></Delayed>}>{workspaceDialog === 'help' ? <HelpPage /> : <AgentTemplateImport request={api} onClose={() => setWorkspaceDialog(null)} onCreated={item => { created(item); setWorkspaceDialog(null); }} />}</Suspense></div></Dialog>}
     {agentContent && <Dialog open size="lg" title={`${agentContent.agent.name} · Export template`} onOpenChange={open => { if (!open) setAgentContent(null); }}><div className="legacy"><Suspense fallback={<Delayed><p role="status">Loading...</p></Delayed>}><AgentTemplateExport id={agentContent.agent.id} request={api} /></Suspense></div></Dialog>}
     <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onEscapeKeyDown={event => { if (settingsQuery && document.activeElement === settingsSearch.current) { event.preventDefault(); setSettingsQuery(''); } }} onOpenAutoFocus={event => {

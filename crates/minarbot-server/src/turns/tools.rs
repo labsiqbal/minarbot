@@ -23,6 +23,14 @@ pub fn workspace(
     db: &Connection,
     turn: &Value,
 ) -> Result<Option<crate::config::WorkspaceConfig>> {
+    if turn["agent"] == crate::mcp::guide::ID {
+        return Ok(Some(crate::config::WorkspaceConfig {
+            agent: crate::mcp::guide::ID.into(),
+            directory: data::agent_folders::ensure_managed(state, crate::mcp::guide::ID)?,
+            write: false,
+            managed: true,
+        }));
+    }
     if let Some(context) = project_context(db, turn)? {
         let project = string(&context, "project");
         let current = one(
@@ -79,6 +87,15 @@ pub fn workspace(
 pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Value>> {
     if crate::automation::model(db, string(turn, "id"))?.is_some() {
         return Ok(Vec::new());
+    }
+    if turn["agent"] == crate::mcp::guide::ID {
+        return if crate::mcp::guide::eligible(turn) {
+            Ok(crate::mcp::guide::declarations()?.into_iter().map(|spec| {
+                json!({"type":"function","function":{"name":spec["name"],"description":spec["description"],"parameters":spec["inputSchema"]}})
+            }).collect())
+        } else {
+            Ok(Vec::new())
+        };
     }
     let mut specs: Vec<Value> =
         serde_json::from_str(include_str!("tool-specs.json")).map_err(|_| Failure::storage())?;
@@ -183,6 +200,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         })?;
     if !args.is_object() {
         return Err(error(400, "Tool arguments must be a JSON object."));
+    }
+    if turn["agent"] == crate::mcp::guide::ID {
+        return crate::mcp::guide::call(state, turn, name, &args).await;
     }
     if name == "read_attachment"
         && closed(&args, &["id", "offset"])

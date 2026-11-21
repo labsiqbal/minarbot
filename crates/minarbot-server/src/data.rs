@@ -532,7 +532,15 @@ fn route(
             agent_folders::route(state, db, id, true, false, v, q, headers)?
         }
         ["api", "agents", id, "template"] if get => agents::template(db, id)?,
-        ["api", "agents", id, "edit"] if post => agents::edit(state, db, id, v)?,
+        ["api", "agents", id, "edit"] if post => {
+            if *id == crate::mcp::guide::ID && headers.contains_key("authorization") {
+                return Err(error(
+                    403,
+                    "Guide connection requires the local Owner in Minarbot.",
+                ));
+            }
+            agents::edit(state, db, id, v)?
+        }
         ["api", "agents", id, "visibility"] if post => {
             let value = agents::visibility(state, db, id, v)?;
             crate::turns::refresh_routing(db)?;

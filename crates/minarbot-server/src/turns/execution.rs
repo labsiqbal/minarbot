@@ -66,8 +66,9 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         } else {
             None
         };
-        let connector = if (super::messaging::channel(&guard.connection, id)?.is_none()
-            || tools::project_context(&guard.connection, &turn)?.is_some())
+        let connector = if turn["agent"] != crate::mcp::guide::ID
+            && (super::messaging::channel(&guard.connection, id)?.is_none()
+                || tools::project_context(&guard.connection, &turn)?.is_some())
             && !setup
         {
             Some(turn)
@@ -137,6 +138,10 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         }
         if let Some(workspace) = tools::workspace(state, db, &turn)? {
             system.push_str(&workspace_conventions(&workspace.directory)?);
+        }
+        if turn["agent"] == crate::mcp::guide::ID {
+            system.push_str("\n\n");
+            system.push_str(&crate::mcp::guide::instructions());
         }
         system.push_str(&format!(
             "\n\n{}\nCurrent avatar revision: 0. Current profile revision: {}.",
@@ -585,7 +590,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                                 &call,
                                 &value,
                             )?;
-                        } else {
+                        } else if turn["agent"] != crate::mcp::guide::ID {
                             tools::journal(&guard.connection, &turn, &call, &value)?;
                         }
                         value
