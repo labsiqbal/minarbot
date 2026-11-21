@@ -1,10 +1,10 @@
 use crate::db::Result;
 use rustix::fs::{self, Mode, OFlags};
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::File,
     io::{self, Read, Write},
-    os::unix::fs::MetadataExt,
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::Path,
 };
 use uuid::Uuid;
@@ -35,6 +35,46 @@ pub fn file_at(parent: &File, name: &OsStr) -> std::io::Result<File> {
         Mode::empty(),
     )?
     .into())
+}
+
+pub type DirectoryEntry = (OsString, fs::FileType);
+
+pub fn entries(
+    directory: &impl std::os::fd::AsFd,
+) -> io::Result<impl Iterator<Item = io::Result<DirectoryEntry>> + '_> {
+    Ok(fs::Dir::read_from(directory)?.filter_map(move |entry| {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => return Some(Err(error.into())),
+        };
+        let name = OsStr::from_bytes(entry.file_name().to_bytes());
+        if name == "." || name == ".." {
+            return None;
+        }
+        Some(
+            if entry.file_type() == fs::FileType::Unknown {
+                fs::statat(directory, name, fs::AtFlags::SYMLINK_NOFOLLOW)
+                    .map(|stat| fs::FileType::from_raw_mode(stat.st_mode))
+            } else {
+                Ok(entry.file_type())
+            }
+            .map(|kind| (name.to_owned(), kind))
+            .map_err(Into::into),
+        )
+    }))
+}
+
+pub fn remove_directory_at(parent: &File, name: &OsStr) -> io::Result<()> {
+    let directory = directory_at(parent, name)?;
+    for entry in entries(&directory)? {
+        let (child, kind) = entry?;
+        if kind == fs::FileType::Directory {
+            remove_directory_at(&directory, &child)?;
+        } else {
+            fs::unlinkat(&directory, child.as_os_str(), fs::AtFlags::empty())?;
+        }
+    }
+    Ok(fs::unlinkat(parent, name, fs::AtFlags::REMOVEDIR)?)
 }
 
 pub fn private(file: &File) -> bool {

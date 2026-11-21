@@ -63,12 +63,13 @@ test('install credentials are hashed, expire after 30 minutes, issue one code at
 });
 
 test('install release is current-only, bounded, SHA-256 checked and public script contains no secrets',async()=>{
- const dir=temp(),{releases,info}=fixture(dir),app=await startApp({database:join(dir,'db'),updates:{releasesDir:releases}});
+ const dir=temp(),{releases,info}=fixture(dir),source='https://minarbot.example.test',app=await startApp({database:join(dir,'db'),updates:{releasesDir:releases},allowedOrigins:[source]});
  try {
    const created=await api(app,'/api/install/tokens',{id:randomUUID()},201);
+   assert.equal(created.source,source);
    const response=await fetch(app.origin+'/api/install/release',{headers:{Authorization:`Bearer ${created.token}`}}),bytes=Buffer.from(await response.arrayBuffer());assert.equal(response.status,200);assert.equal(response.headers.get('x-minarbot-release'),info.id);assert.equal(response.headers.get('x-minarbot-size'),String(bytes.length));assert.equal(response.headers.get('content-length'),String(bytes.length));assert.equal(response.headers.get('x-minarbot-sha256'),createHash('sha256').update(bytes).digest('hex'));
    for(const path of ['/api/install/release?version=other','/api/install/release?token='+created.token]) await api(app,path,undefined,401,created.token,false);
-   const script=await fetch(app.origin+'/api/install/script');assert.equal(script.status,200);assert.equal(await script.text(),readFileSync(join(root,'scripts/install-machine.sh'),'utf8'));assert(!readFileSync(join(root,'scripts/install-machine.sh'),'utf8').includes(created.token));
+   const script=await fetch(app.origin+'/api/install/script');assert.equal(script.status,200);assert.equal(await script.text(),readFileSync(join(root,'scripts/install.sh'),'utf8'));assert(!readFileSync(join(root,'scripts/install.sh'),'utf8').includes(created.token));
    // A new feed publication cannot change what an existing install token may fetch.
    const changed={...info,id:'1.0.1-12345678',version:'1.0.1',commit:'12345678'.repeat(5)};writeFileSync(join(releases,'feed/latest.json'),JSON.stringify(changed));
    const pinned=await fetch(app.origin+'/api/install/release',{headers:{Authorization:`Bearer ${created.token}`}});assert.equal(pinned.headers.get('x-minarbot-release'),info.id);await pinned.arrayBuffer();

@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{header, redirect::Policy, Client, Response, StatusCode, Url};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{future::Future, path::Path, time::Duration};
+use std::{collections::BTreeMap, future::Future, path::Path, time::Duration};
 
 const GITHUB_REPOSITORY: &str = "labsiqbal/minarbot";
 pub(super) const SOURCE: &str = "GitHub";
@@ -38,6 +38,13 @@ fn allowed(url: &Url, fixture_host: Option<&str>) -> bool {
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Asset {
+    size: u64,
+    sha256: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Manifest {
     pub version: String,
     pub id: String,
@@ -47,6 +54,8 @@ pub(super) struct Manifest {
     pub size: u64,
     pub notes: String,
     pub created: String,
+    #[serde(default)]
+    assets: BTreeMap<String, Asset>,
 }
 impl Manifest {
     fn verify(bytes: &[u8], signature: &[u8], key: &[u8; 32]) -> Result<Self> {
@@ -56,7 +65,7 @@ impl Manifest {
         ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
             .verify(bytes, &signature)
             .map_err(|_| invalid("Invalid GitHub release signature."))?;
-        let value: Self = serde_json::from_slice(bytes)
+        let mut value: Self = serde_json::from_slice(bytes)
             .map_err(|error| invalid(format!("Invalid GitHub release manifest: {error}")))?;
         if !release::version(&value.version)
             || !release::id(&value.id)
@@ -86,6 +95,23 @@ impl Manifest {
                 "Invalid GitHub release archive metadata, notes or creation date.",
             ));
         }
+        let name = format!(
+            "minarbot-{}-{}-{}.tar.gz",
+            value.version,
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        if let Some(asset) = value.assets.remove(&name) {
+            if !archive::valid_hash(&asset.sha256) || !(1..=archive::LIMIT).contains(&asset.size) {
+                return Err(invalid("Invalid platform archive metadata."));
+            }
+            value.archive = name;
+            value.sha256 = asset.sha256;
+            value.size = asset.size;
+        } else if !value.assets.is_empty() || name != value.archive {
+            return Err(invalid("GitHub release is unavailable on this platform."));
+        }
+        value.assets.clear();
         Ok(value)
     }
     pub(super) fn public(&self) -> Value {

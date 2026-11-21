@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut response = String::new(); socket.read_to_string(&mut response)?;
             if response.contains("\"committed\":true") { committed = quote(&id); }
         }
-        let variables = env::vars().filter(|(k, _)| k.starts_with("LAUNCHER_") || matches!(k.as_str(), "PORT" | "MINARBOT_DATA_DIR" | "MINARBOT_UPDATE_TRIAL")).map(|(k,v)| format!("{}:{}",quote(&k),quote(&v))).collect::<Vec<_>>().join(",");
+        let variables = env::vars().filter(|(k, _)| k.starts_with("LAUNCHER_") || matches!(k.as_str(), "PORT" | "MINARBOT_DATA_DIR" | "MINARBOT_LAUNCHER_SOCKET" | "MINARBOT_UPDATE_TRIAL")).map(|(k,v)| format!("{}:{}",quote(&k),quote(&v))).collect::<Vec<_>>().join(",");
         // A real server that restarted into this release answers a sender's late apply poll
         // with the launcher's attempt ID, which is the receipt ID of the peer request.
         if request.starts_with(b"POST /api/peer/updates/apply ") {

@@ -115,6 +115,7 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
         if query || !files::keys(&value, &["id"]) {
             return Err(error(400, "Invalid install request."));
         }
+        let source = machines::machine_origin(machines::public_origin(state))?;
         let now = machines::now(state).await?;
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &db.connection;
@@ -145,16 +146,19 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
                 "Five install tokens are active. Wait for one to expire.",
             ));
         }
-        let info = state
+        let releases = state
             .config
             .update
             .options()
             .releases_dir
             .as_ref()
-            .map(|r| release::latest(r))
-            .transpose()?
-            .flatten()
             .ok_or_else(|| error(409, "Publish a release before adding a machine."))?;
+        let release_id = match release::latest(releases)? {
+            Some(info) => files::text(&info, "id").to_owned(),
+            None => minarbot_launcher::files::selection(releases, "current")
+                .map_err(|_| error(409, "Current release selection is invalid."))?
+                .ok_or_else(|| error(409, "Publish a release before adding a machine."))?,
+        };
         let mut random = [0; 32];
         getrandom::getrandom(&mut random).map_err(|_| Failure::storage())?;
         let token = format!("bsi_{}", URL_SAFE_NO_PAD.encode(random));
@@ -165,12 +169,12 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
                 now + 1800000,
                 now,
                 id,
-                files::text(&info, "id")
+                release_id
             ],
         )?;
         return Ok(crate::json_response(
             201,
-            json!({"source":state.origin,"token":token,"expiresAt":now+1800000}),
+            json!({"source":source,"token":token,"expiresAt":now+1800000}),
         ));
     }
     if path == "/api/install/script"
@@ -179,7 +183,7 @@ async fn handle(state: &AppState, request: Request) -> Result<Response> {
     {
         return Ok((
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            include_str!("../../../../scripts/install-machine.sh"),
+            include_str!("../../../../scripts/install.sh"),
         )
             .into_response());
     }

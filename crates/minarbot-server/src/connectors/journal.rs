@@ -11,9 +11,6 @@ pub struct Journal {
     lock: PathBuf,
     owned: fs::Metadata,
 }
-fn uid() -> std::io::Result<u32> {
-    Ok(fs::metadata("/proc/self")?.uid())
-}
 impl Journal {
     pub fn open(directory: &Path, platform: &str) -> crate::db::Result<Self> {
         if !directory.is_absolute() || !["slack", "telegram"].contains(&platform) {
@@ -25,14 +22,17 @@ impl Journal {
             Err(e) => return Err(e.into()),
         }
         let stat = fs::symlink_metadata(directory)?;
-        if !stat.is_dir() || stat.uid() != uid()? || stat.mode() & 0o077 != 0 {
+        if !stat.is_dir()
+            || stat.uid() != rustix::process::geteuid().as_raw()
+            || stat.mode() & 0o077 != 0
+        {
             return Err("Connector state directory must be private and owned".into());
         }
         let lock = directory.join("owner.lock");
         let mut owner = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .custom_flags(0o400000)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
             .mode(0o600)
             .open(&lock)?;
         let owned = owner.metadata()?;
@@ -44,7 +44,7 @@ impl Journal {
                 .write(true)
                 .create_new(true)
                 .mode(0o600)
-                .custom_flags(0o400000)
+                .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
                 .open(&file)
             {
                 Ok(_) => (),
@@ -56,7 +56,7 @@ impl Journal {
                     Ok(stat) => {
                         if !stat.is_file()
                             || stat.nlink() != 1
-                            || stat.uid() != uid()?
+                            || stat.uid() != rustix::process::geteuid().as_raw()
                             || stat.mode() & 0o077 != 0
                         {
                             return Err("Connector journal file must be private and regular".into());
@@ -94,10 +94,14 @@ impl Drop for Journal {
 pub fn private_file(path: &Path, limit: u64) -> crate::db::Result<File> {
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(0o400000 | 0o4000)
+        .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
         .open(path)?;
     let stat = file.metadata()?;
-    if !stat.is_file() || stat.uid() != uid()? || stat.mode() & 0o077 != 0 || stat.len() > limit {
+    if !stat.is_file()
+        || stat.uid() != rustix::process::geteuid().as_raw()
+        || stat.mode() & 0o077 != 0
+        || stat.len() > limit
+    {
         return Err("Script discovery is unavailable or unsafe.".into());
     }
     Ok(file)

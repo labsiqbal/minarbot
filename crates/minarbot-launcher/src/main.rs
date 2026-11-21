@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 mod backup;
 mod config;
+mod runtime;
 use minarbot_launcher::{files, DATABASE_NAME};
 #[cfg(test)]
 mod tests;
@@ -20,15 +21,14 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     fs,
-    os::unix::fs::PermissionsExt,
-    path::Path,
+    path::{Path, PathBuf},
     process::Stdio,
     rc::Rc,
     time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
-    net::{UnixListener, UnixStream},
+    net::UnixStream,
     process::{Child, Command},
     signal::unix::{signal, SignalKind},
     sync::Notify,
@@ -72,6 +72,7 @@ struct Managed {
 }
 struct Launcher {
     config: Config,
+    executable: PathBuf,
     state: RefCell<State>,
     child: RefCell<Option<Managed>>,
     busy: Cell<bool>,
@@ -128,7 +129,7 @@ impl Launcher {
         if !binary.is_file() {
             return Err("Release is missing bin/minarbot-server.".into());
         }
-        let mut command = Command::new(own_executable()?);
+        let mut command = Command::new(&self.executable);
         command
             .arg("--run-server")
             .arg(binary)
@@ -236,7 +237,7 @@ impl Launcher {
             .join(".updates")
             .join(&attempt.id)
             .join(DATABASE_NAME);
-        let mut worker = Command::new(own_executable()?)
+        let mut worker = Command::new(&self.executable)
             .arg("--backup")
             .arg(operation)
             .arg(database)
@@ -344,10 +345,12 @@ impl Launcher {
         let database = self.config.data.join(DATABASE_NAME);
         for suffix in ["", "-wal", "-shm"] {
             if let Ok(s) = fs::metadata(sidecar(&database, suffix)) {
-                bytes += s.len();
+                bytes += u128::from(s.len());
             }
         }
-        if disk.blocks_available() * disk.block_size() < bytes * 3 + 16 * 1024 * 1024 {
+        if u128::from(disk.blocks_available()) * u128::from(disk.block_size())
+            < bytes * 3 + 16 * 1024 * 1024
+        {
             return Err("Insufficient disk space for update snapshot and trial.".into());
         }
         {
@@ -486,20 +489,7 @@ async fn control(launcher: Rc<Launcher>, mut socket: UnixStream) {
     .await;
     let _ = result;
 }
-/// Path that re-executes this launcher even after its release folder was deleted.
-/// A long-running launcher keeps the binary it started from, which release cleanup may remove.
-fn own_executable() -> std::io::Result<std::path::PathBuf> {
-    #[cfg(target_os = "linux")]
-    {
-        Ok(std::path::PathBuf::from("/proc/self/exe"))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        std::env::current_exe()
-    }
-}
-
-async fn launch(config: Config) -> Result<()> {
+async fn launch(mut config: Config) -> Result<()> {
     mkdir(&config.data)?;
     mkdir(&config.releases)?;
     let _lease = lease(
@@ -530,8 +520,14 @@ async fn launch(config: Config) -> Result<()> {
     {
         return Err("Invalid launcher state.".into());
     }
+    let socket = runtime::ControlSocket::bind(&config.data)?;
+    config.env.insert(
+        "MINARBOT_LAUNCHER_SOCKET".into(),
+        socket.path().to_string_lossy().into_owned(),
+    );
     let launcher = Rc::new(Launcher {
         config,
+        executable: socket.executable()?,
         state: RefCell::new(state),
         child: RefCell::new(None),
         busy: Cell::new(false),
@@ -540,7 +536,6 @@ async fn launch(config: Config) -> Result<()> {
         fatal: Notify::new(),
     });
     launcher.save()?;
-    let socket_path = launcher.config.data.join("launcher.sock");
     let mut term = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
     let result = async {
@@ -549,15 +544,13 @@ async fn launch(config: Config) -> Result<()> {
         } else {
             let current = launcher.state.borrow().current.clone(); verify(&launcher.config.releases, &current)?; select(&launcher.config.releases, "current", &current)?; launcher.start(&current, false)?;
         }
-        remove(&socket_path)?;
-        let listener = UnixListener::bind(&socket_path)?; fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
         let mut clients = JoinSet::new(); let mut tick = tokio::time::interval(Duration::from_millis(50));
         loop {
             tokio::select! {
                 _ = term.recv() => break,
                 _ = interrupt.recv() => break,
                 _ = launcher.fatal.notified() => return Err("Update rollback failed. Server remains stopped.".into()),
-                accepted = listener.accept() => { let (socket, _) = accepted?; clients.spawn_local(control(launcher.clone(), socket)); },
+                accepted = socket.listener.accept() => { let (socket, _) = accepted?; clients.spawn_local(control(launcher.clone(), socket)); },
                 Some(_) = clients.join_next(), if !clients.is_empty() => {},
                 _ = tick.tick() => { if !launcher.busy.get() && launcher.child_exited()? { return Err("Managed server exited.".into()); } },
             }
@@ -570,7 +563,6 @@ async fn launch(config: Config) -> Result<()> {
     if let Some(job) = job {
         job.await?;
     }
-    remove(&socket_path)?;
     stopped?;
     result
 }
@@ -604,19 +596,11 @@ fn startup_error(line: &str) -> Option<String> {
         .collect();
     (!message.is_empty()).then_some(message)
 }
-fn run_server(binary: &Path, parent: &str) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    nix::sys::prctl::set_pdeathsig(Signal::SIGTERM)?;
-    if nix::unistd::getppid().as_raw().to_string() != parent {
-        return Err("Launcher stopped before server start.".into());
-    }
-    Err(std::process::Command::new(binary).exec().into())
-}
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let result = if args.len() == 3 && args[0] == "--run-server" {
-        run_server(Path::new(&args[1]), &args[2].to_string_lossy())
+        runtime::run_server(Path::new(&args[1]), &args[2].to_string_lossy())
     } else if args.len() == 4 && args[0] == "--backup" {
         backup::run(
             &args[1].to_string_lossy(),

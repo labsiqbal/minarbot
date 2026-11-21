@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     fs::{self, File},
-    os::{fd::AsRawFd, unix::fs::PermissionsExt},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration, Instant},
@@ -86,10 +86,10 @@ pub(crate) fn prepare_homes(database: &Path) -> crate::db::Result<File> {
         .try_lock()
         .map_err(|error| format!("Cannot lock harness homes directory: {error}"))?;
     directory.set_permissions(fs::Permissions::from_mode(0o700))?;
-    for entry in fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))? {
-        let entry = entry?;
-        if entry.file_name().to_str().is_some_and(session_name) && entry.file_type()?.is_dir() {
-            fs::remove_dir_all(entry.path())?;
+    for entry in operator_file::entries(&directory)? {
+        let (name, kind) = entry?;
+        if name.to_str().is_some_and(session_name) && kind == rustix::fs::FileType::Directory {
+            operator_file::remove_directory_at(&directory, &name)?;
         }
     }
     Ok(directory)

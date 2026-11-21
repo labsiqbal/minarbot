@@ -16,7 +16,7 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, OpenOptions},
+    fs::OpenOptions,
     io::{Read, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     time::{Duration, Instant},
@@ -84,7 +84,7 @@ fn code(v: &Value) -> Result<String> {
     Ok(s)
 }
 // Peers know this machine by its first allowed origin, like Node's getOrigin.
-fn public_origin(s: &AppState) -> &str {
+pub(crate) fn public_origin(s: &AppState) -> &str {
     s.config
         .allowed_origins
         .first()
@@ -121,12 +121,9 @@ fn descriptor(v: &Value) -> Result<Value> {
 }
 pub fn initialize(db: &Connection) -> crate::db::Result<()> {
     db.execute_batch(include_str!("machines.sql"))?;
-    let name = fs::read_to_string("/proc/sys/kernel/hostname")
-        .unwrap_or_else(|_| "Minarbot machine".into())
-        .trim()
-        .chars()
-        .take(120)
-        .collect::<String>();
+    let host = rustix::system::uname();
+    let name = host.nodename().to_string_lossy();
+    let name = name.trim().chars().take(120).collect::<String>();
     db.execute(
         "INSERT OR IGNORE INTO environment_identity VALUES(1,?,?)",
         params![uuid::Uuid::new_v4().to_string(), name],
@@ -237,7 +234,7 @@ fn key(s: &AppState, create: bool) -> Result<Vec<u8>> {
     }
     let mut f = OpenOptions::new()
         .read(true)
-        .custom_flags(0o400000)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
         .open(path)
         .map_err(|_| {
             error(

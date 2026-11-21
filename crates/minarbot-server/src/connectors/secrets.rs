@@ -32,16 +32,13 @@ fn file_key(state: &AppState, sidecar: &str, create: bool) -> Result<Vec<u8>> {
     }
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(0o400000 | 0o4000)
+        .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
         .open(path)
         .map_err(|_| Failure::storage())?;
     let stat = file.metadata().map_err(|_| Failure::storage())?;
     if !stat.is_file()
         || stat.nlink() != 1
-        || stat.uid()
-            != std::fs::metadata("/proc/self")
-                .map_err(|_| Failure::storage())?
-                .uid()
+        || stat.uid() != rustix::process::geteuid().as_raw()
         || stat.mode() & 0o077 != 0
         || stat.len() != 32
     {

@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     fs::File,
-    os::{fd::AsRawFd, unix::fs::FileTypeExt},
+    os::fd::AsRawFd,
     sync::{atomic::Ordering, Mutex},
     time::Duration,
 };
@@ -121,8 +121,10 @@ impl Viewers {
         Ok(json!({"ticket":token,"expiresAt":expires}))
     }
 }
+#[cfg(target_os = "linux")]
 fn socket(s: &AppState, agent: &str) -> Result<File> {
     use rustix::fs::{open, openat, Mode, OFlags};
+    use std::os::unix::fs::FileTypeExt;
     let directory = open(
         s.computer.root.join(agent).join("x11"),
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW,
@@ -146,6 +148,10 @@ fn socket(s: &AppState, agent: &str) -> Result<File> {
         return Err(unavailable());
     }
     Ok(file)
+}
+#[cfg(target_os = "macos")]
+fn socket(_: &AppState, _: &str) -> Result<File> {
+    Err(error(503, crate::platform::COMPUTER_UNAVAILABLE))
 }
 pub async fn upgrade(s: AppState, request: Request, agent: String) -> Result<Response> {
     let pairing = request

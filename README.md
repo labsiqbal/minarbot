@@ -4,7 +4,7 @@ Minarbot is a self-hosted workspace where you work with a team of AI agents. You
 
 Minarbot is free and open source under the [Apache License 2.0](LICENSE).
 
-> **Status:** early and moving fast. It runs every day on two Linux machines, but expect rough edges and breaking changes. Today it supports **Linux x86_64 only**. macOS and Windows are planned in [#13](https://github.com/labsiqbal/minarbot/issues/13).
+> **Status:** early and moving fast. It runs every day on Linux machines. macOS uses an ad-hoc signed desktop build. Windows runs the Linux server inside WSL 2.
 
 ## Features
 
@@ -39,73 +39,41 @@ Minarbot is free and open source under the [Apache License 2.0](LICENSE).
 
 ## Install
 
-Minarbot runs as a local server you open in the browser. A one-line installer is planned in [#13](https://github.com/labsiqbal/minarbot/issues/13). Until then, install a release by hand.
+Minarbot installs a local server and opens it in your browser.
 
-If your data directory was created by Minarbot 0.14.0 or earlier, move it aside before installing. This release requires a fresh data directory.
+### Linux and macOS
 
-**Requirements:** Linux x86_64, `curl`, `tar` and `sha256sum`. To use agents, install and sign in to at least one engine (for example [Codex CLI](https://developers.openai.com/codex/cli) or [Claude Code](https://claude.com/product/claude-code)), or add a model API key in Settings after the first start. An agent on the machine's Codex sign-in also uses Codex's own config, such as its MCP servers and rules. Chats from an agent on either sign-in appear in that CLI's history.
+Install with `curl`, Python 3, and OpenSSL 3. On macOS, Homebrew provides OpenSSL 3 with `brew install openssl@3`.
 
-1. Download the latest release and check it against `latest.json`:
-
-   ```sh
-   mkdir -p ~/minarbot-download && cd ~/minarbot-download
-   curl -fsSLO https://github.com/labsiqbal/minarbot/releases/latest/download/latest.json
-   archive=$(sed -n 's/.*"archive":"\([^"]*\)".*/\1/p' latest.json)
-   id=$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' latest.json)
-   sha=$(sed -n 's/.*"sha256":"\([^"]*\)".*/\1/p' latest.json)
-   curl -fsSLO "https://github.com/labsiqbal/minarbot/releases/latest/download/$archive"
-   echo "$sha  $archive" | sha256sum -c -
-   ```
-
-2. Unpack it and point `current` at it:
-
-   ```sh
-   releases=~/.local/share/minarbot/releases
-   mkdir -p "$releases/$id" ~/.local/share/minarbot/data ~/.config/minarbot
-   tar -xzf "$archive" -C "$releases/$id"
-   ln -sfn "$id" "$releases/current"
-   ```
-
-3. Write the launcher configuration. The launcher only accepts private files:
-
-   ```sh
-   cfg=~/.config/minarbot
-   : > "$cfg/launcher.env"
-   printf '{"dataDir":"%s","envFile":"%s","releasesDir":"%s","port":4317}\n' \
-     ~/.local/share/minarbot/data "$cfg/launcher.env" "$releases" > "$cfg/launcher.json"
-   chmod 700 "$cfg" ~/.local/share/minarbot/data
-   chmod 600 "$cfg/launcher.json" "$cfg/launcher.env"
-   ```
-
-4. Start it, then open <http://127.0.0.1:4317>:
-
-   ```sh
-   "$releases/current/bin/minarbot-launcher" --config ~/.config/minarbot/launcher.json
-   ```
-
-To keep it running in the background, create `~/.config/systemd/user/minarbot.service`:
-
-```ini
-[Unit]
-Description=Minarbot
-After=network.target
-
-[Service]
-ExecStart=%h/.local/share/minarbot/releases/current/bin/minarbot-launcher --config %h/.config/minarbot/launcher.json
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
+```sh
+curl -fsSL https://raw.githubusercontent.com/labsiqbal/minarbot/main/scripts/install.sh | sh
 ```
 
-Then run `systemctl --user daemon-reload && systemctl --user enable --now minarbot.service`. Later updates install from inside the app.
+To install and pair, copy the command from **Machines > Add machine > Install Minarbot** on your existing installation. Set up reachable HTTPS addresses on both machines first, and put each machine's own address first in `MINARBOT_ALLOWED_ORIGINS` in its `launcher.env`.
+
+For the desktop app, download the AppImage for Linux or the DMG for macOS. If macOS blocks Minarbot on first launch, choose **System Settings > Privacy & Security > Open Anyway**. [Releases](https://github.com/labsiqbal/minarbot/releases/latest)
+
+### Windows 11
+
+Install from PowerShell. If Ubuntu is missing, run `wsl --install -d Ubuntu` in Administrator PowerShell and open Ubuntu once to finish its setup. In Ubuntu, install `curl`, `python3`, and `openssl` if needed.
+
+```powershell
+irm https://raw.githubusercontent.com/labsiqbal/minarbot/main/scripts/install.ps1 | iex
+```
+
+For the desktop app, download the Windows installer. If SmartScreen blocks it, choose **More info > Run anyway**. [Releases](https://github.com/labsiqbal/minarbot/releases/latest)
+
+### After install
+
+Open <http://127.0.0.1:4317>. Sign in to your preferred agent engine or add an API key in **Settings > Provider accounts**. Use **Settings > Updates** for server updates.
+
+If your data directory was created by Minarbot 0.14.0 or earlier, move it aside before installing. This release requires a fresh data directory.
 
 > **Security:** the local server has no login. Anyone who can reach its port can use your agents, files and provider accounts. Keep it on `127.0.0.1` or a private network such as Tailscale. Add extra origins with `MINARBOT_ALLOWED_ORIGINS` in `launcher.env`.
 
 ### Computer (optional)
 
-Computer gives an agent its own desktop with Chrome. It is off until you set it up on the machine and turn it on for an agent. One-click setup is planned in [#11](https://github.com/labsiqbal/minarbot/issues/11). For now, on Debian, Ubuntu or Mint:
+Computer gives an agent its own Linux desktop with Chrome. Computer is unavailable on macOS until container support lands. Setup on Debian, Ubuntu or Mint uses the following packages. [#11](https://github.com/labsiqbal/minarbot/issues/11)
 
 ```sh
 sudo apt install tigervnc-standalone-server xfwm4 xfdesktop4 xfce4-panel xdotool scrot bubblewrap dbus
@@ -153,7 +121,7 @@ Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_
 | `crates/minarbot-launcher` | Rust launcher that starts the server, installs updates and rolls back |
 | `app/src` | React and TypeScript UI, built with Vite |
 | `app/*.test.ts` | Node test suite that drives the Rust server end to end |
-| `desktop` | Electron desktop app (Linux AppImage) |
+| `desktop` | Electron desktop app (AppImage, DMG, NSIS) |
 | `scripts` | Release, install and gate scripts |
 
 ## Contributing

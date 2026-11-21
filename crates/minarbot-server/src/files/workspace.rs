@@ -1,18 +1,8 @@
 use super::*;
 use crate::config::WorkspaceConfig;
+use crate::operator_file;
 use sha2::{Digest, Sha256};
-use std::{
-    fs::{self, File, OpenOptions},
-    io::Read,
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    },
-    path::Path,
-};
-const O_NOFOLLOW: i32 = 0x20000;
-const O_DIRECTORY: i32 = 0x10000;
-const O_NONBLOCK: i32 = 0x800;
+use std::{ffi::OsStr, fs::File, io::Read, os::unix::fs::MetadataExt, path::Path};
 fn unavailable() -> Failure {
     error(400,"Cannot read the workspace. Check the path and host permissions, then reload from the start. Only UTF-8 text up to 256 KiB without links is supported.")
 }
@@ -31,16 +21,13 @@ pub fn open_directory(path: &Path) -> std::io::Result<File> {
             return Err(std::io::ErrorKind::InvalidInput.into());
         }
         let part = std::str::from_utf8(part).map_err(|_| std::io::ErrorKind::InvalidInput)?;
-        current = OpenOptions::new()
-            .read(true)
-            .custom_flags(O_NOFOLLOW | O_DIRECTORY)
-            .open(format!("/proc/self/fd/{}/{part}", current.as_raw_fd()))?;
+        current = operator_file::directory_at(&current, part)?;
     }
     Ok(current)
 }
 pub fn validate_bindings(bindings: &[WorkspaceConfig]) -> crate::db::Result<()> {
     if bindings.len() > 256 {
-        return Err("Workspace bindings require Linux and at most 256 entries".into());
+        return Err("Workspace bindings allow at most 256 entries".into());
     }
     let mut ids = std::collections::HashSet::new();
     for binding in bindings {
@@ -102,11 +89,7 @@ fn directory(root: &Path, relative: &str, listing: bool) -> Result<(File, String
     Ok((fd, name))
 }
 pub(super) fn read_bytes(directory: &File, name: &str, limit: usize) -> Result<Vec<u8>> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(O_NOFOLLOW | O_NONBLOCK)
-        .open(format!("/proc/self/fd/{}/{name}", directory.as_raw_fd()))
-        .map_err(|_| unavailable())?;
+    let file = operator_file::file_at(directory, OsStr::new(name)).map_err(|_| unavailable())?;
     let meta = file.metadata().map_err(|_| unavailable())?;
     if !meta.is_file() || meta.nlink() != 1 || meta.len() > limit as u64 {
         return Err(unavailable());
@@ -157,20 +140,18 @@ pub fn read(root: &Path, listing: bool, args: &[(String, String)]) -> Result<Val
     }
     let (fd, name) = directory(root, path, listing)?;
     if listing {
-        let entries =
-            fs::read_dir(format!("/proc/self/fd/{}", fd.as_raw_fd())).map_err(|_| unavailable())?;
+        let entries = operator_file::entries(&fd).map_err(|_| unavailable())?;
         let mut rows = Vec::new();
         for (i, entry) in entries.enumerate() {
             if i >= 10000 {
                 return Err(unavailable());
             }
-            let entry = entry.map_err(|_| unavailable())?;
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let (name, kind) = entry.map_err(|_| unavailable())?;
+            let name = name.to_string_lossy().into_owned();
             if name.encode_utf16().cmp(after.encode_utf16()) != std::cmp::Ordering::Greater {
                 continue;
             }
-            let kind = entry.file_type().map_err(|_| unavailable())?;
-            rows.push(json!({"name":name,"kind":if kind.is_file(){"file"}else if kind.is_dir(){"directory"}else{"unsupported"}}));
+            rows.push(json!({"name":name,"kind":match kind { rustix::fs::FileType::RegularFile => "file", rustix::fs::FileType::Directory => "directory", _ => "unsupported" }}));
         }
         rows.sort_by(|a, b| {
             text(a, "name")

@@ -74,7 +74,7 @@ fn workspace_value(value: serde_json::Value) -> crate::db::Result<Vec<WorkspaceC
     let rows = value
         .as_array()
         .filter(|rows| rows.len() <= 256)
-        .ok_or("Workspace bindings require Linux and at most 256 entries")?;
+        .ok_or("Workspace bindings allow at most 256 entries")?;
     rows.iter()
         .map(|row| {
             serde_json::from_value(row.clone()).map_err(|_| "Invalid workspace binding".into())
@@ -331,7 +331,7 @@ mod tests {
             (
                 "workspaces",
                 json!(null),
-                "Workspace bindings require Linux and at most 256 entries",
+                "Workspace bindings allow at most 256 entries",
             ),
             (
                 "workspaces",

@@ -84,7 +84,6 @@ impl Config {
         for (key, path) in [
             ("MINARBOT_DATA_DIR", &data),
             ("MINARBOT_RELEASES_DIR", &releases),
-            ("MINARBOT_LAUNCHER_SOCKET", &data.join("launcher.sock")),
         ] {
             env.insert(key.into(), path.to_string_lossy().into_owned());
         }

@@ -1,14 +1,12 @@
 use super::*;
+use rustix::fs::{self as at, AtFlags, Mode, OFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
     io::Write,
-    os::{
-        fd::AsRawFd,
-        unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
-    },
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
 };
 
 // ponytail: serialize Git writes globally; use per-common-directory locks if concurrent repositories need throughput.
@@ -593,7 +591,7 @@ async fn commit(repo: &Repo, value: &Value) -> Result<Value> {
         .create_new(true)
         .write(true)
         .mode(0o600)
-        .custom_flags(0x20000)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
         .open(&lock_path))?;
     let _lock = IndexLock(lock_path);
     let temp = temporary(repo)?;
@@ -685,7 +683,7 @@ async fn commit(repo: &Repo, value: &Value) -> Result<Value> {
     tests::crash_ref_publication(&repo.directory, "after");
     io(io(OpenOptions::new()
         .read(true)
-        .custom_flags(0x20000)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
         .open(&updated))?
     .sync_all())?;
     io(fs::rename(updated, &repo.index))?;
@@ -699,39 +697,41 @@ fn publish(root: &Path, file: &str, bytes: &[u8], mode: &str, replace: bool) -> 
     if !parent.is_empty() {
         for part in parent.split('/') {
             let fd = io(workspace::open_directory(&directory))?;
-            match fs::DirBuilder::new()
-                .mode(0o700)
-                .create(format!("/proc/self/fd/{}/{part}", fd.as_raw_fd()))
-            {
+            match at::mkdirat(&fd, part, Mode::RWXU) {
                 Ok(()) => io(fd.sync_all())?,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(rustix::io::Errno::EXIST) => (),
                 Err(e) => return Err(error(400, e.to_string())),
             }
             directory.push(part);
         }
     }
     let fd = io(workspace::open_directory(&directory))?;
-    let location = |s: &str| PathBuf::from(format!("/proc/self/fd/{}/{s}", fd.as_raw_fd()));
-    let staged = location(&format!(".minarbot-git-{}.tmp", uuid::Uuid::new_v4()));
+    let staged = format!(".minarbot-git-{}.tmp", uuid::Uuid::new_v4());
     let result = (|| {
-        let mut output = io(OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(if mode == "100755" { 0o700 } else { 0o600 })
-            .custom_flags(0x20000)
-            .open(&staged))?;
+        let permissions = if mode == "100755" {
+            Mode::RWXU
+        } else {
+            Mode::RUSR | Mode::WUSR
+        };
+        let mut output = std::fs::File::from(io(at::openat(
+            &fd,
+            staged.as_str(),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            permissions,
+        )
+        .map_err(Into::into))?);
         io(output.write_all(bytes))?;
         io(output.sync_all())?;
         if replace {
-            io(fs::rename(&staged, location(name)))?;
+            io(at::renameat(&fd, staged.as_str(), &fd, name).map_err(Into::into))?;
         } else {
-            io(fs::hard_link(&staged, location(name)))?;
+            io(at::linkat(&fd, staged.as_str(), &fd, name, AtFlags::empty()).map_err(Into::into))?;
         }
         io(fd.sync_all())
     })();
-    match fs::remove_file(&staged) {
+    match at::unlinkat(&fd, staged.as_str(), AtFlags::empty()) {
         Ok(()) => io(fd.sync_all())?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(rustix::io::Errno::NOENT) => (),
         Err(e) => return Err(error(400, e.to_string())),
     }
     result
@@ -969,10 +969,7 @@ pub async fn restore(
                     repo.directory.join(parent)
                 };
                 let fd = io(workspace::open_directory(&directory))?;
-                io(fs::remove_file(format!(
-                    "/proc/self/fd/{}/{name}",
-                    fd.as_raw_fd()
-                )))?;
+                io(at::unlinkat(&fd, name, AtFlags::empty()).map_err(Into::into))?;
                 io(fd.sync_all())?;
             }
         }

@@ -221,6 +221,9 @@ async fn pdf_with(
     ))
 }
 pub async fn extract_pdf(bytes: &[u8]) -> Result<String> {
+    if !crate::platform::LINUX_SANDBOX {
+        return Err(error(503, "PDF sandbox is unavailable on this platform."));
+    }
     extract_pdf_with(std::path::Path::new("/usr/bin/bwrap"), bytes).await
 }
 

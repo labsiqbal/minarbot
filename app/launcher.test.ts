@@ -26,9 +26,11 @@ async function stop(child: ChildProcess) {
   const timer = setTimeout(() => child.kill('SIGKILL'), 6000);
   try { await exited; } finally { clearTimeout(timer); }
 }
-async function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'launcher-contract-')), data = join(dir, 'data'), releases = join(dir, 'releases');
-  mkdirSync(data); mkdirSync(releases);
+async function fixture(longHome = false) {
+  const dir = mkdtempSync(join(tmpdir(), 'launcher-contract-'));
+  const home = longHome ? join(dir, 'long-home-'.repeat(18)) : dir;
+  const data = join(home, 'data'), releases = join(home, 'releases');
+  mkdirSync(data, { recursive: true }); mkdirSync(releases);
   const server = createServer(); await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
   const address = server.address(); assert(address && typeof address !== 'string'); const port = address.port;
   await new Promise<void>(done => server.close(() => done()));
@@ -46,7 +48,7 @@ async function fixture() {
     return { id, version, release, seal };
   };
   const start = () => {
-    const child = spawn(...launcherCommand(config), { stdio: ['ignore', 'pipe', 'pipe'] }); processes.push(child);
+    const child = spawn(...launcherCommand(config), { env: { ...process.env, HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] }); processes.push(child);
     let log = ''; child.stdout!.on('data', b => { log += b; }); child.stderr!.on('data', b => { log += b; });
     return { child, log: () => log };
   };
@@ -57,6 +59,22 @@ async function rejectsStart(f: Awaited<ReturnType<typeof fixture>>, pattern: Reg
   try { const [code] = await once(child, 'exit'); assert.notEqual(code, 0, log()); assert.match(log(), pattern); }
   finally { clearTimeout(timer); }
 }
+
+test('launcher starts and accepts update control with a long HOME', async () => {
+  const f = await fixture(true);
+  try {
+    const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id);
+    const running = f.start();
+    const socket = await until(async () => (await f.read()).env.MINARBOT_LAUNCHER_SOCKET, 'Launcher did not serve with a long HOME').catch(error => {
+      throw new Error(`${error.message}\n${running.log()}`);
+    });
+    assert.equal(statSync(socket).mode & 0o777, 0o600);
+    assert.equal(statSync(join(socket, '..')).mode & 0o777, 0o700);
+    assert.equal((await launcherRequest({ ...f.options, launcherSocket: socket }, { type: 'status' })).current, first.id);
+    await stop(running.child);
+    assert(!existsSync(socket));
+  } finally { await f.close(); }
+});
 
 test('launcher rejects invalid config, public files, symlinks and hard links', async () => {
   const f = await fixture();

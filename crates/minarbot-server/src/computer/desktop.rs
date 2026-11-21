@@ -35,7 +35,7 @@ pub fn directory(path: &Path) -> Result<()> {
 fn safe_read(path: &Path) -> Result<Vec<u8>> {
     let f = OpenOptions::new()
         .read(true)
-        .custom_flags(0o400000)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
         .open(path)
         .map_err(|_| error(503, "Desktop file is unavailable or unsafe."))?;
     let mut b = Vec::new();
@@ -45,8 +45,7 @@ fn safe_read(path: &Path) -> Result<Vec<u8>> {
     Ok(b)
 }
 fn birth(pid: u32) -> Option<String> {
-    let s = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    s.rsplit_once(") ")?.1.split(' ').nth(19).map(str::to_owned)
+    crate::platform::process_identity(pid).map(|(_, start)| start)
 }
 pub fn sandbox(profile: &Path, dir: &Path, proxy: &Path, executable: &Path) -> Vec<String> {
     use super::desktop_supervisor::{BINARY, PROXY};
@@ -198,7 +197,7 @@ impl Manager {
                     .to_owned()
             })
             .join("agent-desktops");
-        let enabled = d.enabled.unwrap_or(false);
+        let enabled = crate::platform::LINUX_SANDBOX && d.enabled.unwrap_or(false);
         let (stop, _) = watch::channel(false);
         let mut manager = Self {
             viewers: super::vnc::Viewers::default(),
@@ -232,8 +231,7 @@ impl Manager {
             launcher: None,
         };
         if enabled {
-            let uid =
-                fs::metadata("/proc/self").map(|m| std::os::unix::fs::MetadataExt::uid(&m))?;
+            let uid = rustix::process::geteuid().as_raw();
             let lease_dir = d
                 .lease_dir
                 .unwrap_or_else(|| std::env::temp_dir().join(format!("minarbot-desktop-{uid}")));
@@ -312,9 +310,11 @@ impl Manager {
                 }
             })
             .unwrap_or("off");
-        Ok(
-            json!({"available":self.enabled,"state":state,"stopsInMs":d.map(|d|(d.activity.load(Ordering::SeqCst)+self.idle-now).max(0)),"width":self.width,"height":self.height}),
-        )
+        let mut status = json!({"available":self.enabled,"state":state,"stopsInMs":d.map(|d|(d.activity.load(Ordering::SeqCst)+self.idle-now).max(0)),"width":self.width,"height":self.height});
+        if !crate::platform::LINUX_SANDBOX {
+            status["reason"] = crate::platform::COMPUTER_UNAVAILABLE.into();
+        }
+        Ok(status)
     }
     pub(super) fn at_capacity(&self, agent: &str, pinned: usize) -> Result<bool> {
         if pinned >= self.max {
@@ -519,6 +519,9 @@ impl Manager {
         now: i64,
         environment: &HashMap<String, String>,
     ) -> Result<Arc<Desktop>> {
+        if !crate::platform::LINUX_SANDBOX {
+            return Err(error(503, crate::platform::COMPUTER_UNAVAILABLE));
+        }
         if !self.enabled || self.closing.load(Ordering::SeqCst) {
             return Err(error(403, "Agent computer is disabled."));
         }

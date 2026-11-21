@@ -10,7 +10,7 @@ import {pdfFixture} from './test-support/pdf-fixture.ts';
 import {setTimeout as delay} from 'node:timers/promises';
 
 for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PDF':'text'} artifacts but not private inputs or no-reply outputs`,async()=>{
- const dir=mkdtempSync(join(tmpdir(),'minarbot-result-read-'));let worker='',created='',otherOutput='',target='',expectsReply=true,restart=false,hold=false,ready=false,release:(()=>void)|undefined;
+ const dir=mkdtempSync(join(tmpdir(),'minarbot-result-read-'));let worker='',created='',otherOutput='',target='',expectsReply=true,restart=false,hold=false,release:(()=>void)|undefined,providerReady:(()=>void)|undefined;
  const results:any[]=[],returned:any[]=[];let creates=0,openReturned=false;
  const provider=createServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw),tools=body.messages.filter((m:any)=>m.role==='tool'),last=tools.length?JSON.parse(tools.at(-1).content):null;let fn:any,answer='Done';
@@ -20,7 +20,7 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
   }else if(!last)fn={name:'send_message',arguments:JSON.stringify({recipients:[worker],text:'Make file',expects_reply:expectsReply})};
   else if(last.request){
    returned.push(last);if(restart){restart=false;res.writeHead(503);res.end();return;}
-   ready=true;if(hold)await new Promise<void>(resolve=>{release=resolve;});
+   if(hold)await new Promise<void>(resolve=>{release=resolve;providerReady?.();});
    for(let i=0;i<200&&!created;i++)await new Promise(r=>setTimeout(r,5));
    fn={name:openReturned?'open_file_in_panel':'read_attachment',arguments:JSON.stringify({id:target||created})};
   }else{results.push(last);answer=JSON.stringify(last);}
@@ -60,7 +60,9 @@ for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PD
   for(let attempt=0;attempt<2;attempt++)assert.equal((await fetch(app.origin+path.replace('/turns','/files/')+removed,{method:'DELETE',headers:{Origin:app.origin}})).status,200);
   assert.equal((await fetch(`${app.origin}/api/threads/${source.thread}/files/${removed}`)).status,404);
   assert(!(await ui(path.replace('/turns','/panel/files'))).some((file:any)=>file.id===removed));
-  hold=true;ready=false;created='';id=randomUUID();await ui(path,{id,text:'Delete source'});for(let i=0;i<200&&!ready;i++)await new Promise(r=>setTimeout(r,10));assert(ready);
+  const providerRequest=new Promise<void>(resolve=>{providerReady=resolve;});
+  hold=true;created='';id=randomUUID();await ui(path,{id,text:'Delete source'});
+  await Promise.race([providerRequest,delay(30_000,undefined,{ref:false}).then(()=>assert.fail('Provider did not receive the held request'))]);
   const parent=(await ui(path)).find((t:any)=>t.id===id),child=parent.agentMessages[0],thread=(await ui(`/api/agents/${worker}/threads`)).find((t:any)=>t.id===child.thread);
   if(pdf){
    holdPdf=true;hold=false;release?.();

@@ -85,10 +85,7 @@ pub async fn launcher(options: &config::Options, request: Value) -> Result<Value
     })?;
     if !metadata.file_type().is_socket()
         || metadata.mode() & 0o077 != 0
-        || metadata.uid()
-            != std::fs::metadata("/proc/self")
-                .map_err(|_| Failure::storage())?
-                .uid()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
     {
         return Err(unavailable(
             409,

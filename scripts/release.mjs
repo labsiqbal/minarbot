@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createPrivateKey, createPublicKey, createHash, sign, verify } from 'node:crypto';
-import { closeSync, constants, cpSync, createReadStream, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { closeSync, constants, cpSync, createReadStream, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -62,23 +62,34 @@ function github(args, cwd = root) {
   throw new Error(`gh ${args[0]} ${args[1]} failed: ${error || result.signal || `exit ${result.status}`}`);
 }
 
+function githubTagTarget(tag) {
+  const endpoint = `repos/${githubRepository}/git`;
+  const refs = JSON.parse(github(['api', `${endpoint}/matching-refs/tags/${tag}`]));
+  let target = refs.find(ref => ref.ref === `refs/tags/${tag}`)?.object;
+  while (target?.type === 'tag') target = JSON.parse(github(['api', `${endpoint}/tags/${target.sha}`, '--jq', '.object']));
+  return target;
+}
+
+function releaseSignature(bytes, keyPath) {
+  const signature = sign(null, bytes, signingKey(keyPath));
+  const publicKey = createPublicKey({ format: 'jwk', key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(releasePublicKey, 'base64').toString('base64url') } });
+  if (!verify(null, bytes, publicKey, signature)) throw new Error('Signing key does not match the Minarbot release public key.');
+  return signature.toString('base64');
+}
+
 async function signedRuntimeAssets(releases, directory, info, keyPath) {
   const { version, id, commit, notes, created } = info;
   const archive = `minarbot-${version}-linux-x86_64.tar.gz`;
   const names = [archive, 'latest.json', 'latest.json.sig'];
   const bundle = join(directory, 'signed');
   const cached = existsSync(bundle);
-  const key = signingKey(keyPath);
   const stage = cached ? bundle : mkdtempSync(join(directory, '.signing-'));
   try {
     const [archiveFile, manifestFile, signatureFile] = names.map(name => join(stage, name));
     if (!cached) execFileSync('tar', ['--format=ustar', '-czf', archiveFile, '-C', join(releases, id), '.'], { stdio: 'inherit' });
     const archiveHash = await sha256(archiveFile);
     const bytes = Buffer.from(JSON.stringify({ version, id, commit, archive, sha256: archiveHash, size: statSync(archiveFile).size, notes, created }));
-    const signature = sign(null, bytes, key);
-    const publicKey = createPublicKey({ format: 'jwk', key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(releasePublicKey, 'base64').toString('base64url') } });
-    if (!verify(null, bytes, publicKey, signature)) throw new Error('Signing key does not match the Minarbot release public key.');
-    const encoded = signature.toString('base64');
+    const encoded = releaseSignature(bytes, keyPath);
     if (cached) {
       if (!readFileSync(manifestFile).equals(bytes) || readFileSync(signatureFile, 'utf8') !== encoded) throw new Error('Cached signed release assets changed.');
     } else {
@@ -112,10 +123,7 @@ async function publishGithub(releases, id, keyPath) {
   const existing = github(['release', 'view', tag, ...repo, '--json', 'assets,body,isDraft,name,targetCommitish']);
   const release = existing === undefined ? undefined : JSON.parse(existing);
   // GitHub ignores --target when a tag already exists.
-  const endpoint = `repos/${githubRepository}/git`;
-  const refs = JSON.parse(github(['api', `${endpoint}/matching-refs/tags/${tag}`]));
-  let target = refs.find(ref => ref.ref === `refs/tags/${tag}`)?.object;
-  while (target?.type === 'tag') target = JSON.parse(github(['api', `${endpoint}/tags/${target.sha}`, '--jq', '.object']));
+  const target = githubTagTarget(tag);
   if ((target && (target.type !== 'commit' || target.sha !== commit)) || (!target && release && !release.isDraft)) {
     throw new Error(`GitHub tag ${tag} does not point to release commit ${commit}.`);
   }
@@ -158,6 +166,162 @@ function desktopAssets(directory, version) {
     throw new Error('Desktop build did not produce the matching AppImage and latest-linux.yml.');
   }
   return [image, metadata];
+}
+
+function copyNativeRuntime(repository, binaries, stage) {
+  mkdirSync(join(stage, 'bin'), { recursive: true, mode: 0o700 });
+  for (const name of ['minarbot-server', 'minarbot-launcher']) {
+    const destination = join(stage, 'bin', name);
+    cpSync(join(binaries, name), destination);
+    if (process.platform === 'linux') assertNativeDependencies(destination);
+  }
+  cpSync(join(repository, 'crates/minarbot-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
+  cpSync(join(repository, 'crates/minarbot-launcher/NOTICE'), join(stage, 'bin/launcher.NOTICE'));
+  cpSync(join(repository, 'crates/minarbot-server/provenance.json'), join(stage, 'bin/provenance.json'));
+  const whatsappNotice = join(repository, 'crates/minarbot-server/whatsapp-rust.LICENSE');
+  if (existsSync(whatsappNotice)) cpSync(whatsappNotice, join(stage, 'bin/whatsapp-rust.LICENSE'));
+  for (const name of ['LICENSE', 'agent-delegation.LICENSE']) cpSync(join(repository, 'app', name), join(stage, 'bin', name));
+}
+
+const ciTargets = ['linux-x86_64', 'linux-aarch64', 'macos-x86_64', 'macos-aarch64'];
+const ciChecksums = 'ci-checksums.json';
+const repoArgs = ['-R', githubRepository];
+const signedNames = ['latest.json', 'latest.json.sig'];
+const ciVersion = () => JSON.parse(readFileSync(join(root, 'app/package.json'), 'utf8')).version;
+const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+
+function ciInfo(version, commit, notes) {
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(version) || !/^[a-f0-9]{40}$/.test(commit)
+    || !notes?.trim() || notes.length > 16000) throw new Error('Invalid CI release version, commit or notes.');
+  return { version, id: version + '-' + commit.slice(0, 8), commit, notes,
+    created: new Date(git(['show', '-s', '--format=%cI', commit])).toISOString() };
+}
+
+function packCI(binaries, output, notes) {
+  const target = { linux: 'linux', darwin: 'macos' }[process.platform] + '-' + { x64: 'x86_64', arm64: 'aarch64' }[process.arch];
+  if (!ciTargets.includes(target)) throw new Error('Unsupported native CI packaging target.');
+  const info = ciInfo(ciVersion(), git(['rev-parse', 'HEAD']), notes);
+  const stage = mkdtempSync(join(tmpdir(), 'minarbot-package-'));
+  try {
+    const source = join(root, 'app');
+    if (!existsSync(join(source, 'dist/index.html'))) throw new Error('Build app before CI packaging.');
+    stageRuntime(source, stage);
+    copyNativeRuntime(root, binaries, stage);
+    mkdirSync(join(stage, 'machine'));
+    for (const name of ['install.sh', 'install-machine.sh', 'uninstall-machine.sh']) cpSync(join(root, 'scripts', name), join(stage, 'machine', name));
+    durableWrite(join(stage, 'release.json'), JSON.stringify(parseRelease({ ...info, node: 'rust', files: fileManifest(stage) })) + '\n', 0o644);
+    mkdirSync(output, { recursive: true });
+    const archive = join(output, `minarbot-${info.version}-${target}.tar.gz`);
+    execFileSync('tar', ['--format', 'ustar', '-czf', archive, '-C', stage, '.'], {
+      stdio: 'inherit', env: { ...process.env, COPYFILE_DISABLE: '1' },
+    });
+    console.log(archive);
+  } finally { rmSync(stage, { recursive: true, force: true }); }
+}
+
+function ciAssetNames(version) {
+  return [
+    ...ciTargets.map(target => `minarbot-${version}-${target}.tar.gz`),
+    `Minarbot-${version}-x86_64.AppImage`, `Minarbot-${version}-arm64.AppImage`,
+    'latest-linux.yml', 'latest-linux-arm64.yml',
+    `Minarbot-${version}-macos-arm64.dmg`, `Minarbot-${version}-macos-x64.dmg`,
+    `Minarbot-${version}-windows-x64.exe`, `Minarbot-${version}-windows-x64.exe.blockmap`, 'latest.yml',
+  ];
+}
+
+async function ciAssets(directory, version) {
+  return Object.fromEntries(await Promise.all(ciAssetNames(version).map(async name => {
+    const path = join(directory, name), size = statSync(path).size;
+    if (!size || size > (1 << 30)) throw new Error(`Invalid CI asset size: ${name}`);
+    return [name, { size, sha256: await sha256(path) }];
+  })));
+}
+
+function draft(tag) {
+  const output = github(['release', 'view', tag, ...repoArgs, '--json', 'assets,body,isDraft,targetCommitish']);
+  return output === undefined ? undefined : JSON.parse(output);
+}
+
+function checkDraft(tag, release, info) {
+  if (!release?.isDraft || release.targetCommitish !== info.commit || release.body !== info.notes) {
+    throw new Error(`Expected a draft ${tag} for commit ${info.commit} with matching notes.`);
+  }
+  const target = githubTagTarget(tag);
+  if (target && (target.type !== 'commit' || target.sha !== info.commit)) throw new Error(`GitHub tag ${tag} points at a different commit.`);
+}
+
+async function uploadDraftAssets(tag, release, directory, names) {
+  const remote = new Map(release.assets.map(asset => [asset.name, asset]));
+  if ([...remote.keys()].some(name => !names.includes(name))) throw new Error(`Draft ${tag} has unexpected assets.`);
+  const missing = [];
+  for (const name of names) {
+    const asset = remote.get(name);
+    if (asset?.state === 'uploaded' && asset.digest === `sha256:${await sha256(join(directory, name))}`) continue;
+    if (asset && asset.state !== 'starter') throw new Error(`Draft ${tag} has a different ${name}.`);
+    if (asset) github(['release', 'delete-asset', tag, ...repoArgs, name, '--yes']);
+    missing.push(name);
+  }
+  if (missing.length) github(['release', 'upload', tag, ...repoArgs, ...missing], directory);
+}
+
+async function draftCI(directory, notes) {
+  const info = ciInfo(ciVersion(), git(['rev-parse', 'HEAD']), notes);
+  const tag = `v${info.version}`;
+  const names = [...ciAssetNames(info.version), ciChecksums];
+  if (readdirSync(directory).some(name => !names.includes(name))) throw new Error('Unexpected CI build output.');
+  durableWrite(join(directory, ciChecksums), JSON.stringify({ ...info, assets: await ciAssets(directory, info.version) }));
+  if (!draft(tag)) github(['release', 'create', tag, ...repoArgs, '--draft', '--target', info.commit, '--title', `Minarbot ${info.version}`, '--notes', info.notes]);
+  const release = draft(tag);
+  checkDraft(tag, release, info);
+  await uploadDraftAssets(tag, release, directory, names);
+  console.log(`Draft ${tag} is ready. Sign and publish with --sign-ci ${info.version}.`);
+}
+
+async function signCI(version, keyPath) {
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(version)) throw new Error('Pass --sign-ci the release version, without v.');
+  const tag = `v${version}`, release = draft(tag);
+  if (!release?.isDraft) throw new Error(`Expected a draft release for ${tag}.`);
+  const { targetCommitish: commit, body: notes } = release;
+  const info = ciInfo(version, commit, notes);
+  git(['merge-base', '--is-ancestor', commit, 'HEAD']);
+  if (JSON.parse(git(['show', `${commit}:app/package.json`])).version !== version) throw new Error('Draft version does not match the release commit.');
+  checkDraft(tag, release, info);
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-ci-sign-'));
+  try {
+    const required = [...ciAssetNames(version), ciChecksums];
+    const allowed = [...required, ...signedNames];
+    const remote = new Map(release.assets.map(asset => [asset.name, asset]));
+    if (release.assets.some(asset => !allowed.includes(asset.name)) || required.some(name => remote.get(name)?.state !== 'uploaded')) {
+      throw new Error('Draft is missing CI assets or has unexpected assets.');
+    }
+    github(['release', 'download', tag, ...repoArgs, '--dir', directory, ...required.flatMap(name => ['--pattern', name])]);
+    const assets = await ciAssets(directory, version);
+    const digests = Object.fromEntries(Object.entries(assets).map(([name, asset]) => [name, asset.sha256]));
+    digests[ciChecksums] = await sha256(join(directory, ciChecksums));
+    for (const name of required) {
+      if (remote.get(name).digest !== `sha256:${digests[name]}`) throw new Error(`GitHub asset digest mismatch: ${name}`);
+    }
+    if (readFileSync(join(directory, ciChecksums), 'utf8') !== JSON.stringify({ ...info, assets })) throw new Error('CI checksums do not match the downloaded assets.');
+    const archive = `minarbot-${version}-linux-x86_64.tar.gz`;
+    const manifest = Buffer.from(JSON.stringify({ ...info, archive, ...assets[archive], assets }));
+    const signature = releaseSignature(manifest, keyPath);
+    durableWrite(join(directory, signedNames[0]), manifest);
+    durableWrite(join(directory, signedNames[1]), signature);
+    digests[signedNames[0]] = createHash('sha256').update(manifest).digest('hex');
+    digests[signedNames[1]] = createHash('sha256').update(signature).digest('hex');
+    checkCleanTree();
+    const latestDraft = draft(tag);
+    checkDraft(tag, latestDraft, info);
+    await uploadDraftAssets(tag, latestDraft, directory, allowed);
+    const ready = draft(tag);
+    checkDraft(tag, ready, info);
+    for (const name of allowed) {
+      const asset = ready.assets.find(entry => entry.name === name);
+      if (asset?.state !== 'uploaded' || asset.digest !== `sha256:${digests[name]}`) throw new Error(`Draft changed during signing: ${name}`);
+    }
+    github(['release', 'edit', tag, ...repoArgs, '--draft=false', '--latest']);
+    console.log(`Signed and published ${tag} to ${githubRepository}`);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
 export function buildRelease({ source = join(root, 'app'), releases = join(homedir(), '.local/share/minarbot/releases'), allowDirty = false, notes, build = true, install = true, repository = root, issues = [], readIssueComments: readComments = readIssueComments } = {}) {
@@ -203,15 +367,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     // Runtime source only. Never include workspace data, .env, test fixtures or development bundles.
     stageRuntime(source, stage);
     if (rust && existsSync(join(repository, 'target/release/minarbot-server')) && existsSync(join(repository, 'target/release/minarbot-launcher'))) {
-      mkdirSync(join(stage, 'bin'), { recursive: true, mode: 0o700 }); cpSync(join(repository, 'target/release/minarbot-server'), join(stage, 'bin/minarbot-server'));
-      cpSync(join(repository, 'target/release/minarbot-launcher'), join(stage, 'bin/minarbot-launcher'));
-      for (const name of ['minarbot-server', 'minarbot-launcher']) assertNativeDependencies(join(stage, 'bin', name));
-      cpSync(join(repository, 'crates/minarbot-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
-      cpSync(join(repository, 'crates/minarbot-launcher/NOTICE'), join(stage, 'bin/launcher.NOTICE'));
-      cpSync(join(repository, 'crates/minarbot-server/provenance.json'), join(stage, 'bin/provenance.json'));
-      const whatsappNotice = join(repository, 'crates/minarbot-server/whatsapp-rust.LICENSE');
-      if (existsSync(whatsappNotice)) cpSync(whatsappNotice, join(stage, 'bin/whatsapp-rust.LICENSE'));
-      for (const name of ['LICENSE', 'agent-delegation.LICENSE']) cpSync(join(repository, 'app', name), join(stage, 'bin', name));
+      copyNativeRuntime(repository, join(repository, 'target/release'), stage);
     }
     mkdirSync(join(stage, 'machine'), { mode: 0o700 });
     for (const name of ['install-machine.sh', 'uninstall-machine.sh']) cpSync(join(root, 'scripts', name), join(stage, 'machine', name));
@@ -250,11 +406,22 @@ async function releaseCommand() {
   const { values } = parseArgs({ options: {
     releases: { type: 'string' }, notes: { type: 'string' }, issues: { type: 'string' }, desktop: { type: 'boolean' },
     'allow-dirty': { type: 'boolean' }, 'no-github': { type: 'boolean' }, 'github-only': { type: 'string' }, 'signing-key': { type: 'string' },
+    'pack-ci': { type: 'string' }, 'draft-ci': { type: 'string' }, 'sign-ci': { type: 'string' }, output: { type: 'string' },
   } });
   const releases = resolve(values.releases ?? join(homedir(), '.local/share/minarbot/releases'));
   const keyPath = values['signing-key'] ?? process.env.MINARBOT_RELEASE_SIGNING_KEY
     ?? join(homedir(), '.config/minarbot-release/signing-ed25519.pem');
   const retryId = values['github-only'], allowDirty = values['allow-dirty'], { notes, desktop } = values;
+  const ciMode = ['pack-ci', 'draft-ci', 'sign-ci'].filter(mode => values[mode] !== undefined);
+  if (ciMode.length) {
+    const [mode] = ciMode;
+    const flags = { 'pack-ci': ['output', 'notes'], 'draft-ci': ['notes'], 'sign-ci': ['signing-key'] };
+    if (Object.keys(values).some(flag => flag !== mode && !flags[mode].includes(flag))) throw new Error('Incompatible CI release options.');
+    if (mode === 'pack-ci') return packCI(resolve(values[mode]), resolve(values.output ?? 'artifacts'), notes);
+    if (mode === 'draft-ci') return draftCI(resolve(values[mode]), notes);
+    checkCleanTree();
+    return signCI(values[mode], keyPath);
+  }
   if (retryId !== undefined) {
     if ([allowDirty, values['no-github'], values.issues, notes, desktop].some(value => value !== undefined)) {
       throw new Error('--github-only accepts only --releases and --signing-key.');

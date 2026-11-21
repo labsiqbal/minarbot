@@ -84,7 +84,7 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   const remaining = pairingCode ? Math.max(0, Math.ceil((pairingCode.expiresAt - now) / 1000)) : 0;
   const installRemaining = install ? Math.max(0, Math.ceil((install.expiresAt - now) / 1000)) : 0;
   const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-  const installCommand = install && installRemaining ? `curl -fsSL ${shellQuote(install.source + '/api/install/script')} | sh -s -- --source ${shellQuote(install.source)} --token ${shellQuote(install.token)} --serve` : '';
+  const installCommand = install && installRemaining ? `curl -fsSL ${shellQuote(install.source + '/api/install/script')} | sh -s -- --source ${shellQuote(install.source)} --token ${shellQuote(install.token)}` : '';
   const peer = machines?.find(machine => machine.id === detail);
   function closeSetup(open: boolean) { if (!open && !busy) { setSetup(null); setPairingCode(null); setCopied(false); } }
   function openSetup(flow: 'install' | 'pair' | 'code') { requestAnimationFrame(() => { addTrigger.current?.focus(); if (flow === 'install') closeInstall(true); else setSetup(flow); }); }
@@ -137,12 +137,11 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
     </Dialog>
     <Dialog open={setup === 'install'} onOpenChange={closeInstall} title="Install Minarbot" footer={<><Button onClick={() => closeInstall(false)}>Close</Button>{!installCommand && <Button variant="primary" busy={installBusy} onClick={() => void createInstall()}>{install ? 'Create new command' : 'Create install command'}</Button>}</>}>
       <div className="k-stack machine-install set4-detail">
-        <Tooltip content={<span className="bs-root set4-tooltip">{"Requires Node.js 22.23.4 or later, a systemd user session, and Tailscale on the same tailnet with MagicDNS and HTTPS enabled. Git and Bubblewrap are optional."}</span>}><span className="k-field__hint" tabIndex={0}>Linux · Requirements</span></Tooltip>
-        <Tooltip content={<span className="bs-root set4-tooltip">{"Installs a private release, starts a user service, enables linger if permitted, and uses Tailscale Serve on port 4317."}</span>}><span className="k-field__hint" tabIndex={0}>User service · Tailscale Serve :4317</span></Tooltip>
+        <Tooltip content={<span className="bs-root set4-tooltip">Requires curl, Python 3, and OpenSSL 3. Both machines need reachable HTTPS addresses configured in MINARBOT_ALLOWED_ORIGINS.</span>}><span className="k-field__hint" tabIndex={0}>Linux and macOS requirements</span></Tooltip>
         {installError && <Alert tone="error">{installError}</Alert>}
         {installCommand ? <>
           <Field label="Install command"><Textarea readOnly className="machine-install__command" value={installCommand} spellCheck={false} autoComplete="off" /></Field>
-          <div className="machines-form-actions"><Tooltip content={<span className="bs-root set4-tooltip">{"Grants one release download and pairing code. Closing hides the command. Provider credentials stay on each machine."}</span>}><span className="k-field__hint" tabIndex={0}>Private, single use</span></Tooltip><span className="k-field__hint">Expires in <span className="machines-countdown">{Math.floor(installRemaining / 60)}:{String(installRemaining % 60).padStart(2, '0')}</span></span><Button onClick={async () => { try { await copyText(installCommand); setInstallError(''); setCopied(true); } catch { setCopied(false); setInstallError('Copy failed. Select the command and copy it manually.'); } }}>{copied ? 'Copied' : 'Copy command'}</Button></div>
+          <div className="machines-form-actions"><Tooltip content={<span className="bs-root set4-tooltip">Grants one pairing code. Closing hides the command. Provider credentials stay on each machine.</span>}><span className="k-field__hint" tabIndex={0}>Private, single use</span></Tooltip><span className="k-field__hint">Expires in <span className="machines-countdown">{Math.floor(installRemaining / 60)}:{String(installRemaining % 60).padStart(2, '0')}</span></span><Button onClick={async () => { try { await copyText(installCommand); setInstallError(''); setCopied(true); } catch { setCopied(false); setInstallError('Copy failed. Select the command and copy it manually.'); } }}>{copied ? 'Copied' : 'Copy command'}</Button></div>
           <span className="sr-only" role="status">{copied ? 'Command copied.' : ''}</span>
         </> : install && <Alert tone="warn">This install command expired. Create a new one to continue.</Alert>}
       </div>

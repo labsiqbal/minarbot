@@ -176,8 +176,9 @@ pub fn start(state: AppState) -> Result<tokio::task::JoinHandle<()>> {
         loop {
             if std::env::var("MINARBOT_TEST_SERVER").as_deref() == Ok("rust") {
                 if let Ok(parent) = std::env::var("MINARBOT_TEST_PARENT") {
-                    if parent.bytes().all(|b| b.is_ascii_digit())
-                        && !std::path::Path::new(&format!("/proc/{parent}")).exists()
+                    if parent
+                        .parse()
+                        .is_ok_and(|pid| !crate::platform::process_alive(pid))
                     {
                         std::process::exit(0);
                     }

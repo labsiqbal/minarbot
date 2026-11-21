@@ -77,6 +77,9 @@ pub fn enabled(s: &AppState, agent: &str) -> Result<bool> {
     Ok(s.computer.enabled && db(s, |c| permission(c, agent))?["enabled"] == 1)
 }
 pub fn assert_enabled(s: &AppState, agent: &str) -> Result<()> {
+    if !crate::platform::LINUX_SANDBOX {
+        return Err(error(503, crate::platform::COMPUTER_UNAVAILABLE));
+    }
     if !enabled(s, agent)? {
         return Err(error(403, "Computer tools are disabled for this agent."));
     }
@@ -159,6 +162,9 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
     }
     let request = request.to_string();
     if v["enabled"] == true && !s.computer.enabled {
+        if !crate::platform::LINUX_SANDBOX {
+            return Err(error(503, crate::platform::COMPUTER_UNAVAILABLE));
+        }
         return Err(error(
             403,
             "Enable MINARBOT_AGENT_DESKTOP=1 on the server first.",
