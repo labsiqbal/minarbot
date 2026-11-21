@@ -272,6 +272,7 @@ impl Fixture {
         let events = crate::events::Hub::new();
         events.watch(&database.connection);
         let state = AppState {
+            whatsapp: Default::default(),
             database: Arc::new(Mutex::new(database)),
             computer: Arc::new(crate::computer::Manager::new(&config)?),
             config: Arc::new(config),

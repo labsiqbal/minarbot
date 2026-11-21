@@ -550,6 +550,7 @@ mod tests {
         let turn_id = ::uuid::Uuid::new_v4().to_string();
         db.execute("INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,'Set up','running','fixture')", [turn_id.as_str(),ID])?;
         let state = AppState {
+            whatsapp: Default::default(),
             computer: Arc::new(crate::computer::Manager::new(&config)?),
             database: Arc::new(Mutex::new(database)),
             config: Arc::new(config),

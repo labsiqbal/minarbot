@@ -58,6 +58,7 @@ fn state(scratch: &Path, cli: &Path) -> db::Result<AppState> {
         [scratch.join("project").to_string_lossy().as_ref()],
     )?;
     Ok(AppState {
+        whatsapp: Default::default(),
         computer: Arc::new(crate::computer::Manager::new(&config)?),
         config: Arc::new(config),
         database: Arc::new(std::sync::Mutex::new(database)),
