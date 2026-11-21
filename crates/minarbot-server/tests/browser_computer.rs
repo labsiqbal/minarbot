@@ -512,9 +512,7 @@ fn assert_transport_isolated(server: u32) -> Result<()> {
         .ok_or("fixture supervisor not found")?;
     let (chrome, command) = processes
         .iter()
-        .find(|(_, args)| {
-            args.contains("\0--remote-debugging-pipe\0") && !args.contains("\0--type=")
-        })
+        .find(|(_, args)| args.contains("--remote-debugging-pipe") && !args.contains("--type="))
         .ok_or("fixture Chrome not found")?;
     assert!(!command.contains("--remote-debugging-port"));
     for fd in [0, 1] {
