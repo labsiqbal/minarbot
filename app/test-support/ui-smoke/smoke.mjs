@@ -1655,7 +1655,7 @@ try {
     await page.keyboard.press('Control+,');
     let dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
     await visible(dialog.getByRole('heading', { name: 'General', exact: true }));
-    const groups = { Preferences: ['General', 'Appearance'], Agents: ['Skills'], Connections: ['Providers', 'Connected apps', 'MCP connections'], System: ['Machines', 'Updates'], Data: ['Usage', 'Shared data', 'Backup & restore'], Advanced: ['External access'] };
+    const groups = { Preferences: ['General', 'Appearance'], Agents: ['Skills'], Connections: ['Providers', 'Engines', 'Connected apps', 'Email', 'MCP connections', 'Vault'], System: ['Machines', 'Devices', 'Computer', 'Updates'], Data: ['Usage', 'Shared data', 'Backup & restore'], Advanced: ['External access'] };
     const nav = dialog.getByRole('navigation', { name: 'Settings', exact: true });
     assert.deepEqual(await nav.getByRole('heading').allTextContents(), Object.keys(groups));
     for (const [group, labels] of Object.entries(groups)) assert.deepEqual(await nav.getByRole('group', { name: group, exact: true }).getByRole('button').allTextContents(), labels);

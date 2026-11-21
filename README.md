@@ -105,13 +105,9 @@ Then run `systemctl --user daemon-reload && systemctl --user enable --now minarb
 
 ### Computer (optional)
 
-Computer gives an agent its own desktop with Chrome. It is off until you set it up on the machine and turn it on for an agent. One-click setup is planned in [#11](https://github.com/labsiqbal/minarbot/issues/11). For now, on Debian, Ubuntu or Mint:
+Choose **Set up Computer** in **Settings > Computer** or on the first-run screen. Minarbot downloads the desktop image and verifies its digest against the signed release manifest. If no container runtime is available, the same screen lists the missing programs for the host setup and offers to install them when supported.
 
-```sh
-sudo apt install tigervnc-standalone-server xfwm4 xfdesktop4 xfce4-panel xdotool scrot bubblewrap dbus
-```
-
-Also install [Google Chrome](https://www.google.com/chrome/) so that `google-chrome` is on the `PATH`. Add `MINARBOT_AGENT_DESKTOP=1` to `launcher.env`, restart Minarbot, then turn on **Computer** in the agent's settings. By default two computers run at once per machine, and each stops after 15 idle minutes.
+Once the device is ready, turn on **Computer** in the agent's settings. By default, two Computers can run at once per machine. Each stops after 15 idle minutes. For headless setup, `MINARBOT_AGENT_DESKTOP=1` enables setup automatically and `MINARBOT_AGENT_DESKTOP=0` disables Computer.
 
 Enable **Always-on Computer** in the agent’s settings to start its Computer, skip idle shutdown and start it again when the server starts. It uses one of the same concurrent Computer slots. An explicit stop lasts until you start that Computer again or restart the server.
 

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Progress, Row, SkeletonRows, Switch, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
+import { computerSetupLabel } from './ComputerSetup';
+import { parseRoute, routePath } from './navigation';
 type Change = { enabled: boolean; sharedProfile?: boolean } | { alwaysOn: boolean };
 type Command = { id: string; revision: number } & Change;
 export function useComputerSettings(agent: string, request: ComputerRequest, onSaved?: (status: ComputerStatus) => void) {
@@ -50,14 +52,19 @@ export function useComputerSettings(agent: string, request: ComputerRequest, onS
 export function AgentComputerSettings({ agent, request, autoFocus = false }: { agent: string; request: ComputerRequest; autoFocus?: boolean }) {
   const settings = useComputerSettings(agent, request);
   const { section, status, target, alwaysOn, action, busy, locked, save, saveAlwaysOn, recovery } = settings;
-  useEffect(() => { if (!autoFocus) return; const frame = requestAnimationFrame(() => { section.current?.scrollIntoView({ block: 'center' }); section.current?.querySelector<HTMLButtonElement>('[role="switch"]')?.focus(); }); return () => cancelAnimationFrame(frame); }, [autoFocus, section, status?.available]);
+  useEffect(() => { if (!autoFocus) return; const frame = requestAnimationFrame(() => { section.current?.scrollIntoView({ block: 'center' }); section.current?.querySelector<HTMLElement>(status?.available ? '[role="switch"]' : 'a[href]')?.focus(); }); return () => cancelAnimationFrame(frame); }, [autoFocus, section, status?.available]);
   const atLimit = status?.alwaysOnLimitReached && !alwaysOn;
   const alwaysOnSwitch = <Switch label="Always-on Computer" checked={alwaysOn} disabled={locked || !status?.enabled || atLimit} onChange={value => void saveAlwaysOn(value)} />;
+  const setupPath = routePath({ ...parseRoute(location.pathname + location.search), settings: 'computer' });
   return <div ref={section} className="bs-root k-stack">
-    {!status ? <><span className="sr-only" role="status">Loading computer status...</span><SkeletonRows count={1} /></> : status.available && <Card>
-      <Row title="Computer" meta={busy ? <Progress>{action}</Progress> : undefined} trailing={<Switch label="Computer" checked={target} disabled={locked} onChange={value => void save(value)} />} />
-      <Row title="Always-on Computer" trailing={atLimit ? <Tooltip content="Computer limit reached. Stop another Computer or turn off its Always-on setting."><span tabIndex={0} role="group" aria-label="Always-on Computer unavailable">{alwaysOnSwitch}</span></Tooltip> : alwaysOnSwitch} />
-      {status.enabled && <Row title="Shared browser profile" meta={status.state === 'off' ? undefined : 'Stop Computer to switch profiles'} trailing={<Switch label="Shared browser profile" checked={status.sharedProfile ?? false} disabled={locked || status.state !== 'off'} onChange={value => void save(true, value)} />} />}
+    {!status ? <><span className="sr-only" role="status">Loading computer status...</span><SkeletonRows count={1} /></> : <Card>
+      <Row title="Computer" meta={busy ? <Progress>{action}</Progress> : !status.available && <>
+        <span>{status.setup ? computerSetupLabel(status.setup) : 'Setup required'}</span><a className="k-link" href={setupPath}>Computer setup</a>
+      </>} trailing={<Switch label="Computer" checked={target} disabled={locked || !status.available} onChange={value => void save(value)} />} />
+      {status.available && <>
+        <Row title="Always-on Computer" trailing={atLimit ? <Tooltip content="Computer limit reached. Stop another Computer or turn off its Always-on setting."><span tabIndex={0} role="group" aria-label="Always-on Computer unavailable">{alwaysOnSwitch}</span></Tooltip> : alwaysOnSwitch} />
+        {status.enabled && <Row title="Shared browser profile" meta={status.state === 'off' ? undefined : 'Stop Computer to switch profiles'} trailing={<Switch label="Shared browser profile" checked={status.sharedProfile ?? false} disabled={locked || status.state !== 'off'} onChange={value => void save(true, value)} />} />}
+      </>}
     </Card>}
     {recovery}
   </div>;

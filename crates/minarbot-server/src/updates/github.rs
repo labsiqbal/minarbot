@@ -1,7 +1,7 @@
 use super::{archive, release, Failure, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{header, redirect::Policy, Client, Response, StatusCode, Url};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{future::Future, path::Path, time::Duration};
 
@@ -47,7 +47,15 @@ pub(super) struct Manifest {
     pub size: u64,
     pub notes: String,
     pub created: String,
+    #[serde(default)]
+    pub computer_image: Option<String>,
 }
+#[derive(Deserialize, Serialize)]
+struct SignedManifest {
+    manifest: String,
+    signature: String,
+}
+
 impl Manifest {
     fn verify(bytes: &[u8], signature: &[u8], key: &[u8; 32]) -> Result<Self> {
         let signature = STANDARD
@@ -77,6 +85,11 @@ impl Manifest {
             return Err(invalid("Invalid GitHub release commit."));
         }
         if !archive::valid_hash(&value.sha256)
+            || value.computer_image.as_deref().is_some_and(|digest| {
+                !digest
+                    .strip_prefix("sha256:")
+                    .is_some_and(archive::valid_hash)
+            })
             || !(1..=archive::LIMIT).contains(&value.size)
             || value.notes.encode_utf16().count() > 16_000
             || !chrono::DateTime::parse_from_rfc3339(&value.created)
@@ -166,8 +179,8 @@ impl Feed {
         }
         Ok(response)
     }
-    async fn asset(&self, name: &str, limit: usize) -> Result<Vec<u8>> {
-        let url = Url::parse(&format!("{}/latest/download/{name}", self.base))
+    async fn asset(&self, release: &str, name: &str, limit: usize) -> Result<String> {
+        let url = Url::parse(&format!("{}/{release}/{name}", self.base))
             .map_err(|_| invalid("Invalid GitHub release URL."))?;
         let mut response = self.response(url, None).await?;
         if !response.status().is_success() {
@@ -184,14 +197,66 @@ impl Feed {
             }
             bytes.extend_from_slice(&chunk);
         }
-        Ok(bytes)
+        String::from_utf8(bytes).map_err(|_| invalid("Invalid GitHub release asset encoding."))
+    }
+    async fn signed(
+        &self,
+        release: &str,
+        manifest: &str,
+        signature: &str,
+    ) -> Result<SignedManifest> {
+        let (manifest, signature) = tokio::join!(
+            self.asset(release, manifest, 128 * 1024),
+            self.asset(release, signature, 88)
+        );
+        Ok(SignedManifest {
+            manifest: manifest?,
+            signature: signature?,
+        })
+    }
+    fn verify(&self, signed: &SignedManifest) -> Result<Manifest> {
+        Manifest::verify(
+            signed.manifest.as_bytes(),
+            signed.signature.as_bytes(),
+            &self.key,
+        )
+    }
+    pub(super) async fn computer_image(&self, id: &str, cache: &Path) -> Result<Option<String>> {
+        let (version, _) = id
+            .rsplit_once('-')
+            .filter(|_| release::id(id))
+            .ok_or_else(|| invalid("Computer image needs an installed Minarbot release."))?;
+        if let Some(manifest) = std::fs::read(cache)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<SignedManifest>(&bytes).ok())
+            .and_then(|signed| self.verify(&signed).ok())
+            .filter(|manifest| manifest.id == id)
+        {
+            return Ok(manifest.computer_image);
+        }
+        let tag = format!("download/v{version}");
+        let signed = tokio::time::timeout(
+            Duration::from_secs(15),
+            self.signed(&tag, "computer-image.json", "computer-image.json.sig"),
+        )
+        .await
+        .map_err(|_| unreachable())??;
+        let manifest = self.verify(&signed)?;
+        if manifest.id != id {
+            return Err(invalid(
+                "Computer image manifest does not match the installed release.",
+            ));
+        }
+        let bytes = serde_json::to_vec(&signed).map_err(|_| Failure::storage())?;
+        minarbot_launcher::files::durable(cache, &bytes).map_err(|_| Failure::storage())?;
+        Ok(manifest.computer_image)
     }
     async fn latest(&self) -> Result<Manifest> {
-        let (bytes, signature) = tokio::join!(
-            self.asset("latest.json", 128 * 1024),
-            self.asset("latest.json.sig", 88)
-        );
-        Manifest::verify(&bytes?, &signature?, &self.key)
+        self.verify(
+            &self
+                .signed("latest/download", "latest.json", "latest.json.sig")
+                .await?,
+        )
     }
     pub(super) async fn check(&self) -> Result<Manifest> {
         let mut cached = self.cached.lock().await;

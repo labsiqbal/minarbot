@@ -74,7 +74,7 @@ fn waits(c: &Connection, agent: &str) -> Result<Vec<Value>> {
     rows(c,"SELECT w.*,v.entry AS secret_entry,v.origin AS secret_origin FROM computer_waits w JOIN turns t ON t.id=w.turn LEFT JOIN vault_requests v ON v.turn=w.turn AND v.call_id=w.call_id WHERE w.agent=? AND w.state='waiting' AND t.status NOT IN('done','cancelled')",[agent])
 }
 pub fn enabled(s: &AppState, agent: &str) -> Result<bool> {
-    Ok(s.computer.enabled && db(s, |c| permission(c, agent))?["enabled"] == 1)
+    Ok(s.computer.enabled() && db(s, |c| permission(c, agent))?["enabled"] == 1)
 }
 pub fn assert_enabled(s: &AppState, agent: &str) -> Result<()> {
     if !enabled(s, agent)? {
@@ -158,11 +158,8 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
         request["sharedProfile"] = shared.clone();
     }
     let request = request.to_string();
-    if v["enabled"] == true && !s.computer.enabled {
-        return Err(error(
-            403,
-            "Enable MINARBOT_AGENT_DESKTOP=1 on the server first.",
-        ));
+    if v["enabled"] == true && !s.computer.enabled() {
+        return Err(error(403, "Set up Computer on this device first."));
     }
     let gate = s.computer.control_gate(agent)?;
     let _guard = gate.lock().await;
@@ -240,7 +237,7 @@ async fn configure_always_on(s: &AppState, agent: &str, v: &Value) -> Result<Val
             return Err(error(409, "Computer setting changed. Load latest status."));
         }
         if pin
-            && (!s.computer.enabled
+            && (!s.computer.enabled()
                 || permission["enabled"] != 1
                 || crate::data::agents::hidden(c, agent)?)
         {

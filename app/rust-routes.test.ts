@@ -32,6 +32,7 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/engine-logins/{id}/check', 'Checks sign-in for a local engine login.'],
     ['/api/engine-logins/{id}/remove', 'Removes an unused local engine login.'],
     ['/api/turns/{id}/inspect', 'Reads redacted local run diagnostics for the owner.'],
+    ['/api/settings/computer', 'Reads device readiness and starts local Computer setup.'],
     ['/api/connected-apps/discord', 'Reads connection state and routes for the local Discord bot.'],
     ['/api/connected-apps/discord/{action}', 'Connects the bot or changes Discord routes from local Settings.'],
     ['/api/email/settings', 'Configures the agent receiving domain and issues the relay secret.'],
@@ -44,7 +45,7 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
   const publicMatchers = inventory.publicMatchers.map(entry => new RegExp(entry.pattern, entry.flags));
   const src = new URL('../crates/minarbot-server/src/', import.meta.url);
   const rust = readdirSync(src, { recursive: true }).map(String)
-    .filter(name => name.endsWith('.rs') && !/(^|\/)tests(\/|\.rs$)/.test(name))
+    .filter(name => name.endsWith('.rs') && !/(^|\/)tests(\/|\.rs$)|_tests\.rs$/.test(name))
     .map(name => readFileSync(new URL(name, src), 'utf8')).join('\n');
   const routes = [...rust.matchAll(/\.route\(\s*"([^"\n]+)"/g)].map(match => match[1]);
   assert(routes.length > 0);

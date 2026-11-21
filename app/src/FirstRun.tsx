@@ -4,6 +4,7 @@ import { AgentForm, type Agent, type FirstRunConnection } from './AgentProfileDi
 import { ProviderForm, type ProviderAccount } from './ProvidersPanel';
 import { DEVICE_BINDING, engineLoginsPath, loginBinding, type EngineLogin, type RuntimeChoice } from './EnginesPanel';
 import { Alert, Button, PageHeader } from './ui/kit';
+import { ComputerSetup } from './ComputerSetup';
 import './first-run.css';
 import { useSetupData } from './hooks/useSetupData';
 
@@ -64,6 +65,7 @@ export function FirstRun({ request, isClientError, settingsOpen, onOpenEngines, 
     <div className="first-run">
       <PageHeader headingRef={focusHeading} title="Set up Minarbot" />
       {error && <Alert tone="error" actions={<Button size="sm" onClick={() => { accounts.reload(); engines.reload(); logins.reload(); }}>Retry</Button>}>Setup status could not be loaded.</Alert>}
+      {!settingsOpen && <div className="first-run__computer"><ComputerSetup request={request} onboarding /></div>}
       <ol className="first-run__steps" aria-label="Setup progress">
         {steps.map(({ title, icon: Icon }, index) => {
           const done = index < activeStep;

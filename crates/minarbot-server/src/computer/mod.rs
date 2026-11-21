@@ -16,6 +16,8 @@ pub mod options;
 pub mod remote;
 #[allow(dead_code)]
 pub mod resources;
+mod runtime;
+mod setup;
 pub(crate) mod vault;
 mod vnc;
 pub use desktop::Manager;
@@ -72,6 +74,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .merge(devices::routes())
         .merge(hub::routes())
+        .route("/api/settings/computer", any(entry))
         .route("/api/agents/{id}/computer", any(entry))
         .route("/api/agents/{id}/computer/start", any(entry))
         .route("/api/agents/{id}/computer/stop", any(entry))
@@ -147,6 +150,9 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
         if path == "/api/host-metrics" {
             return host_metrics::handle(&state, request).await;
         }
+        if path == "/api/settings/computer" {
+            return device_setup(&state, request).await;
+        }
         if path.starts_with("/api/agents/") {
             return handle_computer(&state, request).await;
         }
@@ -174,7 +180,12 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
 }
 pub fn maintenance(state: AppState) -> Vec<tokio::task::JoinHandle<()>> {
     let desktop = state.clone();
-    vec![
+    let setup_task = state
+        .auth
+        .is_none()
+        .then(|| setup::begin(&state, false).ok().flatten())
+        .flatten();
+    let mut tasks = vec![
         tokio::spawn(remote::worker(state.clone())),
         hub::maintenance(state.clone()),
         tokio::spawn(async move {
@@ -207,11 +218,12 @@ pub fn maintenance(state: AppState) -> Vec<tokio::task::JoinHandle<()>> {
                 .unwrap_or(900000)
                 .clamp(1, 10000) as u64;
             let mut timer = tokio::time::interval(std::time::Duration::from_millis(interval));
-            let mut restore = desktop.computer.enabled;
+            // Runtime discovery and image download can outlast the first maintenance tick.
+            let mut restore = true;
             loop {
                 timer.tick().await;
                 if !crate::updates::pending(&desktop) {
-                    if restore {
+                    if restore && desktop.computer.enabled() {
                         restore = false;
                         control::restore_always_on(&desktop).await;
                     }
@@ -224,7 +236,37 @@ pub fn maintenance(state: AppState) -> Vec<tokio::task::JoinHandle<()>> {
                 }
             }
         }),
-    ]
+    ];
+    tasks.extend(setup_task);
+    tasks
+}
+
+async fn device_setup(state: &AppState, request: Request) -> Result<Response> {
+    use axum::http::Method;
+    if request.headers().contains_key("authorization") || request.uri().query().is_some() {
+        return Err(error(
+            403,
+            "Computer setup requires the local owner in Minarbot.",
+        ));
+    }
+    crate::files::origin(state, &request)?;
+    let status = match *request.method() {
+        Method::GET => 200,
+        Method::POST => {
+            crate::files::mutation(state, &request)?;
+            if !body(request, 64)
+                .await?
+                .as_object()
+                .is_some_and(|value| value.is_empty())
+            {
+                return Err(error(400, "Computer setup does not accept arguments."));
+            }
+            let _ = setup::begin(state, true)?;
+            202
+        }
+        _ => return Err(error(405, "Method not allowed.")),
+    };
+    Ok(crate::json_response(status, state.computer.setup.status()?))
 }
 
 async fn handle_computer(state: &AppState, request: Request) -> Result<Response> {

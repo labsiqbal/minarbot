@@ -20,7 +20,7 @@ struct Session {
 }
 
 impl ChromePipe {
-    pub(super) fn configure(command: &mut tokio::process::Command) -> Result<Self> {
+    pub(super) fn configure(command: &mut tokio::process::Command, binary: &str) -> Result<Self> {
         let (supervisor, browser) = UnixStream::pair()?;
         supervisor.set_nonblocking(true)?;
         let stdin: std::os::fd::OwnedFd = browser.try_clone()?.into();
@@ -32,7 +32,7 @@ impl ChromePipe {
                 "-c",
                 r#"exec 3<&0 4>&1 </dev/null >/dev/null; exec "$@""#,
                 "minarbot-chrome",
-                "google-chrome",
+                binary,
                 "--remote-debugging-pipe",
             ]);
         Ok(Self {
@@ -87,6 +87,15 @@ impl ChromePipe {
             }
         }
         Ok(false)
+    }
+
+    pub(super) async fn close(&self) -> Result<()> {
+        self.io
+            .lock()
+            .await
+            .call(None, "Browser.close", json!({}))
+            .await?;
+        Ok(())
     }
 }
 
@@ -210,14 +219,14 @@ mod tests {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
         let origin = format!("http://{}", listener.local_addr()?);
         let server = tokio::spawn(async move {
-            axum::serve(listener, Router::new().route("/", get(|| async {
+            axum::serve(listener, Router::new().fallback(get(|| async {
                 Html(r#"<input id="first" autofocus><input id="second"><script>
                     first.addEventListener('input', () => document.title = first.value === 'synthetic-fixture-value' ? 'matched' : 'wrong');
                 </script>"#)
             }))).await
         });
         let mut command = tokio::process::Command::new("sh");
-        let chrome = ChromePipe::configure(&mut command)?;
+        let chrome = ChromePipe::configure(&mut command, "google-chrome")?;
         let mut child = command
             .args([
                 "--headless",
