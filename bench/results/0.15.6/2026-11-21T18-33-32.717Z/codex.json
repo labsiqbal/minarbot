@@ -1,0 +1,522 @@
+{
+  "version": "0.15.6",
+  "binarySHA256": "8730710600a985342a1f7adb4da5bd6d49f56febf58a71654318ff405cbef6e0",
+  "checkoutCommit": "7c70734febab46e1e6225bd93243d6758a3615a5",
+  "suiteSHA256": "efdbe2b5b085bde168c5a495b459fb9c957892bd32513c8d30e9df0e66219aed",
+  "startedAt": "2026-11-21T18:33:32.717Z",
+  "runtime": {
+    "name": "codex",
+    "version": "codex-cli 0.170.0",
+    "account": "device",
+    "model": "default",
+    "reason": null
+  },
+  "repeat": 1,
+  "complete": true,
+  "results": [
+    {
+      "task": "browser-booking",
+      "category": "browser",
+      "attempt": 1,
+      "budget": {
+        "seconds": 180,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 28.16,
+      "tokens": 21142,
+      "knownTokens": 21142,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "browser-ticket",
+      "category": "browser",
+      "attempt": 1,
+      "budget": {
+        "seconds": 180,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 22.35,
+      "tokens": 20279,
+      "knownTokens": 20279,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "cart-bug",
+      "category": "bug-fix",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 36.67,
+      "tokens": 19439,
+      "knownTokens": 19439,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "contacts-csv",
+      "category": "csv",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 23.84,
+      "tokens": 25319,
+      "knownTokens": 25319,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "counter-app",
+      "category": "web-app",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 32.43,
+      "tokens": 20638,
+      "knownTokens": 20638,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "csv-research",
+      "category": "research",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 35.17,
+      "tokens": 42054,
+      "knownTokens": 42054,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "expiry-bug",
+      "category": "bug-fix",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 19.11,
+      "tokens": 18481,
+      "knownTokens": 18481,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "handover-doc",
+      "category": "document",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 24.36,
+      "tokens": 18944,
+      "knownTokens": 18944,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "http-research",
+      "category": "research",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 30.62,
+      "tokens": 25702,
+      "knownTokens": 25702,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "paginate-feature",
+      "category": "feature",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 29.88,
+      "tokens": 19404,
+      "knownTokens": 19404,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "routine-setup",
+      "category": "routine",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 32.14,
+      "tokens": 42882,
+      "knownTokens": 42882,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "sales-csv",
+      "category": "csv",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 21.1,
+      "tokens": 19671,
+      "knownTokens": 19671,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "show-html",
+      "category": "html",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 30.12,
+      "tokens": 19782,
+      "knownTokens": 19782,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "recheck": {
+        "checkerCommit": "e50cd21f1b674fb5ead7267c57b89fa38b6459e5",
+        "originalStatus": "fail",
+        "originalReason": "HTML must be linked or published in the reply",
+        "evidence": "Linked attachment and rendered table verified against the same attempt output."
+      }
+    },
+    {
+      "task": "slug-feature",
+      "category": "feature",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 25.4,
+      "tokens": 18823,
+      "knownTokens": 18823,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "team-review",
+      "category": "delegation",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Runtime turn failed",
+      "checker": {
+        "passed": false,
+        "reason": "Reviewer must finish a real delegated turn"
+      },
+      "turns": 4,
+      "wallSeconds": 49.67,
+      "tokens": 47791,
+      "knownTokens": 47791,
+      "providerCalls": 2,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    },
+    {
+      "task": "tip-app",
+      "category": "web-app",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 36.37,
+      "tokens": 27025,
+      "knownTokens": 27025,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "default"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null
+    }
+  ],
+  "finishedAt": "2026-11-21T18:41:45.327Z"
+}

@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import { checkTask } from './checkers.mjs';
 import { dryRun } from './dry-run.mjs';
 import { fixtureSite } from './fixture.mjs';
@@ -248,10 +249,13 @@ function scoreboard(receipt) {
         '| --- | ---: | --- | ---: | ---: | ---: | ---: | --- |',
         ...rows.map(row => `| ${row.task} | ${row.attempt} | ${row.status} | ${row.turns ?? '-'} | ${row.tokens ?? (row.knownTokens == null ? '-' : `≥${row.knownTokens}`)} | ${row.wallSeconds ?? '-'} | ${row.interventions ?? '-'} | ${(row.reason ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ')} |`),
         '', 'USD cost unavailable. Minarbot does not report billing through its usage ledger.', '',
+        ...rows.filter(row => row.recheck).map(row =>
+            `- ${row.task} rechecked from the original attempt using checker commit \`${row.recheck.checkerCommit.slice(0, 12)}\`.`),
+        '',
     ].join('\n');
 }
 
-async function save(dir, receipt) {
+export async function save(dir, receipt) {
     for (const [extension, body] of [['json', JSON.stringify(receipt, null, 2) + '\n'], ['md', scoreboard(receipt)]]) {
         const path = join(dir, receipt.runtime.name + '.' + extension);
         await writeFile(path + '.tmp', body, { mode: 0o600 });
@@ -343,4 +347,4 @@ async function main() {
     console.log(`Scoreboards: ${dir}`);
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main();
