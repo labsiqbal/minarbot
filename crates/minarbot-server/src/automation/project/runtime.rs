@@ -267,6 +267,12 @@ pub(super) fn maintain(state: &AppState) -> Result<()> {
                     db.execute("UPDATE workflow_runs SET steps=?,status='waiting',revision=revision+1 WHERE id=?",params![seq,id])?;
                 }else if node["kind"]=="wait"{
                     return waits::reserve(&s,&run,&node,seq);
+                }else if !["condition", "approval", "output"].contains(&string(&node,"kind")){
+                    let reason=format!("Unsupported workflow step type: {}.",string(&node,"kind"));
+                    db.execute("INSERT INTO workflow_steps(run,seq,node,status,settings,detail) VALUES(?,?,?,'failed',?,?)",params![id,seq,node["id"].as_str(),crate::db::canonical(&node),reason])?;
+                    s.map("workflow_steps",json!([id,seq]),string(&w,"id"),&parent)?;
+                    db.execute("UPDATE workflow_runs SET steps=? WHERE id=?",params![seq,id])?;
+                    return fail(&s,id,&reason);
                 }else{
                     let mut output=None;
                     if node["kind"]=="output" {if let Some(channel)=node["channel"].as_str(){

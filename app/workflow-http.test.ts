@@ -9,6 +9,60 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
 
+test('legacy unsupported workflow steps fail once without producing output', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-workflow-legacy-kind-'));
+  const database = join(directory, 'state.sqlite');
+  let calls = 0;
+  const provider = createServer((_req, res) => { calls++; res.writeHead(500).end(); });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address();
+  assert(address && typeof address !== 'string');
+  const app = await startApp({ database, baseURL: `http://127.0.0.1:${address.port}/v1` }, { directory, servers: [provider] });
+  t.after(async () => {
+    await app.close();
+    provider.closeAllConnections();
+    await new Promise<void>(resolve => provider.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
+  });
+  async function request(path: string, body?: unknown, status = 200) {
+    const response = await fetch(app.origin + path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { Origin: app.origin, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const result = await response.json();
+    assert.equal(response.status, status, JSON.stringify(result));
+    return result;
+  }
+
+  const agent = await request('/api/agents', { id: randomUUID(), runtime: 'api', name: 'Legacy', model: 'fixture', instructions: 'Test.' }, 201);
+  const list = `/api/agents/${agent.id}/workflows`;
+  for (const kind of ['image', 'asset', 'file-output', 'message-trigger']) {
+    const id = randomUUID();
+    const graph = { entry: 'legacy', maxSteps: 2, nodes: [{ id: 'legacy', kind, next: 'out' }, { id: 'out', kind: 'output' }] };
+    assert.deepEqual(await request(list, { id, name: kind, revision: 0, graph }, 400), { error: 'Unsupported workflow step type.' });
+
+    // Simulate a saved version predating current validation.
+    const db = testDatabase(database);
+    try {
+      db.prepare('INSERT INTO workflows(id,agent,name,revision) VALUES(?,?,?,1)').run(id, agent.id, kind);
+      db.prepare('INSERT INTO workflow_versions(workflow,revision,graph) VALUES(?,1,?)').run(id, JSON.stringify(graph));
+    } finally { db.close(); }
+    const path = `/api/workflows/${id}`;
+    assert.deepEqual((await request(path)).graph, graph);
+    const launch = { id: randomUUID(), revision: 1, input: 'Preserve this input' };
+    await request(`${path}/run`, launch);
+    const run = await request(`/api/workflow-runs/${launch.id}`);
+    const error = `Unsupported workflow step type: ${kind}.`;
+    assert.equal(run.status, 'failed');
+    assert.deepEqual(run.steps.map((step: { node: string; status: string; detail: string }) => [step.node, step.status, step.detail]), [['legacy', 'failed', error]]);
+    assert.equal(run.error, error);
+    assert.equal(run.last, launch.input);
+  }
+  assert.equal(calls, 0);
+  assert.deepEqual((await request('/api/workflow-notifications')).notifications, []);
+});
+
 test('model conditions choose one branch without tools and reject ambiguous answers', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-condition-'));
   let answer = 'yes'; const payloads: any[] = [];
@@ -167,7 +221,9 @@ test('workflow HTTP versions, model steps, approval receipts and cancellation su
       { id: 'work', kind: 'agent', agent: agent.id, prompt: 'Agent tools remain available.', next: 'out' }, { id: 'out', kind: 'output' },
     ] } });
     const agentRun = await request(`/api/workflows/${workflow.id}/run`, { id: randomUUID(), revision: 4, input: 'AGENT' });
-    await until(`/api/workflow-runs/${agentRun.id}`, data => data.status === 'done');
+    const agentResult = await until(`/api/workflow-runs/${agentRun.id}`, data => data.status === 'done');
+    assert.equal(agentResult.last, 'RESULT');
+    assert.deepEqual(agentResult.steps.map((step: { status: string }) => step.status), ['done', 'done']);
     assert(toolNames.at(-1)!.includes('create_text_file')); assert(toolNames.at(-1)!.includes('set_routine_flow'));
     const restorePath = `/api/workflows/${workflow.id}/restore`, restore = { id: randomUUID(), revision: 4, version: 1 };
     await request(restorePath, { ...restore, version: '1' }, 400);
@@ -394,10 +450,23 @@ test('parallel webhook waits for provider before creating a receipt', async () =
     const address = provider.address(); assert(address && typeof address !== 'string');
     app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1` });
     const retry = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-minarbot-time': time, 'x-minarbot-id': delivery, 'x-minarbot-signature': signature, 'Content-Type': 'application/json' }, body });
-    assert.equal(retry.status, 202); await retry.body?.cancel();
+    assert.equal(retry.status, 202);
+    const receipt = await retry.json();
+    assert.equal(receipt.outcome, 'queued');
     const duplicate = await fetch(`${app.origin}/api/workflow-webhooks/${hook.route}`, { method: 'POST', headers: { 'x-minarbot-time': time, 'x-minarbot-id': delivery, 'x-minarbot-signature': signature, 'Content-Type': 'application/json' }, body });
     assert.equal(duplicate.status, 200); await duplicate.body?.cancel();
     assert.equal((await (await fetch(app.origin + `/api/workflows/${workflow.id}/runs`)).json()).length, 1);
+    let run;
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const response = await fetch(`${app.origin}/api/workflow-runs/${receipt.id}`);
+      assert(response.ok);
+      run = await response.json();
+      if (['done', 'failed'].includes(run.status)) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(run.status, 'done');
+    assert.match(run.input, /"event":"parallel"/);
+    assert.deepEqual(JSON.parse(run.last), [{ branch: 1, result: 'ok' }, { branch: 2, result: 'ok' }]);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 

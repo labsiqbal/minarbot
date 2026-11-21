@@ -1,10 +1,9 @@
 import { useId, useRef, useState } from 'react';
-import { workflowEdges, type WorkflowGraph as Graph } from './workflows';
+import { workflowEdges, workflowStepTypeLabel, type WorkflowGraph as Graph } from './workflows';
 import { workflowLayout } from './workflow-editor-state';
 import { Collapsible } from './ui/kit';
 import './ui/workflow.css';
 
-const kinds = { parallel: 'Parallel', agent: 'Agent', model: 'Model', condition: 'Condition', approval: 'Approval', wait: 'Wait for event', output: 'Output' };
 export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, buttonRefs, labels, loops }: {
   graph: Graph; selected: string; locked: boolean; onSelect: (id: string) => void;
   buttonRefs: Map<string, HTMLButtonElement>;
@@ -70,7 +69,7 @@ export function WorkflowGraph({ graph, selected, locked, onSelect, onMove, butto
           event.preventDefault();
           onMove(node.id, point.x + (event.key === 'ArrowLeft' ? -20 : event.key === 'ArrowRight' ? 20 : 0), point.y + (event.key === 'ArrowUp' ? -20 : event.key === 'ArrowDown' ? 20 : 0));
         }}
-        onClick={() => { if (suppressClick.current) suppressClick.current = false; else onSelect(node.id); }}><strong>{node.id}</strong><span>{kinds[node.kind]}{graph.entry === node.id ? ' · Start' : ''}</span>{labels ? <small>{labels.get(node.id) ?? 'Not run yet'}</small> : loops?.has(node.id) && <small>Unconditional loop</small>}</button>; })}
+        onClick={() => { if (suppressClick.current) suppressClick.current = false; else onSelect(node.id); }}><strong>{node.id}</strong><span>{workflowStepTypeLabel(node.kind)}{graph.entry === node.id ? ' · Start' : ''}</span>{labels ? <small>{labels.get(node.id) ?? 'Not run yet'}</small> : loops?.has(node.id) && <small>Unconditional loop</small>}</button>; })}
     </div>
   </div><div className="workflow-graph-links"><Collapsible title="Step connections"><ul>{edges.map((edge, index) => <li key={`${edge.from}:${index}`}>{edge.from}: {edge.label.toLowerCase()} to {edge.to || 'not selected yet'}{edge.to && !byId.has(edge.to) ? ' (step not found)' : ''}</li>)}</ul></Collapsible></div></>;
 }

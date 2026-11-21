@@ -54,6 +54,10 @@ for(const platform of ['slack','telegram'] as const)for(const mode of ['step','r
    }
    await waitDone(row.turn);await deliver();
    const path=`/api/scripts/agents/${owner}/workflow-runs/${row.turn}`,run=await actual(path);
+   if(mode==='step'&&!partial){
+    assert.equal(run.status,'done');assert.equal(run.result,'Done');
+    assert(connector.jsonPosts<{text:string}>(platform==='slack'?'chat.postMessage':'sendMessage').some(post=>post.text==='Done'));
+   }
    if(mode==='notice'){
     const detail=await ui(`/api/workflow-runs/${row.turn}`),step=detail.steps.find((step:any)=>step.thread),parent=(await ui(`/api/threads/${step.thread}/turns`))[0],child=parent.agentMessages[0];let childTurn:any;
     for(let i=0;i<200;i++){childTurn=(await ui(`/api/threads/${child.thread}/turns`))[0];if(childTurn.status==='done')break;await new Promise(r=>setTimeout(r,10));}

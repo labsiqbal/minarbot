@@ -226,6 +226,43 @@ async fn canonical_parallel_graph_rejection_preserves_versions_receipts_and_sync
 }
 
 #[tokio::test]
+async fn canonical_saved_run_reports_unsupported_step_as_failed() -> Result<()> {
+    let f = Fixture::new(epoch("2024-01-01T00:00:00Z"))?;
+    f.workflow(WORKFLOW).await?;
+    f.ready()?;
+    for kind in [
+        "image",
+        "asset",
+        "file-output",
+        "message-trigger",
+        "parallel",
+    ] {
+        let run = uuid::Uuid::new_v4().to_string();
+        f.request(
+            &format!("/workflows/{WORKFLOW}/run"),
+            Some(&json!({"requestId":run,"id":run,"revision":1,"input":"Keep input"})),
+        )
+        .await?;
+        let graph = json!({"entry":"out","maxSteps":1,"nodes":[{"id":"out","kind":kind}]});
+        f.db(|db| {
+            db.execute(
+                "UPDATE workflow_runs SET graph=? WHERE id=?",
+                params![graph.to_string(), run],
+            )?;
+            Ok(())
+        })?;
+        f.tick()?;
+        let data = f.request(&format!("/workflow-runs/{run}"), None).await?["data"].clone();
+        let reason = format!("Unsupported workflow step type: {kind}.");
+        assert_eq!(data["status"], "failed");
+        assert_eq!(data["error"], reason);
+        assert_eq!(data["steps"][0]["status"], "failed");
+        assert_eq!(data["steps"][0]["detail"], reason);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn workflow_schedule_rotates_batches_past_offline_homes() -> Result<()> {
     let now = epoch("2024-01-01T00:00:00Z");
     let f = Fixture::new(now)?;

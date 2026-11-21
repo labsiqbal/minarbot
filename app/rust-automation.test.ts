@@ -137,6 +137,11 @@ test('Rust workflow schedules skip busy approvals once and leave offline work du
       assert(admitted.occurrences[0].run);
       assert.equal(admitted.schedule.enabled, 0);
       assert.equal((await api(`/api/workflows/${workflow.id}/runs`)).length, 1);
+      const run = await until(`/api/workflow-runs/${admitted.occurrences[0].run}`, data => data.status === 'done');
+      assert.equal(run.input, settings.input);
+      assert.equal(run.cursor, 'out');
+      if (workflow.id === onlineOnly.id) assert.equal(run.last, settings.input);
+      else assert.deepEqual(JSON.parse(run.last), [{ branch: 1, result: 'yes' }, { branch: 2, result: 'yes' }]);
     }
   } finally {
     await app.close();

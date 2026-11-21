@@ -9,8 +9,14 @@ export type WorkflowNode =
   | { id: string; kind: 'output'; channel?: string };
 export type WorkflowGraph = { entry: string; maxSteps: number; nodes: WorkflowNode[]; positions?: Record<string, { x: number; y: number }> };
 
+export const workflowStepTypes = { agent: 'Agent', parallel: 'Parallel', model: 'Model', condition: 'Condition', approval: 'Approval', wait: 'Wait for event', output: 'Output' } satisfies Record<WorkflowNode['kind'], string>;
+export function workflowStepTypeLabel(kind: WorkflowNode['kind']): string {
+  return Object.hasOwn(workflowStepTypes, kind) ? workflowStepTypes[kind] : `Unsupported (${kind})`;
+}
+
 export function removeWorkflowNode(graph: WorkflowGraph, removed: string): WorkflowGraph {
   return { ...graph, ...(graph.positions ? { positions: Object.fromEntries(Object.entries(graph.positions).filter(([id]) => id !== removed)) } : {}), entry: graph.entry === removed ? '' : graph.entry, nodes: graph.nodes.filter(node => node.id !== removed).map(node => {
+    if (!Object.hasOwn(workflowStepTypes, node.kind)) return node;
     // Legacy approval rejection edges no longer execute or appear in the editor.
     if (node.kind === 'approval') return { id: node.id, kind: node.kind, prompt: node.prompt, yes: node.yes === removed ? '' : node.yes };
     return { ...node, ...('next' in node && node.next === removed ? { next: '' } : {}),
@@ -35,13 +41,14 @@ function id(value: unknown): string {
   return result;
 }
 export function workflowEdges(node: WorkflowNode): string[] {
+  if (!Object.hasOwn(workflowStepTypes, node.kind)) return [];
   return node.kind === 'output' ? [] : 'next' in node ? [node.next] : node.kind === 'approval' ? [node.yes] : [node.yes, node.no];
 }
 
 export function validateWorkflow(value: unknown, agents: ReadonlySet<string>): WorkflowGraph { return parseWorkflow(value, agents, false); }
-export function validateWorkflowDraft(value: unknown): WorkflowGraph { return parseWorkflow(value, new Set(), true); }
+export function validateWorkflowDraft(value: unknown, saved?: WorkflowGraph): WorkflowGraph { return parseWorkflow(value, new Set(), true, saved); }
 
-function parseWorkflow(value: unknown, agents: ReadonlySet<string>, draft: boolean): WorkflowGraph {
+function parseWorkflow(value: unknown, agents: ReadonlySet<string>, draft: boolean, saved?: WorkflowGraph): WorkflowGraph {
   const edge = (value: unknown) => draft && value === '' ? '' : id(value);
   const graph = object(value); keys(graph, ['entry', 'maxSteps', 'nodes', 'positions']);
   const entry = edge(graph.entry), maxSteps = graph.maxSteps;
@@ -93,7 +100,11 @@ function parseWorkflow(value: unknown, agents: ReadonlySet<string>, draft: boole
         keys(node, ['id', 'kind', 'channel']);
         if (node.channel !== undefined && (typeof node.channel !== 'string' || (!draft && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(node.channel)) || node.channel.length > 36)) throw new Error('Invalid output channel.');
         return { id: name, kind: node.kind, ...(node.channel === undefined ? {} : { channel: node.channel }) };
-      default: throw new Error('Unsupported workflow step type.');
+      default: {
+        const original = saved?.nodes.find(step => step.id === name);
+        if (draft && original && JSON.stringify(original) === JSON.stringify(node)) return original;
+        throw new Error('Unsupported workflow step type.');
+      }
     }
   });
   const known = new Set(nodes.map(node => node.id));

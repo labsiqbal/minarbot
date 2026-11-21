@@ -3,11 +3,12 @@ import { WorkflowGraph as GraphView } from './WorkflowGraph';
 import { ActionMenu, Alert, Button, Field, IconButton, Input, PageHeader, Select, Textarea, useConfirm, useField } from './ui/kit';
 import { Ellipsis, Plus, Redo2, Undo2 } from 'lucide-react';
 import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowDraftMatches, workflowUnconditionalCycles, type WorkflowHistory } from './workflow-editor-state';
-import { removeWorkflowNode, validateWorkflow, type WorkflowGraph, type WorkflowNode } from './workflows.ts';
+import { removeWorkflowNode, validateWorkflow, workflowStepTypeLabel, workflowStepTypes, type WorkflowGraph, type WorkflowNode } from './workflows.ts';
 
 export type Workflow = { id: string; agent: string; name: string; revision: number; graph: WorkflowGraph; deleted?: number };
 export type WorkflowDraft = { name: string; graph: WorkflowGraph; revision: number };
 type Agent = { id: string; name: string; model: string };
+const stepTypeOptions = Object.entries(workflowStepTypes).map(([value, label]) => ({ value, label }));
 
 // ponytail: native validation until kit Select supports required and empty values.
 function RequiredSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
@@ -30,7 +31,7 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
     return () => { stopped = true; };
   }, [owner.id, channelRefresh]);
   const [recovery, setRecovery] = useState(() => {
-    try { return { draft: restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey)), invalid: false, held: pendingSave }; }
+    try { return { draft: restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey), saved?.graph), invalid: false, held: pendingSave }; }
     catch { return { draft: null, invalid: true, held: pendingSave }; }
   });
   const [draftConflict, setDraftConflict] = useState(!!recovery.draft && recovery.draft.revision !== (saved?.revision ?? 0));
@@ -125,7 +126,7 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
     <PageHeader headingRef={heading} title={initial ? 'Edit workflow' : 'New workflow'} description="Arrange steps and their next destinations. Approvals wait for your decision. Saved changes apply only to new runs." actions={<><Button variant="ghost" onClick={async () => { if (!dirty || await confirm({ title: 'Leave editor?', description: 'There are unsaved changes. Leave the editor?', confirm: 'Leave', danger: true })) onBack(); }}>Back</Button><Button type="submit" form="workflow-editor" variant="primary" disabled={locked}>Save workflow</Button></>} />
     {recovery.held && !pendingSave && <Alert tone="warn">The request has completed. Review the local draft before continuing to edit. <Button type="button" disabled={parentLocked} onClick={() => {
       try {
-        const local = restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey));
+        const local = restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey), saved?.graph);
         setRecovery({ draft: local, invalid: false, held: false });
         setDraftConflict(!!local && local.revision !== (saved?.revision ?? 0));
         if (local) { setName(local.name); setHistory(current => editWorkflowHistory(current, local.graph)); }
@@ -143,9 +144,9 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
       <p className="k-field__hint">Choose a step in the graph to open its settings. Undo and redo apply to graph changes, not the workflow name.</p>
       {!!cycles.length && <Alert tone="warn">Unconditional loop: {cycles.map(cycle => cycle.join(', ')).join('; ')}. The loop stops if approval is denied, the run is canceled, or the step limit is reached.</Alert>}
       <GraphView graph={graph} loops={new Set(cycles.flat())} onMove={(id, x, y) => { setSelected(id); setGraph(current => moveWorkflowNode(current, id, x, y)); }} selected={selected} locked={locked} buttonRefs={buttons.current} onSelect={id => { setSelected(id); panels.current.get(id)?.focus(); panels.current.get(id)?.scrollIntoView({ block: 'nearest' }); }} />
-      {graph.nodes.map((node, index) => <fieldset className="k-fieldset workflow-node" style={{ padding: 16, border: '0.5px solid var(--color-border-secondary)', borderRadius: 14 }} key={node.id} tabIndex={-1} ref={element => { if (element) panels.current.set(node.id, element); else panels.current.delete(node.id); }}><legend>Step {node.id}</legend>
+      {graph.nodes.map((node, index) => { const unsupported = !Object.hasOwn(workflowStepTypes, node.kind); return <fieldset className="k-fieldset workflow-node" style={{ padding: 16, border: '0.5px solid var(--color-border-secondary)', borderRadius: 14 }} key={node.id} tabIndex={-1} ref={element => { if (element) panels.current.set(node.id, element); else panels.current.delete(node.id); }}><legend>Step {node.id}</legend>
         <div className="k-inline"><Button type="button" onClick={() => { setSelected(node.id); buttons.current.get(node.id)?.focus(); buttons.current.get(node.id)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }}>Back to graph {node.id}</Button></div>
-        <Field label="Step type"><Select disabled={locked} value={node.kind} onChange={value => changeKind(index, value as WorkflowNode['kind'])} options={[{ value: 'agent', label: 'Agent' }, { value: 'parallel', label: 'Parallel' }, { value: 'model', label: 'Model' }, { value: 'condition', label: 'Condition' }, { value: 'approval', label: 'Approval' }, { value: 'wait', label: 'Wait for event' }, { value: 'output', label: 'Output' }]} /></Field>
+        <Field label="Step type" error={unsupported && 'Choose a supported type or delete this step.'}><Select disabled={locked} value={node.kind} valueLabel={unsupported ? workflowStepTypeLabel(node.kind) : undefined} onChange={value => changeKind(index, value as WorkflowNode['kind'])} options={stepTypeOptions} /></Field>
         {node.kind === 'agent' && <Field label="Executing agent" hint={agents.find(agent => agent.id === node.agent)?.name}><Select disabled={locked} value={node.agent} onChange={value => update(index, { agent: value })} options={agents.map(agent => ({ value: agent.id, label: agent.name.length > 24 ? agent.name.slice(0, 21) + '...' : agent.name }))} /></Field>}
         {node.kind === 'model' && <Field label="Model"><Input required maxLength={200} value={node.model} onChange={event => update(index, { model: event.target.value })} /></Field>}
         {node.kind === 'parallel' && <>
@@ -160,15 +161,15 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
           <Button size="sm" disabled={locked || node.branches.length >= 8} onClick={() => update(index, { branches: [...node.branches, { kind: 'agent', agent: owner.id, prompt: '' }] })}>Add branch</Button>
         </>}
         {node.kind === 'wait' && <><Field label="Event name"><Input required maxLength={256} value={node.event} onChange={event => update(index, { event: event.target.value })} /></Field><Field label="Wait timeout (seconds)"><Input type="number" required min={1} max={604800} value={node.timeoutSeconds} onChange={event => update(index, { timeoutSeconds: Number(event.target.value) })} /></Field><p className="k-field__hint">Waits for a signed event for this run and step. The payload becomes the step result; a timeout fails the workflow.</p></>}
-        {'prompt' in node && <Field label={node.kind === 'approval' ? 'Approval question' : 'Step instructions'}><Textarea required maxLength={node.kind === 'approval' ? 4000 : 16000} rows={3} value={node.prompt} onChange={event => update(index, { prompt: event.target.value })} /></Field>}
+        {!unsupported && 'prompt' in node && <Field label={node.kind === 'approval' ? 'Approval question' : 'Step instructions'}><Textarea required maxLength={node.kind === 'approval' ? 4000 : 16000} rows={3} value={node.prompt} onChange={event => update(index, { prompt: event.target.value })} /></Field>}
         {node.kind === 'condition' && <><Field label="Condition evaluation"><Select disabled={locked} value={node.operator} onChange={value => {
           const operator = value as 'equals' | 'contains' | 'model';
           const base = { id: node.id, kind: 'condition' as const, value: node.value, yes: node.yes, no: node.no };
           const replacement: WorkflowNode = operator === 'model' ? { ...base, operator, model: owner.model } : { ...base, operator };
           setGraph(current => ({ ...current, nodes: current.nodes.map((item, i) => i === index ? replacement : item) }));
         }} options={[{ value: 'equals', label: 'Exact match' }, { value: 'contains', label: 'Contains text' }, { value: 'model', label: 'Model judgment' }]} /></Field>{node.operator === 'model' && <Field label="Condition model"><Input required maxLength={200} value={node.model} onChange={event => update(index, { model: event.target.value })} /></Field>}<Field label={node.operator === 'model' ? 'Condition question' : 'Comparison text'} hint={node.operator === 'model' ? 'The model answers yes or no without tools. Any other answer fails the step; the previous result is still passed on.' : 'Case-sensitive.'}><Input required={node.operator === 'model'} maxLength={16000} value={node.value} onChange={event => update(index, { value: event.target.value })} /></Field></>}
-        {'next' in node && <Field label="Continue to"><RequiredSelect aria-label="Continue to" required value={node.next} onChange={event => update(index, { next: event.target.value })}>{targets}</RequiredSelect></Field>}
-        {'yes' in node && <><Field label={node.kind === 'approval' ? 'If approved' : 'If matched'}><RequiredSelect aria-label={node.kind === 'approval' ? 'If approved' : 'If matched'} required value={node.yes} onChange={event => update(index, { yes: event.target.value })}>{targets}</RequiredSelect></Field>{node.kind === 'condition' ? <Field label="If not matched"><RequiredSelect aria-label="If not matched" required value={node.no} onChange={event => update(index, { no: event.target.value })}>{targets}</RequiredSelect></Field> : <p className="k-field__hint">Rejection stops the run. Previous results remain saved.</p>}</>}
+        {!unsupported && 'next' in node && <Field label="Continue to"><RequiredSelect aria-label="Continue to" required value={node.next} onChange={event => update(index, { next: event.target.value })}>{targets}</RequiredSelect></Field>}
+        {(node.kind === 'approval' || node.kind === 'condition') && <><Field label={node.kind === 'approval' ? 'If approved' : 'If matched'}><RequiredSelect aria-label={node.kind === 'approval' ? 'If approved' : 'If matched'} required value={node.yes} onChange={event => update(index, { yes: event.target.value })}>{targets}</RequiredSelect></Field>{node.kind === 'condition' ? <Field label="If not matched"><RequiredSelect aria-label="If not matched" required value={node.no} onChange={event => update(index, { no: event.target.value })}>{targets}</RequiredSelect></Field> : <p className="k-field__hint">Rejection stops the run. Previous results remain saved.</p>}</>}
         {node.kind === 'output' && <><Field label="Result destination"><Select disabled={locked} value={node.channel === undefined ? 'inbox' : 'channel'} onChange={value => {
           setGraph(current => ({ ...current, nodes: current.nodes.map(item => item.id === node.id ? { id: node.id, kind: 'output', ...(value === 'channel' ? { channel: '' } : {}) } : item) }));
         }} options={[{ value: 'inbox', label: 'Workflow inbox' }, { value: 'channel', label: 'Section and inbox' }]} /></Field>
@@ -180,7 +181,7 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
           const next = graph.nodes.find(item => item.id !== node.id)?.id;
           if (next) { focusAfterRemoval.current = next; setSelected(next); setGraph(current => removeWorkflowNode(current, node.id)); }
         } }]} />
-      </fieldset>)}
+      </fieldset>; })}
       <div className="k-inline"><Button type="button" disabled={graph.nodes.length >= 64} onClick={() => { let n = graph.nodes.length + 1; while (graph.nodes.some(node => node.id === `step${n}`)) n++; setGraph({ ...graph, nodes: [...graph.nodes, { id: `step${n}`, kind: 'output' }] }); }} icon={<Plus size={14} aria-hidden />}>Add step</Button></div>
     </fieldset>
     {error && <Alert tone="error">{error}</Alert>}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { removeWorkflowNode, validateWorkflow, workflowEdges } from './src/workflows.ts';
+import { removeWorkflowNode, validateWorkflow, workflowEdges, workflowStepTypeLabel, workflowStepTypes, type WorkflowGraph } from './src/workflows.ts';
 import { restoreWorkflowCommand } from './src/workflow-command.ts';
 import { randomUUID } from 'node:crypto';
 import { editWorkflowHistory, moveWorkflowNode, restoreWorkflowEditorDraft, workflowAutosaveDraft, workflowLayout, workflowUnconditionalCycles, workflowNodeLabels, workflowStepLabel, type WorkflowHistory } from './src/workflow-editor-state.ts';
@@ -161,6 +161,23 @@ test('local workflow drafts preserve incomplete edits without relaxing execution
   assert.deepEqual(editWorkflowHistory(editWorkflowHistory(history, latest), 'undo').graph, history.graph);
 });
 
+
+test('saved legacy steps stay visible and can be replaced without offering them as choices', () => {
+  for (const kind of ['image', 'asset', 'file-output', 'message-trigger', 'constructor']) {
+    const legacy = { id: 'legacy', kind, next: 'out', prompt: 'Keep original settings' };
+    const graph = { entry: 'legacy', maxSteps: 2, nodes: [legacy, { id: 'out', kind: 'output' }] } as WorkflowGraph;
+    const draft = { name: 'Legacy', graph, revision: 1 };
+    assert.equal(Object.hasOwn(workflowStepTypes, kind), false);
+    assert.equal(workflowStepTypeLabel(graph.nodes[0].kind), `Unsupported (${kind})`);
+    assert.deepEqual(workflowEdges(graph.nodes[0]), []);
+    assert.deepEqual(restoreWorkflowEditorDraft(JSON.stringify(draft), graph), draft);
+    assert.throws(() => restoreWorkflowEditorDraft(JSON.stringify(draft)));
+    assert.throws(() => validateWorkflow(graph, new Set()), /Unsupported workflow step type/);
+    assert.equal(workflowAutosaveDraft('Renamed', graph, draft, new Set()), null);
+    const repaired = { ...removeWorkflowNode(graph, 'legacy'), entry: 'out' };
+    assert.deepEqual(workflowAutosaveDraft(draft.name, repaired, draft, new Set())?.graph, repaired);
+  }
+});
 
 test('graph view identifies unconditional cycles and latest run attempt without mutating history', () => {
   const graph = { entry: 'a', maxSteps: 5, nodes: [

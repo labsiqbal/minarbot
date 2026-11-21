@@ -7,8 +7,9 @@ export function workflowAutosaveDraft(name: string, graph: WorkflowGraph, saved:
 }
 
 export function workflowDraftMatches(name: string, graph: WorkflowGraph, saved: { name: string; graph: WorkflowGraph }, agents: ReadonlySet<string>): boolean {
-  try { return name.trim() === saved.name && JSON.stringify(validateWorkflow(graph, agents)) === JSON.stringify(validateWorkflow(saved.graph, agents)); }
-  catch { return false; }
+  if (name.trim() !== saved.name) return false;
+  try { return JSON.stringify(validateWorkflow(graph, agents)) === JSON.stringify(validateWorkflow(saved.graph, agents)); }
+  catch { return JSON.stringify(graph) === JSON.stringify(saved.graph); }
 }
 
 export type WorkflowHistory = { graph: WorkflowGraph; past: WorkflowGraph[]; future: WorkflowGraph[] };
@@ -80,11 +81,11 @@ export function moveWorkflowNode(graph: WorkflowGraph, id: string, x: number, y:
 }
 
 
-export function restoreWorkflowEditorDraft(raw: string | null): { name: string; graph: WorkflowGraph; revision: number } | null {
+export function restoreWorkflowEditorDraft(raw: string | null, saved?: WorkflowGraph): { name: string; graph: WorkflowGraph; revision: number } | null {
   if (raw === null) return null;
   if (raw.length > 2 * 1024 * 1024) throw new Error('Workflow draft is too large.');
   const value = JSON.parse(raw);
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['name', 'graph', 'revision'].includes(key))
     || typeof value.name !== 'string' || value.name.length > 80 || !Number.isSafeInteger(value.revision) || value.revision < 0) throw new Error('Invalid workflow draft.');
-  return { name: value.name, graph: validateWorkflowDraft(value.graph), revision: value.revision };
+  return { name: value.name, graph: validateWorkflowDraft(value.graph, saved), revision: value.revision };
 }
