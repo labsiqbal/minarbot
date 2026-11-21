@@ -1,3 +1,4 @@
+import { instantMenusSmoke } from './instant-menus-smoke.mjs';
 import { selfVerifyReply, selfVerifySmoke } from './self-verify-smoke.mjs';
 import { providersHiddenSmoke } from './providers-hidden-smoke.mjs';
 import { fileOutputPanelSmoke, fileOutputReply } from './file-output-panel-smoke.mjs';
@@ -931,6 +932,17 @@ try {
   page.on('response', response => { if (new URL(response.url()).pathname.startsWith('/api/') && response.status() >= 500) receipt.failedRequests.push({ check: activeCheck, url: response.url(), method: response.request().method(), status: response.status(), atMs: Date.now() - started }); });
   receipt.timings.startupMs = Date.now() - started;
 
+  if (process.env.MINARBOT_SMOKE_INSTANT_MENUS_ONLY === '1') {
+    const agent = await page.request.post(origin + '/api/agents', { headers: { Origin: origin }, data: { runtime: 'api', id: gitAgent, name: lead, model: models[0], instructions: 'Synthetic menus fixture.' } });
+    assert(agent.ok(), await agent.text());
+    const backToChat = async () => {
+      if (page.url() === 'about:blank') await workspace();
+      await page.getByRole('navigation', { name: 'Choose agent', exact: true }).getByRole('button', { name: new RegExp('^' + lead + ' ') }).click();
+      await visible(page.getByRole('main', { name: 'Conversation ' + lead, exact: true }));
+    };
+    await instantMenusSmoke({ page, check, backToChat, origin, agentId: gitAgent });
+    throw new Error('SMOKE_STOP_AFTER');
+  }
   if (process.env.MINARBOT_SMOKE_NC1_ONLY === '1') {
     await page.request.post(origin + '/api/agents', { headers: { Origin: origin }, data: { runtime: 'api', id: gitAgent, name: gitName, model: 'smoke-primary', instructions: 'Synthetic source control.' } });
     await fileOutputPanelSmoke({ page, origin, root, check, gitAgent, gitName, agentChat: async () => {} });

@@ -3,6 +3,7 @@ import { createContext, forwardRef, useCallback, useContext, useEffect, useId, u
 import { AlertDialog, Checkbox as RadixCheckbox, Collapsible as RadixCollapsible, Dialog as RadixDialog, DropdownMenu, Popover, Select as RadixSelect, Switch as RadixSwitch, Tabs as RadixTabs, Tooltip as RadixTooltip } from 'radix-ui';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, CircleAlert, Info, X } from 'lucide-react';
 import { getNonce } from 'get-nonce';
+import { useDelayedVisible } from '../hooks/useDelayedVisible';
 
 const cx = (...names: (string | false | null | undefined)[]) => names.filter(Boolean).join(' ');
 
@@ -175,8 +176,11 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
 export function EmptyState({ icon, title, children, action }: { icon?: ReactNode; title: ReactNode; children?: ReactNode; action?: ReactNode }) {
   return <div className="k-empty">{icon && <span className="k-empty__icon" aria-hidden>{icon}</span>}<div className="k-empty__title">{title}</div>{children && <div className="k-empty__text">{children}</div>}{action}</div>;
 }
+export function Delayed({ children }: { children: ReactNode }) {
+  return useDelayedVisible() ? children : null;
+}
 export function SkeletonRows({ count = 3 }: { count?: number }) {
-  return <div className="k-card" aria-hidden>{Array.from({ length: count }, (_, index) => <div key={index} className="k-row"><div className="k-row__main"><span className="k-row__text"><span className="k-skeleton" style={{ width: `${46 + (index * 17) % 30}%` }} /><span className="k-skeleton is-small" style={{ width: `${22 + (index * 11) % 20}%` }} /></span></div></div>)}</div>;
+  return <Delayed><div className="k-card" aria-hidden>{Array.from({ length: count }, (_, index) => <div key={index} className="k-row"><div className="k-row__main"><span className="k-row__text"><span className="k-skeleton" style={{ width: `${46 + (index * 17) % 30}%` }} /><span className="k-skeleton is-small" style={{ width: `${22 + (index * 11) % 20}%` }} /></span></div></div>)}</div></Delayed>;
 }
 export function PageHeader({ title, description, actions, headingRef }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; headingRef?: Ref<HTMLHeadingElement> }) {
   return <header className="k-page-head"><div className="k-page-head__text"><h1 ref={headingRef} tabIndex={-1}>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="k-page-head__actions">{actions}</div>}</header>;
@@ -197,12 +201,12 @@ export function Tooltip({ content, children, side, sideOffset = 6 }: { content: 
   return <RadixTooltip.Provider delayDuration={400}><RadixTooltip.Root><RadixTooltip.Trigger asChild onFocus={event => { if (!(event.target as HTMLElement).matches(':focus-visible')) event.preventDefault(); }}>{children}</RadixTooltip.Trigger><RadixTooltip.Portal><RadixTooltip.Content className="k-tooltip" side={side} sideOffset={sideOffset}>{content}</RadixTooltip.Content></RadixTooltip.Portal></RadixTooltip.Root></RadixTooltip.Provider>;
 }
 
-export type MenuEntry = { label: string; onSelect: () => void; danger?: boolean; disabled?: boolean; icon?: ReactNode; hint?: string } | 'separator';
+export type MenuEntry = { label: string; onSelect: () => void; prefetch?: () => void; danger?: boolean; disabled?: boolean; icon?: ReactNode; hint?: string } | 'separator';
 export function ActionMenu({ trigger, items, align = 'end', label, onCloseAutoFocus }: { onCloseAutoFocus?: (event: Event) => void; trigger: ReactNode; items: MenuEntry[]; align?: 'start' | 'center' | 'end'; label: string }) {
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild aria-label={label}>{trigger}</DropdownMenu.Trigger>
     <DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align={align} sideOffset={6} onCloseAutoFocus={onCloseAutoFocus}>
-      {items.map((item, index) => item === 'separator' ? <DropdownMenu.Separator key={index} className="k-menu__sep" /> : <DropdownMenu.Item key={item.label} disabled={item.disabled} onSelect={item.onSelect} className={cx('k-menu__item', item.danger && 'is-danger')}>{item.icon}{item.label}{item.hint && <span className="k-menu__hint">{item.hint}</span>}</DropdownMenu.Item>)}
+      {items.map((item, index) => item === 'separator' ? <DropdownMenu.Separator key={index} className="k-menu__sep" /> : <DropdownMenu.Item key={item.label} disabled={item.disabled} onSelect={item.onSelect} onPointerEnter={item.prefetch} onFocus={item.prefetch} className={cx('k-menu__item', item.danger && 'is-danger')}>{item.icon}{item.label}{item.hint && <span className="k-menu__hint">{item.hint}</span>}</DropdownMenu.Item>)}
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>;
 }

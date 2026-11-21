@@ -1,6 +1,7 @@
+import { useCachedQuery } from './hooks/useCachedQuery';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Ellipsis, Plus, Server } from 'lucide-react';
-import { ActionMenu, Alert, Badge, Button, Card, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, useConfirm } from './ui/kit';
+import { ActionMenu, Alert, Delayed, Badge, Button, Card, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, useConfirm } from './ui/kit';
 
 const path = '/api/provider-accounts';
 const providers = {
@@ -18,18 +19,15 @@ type SavedAccount = Extract<Account, { source: 'settings' }>;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Request failed. Try again.';
 
 export function ProvidersPanel({ request }: { request: Request }) {
-  const [accounts, setAccounts] = useState<Account[] | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);
+  const { data: accounts, setData: setAccounts, fresh, error: loadError, reload } = useCachedQuery<Account[]>(request, path);
+  const [actionError, setError] = useState('');
+  const error = actionError || (loadError ? message(loadError) : '');
   const [editing, setEditing] = useState<SavedAccount | 'new' | null>(null);
   const [removing, setRemoving] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const add = useRef<HTMLButtonElement>(null);
   const confirm = useConfirm();
   useEffect(() => { heading.current?.focus(); }, []);
-  useEffect(() => {
-    let alive = true;
-    void request<Account[]>(path).then(rows => { if (alive) setAccounts(rows); }).catch(error => { if (alive) setError(message(error)); });
-    return () => { alive = false; };
-  }, [request, reload]);
 
   async function remove(account: SavedAccount) {
     setRemoving(true);
@@ -52,9 +50,9 @@ export function ProvidersPanel({ request }: { request: Request }) {
   const visible = accounts?.filter(account => account.configured || account.source === 'settings');
   return <div className="k-page bs-root">
     <PageHeader headingRef={heading} title="Providers" actions={<Button ref={add} variant="primary" disabled={accounts === null} icon={<Plus size={14} aria-hidden />} onClick={() => { setError(''); setEditing('new'); }}>Add provider</Button>} />
-    {error && <Alert tone="error" actions={!accounts && <Button size="sm" onClick={() => { setError(''); setReload(value => value + 1); }}>Retry</Button>}>{error}</Alert>}
+    {error && <Alert tone="error" actions={!accounts && <Button size="sm" onClick={() => { setError(''); reload(); }}>Retry</Button>}>{error}</Alert>}
     {!visible ? !error && <SkeletonRows /> : !visible.length ? <EmptyState icon={<Server size={20} aria-hidden />} title="No providers" /> : visible.map(account => <Section key={account.id} title={account.name} actions={account.source === 'settings'
-      ? <ActionMenu label={`Actions for ${account.name}`} trigger={<IconButton label={`Actions for ${account.name}`} disabled={removing}><Ellipsis size={16} aria-hidden /></IconButton>} items={[
+      ? <ActionMenu label={`Actions for ${account.name}`} trigger={<IconButton label={`Actions for ${account.name}`} disabled={removing || !fresh}><Ellipsis size={16} aria-hidden /></IconButton>} items={[
         { label: 'Edit', onSelect: () => { setError(''); setEditing(account); } },
         { label: 'Remove', danger: true, onSelect: () => { void remove(account); } },
       ]} />
@@ -126,13 +124,8 @@ export function ProviderForm({ account, request, onClose, onSaved }: { account?:
 
 function ProviderModels({ account, request }: { account: Account; request: Request }) {
   const [query, setQuery] = useState(''), [closed, setClosed] = useState<string[]>([]);
-  const [models, setModels] = useState<string[] | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);
-  useEffect(() => {
-    if (!account.configured) return;
-    let alive = true; setError('');
-    void request<{ models: string[] }>(`/api/models?account=${encodeURIComponent(account.id)}`).then(data => { if (alive) setModels(data.models); }).catch(error => { if (alive) setError(error instanceof Error ? error.message : 'Models could not be loaded.'); });
-    return () => { alive = false; };
-  }, [account.id, account.configured, request, reload]);
+  const { data, error, reload } = useCachedQuery<{ models: string[] }>(request, `/api/models?account=${encodeURIComponent(account.id)}`, account.configured);
+  const models = data?.models;
   const groups = new Map<string, string[]>();
   for (const model of [...new Set(models ?? [])].sort()) {
     if (!model.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) continue;
@@ -145,7 +138,8 @@ function ProviderModels({ account, request }: { account: Account; request: Reque
     {account.configured && <div className="provider-models">
       <div className="provider-models__head"><span>Models</span>{models && <Badge>{models.length}</Badge>}</div>
       <Input type="search" aria-label={`Search models for ${account.name}`} placeholder="Search models" value={query} onChange={event => { setQuery(event.target.value); setClosed([]); }} />
-      {error ? <Alert tone="error" actions={<Button size="sm" onClick={() => setReload(value => value + 1)}>Retry</Button>}>{error}</Alert> : !models ? <p role="status">Loading models...</p> : <div className="provider-models__scroll" role="region" aria-label={`Models for ${account.name}`} tabIndex={0}>
+      {error != null && <Alert tone="error" actions={<Button size="sm" onClick={reload}>Retry</Button>}>{error instanceof Error ? error.message : 'Models could not be loaded.'}</Alert>}
+      {!models ? !error && <Delayed><p role="status">Loading models...</p></Delayed> : <div className="provider-models__scroll" role="region" aria-label={`Models for ${account.name}`} tabIndex={0}>
         {[...groups].map(([prefix, items]) => <Collapsible key={prefix} open={!closed.includes(prefix)} onOpenChange={open => setClosed(current => open ? current.filter(item => item !== prefix) : [...current, prefix])} title={<>{prefix}<Badge>{items.length}</Badge></>}>
           <ul className="provider-models__list">{items.map(model => <li key={model}><span className="provider-model-id">{model}</span>{model === account.defaultModel && <Badge>Default</Badge>}</li>)}</ul>
         </Collapsible>)}

@@ -1,4 +1,5 @@
-import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { restoreSkillCommand, type SkillCommand } from '../shared/skill-command';
 import { ArrowLeft, ChevronLeft, ChevronRight, Ellipsis, FileText, Package, Plus } from 'lucide-react';
@@ -10,7 +11,7 @@ type Page = { packs: Pack[]; next_after: string | null };
 type Library = { skills: { id: string; name: string; revision: number }[]; next_after: string | null };
 const storage = 'minarbot:pack-command';
 export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedded = false, headingRef }: { headingRef?: RefObject<HTMLHeadingElement | null>; embedded?: boolean; agents: { id: string; name: string }[]; initialOwner: string; request: <T>(path: string, body?: unknown) => Promise<T>; onClose: () => void }) {
-  const [owner, setOwner] = useState(initialOwner), [page, setPage] = useState<Page | null>(null), [library, setLibrary] = useState<Library | null>(null);
+  const [owner, setOwner] = useState(initialOwner);
   const [cursors, setCursors] = useState(['']), [skillCursors, setSkillCursors] = useState(['']), [refresh, setRefresh] = useState(0);
   const [editor, setEditor] = useState<Pack | null>(null), [baseline, setBaseline] = useState(''), [binding, setBinding] = useState<Binding | null | undefined>(undefined);
   const [version, setVersion] = useState(1), [skill, setSkill] = useState(''), [skillVersion, setSkillVersion] = useState(1);
@@ -21,13 +22,15 @@ export function SkillPacksPanel({ agents, initialOwner, request, onClose, embedd
   const confirm = useConfirm();
   const replace = async () => !editor || JSON.stringify(editor) === baseline || confirm({ title: 'Discard unsaved pack changes?', confirm: 'Discard changes', danger: true });
   useEffect(() => { if (!embedded) heading.current?.focus(); return () => { generation.current++; }; }, []);
-  const loadScope = useRef(''), [loadError, setLoadError] = useState('');
-  usePolling(async signal => {
-    const scope = JSON.stringify([after, skillAfter, refresh]);
-    if (loadScope.current !== scope) { loadScope.current = scope; setPage(null); setLibrary(null); setError(''); }
+  const [loadError, setLoadError] = useState('');
+  const path = `/api/skill-packs${after ? `?after=${after}` : ''}`;
+  const libraryPath = `/api/skills${skillAfter ? `?after=${skillAfter}` : ''}`;
+  const { data: page } = useCachedData<Page>(path);
+  const { data: library } = useCachedData<Library>(libraryPath);
+  useQueryPolling(async signal => {
     try {
-      const [packs, skills] = await Promise.all([request<Page>(`/api/skill-packs${after ? `?after=${after}` : ''}`), request<Library>(`/api/skills${skillAfter ? `?after=${skillAfter}` : ''}`)]);
-      if (!signal.aborted) { setPage(packs); setLibrary(skills); setLoadError(''); }
+      await Promise.all([queryCache.refresh(path, () => request<Page>(path)), queryCache.refresh(libraryPath, () => request<Library>(libraryPath))]);
+      if (!signal.aborted) setLoadError('');
     } catch (error) { if (!signal.aborted) setLoadError(error instanceof Error ? error.message : 'Packs could not load.'); }
   }, { interval: 15000 }, [after, skillAfter, refresh, request]);
   useEffect(() => {

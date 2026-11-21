@@ -1,3 +1,5 @@
+import { useCachedData, useQueryVersion } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useCallback, useRef, useState } from 'react';
 import { Smartphone } from 'lucide-react';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
@@ -16,7 +18,8 @@ const lastSeen = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeS
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
 export function DevicesPanel({ request }: { request: Request }) {
-  const [settings, setSettings] = useState<DeviceSettings>();
+  const { data: settings, fresh } = useCachedData<DeviceSettings>(path);
+  const version = useQueryVersion();
   const [code, setCode] = useState<PairingCode>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -25,17 +28,16 @@ export function DevicesPanel({ request }: { request: Request }) {
   const confirm = useConfirm();
 
   const load = useCallback(async (current: () => boolean) => {
-    const version = generation.current;
+    const currentGeneration = generation.current;
     try {
-      const value = await request<DeviceSettings>(path);
-      if (current() && version === generation.current) {
-        setSettings(value);
+      await queryCache.refresh(path, () => request<DeviceSettings>(path));
+      if (current() && currentGeneration === generation.current) {
         setLoadError('');
       }
     } catch (error) {
-      if (current() && version === generation.current) setLoadError(message(error));
+      if (current() && currentGeneration === generation.current) setLoadError(message(error));
     }
-  }, [request]);
+  }, [request, version]);
   const panel = useVisiblePolling(load, 5000);
 
   const expired = useExpiry(code?.expiresAt);
@@ -59,8 +61,7 @@ export function DevicesPanel({ request }: { request: Request }) {
 
   function toggle(required: boolean) {
     void update(async () => {
-      const value = await request<{ required: boolean }>(path, { required });
-      setSettings(previous => previous && { ...previous, required: value.required });
+      await request(path, { required });
     });
   }
 
@@ -68,17 +69,16 @@ export function DevicesPanel({ request }: { request: Request }) {
     if (!await confirm({ title: 'Revoke device?', description: device.name, confirm: 'Revoke', danger: true })) return;
     await update(async () => {
       await request(path + '/revoke', { id: device.id });
-      if (settings?.current === device.id) window.location.reload();
-      else setSettings(previous => previous && { ...previous, devices: previous.devices.filter(item => item.id !== device.id) });
+      if (settings?.current === device.id) { queryCache.clear(); window.location.reload(); }
     });
   }
 
   return <div className="k-page bs-root devices-page" ref={panel}>
-    <PageHeader title="Devices" actions={<Button variant="primary" disabled={busy || !settings?.pairingUrl} onClick={issue}>Pair a device</Button>} />
+    <PageHeader title="Devices" actions={<Button variant="primary" disabled={busy || !fresh || !settings?.pairingUrl} onClick={issue}>Pair a device</Button>} />
     {(loadError || (!code && error)) && <Alert tone="error">{loadError || error}</Alert>}
     <Section title="Remote access">
       {settings ? <Card><Row title={signIn} meta={!settings.canRequire ? 'Pair this browser first.' : undefined}
-        trailing={<Switch label={signIn} checked={settings.required} disabled={busy || !settings.canRequire} onChange={toggle} />} /></Card> : <SkeletonRows count={1} />}
+        trailing={<Switch label={signIn} checked={settings.required} disabled={busy || !fresh || !settings.canRequire} onChange={toggle} />} /></Card> : <SkeletonRows count={1} />}
       {settings && !settings.pairingUrl && <Alert>Set up an HTTPS address to pair a device.</Alert>}
     </Section>
     <Section title="Paired devices">

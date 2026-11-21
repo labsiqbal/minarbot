@@ -8,7 +8,8 @@ import {
   type PeerState, type UpdateCommand, type UpdateMachine, type UpdateRun,
 } from '../updateEverything.logic.ts';
 import { localUpdateKey, readLocalUpdate, readSavedUpdateRun, submitUpdateCommand, updateRunCommand, updateRunKey, withUpdateReceipts, type UpdateRequest } from '../updateEverythingRun.ts';
-import { usePolling } from './usePolling.ts';
+import { useCachedData, useQueryPolling } from './useCachedQuery.ts';
+import { queryCache } from './queryCache.ts';
 
 type PollIssue = { message: string; reconnecting: boolean };
 const message = (error: unknown) => error instanceof Error ? error.message : 'Update status unavailable.';
@@ -30,7 +31,10 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
   const [run, setRun] = useState(recovery.run);
   const current = useRef(run), peerSnapshots = useRef<PeerState[]>([]);
   const legacy = useRef(recovery.run ? null : recovery.local);
-  const [state, setState] = useState<UpdateState | null>(null), [peers, setPeers] = useState<PeerState[] | null>(null);
+  const path = '/api/updates', peersPath = '/api/updates/machines';
+  const { data: state, fresh } = useCachedData<UpdateState>(path);
+  const { data: peerList, fresh: peersFresh } = useCachedData<{ machines: PeerState[] }>(peersPath);
+  const peers = peerList?.machines ?? null;
   const [selection, setSelection] = useState<string[] | null>(null);
   const [selectedRelease, setSelectedRelease] = useState<ReleaseInfo>();
   const [open, setOpen] = useState(!!recovery.run), [localIssue, setLocalIssue] = useState<PollIssue | null>(null);
@@ -47,7 +51,7 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
     if (attempt?.state === 'transferring') downloads[peer.machine] = attempt;
   }
   const ready = rows.some(row => !row.skipped);
-  const planning = selection === null && (!loaded || machines.length > 0 && peers === null);
+  const planning = selection === null && (!loaded || machines.length > 0 && !peersFresh);
 
   function save(next: UpdateRun) {
     try { sessionStorage.setItem(updateRunKey, JSON.stringify(next)); }
@@ -63,7 +67,7 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
   }
 
   function start(plan: UpdateMachine[]) {
-    if (current.current || storageError || planning && !legacy.current || reconnecting || error || !plan.some(row => !row.skipped)) return;
+    if (current.current || !fresh || storageError || planning && !legacy.current || reconnecting || error || !plan.some(row => !row.skipped)) return;
     const pending = legacy.current;
     const next = planUpdateRun(plan, () => crypto.randomUUID());
     if (pending) {
@@ -154,12 +158,12 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
     }
   }
 
-  usePolling(async signal => {
+  useQueryPolling(async signal => {
+    const version = queryCache.version();
     let value: UpdateState;
-    try { value = await request<UpdateState>('/api/updates', undefined, signal); }
+    try { value = await queryCache.refresh(path, () => request<UpdateState>(path, undefined, signal)); }
     catch (error) { if (!signal.aborted) setLocalIssue(pollIssue(error)); return; }
-    if (signal.aborted) return;
-    setState(value);
+    if (signal.aborted || version !== queryCache.version()) return;
     setLocalIssue(null);
     setCommandIssue(null);
     const pending = legacy.current;
@@ -179,12 +183,12 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
     await advance(value);
   }, { interval: active || settingsOpen || open ? 1000 : 15000 }, [request]);
 
-  usePolling(async signal => {
+  useQueryPolling(async signal => {
+    const version = queryCache.version();
     try {
-      const result = await request<{ machines: PeerState[] }>('/api/updates/machines', undefined, signal);
-      if (!signal.aborted) {
+      const result = await queryCache.refresh(peersPath, () => request<NonNullable<typeof peerList>>(peersPath, undefined, signal));
+      if (!signal.aborted && version === queryCache.version()) {
         peerSnapshots.current = result.machines;
-        setPeers(result.machines);
         setPeerIssue(null);
       }
     } catch (error) { if (!signal.aborted) setPeerIssue(pollIssue(error)); }

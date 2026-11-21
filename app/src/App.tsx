@@ -13,6 +13,8 @@ import { useComposerFocus } from './hooks/useComposerFocus';
 import { useQuickSwitcher } from './hooks/useQuickSwitcher';
 import { QuickSwitcher, type SwitcherItem } from './ui/QuickSwitcher';
 import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useNextFrame } from './hooks/useNextFrame';
 import { MessageFind } from './ui/MessageFind';
 import { AgentActions, HiddenAgentBanner, useDeleteAgent } from './AgentActions';
@@ -63,12 +65,12 @@ import { usePanelFileRequests } from './hooks/usePanelFileRequests';
 import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
 import { Link as LinkIcon, Smartphone, Archive, BarChart3, BookOpen, Cpu, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
-import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Collapsible, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, useConfirm, RecoveryAlert, Tooltip } from './ui/kit';
+import { ActionMenu, Alert, Delayed, Badge, Button, Card, Checkbox, Collapsible, ConfirmProvider, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Switch, TabPanel, Tabs, Textarea, useConfirm, RecoveryAlert, Tooltip } from './ui/kit';
 import { createRoot } from 'react-dom/client';
 import { Collapsible as Disclosure, Dialog as RadixDialog, DropdownMenu } from 'radix-ui';
 import { validateFlow, type FlowGraph, type FlowLink } from './flows.ts';
@@ -87,24 +89,8 @@ import './Routines.css';
 import { RoutineSchedule, scheduleLabel, type RoutineTiming } from './RoutineSchedule';
 import '@fontsource-variable/inter';
 
-const focusFailedPanelHeading = (heading: HTMLHeadingElement | null) => heading?.focus();
-const panelLoadFailure = () => ({ default: () => <section className="empty"><h1 tabIndex={-1} ref={focusFailedPanelHeading}>Panel could not be loaded</h1><p role="alert">Check your connection, then reload the app.</p><button onClick={() => window.location.reload()}>Reload app</button></section> });
-const WorkspacePanel = lazy(() => import('./WorkspacePanel').then(module => ({ default: module.WorkspacePanel })).catch(panelLoadFailure));
-const MemoryPanel = lazy(() => import('./MemoryPanel').then(module => ({ default: module.MemoryPanel })).catch(panelLoadFailure));
-const WorkflowPanel = lazy(() => import('./WorkflowPanel').then(module => ({ default: module.WorkflowPanel })).catch(panelLoadFailure));
-const WorkflowDirectory = lazy(() => import('./WorkflowDirectory').then(module => ({ default: module.WorkflowDirectory })).catch(panelLoadFailure));
-const GeneralSettings = lazy(() => import('./GeneralSettings').then(module => ({ default: module.GeneralSettings })).catch(panelLoadFailure));
-const PresentationSettings = lazy(() => import('./PresentationSettings').then(module => ({ default: module.PresentationSettings })).catch(panelLoadFailure));
-const SharedDataPanel = lazy(() => import('./SharedDataPanel').then(module => ({ default: module.SharedDataPanel })).catch(panelLoadFailure));
-const UsagePanel = lazy(() => import('./UsagePanel').then(module => ({ default: module.UsagePanel })).catch(panelLoadFailure));
-const BackupPanel = lazy(() => import('./BackupPanel').then(module => ({ default: module.BackupPanel })).catch(panelLoadFailure));
-const AgentTemplateImport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateImport })).catch(panelLoadFailure));
-const AgentTemplateExport = lazy(() => import('./AgentTemplateImport').then(module => ({ default: module.AgentTemplateExport })).catch(panelLoadFailure));
-const McpServerPanel = lazy(() => import('./McpServerPanel').then(module => ({ default: module.McpServerPanel })).catch(panelLoadFailure));
-const McpPanel = lazy(() => import('./McpPanel').then(module => ({ default: module.McpPanel })).catch(panelLoadFailure));
-const HubConnection = lazy(() => import('./hub/HubConnection').then(module => ({ default: module.HubConnection })).catch(panelLoadFailure));
-const ConnectedAppsPanel = lazy(() => import('./ConnectedAppsPanel').then(module => ({ default: module.ConnectedAppsPanel })).catch(panelLoadFailure));
-const SkillsPanel = lazy(() => import('./SkillsPanel').then(module => ({ default: module.SkillsPanel })).catch(panelLoadFailure));
+import { WorkspacePanel, MemoryPanel, WorkflowPanel, WorkflowDirectory, GeneralSettings, PresentationSettings, SharedDataPanel, UsagePanel, BackupPanel, AgentTemplateImport, AgentTemplateExport, McpServerPanel, McpPanel, HubConnection, ConnectedAppsPanel, SkillsPanel, panelPrefetchers, settingsPrefetch } from './lazyPanels';
+import { usePanelPrefetch } from './hooks/usePanelPrefetch';
 
 import type { Agent } from './AgentProfileDialog';
 type Channel = { section_name?: string; project?: string | null; activity: number; read_position: number; revision: number; archived: number; id: string; name: string; instructions: string; members: string[]; lead: string | null };
@@ -124,10 +110,22 @@ function plainPreview(text?: string) {
 type SidebarSummary = { agent: string; preview: string; time: string | null; status: string; needs_you?: number };
 type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
+let environmentIdentity: string | undefined;
 async function api<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(path, { ...(data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {}), signal })
-    .catch(() => { throw new ConnectionError('Minarbot connection lost. Check your connection, then try again.'); });
-  return readJson<T>(response);
+  const isGet = !data;
+  try {
+    const response = await fetch(path, { ...(!isGet ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {}), signal })
+      .catch(() => { throw new ConnectionError('Minarbot connection lost. Check your connection, then try again.'); });
+    const result = await readJson<T>(response);
+    if (isGet && path === '/api/environment') {
+      const id = (result as Environment).id;
+      if (environmentIdentity && environmentIdentity !== id) queryCache.clear();
+      environmentIdentity = id;
+    }
+    return result;
+  } finally {
+    if (!isGet) queryCache.invalidate();
+  }
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
@@ -386,7 +384,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const attachments = useConversationAttachments({ path: path.replace(/\/turns$/, '/files'), archived, attached: pending?.files ?? attached, onAttach: attach, locked: blocked || !!pending || busy, pastedFiles, onPasteSettled: () => setPastedFiles([]), onFiles: setPastedFiles, filesOpen: detailsOpen && rightPanel.tab === 'files', api });
   const openOutput = useCallback((file: { id: string; name: string }) => { rightPanel.selectFile({ name: file.name, path: `${path.replace(/\/turns$/, '')}/panel/files/${file.id}` }); setDetailsOpen(true); }, [rightPanel.selectFile, path, setDetailsOpen]);
   usePanelFileRequests(turns, openOutput);
-  if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); nextFrame(() => document.querySelector<HTMLButtonElement>('.chat__pill')?.focus()); }} /></Suspense></PageView>;
+  if (showMemory) return <PageView><Suspense fallback={<Delayed><p className="empty" role="status">Loading memory...</p></Delayed>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); nextFrame(() => document.querySelector<HTMLButtonElement>('.chat__pill')?.focus()); }} /></Suspense></PageView>;
   const refreshTurns = () => { window.dispatchEvent(new Event('minarbot:message-changed')); void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(optimistic.merge(data)); if (!focusedTask && !before && !finding) setTurns(optimistic.merge(mergeStream(findHistory.current ? mergeHistory(findHistory.current, data) : data))); setActiveTurns(active); }).catch(error => setError(message(error))); };
   const queued = (turn: Turn) => !channel && activeTurns.some(active => active.id !== turn.id) && turn.status === 'queued' && !turn.paused && !isTurnWaitingForInput(turn) && !turn.events?.some(event => event.status === 'waiting') && !turn.parent && !turn.waiting_for && !turn.routineReport && !turn.workflow_run && !turn.activity?.calls.length && !turn.agentMessages?.length;
   const runningTurn = !channel ? activeTurns[0] : undefined;
@@ -396,7 +394,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const items: MenuItem[] = [
     ...menuItems.filter(item => !['Export template', 'Delete'].includes(item.label)),
     ...(thread ? [{ label: 'Conversation settings', icon: <SlidersHorizontal size={15} aria-hidden />, onSelect: () => setConversationSettingsOpen(true) }] : onEdit ? [{ label: editLabel, icon: <Pencil size={15} aria-hidden />, onSelect: onEdit }] : []),
-    ...(channel ? [{ label: `${channel ? 'Section' : 'Agent'} memory`, icon: <BookOpen size={15} aria-hidden />, onSelect: () => setShowMemory(true) }, { label: 'History summary', icon: <ListRestart size={15} aria-hidden />, onSelect: () => setSummaryOpen(true) }] : []),
+    ...(channel ? [{ label: `${channel ? 'Section' : 'Agent'} memory`, prefetch: MemoryPanel.prefetch, icon: <BookOpen size={15} aria-hidden />, onSelect: () => setShowMemory(true) }, { label: 'History summary', icon: <ListRestart size={15} aria-hidden />, onSelect: () => setSummaryOpen(true) }] : []),
     { label: detailsOpen ? 'Hide panel' : 'Show panel', icon: <PanelRight size={15} aria-hidden />, onSelect: () => setDetailsOpen(!detailsOpen) },
     ...menuItems.filter(item => item.label === 'Export template').map(item => ({ ...item, separator: true })),
     ...menuItems.filter(item => item.label === 'Delete'),
@@ -431,7 +429,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const waiting = turns?.flatMap(turn => turn.events?.filter(event => event.status === 'waiting').map(event => ({ turn, event })) ?? []) ?? [];
   return <div className="chat-row bs-root">
     {queueOrderOpen && <Dialog open title="Queue order" onOpenChange={setQueueOrderOpen}><QueuePanel path={path} request={api} onOpen={id => { setQueueOrderOpen(false); openFocused(id); }} /></Dialog>}
-    {conversationSettingsOpen && <Dialog open title="Conversation settings" onOpenChange={setConversationSettingsOpen}><div className="k-stack"><Button icon={<BookOpen size={16} aria-hidden />} onClick={() => { setConversationSettingsOpen(false); setShowMemory(true); }}>Agent memory</Button><Button icon={<ListRestart size={16} aria-hidden />} onClick={() => { setConversationSettingsOpen(false); setSummaryOpen(true); }}>History summary</Button></div></Dialog>}
+    {conversationSettingsOpen && <Dialog open title="Conversation settings" onOpenChange={setConversationSettingsOpen}><div className="k-stack"><Button icon={<BookOpen size={16} aria-hidden />} onPointerEnter={MemoryPanel.prefetch} onFocus={MemoryPanel.prefetch} onClick={() => { setConversationSettingsOpen(false); setShowMemory(true); }}>Agent memory</Button><Button icon={<ListRestart size={16} aria-hidden />} onClick={() => { setConversationSettingsOpen(false); setSummaryOpen(true); }}>History summary</Button></div></Dialog>}
     {summaryOpen && <Dialog open title="Conversation context" onOpenChange={setSummaryOpen}><CompactionPanel path={path.replace(/\/turns$/, '/compaction')} request={api} /></Dialog>}
     <main className={`chat${finding ? ' is-finding' : ''}`} aria-label={`Conversation ${title}`}>
       {finding && <MessageFind query={query} onQuery={setQuery} viewport={transcript} content={turns} onClose={() => { setFinding(false); setQuery(''); composer.current?.focus(); }} />}
@@ -791,18 +789,19 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
     } catch { return { command: null, blocked: true }; }
   });
   const [pending, setPending] = useState<Command | null>(recovered.command), [blocked, setBlocked] = useState(recovered.blocked), [busy, setBusy] = useState(false);
-  const [page, setPage] = useState<{ routines: Routine[]; next_after: string | null } | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState(''), [reload, setReload] = useState(0);
+  const [error, setError] = useState(''), [notice, setNotice] = useState(''), [reload, setReload] = useState(0);
   const [filters, setFilters] = useState({ search: '', agent: initialAgent ?? '', enabled: '', trigger: '', project: '' }), [cursors, setCursors] = useState(['']);
   const [editing, setEditing] = useState<Routine | null | undefined>(undefined), [detail, setDetail] = useState<Routine | null>(null), [webhook, setWebhook] = useState<Routine | null>(null);
   const heading = useRef<HTMLHeadingElement>(null), confirm = useConfirm(), flight = useRef(false), mounted = useRef(true), loadVersion = useRef(0);
   const after = cursors.at(-1)!;
-  useEffect(() => { setPage(null); }, [filters, after]);
+  const path = `/api/routines?${new URLSearchParams({ ...filters, after })}`;
+  const { data: page, fresh } = useCachedData<{ routines: Routine[]; next_after: string | null }>(path);
   useEffect(() => () => { mounted.current = false; }, []);
-  usePolling(async signal => {
-    const version = loadVersion.current;
+  useQueryPolling(async signal => {
+    const version = loadVersion.current, cacheVersion = queryCache.version();
     try {
-      const data = await api<{ routines: Routine[]; next_after: string | null }>(`/api/routines?${new URLSearchParams({ ...filters, after })}`);
-      if (!signal.aborted && version === loadVersion.current) { setPage(data); setDetail(current => current ? data.routines.find(row => row.id === current.id) ?? current : null); }
+      const data = await queryCache.refresh(path, () => api<NonNullable<typeof page>>(path));
+      if (!signal.aborted && cacheVersion === queryCache.version() && version === loadVersion.current) setDetail(current => current ? data.routines.find(row => row.id === current.id) ?? current : null);
     } catch (error) { if (!signal.aborted) setError(message(error)); }
   }, { interval: 1200 }, [filters, after, reload]);
   useEffect(() => { if (!detail) heading.current?.focus(); }, [!!detail, after]);
@@ -820,7 +819,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
       if (request.action === 'test') sessionStorage.removeItem(`minarbot:routine-test:${request.routine}`);
       if (!mounted.current) return;
       loadVersion.current++; setPending(null);
-      if (request.action === 'edit') { setDetail(current => current?.id === request.routine ? { ...current, ...result } : current); setPage(current => current && ({ ...current, routines: current.routines.map(row => row.id === request.routine ? { ...row, ...result } : row) })); }
+      if (request.action === 'edit') setDetail(current => current?.id === request.routine ? { ...current, ...result } : current);
       setReload(value => value + 1);
       setNotice(request.action === 'test' ? 'Run accepted. Open Overview to follow its progress.' : request.action === 'delete' ? 'Routine deleted. Existing run conversations are retained.' : 'Routine updated.');
       if (request.action === 'delete') setDetail(null);
@@ -831,7 +830,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
     } finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
   function toggle(routine: Routine) {
-    if (locked) return;
+    if (locked || !fresh) return;
     void command({ routine: routine.id, action: 'edit', data: { id: crypto.randomUUID(), revision: routine.revision, name: routine.name, prompt: routine.prompt, ...(routine.schedule ? { schedule: routine.schedule, zone: routine.schedule_zone } : { nextAt: routine.next_at, intervalSeconds: routine.interval_ms === null ? null : routine.interval_ms / 1000 }), project: routine.project, reportTo: routine.report_to, enabled: !routine.enabled, trigger: routine.trigger } });
   }
   function run(routine: Routine) {
@@ -856,11 +855,11 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
   const newRoutine = agents.length > 0 && <Button disabled={locked} variant="primary" icon={<Plus size={14} aria-hidden />} onClick={() => setEditing(null)}>{agents.some(agent => pendingRoutine(agent.id)) ? 'Resume saving' : 'New routine'}</Button>;
   const editingOwner = editing ? owner(editing.agent) : agents.find(agent => pendingRoutine(agent.id)) ?? owner(filters.agent) ?? agents[0];
   return <>
-    {webhook ? <WebhookSettings key={webhook.id} routine={webhook} onBack={() => setWebhook(null)} /> : detail ? <RoutineDetail routine={detail} locked={locked} recovery={recovery} onBack={() => { setDetail(null); setReload(value => value + 1); }} onEdit={() => setEditing(detail)} onRun={() => run(detail)} onToggle={() => toggle(detail)} onDelete={() => void remove(detail)} onWebhook={() => setWebhook(detail)} onOpen={onOpen} /> : <div className="k-page bs-root routines-hub">
+    {webhook ? <WebhookSettings key={webhook.id} routine={webhook} onBack={() => setWebhook(null)} /> : detail ? <RoutineDetail routine={detail} locked={locked || !fresh} recovery={recovery} onBack={() => { setDetail(null); setReload(value => value + 1); }} onEdit={() => setEditing(detail)} onRun={() => run(detail)} onToggle={() => toggle(detail)} onDelete={() => void remove(detail)} onWebhook={() => setWebhook(detail)} onOpen={onOpen} /> : <div className="k-page bs-root routines-hub">
       <PageHeader headingRef={heading} title="Routines" actions={showFilters && newRoutine} />
       {showFilters && <div className="routine-filters"><Field label="Search routines"><Input type="search" maxLength={80} value={filters.search} onChange={event => filter('search', event.target.value)} placeholder="Search by name" /></Field><Field label="Agent"><Select value={filters.agent} onChange={value => filter('agent', value)} options={[{ value: '', label: 'All agents' }, ...agents.map(agent => ({ value: agent.id, label: agent.name }))]} /></Field><Field label="Status"><Select value={filters.enabled} onChange={value => filter('enabled', value)} options={[{ value: '', label: 'All statuses' }, { value: '1', label: 'Enabled' }, { value: '0', label: 'Disabled' }]} /></Field><Field label="Project"><Select value={filters.project} onChange={value => filter('project', value)} options={[{ value: '', label: 'All projects' }, { value: 'none', label: 'No project' }, ...projects.map(project => ({ value: project.id, label: project.name }))]} /></Field><Field label="Trigger"><Select value={filters.trigger} onChange={value => filter('trigger', value)} options={[{ value: '', label: 'All triggers' }, { value: 'once', label: 'Once' }, { value: 'recurring', label: 'Recurring schedule' }, { value: 'webhook', label: 'Webhook' }, { value: 'manual', label: 'Manual' }, { value: 'script', label: 'Local script' }]} /></Field></div>}
       {recovery}
-      {!page ? <><span className="sr-only" role="status">Loading routines...</span><SkeletonRows /></> : !page.routines.length ? <EmptyState icon={<CalendarClock size={20} aria-hidden />} title={hasFilters ? 'No matching routines' : 'No routines yet'} action={hasFilters ? <Button onClick={() => { setFilters({ search: '', agent: '', enabled: '', trigger: '', project: '' }); setCursors(['']); }}>Clear filters</Button> : newRoutine}></EmptyState> : <div className="k-table-wrap"><table className="k-table routine-table"><thead><tr><th>Routine</th><th>Owner</th><th>Project</th><th>Report to</th><th>Trigger</th><th>Last run</th><th>Next run</th><th>Enabled</th></tr></thead><tbody>{page.routines.map(row => <tr key={row.id}><td><button type="button" className="routine-name k-link" onClick={() => { setNotice(''); setDetail(row); }}>{row.name}</button>{Number(row.flow_agents) > 1 && <Badge>{row.flow_agents} agents</Badge>}</td><td><span className="routine-owner">{owner(row.agent) && <AgentAvatar agent={owner(row.agent)!} size={24} />}<span>{row.owner_name}</span></span></td><td>{row.project_name ?? <span className="k-field__hint">No project</span>}</td><td>{routineReportLabel(row)}</td><td>{routineTriggerLabel(row)}</td><td>{row.last_status && row.last_thread ? <button type="button" className="routine-run k-link" onClick={() => onOpen(row.agent, row.last_thread!)}><span>{runStatus({ status: row.last_status, paused: row.last_paused, no_update: row.last_no_update })}</span><time dateTime={row.last_created!}>{relativeRun(row.last_created!)}</time></button> : <span className="k-field__hint">Never run</span>}</td><td>{row.enabled && row.trigger === 'schedule' ? <time title={new Date(row.next_at).toLocaleString('en-US')} dateTime={new Date(row.next_at).toISOString()}>{relativeRun(row.next_at)}</time> : <span className="k-field__hint">{row.enabled ? 'On demand' : 'Paused'}</span>}</td><td><Switch checked={!!row.enabled} disabled={locked} label={`Enable ${row.name}`} onChange={() => toggle(row)} /></td></tr>)}</tbody></table></div>}
+      {!page ? <><span className="sr-only" role="status">Loading routines...</span><SkeletonRows /></> : !page.routines.length ? <EmptyState icon={<CalendarClock size={20} aria-hidden />} title={hasFilters ? 'No matching routines' : 'No routines yet'} action={hasFilters ? <Button onClick={() => { setFilters({ search: '', agent: '', enabled: '', trigger: '', project: '' }); setCursors(['']); }}>Clear filters</Button> : newRoutine}></EmptyState> : <div className="k-table-wrap"><table className="k-table routine-table"><thead><tr><th>Routine</th><th>Owner</th><th>Project</th><th>Report to</th><th>Trigger</th><th>Last run</th><th>Next run</th><th>Enabled</th></tr></thead><tbody>{page.routines.map(row => <tr key={row.id}><td><button type="button" className="routine-name k-link" disabled={!fresh} onClick={() => { setNotice(''); setDetail(row); }}>{row.name}</button>{Number(row.flow_agents) > 1 && <Badge>{row.flow_agents} agents</Badge>}</td><td><span className="routine-owner">{owner(row.agent) && <AgentAvatar agent={owner(row.agent)!} size={24} />}<span>{row.owner_name}</span></span></td><td>{row.project_name ?? <span className="k-field__hint">No project</span>}</td><td>{routineReportLabel(row)}</td><td>{routineTriggerLabel(row)}</td><td>{row.last_status && row.last_thread ? <button type="button" className="routine-run k-link" onClick={() => onOpen(row.agent, row.last_thread!)}><span>{runStatus({ status: row.last_status, paused: row.last_paused, no_update: row.last_no_update })}</span><time dateTime={row.last_created!}>{relativeRun(row.last_created!)}</time></button> : <span className="k-field__hint">Never run</span>}</td><td>{row.enabled && row.trigger === 'schedule' ? <time title={new Date(row.next_at).toLocaleString('en-US')} dateTime={new Date(row.next_at).toISOString()}>{relativeRun(row.next_at)}</time> : <span className="k-field__hint">{row.enabled ? 'On demand' : 'Paused'}</span>}</td><td><Switch checked={!!row.enabled} disabled={locked || !fresh} label={`Enable ${row.name}`} onChange={() => toggle(row)} /></td></tr>)}</tbody></table></div>}
       {(cursors.length > 1 || !!page?.next_after) && <div className="k-pager"><IconButton label="Previous routines" disabled={cursors.length < 2} onClick={() => setCursors(values => values.slice(0, -1))}><ChevronLeft size={16} aria-hidden /></IconButton><IconButton label="Next routines" disabled={!page?.next_after} onClick={() => { if (page?.next_after) setCursors(values => [...values, page.next_after!]); }}><ChevronRight size={16} aria-hidden /></IconButton></div>}
     </div>}
     {editing !== undefined && editingOwner && <RoutineForm key={editing?.id ?? 'new'} owner={editingOwner} agents={agents} projects={projects} routine={editing} onSaved={updated => { setDetail(current => current?.id === updated.id ? { ...current, ...updated } : current); setEditing(undefined); setReload(value => value + 1); }} onBack={() => { setEditing(undefined); setReload(value => value + 1); }} />}
@@ -986,8 +985,8 @@ function AgentConversations({ agent, attention, onRestored, configured, firstRun
   const openWorkflows = () => { leave(); setShowWorkspace(false); setShowWorkflows(true); };
   const openWorkspace = () => { leave(); setShowWorkflows(false); setForm(null); setShowWorkspace(true); };
   const errorBanner = error && <p className="error" role="alert">{error} <button className="secondary" onClick={() => void load().catch(() => {})}>Reload conversation</button></p>;
-  if (showWorkspace) return <PageView>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workspace files...</p>}><WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); nextFrame(() => workspaceButton.current?.focus()); }} /></Suspense></PageView>;
-  if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<p className="empty" role="status">Loading workflows...</p>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
+  if (showWorkspace) return <PageView>{errorBanner}<Suspense fallback={<Delayed><p className="empty" role="status">Loading workspace files...</p></Delayed>}><WorkspacePanel key={agent.id} agent={agent} request={api} onClose={() => { setShowWorkspace(false); nextFrame(() => workspaceButton.current?.focus()); }} /></Suspense></PageView>;
+  if (showWorkflows) return <PageView wide>{errorBanner}<Suspense fallback={<Delayed><p className="empty" role="status">Loading workflows...</p></Delayed>}><WorkflowPanel owner={agent} agents={workflowAgents} request={api} onNavigate={leave} onBack={() => { leave(); setShowWorkflows(false); }} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={workflowAgents.find(item => item.id === owner)} threadId={id} configured={configured} onOpenAgent={onOpenAgent} onOpenChannel={onOpenChannel} />} /></Suspense></PageView>;
 
   if (!loaded) return <PageView>{errorBanner}<p className="empty" role="status">Loading conversation...</p></PageView>;
   if (selected && !thread) return <PageView><EmptyState title="Page not found" action={<Button onClick={() => select('')}>Back to chats</Button>}>This conversation no longer exists.</EmptyState></PageView>;
@@ -1053,7 +1052,7 @@ function AgentConversations({ agent, attention, onRestored, configured, firstRun
   </>;
   return <><Chat onRestored={onRestored} onOpenChannel={onOpenChannel} onOpenAgent={onOpenAgent} key={thread?.id ?? agent.id} agent={agent} thread={thread} firstRun={firstRun} configured={(agent.runtime && agent.runtime !== 'api' ? agent.provider_available === true : configured && agent.provider_available !== false)}
     onEdit={thread ? () => setForm(thread) : onEdit}
-    menuItems={[{ label: 'New conversation', icon: <Plus size={15} aria-hidden />, onSelect: openForm, disabled: locked }, ...(thread ? actions(thread).map((item, index) => ({ ...item, separator: index === 0 || item.separator })) : []), { label: 'Routines', separator: !!thread, icon: <CalendarClock size={15} aria-hidden />, onSelect: openRoutines }, { label: 'Workflows', icon: <WorkflowIcon size={15} aria-hidden />, onSelect: openWorkflows }, { label: 'Workspace files', icon: <FolderOpen size={15} aria-hidden />, onSelect: openWorkspace }, { label: 'Export template', icon: <Download size={15} aria-hidden />, onSelect: onExport }]}
+    menuItems={[{ label: 'New conversation', icon: <Plus size={15} aria-hidden />, onSelect: openForm, disabled: locked }, ...(thread ? actions(thread).map((item, index) => ({ ...item, separator: index === 0 || item.separator })) : []), { label: 'Routines', separator: !!thread, icon: <CalendarClock size={15} aria-hidden />, onSelect: openRoutines }, { label: 'Workflows', icon: <WorkflowIcon size={15} aria-hidden />, prefetch: WorkflowPanel.prefetch, onSelect: openWorkflows }, { label: 'Workspace files', prefetch: WorkspacePanel.prefetch, icon: <FolderOpen size={15} aria-hidden />, onSelect: openWorkspace }, { label: 'Export template', prefetch: AgentTemplateExport.prefetch, icon: <Download size={15} aria-hidden />, onSelect: onExport }]}
     detailsExtra={{ chats: conversations, onManageRoutines: openRoutines }} rename={form?.id === selected ? nameEditor : null} /></>;
 }
 
@@ -1235,6 +1234,7 @@ function App() {
     catch (error) { if (version === directoryRequest.current) setError(message(error)); if (propagate) throw error; }
   }
   useEffect(() => { void load(); }, []);
+  usePanelPrefetch(directory !== null, panelPrefetchers);
   useMessageChanged(() => { void api<{ summaries: SidebarSummary[] }>('/api/sidebar/summary').then(result => setSummaries(result.summaries)).catch(() => {}); });
   usePolling(async signal => {
     try {
@@ -1362,7 +1362,7 @@ function App() {
   else if (notFound) content = <PageView><EmptyState title="Page not found" action={<Button onClick={() => navigate(directory.agents[0] ? { agent: directory.agents[0].id } : {}, true)}>Back to chats</Button>}>This page may have moved or no longer exists.</EmptyState></PageView>;
   else if (deleting) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Deleting agent...</p></main>;
   else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} />; }
-  else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
+  else if (view === 'workflows') content = <PageView wide><Suspense fallback={<Delayed><p className="empty" role="status">Loading workflow directory...</p></Delayed>}><WorkflowDirectory agents={directory.agents} request={api} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
   else if (view === 'routines') content = <PageView wide><RoutinesHub key={routineAgent} initialAgent={routineAgent} agents={directory.agents.filter(agent => !agent.hidden)} projects={projectState.projects} onOpen={openThread} /></PageView>;
   else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={openThread} onDeleted={() => { navigate({}, true); void load(); }} /></PageView>;
   else if (route.thread && !routeThread?.thread) content = <PageView>{routeThread?.error ? <Alert tone="error">{routeThread.error} Retrying…</Alert> : <p role="status">Loading conversation...</p>}</PageView>;
@@ -1375,11 +1375,11 @@ function App() {
         <span className="sidebar__bots-label">Minarbot</span>
         <nav className="sidebar__controls" aria-label="Automation">
           <IconButton label="Routines" aria-current={view === 'routines' ? 'page' : undefined} disabled={!directory} onClick={() => { setRoutineAgent(''); setView('routines'); setDialog(null); }}><CalendarClock size={16} aria-hidden /></IconButton>
-          <IconButton label="Workflows" aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
+          <IconButton label="Workflows" onPointerEnter={WorkflowDirectory.prefetch} onFocus={WorkflowDirectory.prefetch} aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
           <ActionMenu label="Create new" trigger={<IconButton label="Create new"><Plus size={16} aria-hidden /></IconButton>} items={[
             ...(agent ? [{ label: 'New conversation', icon: <MessageSquare size={15} aria-hidden />, hint: 'Ctrl/Cmd+Shift+O', onSelect: () => { openAgent(selected); switcherFrame(() => window.dispatchEvent(new Event('minarbot:new-conversation'))); } }] : []),
             { label: 'New agent', icon: <Plus size={15} aria-hidden />, onSelect: () => setDialog('agent'), disabled: !directory },
-            { label: 'Import template', icon: <Download size={15} aria-hidden />, onSelect: () => setWorkspaceDialog('import'), disabled: !directory },
+            { label: 'Import template', prefetch: AgentTemplateImport.prefetch, icon: <Download size={15} aria-hidden />, onSelect: () => setWorkspaceDialog('import'), disabled: !directory },
             { label: 'New project', icon: <FolderOpen size={15} aria-hidden />, onSelect: () => setDialog('project'), disabled: !directory },
             { label: 'Add a machine', icon: <Monitor size={15} aria-hidden />, onSelect: () => setSettings('machines') },
           ]} />
@@ -1446,7 +1446,7 @@ function App() {
         <Tooltip content={activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not configured'}><button type="button" className="provider-status" aria-label={activityError ? 'Status not updated. Trying again.' : directory?.configured ? 'Provider configured' : 'Provider not configured'} onClick={() => setSettings('providers')}><i className={directory?.configured && !activityError ? 'is-on' : ''} aria-hidden /></button></Tooltip>
         <IconButton label="Quick switcher (Ctrl/Cmd+K)" onClick={() => switcher.setOpen(true)}><Search size={16} aria-hidden /></IconButton>
         <IconButton label="Help" onClick={() => setWorkspaceDialog('help')}><BookOpen size={16} aria-hidden /></IconButton>
-        <RadixDialog.Trigger asChild><IconButton label="Settings" className="sidebar-settings" onClick={() => { setSettings('general'); setNarrowOpen(false); }}><Settings size={16} aria-hidden /></IconButton></RadixDialog.Trigger>
+        <RadixDialog.Trigger asChild><IconButton label="Settings" onPointerEnter={GeneralSettings.prefetch} onFocus={GeneralSettings.prefetch} className="sidebar-settings" onClick={() => { setSettings('general'); setNarrowOpen(false); }}><Settings size={16} aria-hidden /></IconButton></RadixDialog.Trigger>
       </div>
       <PanelResizeHandle panel={sidebar} />
     </aside>;
@@ -1465,8 +1465,8 @@ function App() {
     {dialog === 'project' && directory && <CreateProject state={projectState} agents={directory.agents} request={api} onClose={() => setDialog(null)} onCreated={item => { openSection(item.channel); }} />}
     {dialog === 'edit' && directory && channel && <ChannelForm key={`${channel.id}:${channel.revision}:${editReload}`} agents={directory.agents} channel={channel} onCancel={() => setDialog(null)} onReload={() => { void load().then(() => setEditReload(value => value + 1)); }} onCreated={() => { void load(); setDialog(null); }} />}
     {dialog === 'edit' && directory && !channel && agent && <AgentForm request={api} isClientError={error => error instanceof HttpError && error.status < 500} key={`${agent.id}:${editReload}`} model={directory.defaultModel} profile={agent} onCancel={() => setDialog(null)} onDelete={item => deleteAgent(item)} onVisibilityChanged={() => load(true)} onReload={() => load(true).then(() => setEditReload(value => value + 1))} onCreated={() => { void load(); setDialog(null); }} />}
-    {workspaceDialog && <Dialog open size="lg" title={workspaceDialog === 'help' ? 'Keyboard shortcuts' : 'Import template'} onOpenChange={open => { if (!open) setWorkspaceDialog(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}>{workspaceDialog === 'help' ? <HelpPage /> : <AgentTemplateImport request={api} onClose={() => setWorkspaceDialog(null)} onCreated={item => { created(item); setWorkspaceDialog(null); }} />}</Suspense></div></Dialog>}
-    {agentContent && <Dialog open size="lg" title={`${agentContent.agent.name} · Export template`} onOpenChange={open => { if (!open) setAgentContent(null); }}><div className="legacy"><Suspense fallback={<p role="status">Loading...</p>}><AgentTemplateExport id={agentContent.agent.id} request={api} /></Suspense></div></Dialog>}
+    {workspaceDialog && <Dialog open size="lg" title={workspaceDialog === 'help' ? 'Keyboard shortcuts' : 'Import template'} onOpenChange={open => { if (!open) setWorkspaceDialog(null); }}><div className="legacy"><Suspense fallback={<Delayed><p role="status">Loading...</p></Delayed>}>{workspaceDialog === 'help' ? <HelpPage /> : <AgentTemplateImport request={api} onClose={() => setWorkspaceDialog(null)} onCreated={item => { created(item); setWorkspaceDialog(null); }} />}</Suspense></div></Dialog>}
+    {agentContent && <Dialog open size="lg" title={`${agentContent.agent.name} · Export template`} onOpenChange={open => { if (!open) setAgentContent(null); }}><div className="legacy"><Suspense fallback={<Delayed><p role="status">Loading...</p></Delayed>}><AgentTemplateExport id={agentContent.agent.id} request={api} /></Suspense></div></Dialog>}
     <RadixDialog.Portal><RadixDialog.Content className="app-settings bs-root" aria-describedby={undefined} onEscapeKeyDown={event => { if (settingsQuery && document.activeElement === settingsSearch.current) { event.preventDefault(); setSettingsQuery(''); } }} onOpenAutoFocus={event => {
       event.preventDefault();
       const page = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('.app-settings__page');
@@ -1489,27 +1489,27 @@ function App() {
           else if (event.key === 'End') next = buttons.length - 1;
           else return;
           event.preventDefault(); buttons[next]?.focus();
-        }}>{filteredSettings.map(group => <div key={group.label} role="group" aria-labelledby={`settings-${group.label}`} className="app-settings__group"><h2 id={`settings-${group.label}`}>{group.label}</h2>{group.items.map(section => <Tooltip key={section.id} content={section.label} side="right" sideOffset={8}><button type="button" aria-label={section.label} className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id ? 'page' : undefined} onClick={event => { if (settings === section.id) event.currentTarget.closest('[role="dialog"]')?.querySelector<HTMLElement>('.app-settings__page h1')?.focus(); else setSettings(section.id); }}><section.icon size={16} aria-hidden /><span>{section.label}</span></button></Tooltip>)}</div>)}{!filteredSettings.length && <p className="app-settings__no-results" role="status">No settings found</p>}</nav>
+        }}>{filteredSettings.map(group => <div key={group.label} role="group" aria-labelledby={`settings-${group.label}`} className="app-settings__group"><h2 id={`settings-${group.label}`}>{group.label}</h2>{group.items.map(section => <Tooltip key={section.id} content={section.label} side="right" sideOffset={8}><button type="button" aria-label={section.label} onPointerEnter={settingsPrefetch[section.id]} onFocus={settingsPrefetch[section.id]} className={`cfg-nav__item${settings === section.id ? ' is-active' : ''}`} aria-current={settings === section.id ? 'page' : undefined} onClick={event => { if (settings === section.id) event.currentTarget.closest('[role="dialog"]')?.querySelector<HTMLElement>('.app-settings__page h1')?.focus(); else setSettings(section.id); }}><section.icon size={16} aria-hidden /><span>{section.label}</span></button></Tooltip>)}</div>)}{!filteredSettings.length && <p className="app-settings__no-results" role="status">No settings found</p>}</nav>
       </aside>
       <IconButton className="app-settings__close" label="Close settings" onClick={() => setSettings(null)}><X size={16} aria-hidden /></IconButton>
       <div className="app-settings__main">
         <div className={`app-settings__page legacy${settings === 'general' || settings === 'appearance' ? ' app-settings__page--preferences' : ''}`} tabIndex={-1}>
           {!directory ? <p className="empty" role="status">Loading workspace...</p>
-            : settings === 'skills' ? <Suspense fallback={<p className="empty" role="status">Loading skill library...</p>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'skills' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading skill library...</p></Delayed>}><SkillsPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
             : settings === 'providers' ? <ProvidersPanel request={api} />
             : settings === 'engines' ? <EnginesPanel request={api} />
             : settings === 'devices' ? <DevicesPanel request={api} />
             : settings === 'updates' ? <UpdatesPanel updates={updates} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />
-            : settings === 'hub' ? <Suspense fallback={<p className="empty" role="status">Loading hub connection...</p>}><HubConnection agents={directory.agents} request={api} /></Suspense>
-            : settings === 'connected-apps' ? <Suspense fallback={<p className="empty" role="status">Loading connected apps...</p>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
-            : settings === 'mcp-server' ? <Suspense fallback={<p className="empty" role="status">Loading MCP server...</p>}><McpServerPanel request={api} /></Suspense>
-            : settings === 'mcp' ? <Suspense fallback={<p className="empty" role="status">Loading MCP connections...</p>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
-            : settings === 'data' ? <Suspense fallback={<p className="empty" role="status">Loading shared data...</p>}><SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
-            : settings === 'usage' ? <Suspense fallback={<p className="empty" role="status">Loading usage...</p>}><UsagePanel request={api} onClose={() => setSettings(null)} /></Suspense>
-            : settings === 'backup' ? <Suspense fallback={<p className="empty" role="status">Loading backup...</p>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>
-            : settings === 'general' ? <Suspense fallback={<p className="empty" role="status">Loading general settings...</p>}><GeneralSettings notificationsMuted={notificationsMuted} notificationError={notificationError} onNotificationsChange={enabled => { try { localStorage.setItem(notificationMuteKey, enabled ? '0' : '1'); setNotificationsMuted(!enabled); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }} /></Suspense>
-            : <Suspense fallback={<p className="empty" role="status">Loading appearance settings...</p>}><PresentationSettings /></Suspense>}
+            : settings === 'hub' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading hub connection...</p></Delayed>}><HubConnection agents={directory.agents} request={api} /></Suspense>
+            : settings === 'connected-apps' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading connected apps...</p></Delayed>}><ConnectedAppsPanel agents={directory.agents} request={api} /></Suspense>
+            : settings === 'mcp-server' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading MCP server...</p></Delayed>}><McpServerPanel request={api} /></Suspense>
+            : settings === 'mcp' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading MCP connections...</p></Delayed>}><McpPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'data' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading shared data...</p></Delayed>}><SharedDataPanel agents={directory.agents} request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'usage' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading usage...</p></Delayed>}><UsagePanel request={api} onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'backup' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading backup...</p></Delayed>}><BackupPanel onClose={() => setSettings(null)} /></Suspense>
+            : settings === 'general' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading general settings...</p></Delayed>}><GeneralSettings request={api} notificationsMuted={notificationsMuted} notificationError={notificationError} onNotificationsChange={enabled => { try { localStorage.setItem(notificationMuteKey, enabled ? '0' : '1'); setNotificationsMuted(!enabled); setNotificationError(''); } catch { setNotificationError('Notification preference could not be saved. Check browser storage.'); } }} /></Suspense>
+            : <Suspense fallback={<Delayed><p className="empty" role="status">Loading appearance settings...</p></Delayed>}><PresentationSettings /></Suspense>}
         </div>
       </div>
     </RadixDialog.Content></RadixDialog.Portal>

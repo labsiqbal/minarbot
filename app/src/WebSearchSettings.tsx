@@ -1,21 +1,12 @@
 import { useId, useRef, useState } from 'react';
-import { readJson } from './http';
 import { Alert, Button, Card, Input, Row, Section, SkeletonRows } from './ui/kit';
 import { useWebSearchSettings, webSearchSettingsPath, type WebSearchConfig } from './hooks/useWebSearchSettings';
 import './ui/web-search-settings.css';
 
-function post<T>(endpoint: string, url: string) {
-  return fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: crypto.randomUUID(), url }),
-  }).then(response => readJson<T>(response));
-}
-
-export function WebSearchSettings() {
+export function WebSearchSettings({ request }: { request: <T>(path: string, data?: unknown) => Promise<T> }) {
   const id = useId();
   const field = useRef<HTMLInputElement>(null);
-  const { settings, setSettings, loadError } = useWebSearchSettings();
+  const { settings, setSettings, loadError } = useWebSearchSettings(request);
   const [draft, setDraft] = useState<string>();
   const [busy, setBusy] = useState<'test' | 'save' | null>(null);
   const [count, setCount] = useState<number | null>(null);
@@ -32,9 +23,9 @@ export function WebSearchSettings() {
     try {
       if (action === 'test') {
         setCount(null);
-        setCount((await post<{ count: number }>(webSearchSettingsPath + '/test', url)).count);
+        setCount((await request<{ count: number }>(webSearchSettingsPath + '/test', { id: crypto.randomUUID(), url })).count);
       } else {
-        setSettings(await post<WebSearchConfig>(webSearchSettingsPath, url));
+        setSettings(await request<WebSearchConfig>(webSearchSettingsPath, { id: crypto.randomUUID(), url }));
         setDraft(undefined);
         setSaved(true);
       }

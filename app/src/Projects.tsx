@@ -1,4 +1,5 @@
-import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ChevronRight, Ellipsis, Folder, FolderOpen, Hash, Plus, X } from 'lucide-react';
 import type { LocalProject } from '../shared/local-project';
@@ -17,11 +18,13 @@ type Command = { path: string; body: Record<string, unknown> };
 const storage = 'minarbot:project-command';
 const message = (error: unknown) => error instanceof Error ? error.message : 'Project could not load. Try again.';
 export function useProjects(request: Request) {
-  const [projects,setProjects] = useState<LocalProject[]>([]), [root,setRoot] = useState(''), [error,setError] = useState(''), [busy,setBusy] = useState(false), [pending,setPending] = useState<Command | null>(null), [invalid,setInvalid] = useState(false);
-  const generation = useRef(0), flight = useRef(false), commandRef = useRef<Command | null>(null), confirm = useConfirm();
-  const reload = useCallback(async (signal?: AbortSignal) => { const current=++generation.current; const result = await request<{projects: LocalProject[]; root: string}>('/api/projects'); if(!signal?.aborted && current===generation.current){setProjects(result.projects);setRoot(result.root);} },[request]);
-  useEffect(() => { try { const raw = sessionStorage.getItem(storage); if(raw) { const value = JSON.parse(raw); if(!value || typeof value.path !== 'string' || !/^\/api\/projects(?:\/[a-f0-9-]{36}\/(?:edit|archive|delete|thread|sections(?:\/[a-f0-9-]{36}\/edit)?))?$/.test(value.path) || !value.body || !/^[a-f0-9-]{36}$/i.test(value.body.id)) throw new Error(); commandRef.current=value;setPending(value); } } catch {setInvalid(true);} return()=>{generation.current++;}; },[reload]);
-  usePolling(async signal => { try { await reload(signal); } catch(error) { if (!signal.aborted) setError(message(error)); } }, { interval: 5000 }, [reload]);
+  const path = '/api/projects';
+  const { data } = useCachedData<{ projects: LocalProject[]; root: string }>(path);
+  const [error,setError] = useState(''), [busy,setBusy] = useState(false), [pending,setPending] = useState<Command | null>(null), [invalid,setInvalid] = useState(false);
+  const flight = useRef(false), commandRef = useRef<Command | null>(null), confirm = useConfirm();
+  const reload = useCallback(() => queryCache.refresh(path, () => request<NonNullable<typeof data>>(path)), [request]);
+  useEffect(() => { try { const raw = sessionStorage.getItem(storage); if(raw) { const value = JSON.parse(raw); if(!value || typeof value.path !== 'string' || !/^\/api\/projects(?:\/[a-f0-9-]{36}\/(?:edit|archive|delete|thread|sections(?:\/[a-f0-9-]{36}\/edit)?))?$/.test(value.path) || !value.body || !/^[a-f0-9-]{36}$/i.test(value.body.id)) throw new Error(); commandRef.current=value;setPending(value); } } catch {setInvalid(true);} },[reload]);
+  useQueryPolling(async signal => { try { await reload(); } catch(error) { if (!signal.aborted) setError(message(error)); } }, { interval: 5000 }, [reload]);
   async function execute(path: string, body: Record<string,unknown>): Promise<boolean> {
     if(flight.current || invalid) return false; const command = commandRef.current ?? {path,body};
     if(commandRef.current && (path !== command.path || JSON.stringify(body) !== JSON.stringify(command.body))) {setError('Resolve the pending project change first.');return false;}
@@ -29,7 +32,7 @@ export function useProjects(request: Request) {
     try {sessionStorage.setItem(storage,JSON.stringify(command));commandRef.current=command;setPending(command);await request(command.path,command.body);await reload();sessionStorage.removeItem(storage);commandRef.current=null;setPending(null);return true;} catch(error){setError(message(error));return false;} finally{flight.current=false;setBusy(false);}
   }
   const recovery = <>{error && <Alert tone="error" actions={<Button size="sm" onClick={() => void reload().then(()=>setError('')).catch(error=>setError(message(error)))}>Reload projects</Button>}>{error}</Alert>}{(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Saved project request could not be read' : 'Project change is not confirmed'} actions={<>{pending && <Button size="sm" disabled={busy} onClick={()=>void execute(pending.path,pending.body)}>Retry project change</Button>}<Button size="sm" disabled={busy} onClick={async()=>{if(await confirm({title:'Clear project request?',description:'Check project state first. Changes already saved and folders already created remain. Clearing this request does not undo them.',confirm:'Clear request'}))try{sessionStorage.removeItem(storage);commandRef.current=null;setPending(null);setInvalid(false);await reload();}catch(error){setError(message(error));}}}>Clear request</Button></>} />}</>;
-  return {projects,root,reload,execute,busy,locked:busy || !!pending || invalid,recovery};
+  return {projects: data?.projects ?? [], root: data?.root ?? '', reload,execute,busy,locked:busy || !!pending || invalid,recovery};
 }
 export type ProjectState = ReturnType<typeof useProjects>;
 

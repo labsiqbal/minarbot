@@ -1,4 +1,5 @@
-import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { getNonce } from 'get-nonce';
 import { SkillPacksPanel } from './SkillPacksPanel';
 import { useEffect, useRef, useState } from 'react';
@@ -16,9 +17,8 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   const [owner, setOwner] = useState(agents[0]?.id ?? '');
   const [recovery] = useState(() => { try { return { command: restoreSkillCommand(sessionStorage.getItem(storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
-  const [page, setPage] = useState<{ skills: Skill[]; next_after: string | null } | null>(null), [installed, setInstalled] = useState<Installed[] | null>(null);
   const [installCursors, setInstallCursors] = useState(['']), installAfter = installCursors.at(-1)!;
-  const [installNext, setInstallNext] = useState<string | null>(null), [binding, setBinding] = useState<Installed | null | undefined>(undefined);
+  const [binding, setBinding] = useState<Installed | null | undefined>(undefined);
   const [baseline, setBaseline] = useState('');
   const [cursors, setCursors] = useState(['']), [refresh, setRefresh] = useState(0), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [editor, setEditor] = useState<Skill | null>(null), [version, setVersion] = useState(1);
@@ -30,13 +30,15 @@ export function SkillsPanel({ agents, request, onClose }: { agents: { id: string
   const locked = busy || importBusy || !!pending || invalid, after = cursors.at(-1)!;
   useEffect(() => { heading.current?.focus(); return () => { navigation.current++; }; }, []);
   useEffect(() => { heading.current?.focus(); }, [after]);
-  const loadScope = useRef('');
-  usePolling(async signal => {
-    const scope = JSON.stringify([owner, after, installAfter, refresh]);
-    if (loadScope.current !== scope) { loadScope.current = scope; setPage(null); setInstalled(null); }
+  const path = `/api/skills${after ? `?after=${after}` : ''}`;
+  const installPath = `/api/agents/${owner}/skills${installAfter ? `?after=${installAfter}` : ''}`;
+  const { data: page } = useCachedData<{ skills: Skill[]; next_after: string | null }>(path);
+  const { data: installs } = useCachedData<{ items: Installed[]; next_after: string | null }>(installPath);
+  const installed = owner ? installs?.items ?? null : [], installNext = installs?.next_after ?? null;
+  useQueryPolling(async signal => {
     try {
-      const [library, rows] = await Promise.all([request<NonNullable<typeof page>>(`/api/skills${after ? `?after=${after}` : ''}`), owner ? request<{ items: Installed[]; next_after: string | null }>(`/api/agents/${owner}/skills${installAfter ? `?after=${installAfter}` : ''}`) : Promise.resolve({ items: [], next_after: null })]);
-      if (!signal.aborted) { setPage(library); setInstalled(rows.items); setInstallNext(rows.next_after); setLoadError(''); }
+      await Promise.all([queryCache.refresh(path, () => request<NonNullable<typeof page>>(path)), owner ? queryCache.refresh(installPath, () => request<NonNullable<typeof installs>>(installPath)) : null]);
+      if (!signal.aborted) setLoadError('');
     } catch (error) { if (!signal.aborted) setLoadError(error instanceof Error ? error.message : 'Skills could not load.'); }
   }, { interval: 15000 }, [owner, after, installAfter, refresh, request]);
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { copyText } from './ui/clipboard';
 import { getNonce } from 'get-nonce';
-import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Ellipsis, KeyRound, Plus } from 'lucide-react';
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
@@ -23,16 +24,17 @@ function restore(raw: string | null): Command | null {
 export function McpServerPanel({ request }: { request: <T>(path: string, body?: unknown) => Promise<T> }) {
   const [recovery] = useState(() => { try { return { pending: restore(sessionStorage.getItem(storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.pending), [invalid, setInvalid] = useState(recovery.invalid);
-  const [page, setPage] = useState<{ items: PeerToken[]; endpoint: string } | null>(null), [refresh, setRefresh] = useState(0);
+  const { data: page } = useCachedData<{ items: PeerToken[]; endpoint: string }>(path);
+  const [refresh, setRefresh] = useState(0);
   const [detailId, setDetailId] = useState('');
   const [showForm, setShowForm] = useState(false), [name, setName] = useState(''), [selected, setSelected] = useState<Scope[]>(['agents:read']);
   const [secret, setSecret] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null), mounted = useRef(true), flight = useRef(false), reads = useRef(0);
   const confirm = useConfirm(), locked = busy || !!pending || invalid;
   useEffect(() => { mounted.current = true; heading.current?.focus(); return () => { mounted.current = false; reads.current++; }; }, []);
-  usePolling(async signal => {
+  useQueryPolling(async signal => {
     const version = ++reads.current;
-    try { const result = await request<NonNullable<typeof page>>(path); if (!signal.aborted && mounted.current && version === reads.current) { setPage(result); setError(''); } }
+    try { await queryCache.refresh(path, () => request<NonNullable<typeof page>>(path)); if (!signal.aborted && mounted.current && version === reads.current) setError(''); }
     catch (reason) { if (!signal.aborted && mounted.current && version === reads.current) setError(reason instanceof Error ? reason.message : 'Access tokens could not load.'); }
   }, { interval: 5000, enabled: !busy && !pending && !invalid }, [refresh, request]);
   async function copy(value: string) { try { await copyText(value); if (mounted.current) { setError(''); setNotice('Copied.'); } } catch { if (mounted.current) { setNotice(''); setError('Could not copy. Select the text and copy it manually.'); } } }

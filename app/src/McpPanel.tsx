@@ -1,4 +1,5 @@
-import { usePolling } from './hooks/usePolling';
+import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { getNonce } from 'get-nonce';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ChevronLeft, ChevronRight, Info, Ellipsis, Plug, Plus } from 'lucide-react';
@@ -20,7 +21,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
   const storage = 'minarbot:mcp-command'+(project?`:${project}`:'');
   const [recovery] = useState(() => { try { return { command: restore(sessionStorage.getItem(storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
-  const [page, setPage] = useState<{ items: Connection[]; next_after: string | null } | null>(null), [cursors, setCursors] = useState(['']);
+  const [cursors, setCursors] = useState(['']);
   const [agent, setAgent] = useState(agents[0]?.id ?? ''), [selected, setSelected] = useState(''), [detail, setDetail] = useState<Detail | null>(null), [tools, setTools] = useState<string[]>([]);
   const [name, setName] = useState(''), [url, setUrl] = useState(''), [token, setToken] = useState('');
   const [editing, setEditing] = useState<Connection | null>(null), [rotate, setRotate] = useState(false);
@@ -32,12 +33,15 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
   const locked = busy || !!pending || invalid, after = cursors.at(-1)!;
   useEffect(() => { heading.current?.focus(); return () => { generation.current++; }; }, []);
   useEffect(() => { heading.current?.focus(); }, [after, selected]);
-  usePolling(async signal => {
+  const path = `/api/mcp${after ? `?after=${after}` : ''}`;
+  const cachePath = project ? `/api/projects/${project}/${path.slice(5)}` : path;
+  const { data: page, fresh } = useCachedData<{ items: Connection[]; next_after: string | null }>(cachePath);
+  useQueryPolling(async signal => {
     const current = ++reads.current;
     try {
-      const [nextPage, nextDetail] = await Promise.all([request<NonNullable<typeof page>>(`/api/mcp${after ? `?after=${after}` : ''}`), selected && agent ? request<Detail>(`/api/mcp/${selected}?agent=${agent}`) : Promise.resolve(null)]);
+      const [, nextDetail] = await Promise.all([queryCache.refresh(cachePath, () => request<NonNullable<typeof page>>(path)), selected && agent ? request<Detail>(`/api/mcp/${selected}?agent=${agent}`) : Promise.resolve(null)]);
       if (!signal.aborted && current === reads.current) {
-        setPage(nextPage); setDetail(nextDetail); setError('');
+        setDetail(nextDetail); setError('');
         setTools(nextDetail?.grant.tools ?? []);
       }
     } catch (error) { if (!signal.aborted && current === reads.current) setError(error instanceof Error ? error.message : 'Connections could not load.'); }
@@ -91,7 +95,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
     generation.current++; setEditing(row); setName(row.name); setUrl(row.url); setToken(''); setRotate(false); setTested(null); heading.current?.focus(); setShowForm(true);
   };
   const open = (row: Connection) => { generation.current++; reads.current++; setDetail(null); setSelected(row.id); setRefresh(value => value + 1); };
-  const menu = (row: Connection) => <ActionMenu label={`Menu ${row.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${row.name}`} disabled={locked}><Ellipsis size={16} aria-hidden /></button>} items={[
+  const menu = (row: Connection) => <ActionMenu label={`Menu ${row.name}`} trigger={<button type="button" className="k-icon-btn" aria-label={`Menu ${row.name}`} disabled={locked || !fresh}><Ellipsis size={16} aria-hidden /></button>} items={[
     { label: 'Edit connection', onSelect: () => void edit(row) },
     { label: `${row.enabled ? 'Disable' : 'Enable'} ${row.name}`, onSelect: () => void execute({ path: `/api/mcp/${row.id}`, body: { id: crypto.randomUUID(), revision: row.revision, enabled: !row.enabled } }) },
     'separator',

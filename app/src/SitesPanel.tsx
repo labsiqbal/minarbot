@@ -1,3 +1,5 @@
+import { useCachedData, useQueryVersion } from './hooks/useCachedQuery';
+import { queryCache } from './hooks/queryCache';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { siteCommand } from './site-command';
@@ -9,7 +11,7 @@ type Page = { sites: Site[]; next_after: string | null };
 type Command = ReturnType<typeof siteCommand>;
 export function SitesPanel({ agent, request }: { agent: string; request: <T>(path: string, data?: unknown) => Promise<T> }) {
   const path = `/api/agents/${agent}/sites`, key = `minarbot-sites:${agent}`;
-  const [open, setOpen] = useState(true), [editorOpen, setEditorOpen] = useState(false), [page, setPage] = useState<Page | null>(null), [cursors, setCursors] = useState(['']);
+  const [open, setOpen] = useState(true), [editorOpen, setEditorOpen] = useState(false), [cursors, setCursors] = useState(['']);
   const [editing, setEditing] = useState<Site | null>(null), [name, setName] = useState(''), [source, setSource] = useState('');
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState<Command | null>(null), [invalid, setInvalid] = useState(false);
   const [reload, setReload] = useState(0), [notice, setNotice] = useState('');
@@ -27,12 +29,15 @@ export function SitesPanel({ agent, request }: { agent: string; request: <T>(pat
     return () => { generation.current++; };
   }, [key]);
   const [loadError, setLoadError] = useState('');
+  const queryPath = `${path}?after=${after}`;
+  const { data: page } = useCachedData<Page>(queryPath);
+  const version = useQueryVersion();
   const root = useVisiblePolling(useCallback(async current => {
     if (!open || busy) return;
-    try { const value = await request<Page>(`${path}?after=${after}`); if (current()) { setPage(value); setLoadError(''); } }
+    try { await queryCache.refresh(queryPath, () => request<Page>(queryPath)); if (current()) setLoadError(''); }
     catch (reason) { if (current()) setLoadError(failure(reason)); }
-  }, [open, path, after, reload, request, busy]));
-  useEffect(() => { setPage(null); heading.current?.focus(); }, [path, after]);
+  }, [open, queryPath, reload, request, busy, version]));
+  useEffect(() => { heading.current?.focus(); }, [path, after]);
   useEffect(() => { if (editing && !busy && !pending) nameInput.current?.focus(); }, [editing, busy, pending]);
   function reset() { generation.current++; setEditing(null); setName(''); setSource(''); setError(''); nameInput.current?.focus(); }
   async function edit(id: string) {
