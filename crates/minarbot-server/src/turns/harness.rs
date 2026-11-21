@@ -71,7 +71,7 @@ pub fn instructions(
     }
     let shell = match runtime {
         "codex" => "exec_command",
-        "claude" => "Bash",
+        "claude" if !crate::platform::LINUX_SANDBOX => "Bash",
         "pi" => "bash",
         _ => "",
     };

@@ -12,11 +12,11 @@ process.env.MINARBOT_HARNESS_CANARY = 'never-inherit-this-canary';
 const fakeSource = readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8');
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 function executable(directory: string) { const path = join(directory,'fake-harness'); writeFileSync(path, `#!${process.execPath}\n` + fakeSource.split('\n').slice(1).join('\n')); chmodSync(path,0o700); return path; }
-async function fixture(runtime: HarnessRuntime, write = true, room = false) {
+async function fixture(runtime: HarnessRuntime, write = true, room = false, realMcp = false) {
   const directory = mkdtempSync(join(room ? join(import.meta.dirname,'node_modules') : tmpdir(),'minarbot-harness-')), workspace = join(directory,'workspace'); mkdirSync(workspace);
   const binary = executable(directory), agent = randomUUID(), minted: {agent: string;turn: string;id: string}[] = [], revoked: string[] = [];
   if(room)mkdirSync(join(directory,'state'));
-  const options = { baseURL: 'http://127.0.0.1:1/v1', database:join(directory,room?'state/db.sqlite':'db.sqlite'), port:0, timeout:10_000, workspaces:[{agent,directory:workspace,write}], harness: { executables:{codex:binary,claude:binary}, issuer:{ mintAgentSession(input: {agent:string;turn:string}) { const id=randomUUID(); minted.push({...input,id});return {id,token:'test-mcp-session-token'}; }, revokeAgentSession(id:string) { revoked.push(id); } } } };
+  const options = { baseURL: 'http://127.0.0.1:1/v1', database:join(directory,room?'state/db.sqlite':'db.sqlite'), port:0, timeout:10_000, workspaces:[{agent,directory:workspace,write}], harness: { executables:{codex:binary,claude:binary}, ...(!realMcp && { issuer:{ mintAgentSession(input: {agent:string;turn:string}) { const id=randomUUID(); minted.push({...input,id});return {id,token:'test-mcp-session-token'}; }, revokeAgentSession(id:string) { revoked.push(id); } } }) } };
   let app = await startApp(options);
   const request = async (path:string, body?:unknown, expected=200) => { const response=await fetch(app.origin+path,{method:body?'POST':'GET',headers:{Origin:app.origin,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await response.json();assert(expected===200?response.ok:response.status===expected,JSON.stringify(data));return data; };
   const profile = { runtime: 'api' as const, name:'Coder', model:'saved-api-model', instructions:'Help with coding.' };
@@ -26,6 +26,27 @@ async function fixture(runtime: HarnessRuntime, write = true, room = false) {
   const send = async(text:string) => {const id=randomUUID();await request(path+'/turns',{id,text});return id;};
   return {directory,workspace,agent,path,profile,request,until,send,minted,revoked,options,get app(){return app;}, async editDatabase(edit: (db: DatabaseSync) => void){await app.close();const db=testDatabase(options.database);try{edit(db);}finally{db.close();app=await startApp(options);}},async restart(){await app.close();app=await startApp(options);},async close(){await app.close();rmSync(directory,{recursive:true,force:true});}};
 }
+test('claude: workspace shell inspection and checks finish without approval', { skip: process.platform !== 'linux' }, async () => {
+  const f = await fixture('claude', true, false, true);
+  try {
+    const hostFile = join(f.directory, 'host-only.txt');
+    writeFileSync(hostFile, 'private fixture');
+    writeFileSync(join(f.workspace, 'fixture.test.mjs'), `
+import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+assert.equal(process.cwd(), '/workspace');
+assert.equal(process.env.MINARBOT_MCP_TOKEN, undefined);
+assert.equal(existsSync(${JSON.stringify(hostFile)}), false);
+await assert.rejects(fetch(${JSON.stringify(f.app.origin + '/api/environment')}, { signal: AbortSignal.timeout(2000) }));
+`);
+    const id = await f.send('WORKSPACE_SHELL_FIXTURE');
+    const row = await f.until(id, row => row.harnessApprovals.length || ['done','failed'].includes(row.status));
+    assert.deepEqual(row.harnessApprovals, []);
+    assert.equal(row.status, 'done', row.error);
+    assert.equal(row.reply, 'finished');
+    assert.equal(readFileSync(join(f.workspace, 'result.txt'), 'utf8'), 'checked');
+  } finally { await f.close(); }
+});
 for(const runtime of ['codex','claude'] as const) {
   test(`${runtime}: native check receipt prevents a second verification turn`, async () => {
     const f = await fixture(runtime);
