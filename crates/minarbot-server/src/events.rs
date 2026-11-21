@@ -123,6 +123,30 @@ impl Hub {
     pub fn close(&self) {
         self.shutdown.send_replace(true);
     }
+    pub fn calendar(&self) -> Response {
+        let mut changes = self.changes.subscribe();
+        let mut shutdown = self.shutdown.subscribe();
+        let stream = async_stream::stream! {
+            yield Ok::<_, Infallible>("data: changed\n\n");
+            let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + Duration::from_secs(15), Duration::from_secs(15));
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => break,
+                    _ = heartbeat.tick() => { yield Ok(": keepalive\n\n"); continue; },
+                    change = changes.recv() => match change {
+                        Ok(scope) if scope == "database" => (),
+                        Err(broadcast::error::RecvError::Lagged(_)) => (),
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        _ => continue,
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                while changes.try_recv().is_ok() {}
+                yield Ok("data: changed\n\n");
+            }
+        };
+        stream_response(Body::from_stream(stream))
+    }
     pub fn sidebar(&self, db: &Arc<Mutex<Database>>) -> Response {
         let mut changes = self.changes.subscribe();
         let mut shutdown = self.shutdown.subscribe();

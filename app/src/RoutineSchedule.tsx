@@ -19,8 +19,9 @@ export function scheduleLabel(schedule: Spec | null | undefined, nextAt: number,
   if (schedule.kind === 'legacy_interval') return `Every ${schedule.intervalMs / 60000} minutes`;
   return `Once on ${new Date(schedule.at).toLocaleString('en-GB', { timeZone })} (${timeZone})`;
 }
-export function RoutineSchedule({ initial, initialNextAt, initialInterval, initialZone, legacy, disabled, active, onChange }: {
+export function RoutineSchedule({ initial, initialNextAt, initialInterval, initialZone, intervalAnchor, legacy, disabled, active, onChange }: {
   initial?: Spec | null; initialNextAt: number; initialInterval: number | null; initialZone?: string | null;
+  intervalAnchor?: number;
   legacy: boolean; disabled: boolean; active: boolean; onChange: (value: RoutineTiming | null) => void;
 }) {
   const cron = initial?.kind === 'cron' ? /^(\d+) (\d+) \* \* (\*|1-5|[0-6](?:,[0-6])*)$/.exec(initial.expression) : null;
@@ -49,7 +50,7 @@ export function RoutineSchedule({ initial, initialNextAt, initialInterval, initi
   let spec: Spec;
   if (mode === 'legacy') spec = { kind:'legacy_interval',intervalMs:Number(amount)*60000,anchorAt:initialNextAt };
   else if (mode === 'once') spec = { kind:'once',date,time:clock };
-  else if (mode === 'interval') spec = { kind:'interval',amount:Number(amount),unit:unit as 'minute'|'hour'|'day',anchorAt:initial?.kind === 'interval' && Number(amount) === initial.amount && unit === initial.unit ? initial.anchorAt : anchor + Number(amount) * (unit === 'minute' ? 60000 : unit === 'hour' ? 3600000 : 86400000) };
+  else if (mode === 'interval') spec = { kind:'interval',amount:Number(amount),unit:unit as 'minute'|'hour'|'day',anchorAt:initial?.kind === 'interval' && Number(amount) === initial.amount && unit === initial.unit ? initial.anchorAt : intervalAnchor ?? anchor + Number(amount) * (unit === 'minute' ? 60000 : unit === 'hour' ? 3600000 : 86400000) };
   else spec = { kind:'cron',expression:mode === 'cron' ? expression : `${Number(clock.split(':')[1])} ${Number(clock.split(':')[0])} * * ${mode === 'daily' ? '*' : mode === 'weekdays' ? '1-5' : weekly.join(',')}` };
   const serialized = JSON.stringify(spec);
   useEffect(() => {
@@ -77,7 +78,7 @@ export function RoutineSchedule({ initial, initialNextAt, initialInterval, initi
       <Field label="Time zone" hint="IANA zone. Daily and weekly times follow its local clock."><Input value={zone} required={active} maxLength={100} disabled={disabled} onChange={event=>setZone(event.target.value)} placeholder="Asia/Jakarta"/></Field>
     </div>
     {mode === 'weekly' && <fieldset className="routine-days"><legend>Days</legend>{days.map((day,index)=><Checkbox key={day} label={day} checked={weekly.includes(String(index))} disabled={disabled} onChange={checked=>setWeekly(values=>checked ? [...values,String(index)].sort() : values.filter(value=>value!==String(index)))}/>)}</fieldset>}
-    {(mode === 'interval' || mode === 'legacy') && <div className="k-grid-2"><Field label={mode === 'legacy' ? 'Every (minutes)' : 'Every'} hint={mode === 'legacy' ? 'Existing fixed interval; timing stays unchanged.' : 'Elapsed time, up to 365 days. New intervals start after this duration.'}><Input type="number" required={active} min={mode === 'legacy' ? 1 : unit === 'minute' ? 5 : 1} max={unit === 'hour' && mode !== 'legacy' ? 8760 : 525600} step={mode === 'legacy' ? 'any' : 1} value={amount} disabled={disabled} onChange={event=>setAmount(event.target.value)}/></Field>{mode !== 'legacy' && <Field label="Unit"><Select value={unit} disabled={disabled} onChange={value=>setUnit(value as 'minute'|'hour'|'day')} options={[{value:'hour',label:'Hours'},{value:'minute',label:'Minutes'},...(unit === 'day' ? [{value:'day',label:'Days'}] : [])]}/></Field>}</div>}
+    {(mode === 'interval' || mode === 'legacy') && <div className="k-grid-2"><Field label={mode === 'legacy' ? 'Every (minutes)' : 'Every'} hint={mode === 'legacy' ? 'Existing fixed interval; timing stays unchanged.' : intervalAnchor ? 'Elapsed time, starting at the selected slot.' : 'Elapsed time, up to 365 days. New intervals start after this duration.'}><Input type="number" required={active} min={mode === 'legacy' ? 1 : unit === 'minute' ? 5 : 1} max={unit === 'hour' && mode !== 'legacy' ? 8760 : 525600} step={mode === 'legacy' ? 'any' : 1} value={amount} disabled={disabled} onChange={event=>setAmount(event.target.value)}/></Field>{mode !== 'legacy' && <Field label="Unit"><Select value={unit} disabled={disabled} onChange={value=>setUnit(value as 'minute'|'hour'|'day')} options={[{value:'hour',label:'Hours'},{value:'minute',label:'Minutes'},...(unit === 'day' ? [{value:'day',label:'Days'}] : [])]}/></Field>}</div>}
     {mode === 'cron' && <Field label="Cron expression" hint="Five numeric fields: minute hour day month weekday (0 = Sunday). Minimum gap: 5 minutes."><Input value={expression} required={active} maxLength={256} disabled={disabled} placeholder="0 9 * * 1-5" onChange={event=>setExpression(event.target.value)}/></Field>}
     <section className="routine-preview" aria-label="Next runs" aria-live="polite"><strong>Next runs</strong>{error || zoneError ? <Alert tone="error">{error || zoneError}</Alert> : !preview ? <p role="status">Calculating schedule...</p> : preview.times.length ? <ol>{preview.times.map(at=><li key={at}><time dateTime={new Date(at).toISOString()}>{new Date(at).toLocaleString('en-GB',{timeZone:preview.zone,weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</time></li>)}</ol> : <p>No future runs. A past one-time schedule runs once when enabled.</p>}</section>
   </div>;

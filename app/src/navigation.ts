@@ -1,6 +1,6 @@
 export type SettingsSection = 'general' | 'appearance' | 'providers' | 'engines' | 'skills' | 'connected-apps' | 'hub' | 'mcp' | 'machines' | 'devices' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server';
 export type ResultTarget = { view: 'file' | 'url' | 'computer'; path: string; name: string; agent?: string };
-export type AppRoute = { result?: ResultTarget; notFound?: boolean; agent?: string; thread?: string; room?: string; project?: string; machine?: string; remoteAgent?: string; view?: 'routines' | 'workflows'; settings?: SettingsSection };
+export type AppRoute = { result?: ResultTarget; notFound?: boolean; agent?: string; thread?: string; room?: string; project?: string; machine?: string; remoteAgent?: string; view?: 'routines' | 'workflows' | 'calendar'; settings?: SettingsSection };
 const settings = new Set(['general', 'appearance', 'providers', 'engines', 'skills', 'connected-apps', 'hub', 'mcp', 'machines', 'devices', 'updates', 'usage', 'data', 'backup', 'mcp-server']);
 const id = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
 
@@ -16,7 +16,7 @@ function parseBaseRoute(location: string): AppRoute {
   if ((match = new RegExp(`^/rooms/(${id})$`, 'i').exec(path))) return { room: match[1].toLowerCase() };
   if ((match = new RegExp(`^/projects/(${id})$`, 'i').exec(path))) return { project: match[1].toLowerCase() };
   if ((match = new RegExp(`^/machines/(${id})/agents/(${id})$`, 'i').exec(path))) return { machine: match[1].toLowerCase(), remoteAgent: match[2].toLowerCase() };
-  if (path === '/routines' || path === '/workflows') return { view: path.slice(1) as 'routines' | 'workflows' };
+  if (path === '/routines' || path === '/workflows' || path === '/calendar') return { view: path.slice(1) as 'routines' | 'workflows' | 'calendar' };
   return { notFound: true };
 }
 

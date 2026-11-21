@@ -57,6 +57,32 @@ function RunGraph({ run }: { run: Run }) {
   </section>;
 }
 
+export function WorkflowRunDetails({ id, request, onThread }: {
+  id: string; request: <T>(path: string, data?: unknown, signal?: AbortSignal) => Promise<T>;
+  onThread: (agent: string, thread: string) => void;
+}) {
+  const [run, setRun] = useState<Run>();
+  const [error, setError] = useState('');
+  usePolling(async signal => {
+    try {
+      const result = await request<Run>('/api/workflow-runs/' + id, undefined, signal);
+      if (!signal.aborted) { setRun(result); setError(''); }
+    } catch (reason) { if (!signal.aborted) setError(reason instanceof Error ? reason.message : 'Run could not load.'); }
+  }, { interval: 1200 }, [id, request]);
+  return <div className="k-stack">
+    {error && <Alert tone="error">{error}</Alert>}
+    {!run && !error && <SkeletonRows />}
+    {run && <>
+      <div><Badge>Version {run.version} · {statuses[run.status] ?? run.status}</Badge></div>
+      {run.error && <Alert tone="error">{run.error}</Alert>}
+      <RunGraph key={run.id} run={run} />
+      <WorkflowText text={run.last} run={run.id} />
+      <Card>{run.steps.map(step => <Row key={step.seq} title={step.node} meta={<Badge>{workflowStepLabel(step)}</Badge>}
+        trailing={step.thread && step.agent && <Button size="sm" onClick={() => onThread(step.agent!, step.thread!)}>Open step {step.node}</Button>} />)}</Card>
+    </>}
+  </div>;
+}
+
 export function WorkflowPanel({ owner, agents, request, onBack, renderConversation, onNavigate, initial }: {
   owner: Agent; agents: Agent[]; request: <T>(path: string, data?: unknown) => Promise<T>;
   onBack: () => void; renderConversation: (thread: string, owner: string) => ReactNode; onNavigate: () => void;

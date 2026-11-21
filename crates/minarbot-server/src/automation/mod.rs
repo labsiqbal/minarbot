@@ -1,8 +1,9 @@
+mod calendar;
 pub(crate) mod flows;
 pub mod options;
 pub(crate) mod project;
 mod routines;
-mod schedule;
+pub(crate) mod schedule;
 pub mod scripts;
 mod webhooks;
 mod workflows;
@@ -62,7 +63,10 @@ pub fn initialize(db: &Connection) -> Result<()> {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .merge(scripts::routes())
+        .route("/api/automation-calendar", any(entry))
+        .route("/api/automation-calendar/routines.ics", any(entry))
         .route("/api/routines", any(entry))
+        .route("/api/routines/{id}", any(entry))
         .route("/api/routine-schedule", any(entry))
         .route("/api/agents/{id}/routines", any(entry))
         .route("/api/routines/{id}/edit", any(entry))
@@ -215,6 +219,17 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
     };
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
+    if path == "/api/automation-calendar" || path == "/api/automation-calendar/routines.ics" {
+        if method != Method::GET {
+            return Err(error(405, "Method not allowed."));
+        }
+        let now = state.config.now();
+        return if path.ends_with(".ics") {
+            calendar::export(db, &q, now)
+        } else {
+            Ok(crate::json_response(200, calendar::read(db, &q, now)?))
+        };
+    }
     let p: Vec<_> = path.split('/').skip(1).collect();
     if method == Method::GET && path == "/api/routine-schedule" {
         return Ok(crate::json_response(

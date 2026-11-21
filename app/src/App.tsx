@@ -56,6 +56,8 @@ import { isTurnWaitingForInput, liveTurn, livePartial, pendingApprovalSubject, t
 import { TimelineMinimap } from './ui/TimelineMinimap';
 import { deriveTimelineMinimapItems } from './ui/timelineMinimapItems';
 import { EventConnection } from './EventConnection';
+import { AutomationCalendar } from './AutomationCalendar';
+import type { AppRoute } from './navigation';
 import { applyPresentation, presentationKey, readPresentation } from './presentation';
 import { CreateProject, HelpPage, ProjectHome, ProjectSidebar, useProjects } from './Projects';
 import { MachinesPanel, RemoteAgentDetail, useMachines } from './MachinesPanel';
@@ -64,7 +66,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Link as LinkIcon, Smartphone, Archive, BarChart3, BookOpen, Cpu, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Link as LinkIcon, Smartphone, Archive, BarChart3, BookOpen, Cpu, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -1178,7 +1180,7 @@ function App() {
   const [environment, setEnvironment] = useState<Environment | null>(null), [summaries, setSummaries] = useState<SidebarSummary[]>([]);
   const [routineAgent, setRoutineAgent] = useState('');
   const view = route.view ?? (route.machine ? 'remote' : 'chat');
-  const setView = (view: 'routines' | 'workflows') => navigate({ view });
+  const setView = (view: NonNullable<AppRoute['view']>) => navigate({ view });
   const remoteMachinesState = useMachines(api);
   const remoteSelection = route.machine && route.remoteAgent ? { machine: route.machine, agent: route.remoteAgent } : null;
   const [workspaceDialog, setWorkspaceDialog] = useState<'import' | 'help' | null>(null);
@@ -1278,6 +1280,8 @@ function App() {
     navigate(target.channel ? { room: target.channel } : { agent: target.agent, thread: target.thread ?? undefined });
     setDialog(null);
   };
+  const openReport = (agent: string, destination: string, turn: string) =>
+    openAttention({ agent, channel: destination === 'direct' ? null : destination, thread: null, turn, focus: turn });
   const attention = useNeedsYouNotifications(openAttention);
   const attentionByAgent = new Map<string, Map<string, PendingInput>>();
   for (const input of attention ?? []) {
@@ -1298,7 +1302,7 @@ function App() {
   useRouteFallback(!route.notFound && !invalidRoute && !!directory && !route.agent && !route.room && !route.project && !route.view && !route.machine, { agent: defaultAgent?.id, settings: route.settings }, navigate);
   const notFound = route.notFound || invalidRoute || routeThread?.missing;
   const settingsName = settingsGroups.flatMap(group => group.items).find(item => item.id === route.settings)?.label;
-  const pageTitle = notFound ? 'Page not found' : route.settings ? `Settings · ${settingsName}` : project ? project.name : channel ? `#${channel.section_name ?? channel.name} · ${sectionProject?.name ?? 'Room'}` : route.machine ? remoteMachinesState.machines.find(machine => machine.id === route.machine)?.agents.find(agent => agent.id === route.remoteAgent)?.name : route.view ? route.view === 'routines' ? 'Routines' : 'Workflows' : agent ? `${routeThread?.thread?.name ?? 'Main chat'} · ${agent.name}` : '';
+  const pageTitle = notFound ? 'Page not found' : route.settings ? `Settings · ${settingsName}` : project ? project.name : channel ? `#${channel.section_name ?? channel.name} · ${sectionProject?.name ?? 'Room'}` : route.machine ? remoteMachinesState.machines.find(machine => machine.id === route.machine)?.agents.find(agent => agent.id === route.remoteAgent)?.name : route.view ? route.view === 'routines' ? 'Routines' : route.view === 'workflows' ? 'Workflows' : 'Automation calendar' : agent ? `${routeThread?.thread?.name ?? 'Main chat'} · ${agent.name}` : '';
   useRoutePresentation(route, pageTitle, setSidebarTab, attentionCount);
   const relativeTime = (value: string | null | undefined) => { if (!value) return ''; const age = Math.max(0, Date.now() - Date.parse(value)); if (!Number.isFinite(age)) return ''; const minutes = Math.floor(age / 60000); if (minutes < 60) return `${Math.max(1, minutes)}m`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h`; return `${Math.floor(hours / 24)}d`; };
   const summaryByAgent = new Map(summaries.map(item => [item.agent, item]));
@@ -1363,8 +1367,9 @@ function App() {
   else if (deleting) content = <main className="chat chat--empty bs-root"><p className="empty-chat__sub" role="status">Deleting agent...</p></main>;
   else if (view === 'remote') { const machine = remoteMachinesState.machines.find(item => item.id === remoteSelection?.machine); content = <RemoteAgentDetail key={`${machine?.id}:${remoteSelection?.agent}`} request={api} machine={machine} agent={machine?.agents.find(item => item.id === remoteSelection?.agent)} />; }
   else if (view === 'workflows') content = <PageView wide><Suspense fallback={<p className="empty" role="status">Loading workflow directory...</p>}><WorkflowDirectory agents={directory.agents} request={api} renderConversation={(id, owner) => <WorkflowConversation key={id} agent={directory.agents.find(item => item.id === owner)} threadId={id} configured={directory.configured} onOpenAgent={openThread} onOpenChannel={openChannel} />} /></Suspense></PageView>;
+  else if (view === 'calendar') content = <PageView wide><AutomationCalendar projects={projectState.projects} agents={directory.agents} request={api} onThread={openThread} onReport={openReport} /></PageView>;
   else if (view === 'routines') content = <PageView wide><RoutinesHub key={routineAgent} initialAgent={routineAgent} agents={directory.agents.filter(agent => !agent.hidden)} projects={projectState.projects} onOpen={openThread} /></PageView>;
-  else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={openThread} onDeleted={() => { navigate({}, true); void load(); }} /></PageView>;
+  else if (project) content = <PageView wide><ProjectHome project={project} agents={directory.agents} state={projectState} request={api} onChat={id => { void load(true).then(() => openChannel(id)); }} onThread={openThread} onReport={openReport} onDeleted={() => { navigate({}, true); void load(); }} /></PageView>;
   else if (route.thread && !routeThread?.thread) content = <PageView>{routeThread?.error ? <Alert tone="error">{routeThread.error} Retrying…</Alert> : <p role="status">Loading conversation...</p>}</PageView>;
   else if (projectThread && directory.agents.find(agent => agent.id === projectThread.agent)) { const owner = directory.agents.find(agent => agent.id === projectThread.agent)!; const thread = projectState.projects.find(project => project.id === projectThread.project)?.threads.find(thread => thread.id === projectThread.thread) ?? projectThread.conversation; content = thread ? <Chat onOpenAgent={openThread} key={thread.id} agent={owner} thread={{...thread,revision:1,archived:0,deleted:0}} configured={directory.configured} menuItems={[{label:'Back to project',onSelect:()=>openProject(projectThread.project)}]} /> : <PageView><EmptyState title="Project conversation unavailable" /></PageView>; }
   else if (channel) content = <Chat onOpenAgent={openThread} key={`channel:${channel.id}`} agent={channel} channel={{ ...channel, lead: directory.agents.find(agent => agent.id === channel.lead)?.hidden ? null : channel.lead }} onRead={() => markRead(channel)} members={directory.agents.filter(agent => channel.members.includes(agent.id) && !agent.hidden)} onEdit={channel.project ? undefined : () => setDialog('edit')} menuItems={channel.project ? [{label:'Back to project',onSelect:()=>openProject(channel.project!)}] : []} configured={directory.configured} />;
@@ -1376,6 +1381,7 @@ function App() {
         <nav className="sidebar__controls" aria-label="Automation">
           <IconButton label="Routines" aria-current={view === 'routines' ? 'page' : undefined} disabled={!directory} onClick={() => { setRoutineAgent(''); setView('routines'); setDialog(null); }}><CalendarClock size={16} aria-hidden /></IconButton>
           <IconButton label="Workflows" aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
+          <IconButton label="Automation calendar" aria-current={view === 'calendar' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('calendar'); setNarrowOpen(false); setDialog(null); }}><CalendarDays size={16} aria-hidden /></IconButton>
           <ActionMenu label="Create new" trigger={<IconButton label="Create new"><Plus size={16} aria-hidden /></IconButton>} items={[
             ...(agent ? [{ label: 'New conversation', icon: <MessageSquare size={15} aria-hidden />, hint: 'Ctrl/Cmd+Shift+O', onSelect: () => { openAgent(selected); switcherFrame(() => window.dispatchEvent(new Event('minarbot:new-conversation'))); } }] : []),
             { label: 'New agent', icon: <Plus size={15} aria-hidden />, onSelect: () => setDialog('agent'), disabled: !directory },

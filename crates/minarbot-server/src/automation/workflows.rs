@@ -90,6 +90,10 @@ pub(super) fn start(
         w["revision"].as_i64().ok_or_else(Failure::storage)?,
     )?;
     db.execute("INSERT INTO workflow_runs(id,workflow,version,agent,graph,input,last,cursor,status,created) VALUES(?,?,?,?,?,?,?,?,'ready',?)",params![id,workflow,w["revision"].as_i64(),string(&w,"agent"),g.to_string(),input,input,string(&g,"entry"),iso(db,state.config.now())?])?;
+    db.execute(
+        "INSERT INTO local_workflow_run_projects SELECT ?,project FROM local_workflow_schedule_projects WHERE workflow=?",
+        [id, workflow],
+    )?;
     Ok(())
 }
 #[allow(clippy::too_many_arguments)]
@@ -114,14 +118,16 @@ pub fn route(
     if get && (path == "/api/workflows" || owner.is_some()) {
         let after = data::param(q, "after").unwrap_or("");
         let deleted = data::param(q, "deleted").unwrap_or("0");
+        let project = data::param(q, "project");
         if q.iter()
-            .any(|(k, _)| !["after", "deleted"].contains(&k.as_str()))
+            .any(|(k, _)| !["after", "deleted", "project"].contains(&k.as_str()))
+            || project.is_some_and(|p| p != "none" && !uuid(p))
             || !["0", "1"].contains(&deleted)
             || !after.is_empty() && !uuid(after)
         {
             return Err(error(400, "Invalid workflow list position."));
         }
-        let mut rows=all(db,"SELECT workflows.*,agents.name AS owner_name,graph FROM workflows JOIN agents ON agents.id=workflows.agent JOIN workflow_versions ON workflow=workflows.id AND workflow_versions.revision=workflows.revision WHERE (? IS NULL OR agent=?) AND workflows.deleted=? AND workflows.id>? ORDER BY workflows.id LIMIT 21",params![owner,owner,deleted,after])?;
+        let mut rows=all(db,"SELECT w.*,a.name AS owner_name,v.graph,b.project AS schedule_project FROM workflows w JOIN agents a ON a.id=w.agent JOIN workflow_versions v ON v.workflow=w.id AND v.revision=w.revision LEFT JOIN local_workflow_schedule_projects b ON b.workflow=w.id WHERE (?1 IS NULL OR w.agent=?1) AND w.deleted=?2 AND w.id>?3 AND (?4 IS NULL OR (?4='none' AND b.project IS NULL) OR ((b.project IS NULL OR b.project=?4) AND EXISTS(SELECT 1 FROM local_project_members m JOIN local_projects p ON p.id=m.project WHERE m.project=?4 AND m.agent=w.agent AND p.archived=0 AND p.deleted=0))) ORDER BY w.id LIMIT 21",params![owner,deleted,after,project])?;
         for row in &mut rows {
             parse_graph(row)?;
         }
@@ -158,7 +164,7 @@ pub fn route(
                     json!(all(db,"SELECT rowid AS seq,id,version,status,cursor,steps,revision,error,created,substr(last,1,1000) AS result FROM workflow_runs WHERE workflow=? AND rowid<? ORDER BY rowid DESC LIMIT 20",params![id,before])?)
                 }
                 Some("schedule") => {
-                    json!({"schedule":one(db,"SELECT * FROM workflow_schedules WHERE workflow=?",[id])?,"occurrences":all(db,"SELECT * FROM workflow_occurrences WHERE workflow=? ORDER BY scheduled_at DESC LIMIT 20",[id])?})
+                    json!({"schedule":read_schedule(db,id)?,"occurrences":all(db,"SELECT * FROM workflow_occurrences WHERE workflow=? ORDER BY scheduled_at DESC LIMIT 20",[id])?})
                 }
                 _ => present(db, w)?,
             },
@@ -261,12 +267,15 @@ fn queue_count(db: &Connection) -> Result<i64> {
         |r| r.get(0),
     )?)
 }
-fn save_schedule(db: &Connection, id: &str, v: &Value) -> Result<Value> {
-    let old = one(
+fn read_schedule(db: &Connection, id: &str) -> Result<Option<Value>> {
+    one(
         db,
-        "SELECT * FROM workflow_schedules WHERE workflow=?",
+        "SELECT s.*,b.project FROM workflow_schedules s LEFT JOIN local_workflow_schedule_projects b USING(workflow) WHERE s.workflow=?",
         [id],
-    )?;
+    )
+}
+fn save_schedule(db: &Connection, id: &str, v: &Value) -> Result<Value> {
+    let old = read_schedule(db, id)?;
     if !data::closed(
         v,
         &[
@@ -276,10 +285,12 @@ fn save_schedule(db: &Connection, id: &str, v: &Value) -> Result<Value> {
             "intervalSeconds",
             "input",
             "enabled",
+            "project",
         ],
     ) || !integer(&v["revision"], 0, 9007199254740991)
         || !integer(&v["nextAt"], 1, 253370764799999)
         || !v["enabled"].is_boolean()
+        || !v["project"].is_null() && !v["project"].as_str().is_some_and(uuid)
         || v["input"]
             .as_str()
             .is_none_or(|s| s.encode_utf16().count() > 16000)
@@ -288,6 +299,11 @@ fn save_schedule(db: &Connection, id: &str, v: &Value) -> Result<Value> {
             .is_some_and(|n| n.is_null() || integer(n, 60, 31536000))
     {
         return Err(error(400, "Invalid workflow schedule."));
+    }
+    if let Some(project) = v["project"].as_str() {
+        if !data::exists(db,"SELECT 1 FROM local_projects p JOIN local_project_members m ON m.project=p.id JOIN workflows w ON w.agent=m.agent WHERE p.id=? AND w.id=? AND p.deleted=0 AND p.archived=0",[project,id])? {
+            return Err(error(403, "Workflow owner must be a member of an active project."));
+        }
     }
     if old
         .as_ref()
@@ -310,10 +326,13 @@ fn save_schedule(db: &Connection, id: &str, v: &Value) -> Result<Value> {
         ));
     }
     db.execute("INSERT INTO workflow_schedules VALUES(?,?,?,?,?,?) ON CONFLICT(workflow) DO UPDATE SET revision=excluded.revision,next_at=excluded.next_at,interval_ms=excluded.interval_ms,input=excluded.input,enabled=excluded.enabled",params![id,v["revision"].as_i64().unwrap_or(0)+1,v["nextAt"].as_i64(),v["intervalSeconds"].as_i64().map(|n|n*1000),string(v,"input"),i64::from(v["enabled"]==true)])?;
-    one(
-        db,
-        "SELECT * FROM workflow_schedules WHERE workflow=?",
-        [id],
-    )?
-    .ok_or_else(Failure::storage)
+    if let Some(project) = v["project"].as_str() {
+        db.execute("INSERT INTO local_workflow_schedule_projects VALUES(?,?) ON CONFLICT(workflow) DO UPDATE SET project=excluded.project", [id, project])?;
+    } else if v.get("project").is_some() {
+        db.execute(
+            "DELETE FROM local_workflow_schedule_projects WHERE workflow=?",
+            [id],
+        )?;
+    }
+    read_schedule(db, id)?.ok_or_else(Failure::storage)
 }
