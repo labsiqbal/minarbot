@@ -16,6 +16,7 @@ import { attachmentSmoke } from './attachment-smoke.mjs';
 import { widePanelsSmoke } from './rs1-smoke.mjs';
 import { desktopImage, installVncFixture } from './computer-smoke.mjs';
 import { desktopViewSmoke } from './desktop-view-smoke.mjs';
+import { issue1Smoke } from './issue1-smoke.mjs';
 import { roomControlsSmoke } from './room-controls-smoke.mjs';
 import { runControlsSmoke } from './run-controls-smoke.mjs';
 import { streamActionsSmoke } from './stream-actions-smoke.mjs';
@@ -939,6 +940,11 @@ try {
   }
   if (process.env.MINARBOT_SMOKE_SET3_ONLY === '1') {
     await createAgent(lead); await settingsConnectionsSmoke(mcpPort); throw new Error('SMOKE_STOP_AFTER');
+  }
+  if (process.env.MINARBOT_SMOKE_ISSUE1_ONLY === '1') {
+    await createAgent(lead);
+    await issue1Smoke({ page, check, agentChat, screenshot });
+    throw new Error('SMOKE_STOP_AFTER');
   }
   await check('Empty workspace', async () => {
     await workspace();

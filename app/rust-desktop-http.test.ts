@@ -293,3 +293,64 @@ test('HTTP VNC relay enforces owner Host/Origin, tickets, viewer cap, live contr
     const last = await connectVnc(url((await mint('watch', 2)).ticket), app.origin); clients.push(last); await last.handshake(); await post(path + '/stop', {}); await new Promise(resolve => setTimeout(resolve, 30)); assert(last.closed);
   } finally { for (const client of clients) client.close(); await app.close(); await new Promise<void>(resolve => backend.close(() => resolve())); if (socketDirectory !== undefined) fs.closeSync(socketDirectory); f.cleanup(); }
 });
+
+test('Always-on Computer uses a desktop slot, survives idle and restores on server restart', async () => {
+  const { startApp } = await import('./test-bridge.ts');
+  const f = await desktopFixture();
+  const options = { database: join(f.dir, 'always-on.sqlite'), desktop: { ...f.options, max: 1 } };
+  let app = await startApp(options, { directory: f.dir });
+  async function request(path: string, body?: unknown, status = 200) {
+    const response = await fetch(app.origin + path, {
+      method: body ? 'POST' : 'GET',
+      headers: { Origin: app.origin, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await response.json();
+    assert.equal(response.status, status, JSON.stringify(data));
+    return data;
+  }
+  async function computer(name: string) {
+    const id = randomUUID(), path = `/api/agents/${id}/computer`;
+    await request('/api/agents', { id, name, runtime: 'api', model: 'fixture', instructions: 'Help.' }, 201);
+    await request(path, { id: randomUUID(), revision: 0, enabled: true });
+    return path;
+  }
+  async function waitFor(path: string, state: string, slotAvailable = false) {
+    for (let attempt = 0; attempt < 140; attempt++) {
+      const status = await request(path);
+      if ((status.state === state || state === 'running' && status.state === 'idle') &&
+          (!slotAvailable || !status.alwaysOnLimitReached)) return status;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.fail(`Computer did not reach ${state}`);
+  }
+  try {
+    const first = await computer('Keep on'), second = await computer('On demand');
+    await request(second + '/start', {});
+    assert.equal((await request(first)).alwaysOnLimitReached, true);
+    const enable = { id: randomUUID(), revision: 1, alwaysOn: true };
+    await request(first, enable, 429);
+    await request(second + '/stop', {});
+    const running = await request(first, enable);
+    assert.equal(running.alwaysOn, true);
+    assert.equal(running.stopsInMs, null);
+    assert.equal((await request(first, enable)).revision, running.revision);
+    await request(second + '/start', {}, 429);
+    await new Promise(resolve => setTimeout(resolve, 2150));
+    await waitFor(first, 'running');
+    assert.equal(f.launches.length, 2);
+    await app.close();
+    app = await startApp(options);
+    const restored = await waitFor(first, 'running');
+    assert.equal(restored.alwaysOn, true);
+    assert.equal(f.launches.length, 3);
+    assert.equal(f.launches[2].profile, f.launches[1].profile);
+    assert.equal((await request(second)).state, 'off');
+    await request(first, { id: randomUUID(), revision: restored.revision, alwaysOn: false });
+    await waitFor(first, 'off');
+    await waitFor(second, 'off', true);
+  } finally {
+    await app.close();
+    f.cleanup();
+  }
+});

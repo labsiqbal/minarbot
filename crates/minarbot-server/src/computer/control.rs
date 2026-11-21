@@ -21,6 +21,43 @@ fn permission(c: &Connection, agent: &str) -> Result<Value> {
     )?
     .unwrap_or(json!({"enabled":0,"revision":0})))
 }
+fn pinned(c: &Connection, agent: &str) -> Result<bool> {
+    Ok(one(c, "SELECT 1 FROM computer_always_on WHERE agent=?", [agent])?.is_some())
+}
+pub(super) fn always_on(s: &AppState, agent: &str) -> Result<bool> {
+    db(s, |c| {
+        Ok(pinned(c, agent)? && !crate::data::agents::hidden(c, agent)?)
+    })
+}
+fn at_capacity(s: &AppState, c: &Connection, agent: &str) -> Result<bool> {
+    let pinned = c.query_row("SELECT count(*) FROM computer_always_on", [], |r| r.get(0))?;
+    s.computer.at_capacity(agent, pinned)
+}
+pub(super) async fn restore_always_on(s: &AppState) {
+    let Ok(agents) = db(s, |c| {
+        rows(c, "SELECT agent FROM computer_always_on ORDER BY agent", [])
+    }) else {
+        return;
+    };
+    for row in agents {
+        let agent = text(&row, "agent");
+        let result = async {
+            let gate = s.computer.control_gate(agent)?;
+            let _guard = gate.lock().await;
+            if always_on(s, agent)? && enabled(s, agent)? {
+                s.computer.start(agent, s.config.now()).await?;
+            }
+            Ok::<_, Failure>(())
+        }
+        .await;
+        if let Err(error) = result {
+            eprintln!(
+                "Always-on Computer could not start for {agent}: {}",
+                error.message
+            );
+        }
+    }
+}
 fn control(c: &Connection, agent: &str, now: i64) -> Result<Value> {
     c.execute(
         "INSERT OR IGNORE INTO computer_control VALUES(?,'agent',?,?,0)",
@@ -63,6 +100,13 @@ pub fn turn_wait(c: &Connection, turn: &str) -> Result<Option<Value>> {
 fn read_db(s: &AppState, c: &Connection, agent: &str) -> Result<Value> {
     let mut value = s.computer.status(agent, s.config.now())?;
     let p = permission(c, agent)?;
+    let always_on = pinned(c, agent)?;
+    value["alwaysOn"] = json!(always_on);
+    value["alwaysOnLimitReached"] =
+        json!(!always_on && p["enabled"] == 1 && at_capacity(s, c, agent)?);
+    if always_on {
+        value["stopsInMs"] = Value::Null;
+    }
     value["enabled"] = json!(p["enabled"] == 1);
     value["revision"] = p["revision"].clone();
     value["control"] = control(c, agent, s.config.now())?;
@@ -96,6 +140,9 @@ fn prior(c: &Connection, v: &Value, request: &str) -> Result<Option<Value>> {
     Ok(None)
 }
 pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
+    if v.get("alwaysOn").is_some() {
+        return configure_always_on(s, agent, v).await;
+    }
     if !keys(v, &["id", "revision", "enabled"]) || !command_id(v) || !v["enabled"].is_boolean() {
         return Err(error(400, "Invalid computer setting."));
     }
@@ -125,6 +172,9 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
             return Err(error(409, "Computer setting changed. Load latest status."));
         }
         c.execute("INSERT INTO agent_computers VALUES(?,?,?) ON CONFLICT(agent) DO UPDATE SET enabled=excluded.enabled,revision=excluded.revision",params![agent,if v["enabled"]==true{1}else{0},v["revision"].as_i64().unwrap_or(0)+1])?;
+        if v["enabled"] == false {
+            c.execute("DELETE FROM computer_always_on WHERE agent=?", [agent])?;
+        }
         let result = read_db(s, c, agent)?;
         c.execute(
             "INSERT INTO computer_commands VALUES(?,?,?)",
@@ -136,6 +186,64 @@ pub async fn configure(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
         s.computer.stop(agent).await?;
     }
     read(s, agent)
+}
+async fn configure_always_on(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
+    if !keys(v, &["id", "revision", "alwaysOn"]) || !command_id(v) || !v["alwaysOn"].is_boolean() {
+        return Err(error(400, "Invalid always-on setting."));
+    }
+    let request =
+        json!({"agent":agent,"id":v["id"],"revision":v["revision"],"alwaysOn":v["alwaysOn"]})
+            .to_string();
+    let _capacity = s.computer.always_on_gate.lock().await;
+    let gate = s.computer.control_gate(agent)?;
+    let _guard = gate.lock().await;
+    if db(s, |c| prior(c, v, &request))?.is_some() {
+        return read(s, agent);
+    }
+    let pin = v["alwaysOn"] == true;
+    db(s, |c| {
+        let permission = permission(c, agent)?;
+        if permission["revision"] != v["revision"] {
+            return Err(error(409, "Computer setting changed. Load latest status."));
+        }
+        if pin
+            && (!s.computer.enabled
+                || permission["enabled"] != 1
+                || crate::data::agents::hidden(c, agent)?)
+        {
+            return Err(error(403, "Enable Computer for this agent first."));
+        }
+        if pin && !pinned(c, agent)? && at_capacity(s, c, agent)? {
+            return Err(error(
+                429,
+                "Desktop limit reached. Stop another computer first.",
+            ));
+        }
+        Ok(())
+    })?;
+    if pin {
+        s.computer.start(agent, s.config.now()).await?;
+    }
+    tx(s, |c| {
+        if pin {
+            c.execute(
+                "INSERT OR IGNORE INTO computer_always_on VALUES(?)",
+                [agent],
+            )?;
+        } else {
+            c.execute("DELETE FROM computer_always_on WHERE agent=?", [agent])?;
+        }
+        c.execute(
+            "UPDATE agent_computers SET revision=revision+1 WHERE agent=?",
+            [agent],
+        )?;
+        let value = read_db(s, c, agent)?;
+        c.execute(
+            "INSERT INTO computer_commands VALUES(?,?,?)",
+            params![text(v, "id"), request, value.to_string()],
+        )?;
+        Ok(value)
+    })
 }
 pub async fn transition(s: &AppState, agent: &str, v: &Value) -> Result<Value> {
     let op = text(v, "operation");

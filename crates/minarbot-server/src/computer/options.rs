@@ -25,7 +25,15 @@ pub struct DesktopOptions {
 }
 impl Options {
     pub fn environment() -> crate::db::Result<Self> {
+        let data_dir = std::env::var_os("MINARBOT_DESKTOP_DATA_DIR").map(PathBuf::from);
+        if data_dir
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute() || !path.is_dir())
+        {
+            return Err("MINARBOT_DESKTOP_DATA_DIR must be an existing absolute directory.".into());
+        }
         let desktop = DesktopOptions {
+            data_dir,
             enabled: Some(std::env::var("MINARBOT_AGENT_DESKTOP").as_deref() == Ok("1")),
             max: std::env::var("MINARBOT_AGENT_DESKTOP_MAX")
                 .ok()
