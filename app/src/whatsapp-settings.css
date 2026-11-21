@@ -1,0 +1,26 @@
+.wa-settings__pair {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.wa-settings__pair img {
+  max-inline-size: 100%;
+  block-size: auto;
+  border-radius: var(--radius-md);
+}
+
+.wa-settings__mapping {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.wa-settings__mapping + .wa-settings__mapping {
+  border-block-start: 1px solid var(--line);
+}
+
+.wa-settings__mapping > button {
+  justify-self: start;
+}

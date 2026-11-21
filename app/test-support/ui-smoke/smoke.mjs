@@ -8,6 +8,7 @@ import { r4SettingsSmoke } from './r4-settings-smoke.mjs';
 import assert from 'node:assert/strict';
 import { polishSmoke } from './polish-smoke.mjs';
 import { copySettingsSmoke } from './copy-settings-smoke.mjs';
+import { whatsappSmoke } from './whatsapp-smoke.mjs';
 import { rightPanelUXSmoke } from './right-panel-ux-smoke.mjs';
 import { deleteAgentSmoke } from './delete-agent-smoke.mjs';
 import { typographySmoke } from './typography-smoke.mjs';
@@ -933,6 +934,10 @@ try {
   page.on('response', response => { if (new URL(response.url()).pathname.startsWith('/api/') && response.status() >= 500) receipt.failedRequests.push({ check: activeCheck, url: response.url(), method: response.request().method(), status: response.status(), atMs: Date.now() - started }); });
   receipt.timings.startupMs = Date.now() - started;
 
+  if (process.env.MINARBOT_SMOKE_WHATSAPP_ONLY === '1') {
+    await whatsappSmoke({ check, page, origin, settings, screenshot });
+    throw new Error('SMOKE_STOP_AFTER');
+  }
   if (process.env.MINARBOT_SMOKE_INSTANT_MENUS_ONLY === '1') {
     const agent = await page.request.post(origin + '/api/agents', { headers: { Origin: origin }, data: { runtime: 'api', id: gitAgent, name: lead, model: models[0], instructions: 'Synthetic menus fixture.' } });
     assert(agent.ok(), await agent.text());
@@ -1003,6 +1008,7 @@ try {
   });
   await check('Create first agent and open chat', () => createAgent(lead));
   await providersHiddenSmoke({ page, check, origin, root, settings, workspace, lead });
+  await whatsappSmoke({ check, page, origin, settings, screenshot });
   await copySettingsSmoke({ check, page, origin, root, openNew, settings, workspace, agentChat });
   if (process.env.MINARBOT_SMOKE_UXD_ONLY === '1') throw new Error('SMOKE_STOP_AFTER');
   if (process.env.MINARBOT_SMOKE_DELETE_ONLY === '1') { await deleteAgentSmoke({ page, check, origin, root, receipt }); throw new Error('SMOKE_STOP_AFTER'); }

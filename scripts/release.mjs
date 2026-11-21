@@ -209,6 +209,8 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
       cpSync(join(repository, 'crates/minarbot-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
       cpSync(join(repository, 'crates/minarbot-launcher/NOTICE'), join(stage, 'bin/launcher.NOTICE'));
       cpSync(join(repository, 'crates/minarbot-server/provenance.json'), join(stage, 'bin/provenance.json'));
+      const whatsappNotice = join(repository, 'crates/minarbot-server/whatsapp-rust.LICENSE');
+      if (existsSync(whatsappNotice)) cpSync(whatsappNotice, join(stage, 'bin/whatsapp-rust.LICENSE'));
       for (const name of ['LICENSE', 'agent-delegation.LICENSE']) cpSync(join(repository, 'app', name), join(stage, 'bin', name));
     }
     mkdirSync(join(stage, 'machine'), { mode: 0o700 });

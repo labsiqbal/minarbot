@@ -106,6 +106,20 @@ fn writable(db: &Connection, kind: &str, owner: &str) -> Result<()> {
     }
     Ok(())
 }
+pub(crate) fn destination(state: &AppState) -> Result<Value> {
+    let Some(config) = &state.config.media.transcription_provider else {
+        return Ok(Value::Null);
+    };
+    let url = config
+        .endpoint("/audio/transcriptions")
+        .map_err(|_| Failure::storage())?;
+    let id = format!(
+        "{:x}",
+        Sha256::digest(json!([url.as_str(), config.model]).to_string().as_bytes())
+    );
+    Ok(json!({"id":id,"origin":url.origin().ascii_serialization(),"model":config.model}))
+}
+
 pub async fn handle(state: &AppState, request: Request, parts: &[&str]) -> Result<Response> {
     let kind = *parts.get(1).ok_or_else(Failure::storage)?;
     let owner = *parts.get(2).ok_or_else(Failure::storage)?;
@@ -117,19 +131,7 @@ pub async fn handle(state: &AppState, request: Request, parts: &[&str]) -> Resul
         crate::files::attachments::file(&guard.connection, file, &scope)?.bytes
     };
     let config = state.config.media.transcription_provider.clone();
-    let provider = config
-        .as_ref()
-        .map(|config| -> Result<Value> {
-            let url = config
-                .endpoint("/audio/transcriptions")
-                .map_err(|_| Failure::storage())?;
-            let id = format!(
-                "{:x}",
-                Sha256::digest(json!([url.as_str(), config.model]).to_string().as_bytes())
-            );
-            Ok(json!({"id":id,"origin":url.origin().ascii_serialization(),"model":config.model}))
-        })
-        .transpose()?;
+    let provider = destination(state)?;
     if request.method() == Method::GET {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let last=visible(one(&guard.connection,"SELECT id,model,origin,status,created,result,usage FROM transcriptions WHERE file=? ORDER BY rowid DESC LIMIT 1",[file])?)?;
@@ -213,9 +215,10 @@ pub async fn handle(state: &AppState, request: Request, parts: &[&str]) -> Resul
             writable(db, kind, owner)?;
             return Ok(crate::json_response(200, operation(db, id)?));
         }
-        let provider = provider
-            .as_ref()
-            .ok_or_else(|| error(503, "Transcription provider is not configured."))?;
+        if provider.is_null() {
+            return Err(error(503, "Transcription provider is not configured."));
+        }
+        let provider = &provider;
         if input["provider"] != provider["id"] {
             return Err(error(
                 409,

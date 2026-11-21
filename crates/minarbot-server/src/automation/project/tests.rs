@@ -88,6 +88,7 @@ impl Fixture {
             events: crate::events::Hub::new(),
             computer,
             turns: crate::turns::Runtime::default(),
+            whatsapp: Default::default(),
             trial_pending: Arc::new(AtomicBool::new(false)),
         };
         Ok(Self { state, _dir: dir })

@@ -401,6 +401,7 @@ mod tests {
             auth: None,
             events: crate::events::Hub::new(),
             turns: super::super::Runtime::default(),
+            whatsapp: Default::default(),
             trial_pending: Default::default(),
             computer,
         };

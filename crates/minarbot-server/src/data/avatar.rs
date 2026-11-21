@@ -248,6 +248,7 @@ mod tests {
             events: crate::events::Hub::new(),
             computer,
             turns: crate::turns::Runtime::default(),
+            whatsapp: Default::default(),
             trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let turn = json!({"id":"turn","agent":"agent"});

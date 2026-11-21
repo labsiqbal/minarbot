@@ -252,6 +252,7 @@ mod tests {
             auth: None,
             events: crate::events::Hub::new(),
             turns: crate::turns::Runtime::default(),
+            whatsapp: Default::default(),
             trial_pending: Arc::default(),
         };
         let read = |call: i64| -> crate::db::Result<(i64, String)> {

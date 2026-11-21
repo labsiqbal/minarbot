@@ -69,11 +69,11 @@ export function DiscordSettings({ agents, request }: {
     {(error || loadError) && <Alert tone="error">{error || loadError}</Alert>}
     {!status && !loadError && <SkeletonRows count={1} />}
     {status && <Card><Row title="Bot connection" meta={<span role="status"><Badge tone={status.status === 'connected' ? 'success' : ['disconnected', 'connecting', 'reconnecting'].includes(status.status) ? 'neutral' : 'warn'}>{statusLabels[status.status]}</Badge></span>}
-      trailing={status.bot ? <Button size="sm" disabled={busy} onClick={async () => {
+      trailing={status.bot ? <div className="k-inline">{!replacing && <Button size="sm" disabled={busy} onClick={() => setReplacing(true)}>Replace token</Button>}<Button size="sm" disabled={busy} onClick={async () => {
         if (await confirm({ title: 'Disconnect Discord?', description: 'Discord routes will be removed.', confirm: 'Disconnect', danger: true })) {
           if (await change('disconnect')) { setAdding(false); setReplacing(false); }
         }
-      }}>Disconnect</Button> : undefined} /></Card>}
+      }}>Disconnect</Button></div> : undefined} /></Card>}
     {status && (!status.bot || replacing) && <form className="k-fieldset" aria-labelledby={title} onSubmit={async event => {
       event.preventDefault();
       const form = event.currentTarget;
@@ -84,7 +84,6 @@ export function DiscordSettings({ agents, request }: {
       <Field label="Bot token"><Input type="password" name="discordToken" required autoComplete="off" spellCheck={false} maxLength={256} disabled={busy} /></Field>
       <div className="k-inline"><Button type="submit" variant="primary" busy={busy}>{status.bot ? 'Save token' : 'Connect Discord'}</Button>{replacing && <Button disabled={busy} onClick={() => setReplacing(false)}>Cancel</Button>}</div>
     </form>}
-    {status?.bot && !replacing && <div><Button size="sm" disabled={busy} onClick={() => setReplacing(true)}>Replace bot token</Button></div>}
     {status?.bot && <Section title="Discord routes" id={routeTitle} actions={<Button size="sm" disabled={busy || adding} onClick={() => void add()}>Add route</Button>}>
       {!!status.routes.length && <Card>{status.routes.map(route => <Row key={route.id} title={route.label ?? choices.find(o => o.value === `${route.kind}:${route.target}`)?.label ?? (route.kind === 'section' ? 'Project section' : 'Agent')}
         meta={`${route.channel} · ${route.users.length} allowed ${route.users.length === 1 ? 'user' : 'users'}`}

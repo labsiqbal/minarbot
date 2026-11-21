@@ -245,6 +245,7 @@ mod tests {
             auth: None,
             events: crate::events::Hub::new(),
             turns: crate::turns::Runtime::default(),
+            whatsapp: Default::default(),
             trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         Ok((scratch, state, agent))
