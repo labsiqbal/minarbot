@@ -93,35 +93,24 @@ fn overdue(
             .and_then(|c| c["counted_at"].as_i64())
             .unwrap_or(s.state.config.now()),
     );
-    let mut count = if cursor.is_some() {
+    let count = if cursor.is_some() {
         pending
             .and_then(|p| p["missed_count"].as_i64())
             .unwrap_or(0)
     } else {
         -1
     };
-    let mut next = None;
-    schedule::scan(
+    let (missed, next) = schedule::advance_cron(
         string(spec, "expression"),
         zone,
         cursor
             .as_ref()
             .and_then(|c| c["counted_at"].as_i64())
             .unwrap_or(due - 1),
-        counted.saturating_add(1825 * 86400000),
-        |at, index| {
-            if routine && index != 0 {
-                return Ok(true);
-            }
-            if at > counted {
-                next = Some(at);
-                return Ok(false);
-            }
-            count += 1;
-            Ok(true)
-        },
+        counted,
+        routine,
     )?;
-    Ok((count.max(0), next, counted))
+    Ok(((count + missed).max(0), next, counted))
 }
 fn wall_identity(at: i64, zone: &str) -> Result<(Value, u8)> {
     use chrono::{LocalResult, TimeZone};

@@ -144,8 +144,7 @@ fn schedules(state: &AppState, db: &Connection) -> Result<()> {
         let workflow = string(&s,"workflow");
         let at = s["next_at"].as_i64().ok_or_else(Failure::storage)?;
         let duration = s["interval_ms"].as_i64();
-        let missed = duration.map(|n|(now-at)/n).unwrap_or(0);
-        let next = duration.map(|n|at+(missed+1)*n).unwrap_or(at);
+        let (missed, next) = schedule::elapsed(at, duration, now);
         let busy = data::exists(db,"SELECT 1 FROM workflow_runs WHERE workflow=? AND status IN('ready','waiting','approval')",[workflow])?;
         if !busy && queue_count(db)? >= 100 { continue; }
         if !data::exists(db,"SELECT 1 FROM workflow_occurrences WHERE workflow=? AND scheduled_at=?",params![workflow,at])? {
@@ -156,7 +155,7 @@ fn schedules(state: &AppState, db: &Connection) -> Result<()> {
             };
             db.execute("INSERT INTO workflow_occurrences VALUES(?,?,?,?,?)",params![workflow,at,run,missed,if busy {Some("busy")} else {None}])?;
         }
-        db.execute("UPDATE workflow_schedules SET next_at=?,enabled=?,revision=revision+1 WHERE workflow=?",params![next,i64::from(duration.is_some() && next<=schedule::MAX_TIME),workflow])?;
+        db.execute("UPDATE workflow_schedules SET next_at=?,enabled=?,revision=revision+1 WHERE workflow=?",params![next.unwrap_or(at),next.is_some(),workflow])?;
     }
     Ok(())
 }

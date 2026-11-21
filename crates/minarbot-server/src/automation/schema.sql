@@ -15,3 +15,11 @@ CREATE TABLE IF NOT EXISTS workflow_webhook_receipts(route TEXT NOT NULL,deliver
 CREATE TABLE IF NOT EXISTS local_routine_reports(run TEXT PRIMARY KEY REFERENCES turns(id),name TEXT NOT NULL,agent TEXT NOT NULL REFERENCES agents(id),thread TEXT NOT NULL REFERENCES threads(id),destination TEXT NOT NULL,posted INTEGER NOT NULL DEFAULT 0,message TEXT UNIQUE REFERENCES turns(id),status TEXT) STRICT;
 CREATE TABLE IF NOT EXISTS script_admissions(id TEXT PRIMARY KEY,agent TEXT NOT NULL REFERENCES agents(id),created INTEGER NOT NULL) STRICT;
 CREATE INDEX IF NOT EXISTS script_admissions_agent_created ON script_admissions(agent,created);
+CREATE TABLE IF NOT EXISTS local_workflow_schedule_projects(
+  workflow TEXT PRIMARY KEY REFERENCES workflow_schedules(workflow) ON DELETE CASCADE,
+  project TEXT NOT NULL REFERENCES local_projects(id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS local_workflow_run_projects(
+  run TEXT PRIMARY KEY REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  project TEXT NOT NULL REFERENCES local_projects(id)
+) STRICT;

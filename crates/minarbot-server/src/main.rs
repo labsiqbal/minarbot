@@ -150,7 +150,12 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
         return Ok(local_error(401, "Unauthorized request."));
     }
     let scope = events::scope(path);
-    if scope.is_some() || path == "/api/sidebar/stream" {
+    if scope.is_some()
+        || matches!(
+            path,
+            "/api/sidebar/stream" | "/api/automation-calendar/stream"
+        )
+    {
         if request.headers().contains_key("authorization")
             || request.headers().contains_key("origin")
                 && !allowed(state, text_header(request.headers(), "origin"))
@@ -178,6 +183,7 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
         }
         return match scope {
             Some(scope) => state.events.response(scope, &state.database),
+            None if path == "/api/automation-calendar/stream" => Ok(state.events.calendar()),
             None => Ok(state.events.sidebar(&state.database)),
         };
     }
@@ -748,6 +754,7 @@ async fn main() -> db::Result<()> {
         .route("/api/restore/reconcile", any(dispatch))
         .route("/api/agents", any(dispatch))
         .route("/api/sidebar/stream", any(dispatch))
+        .route("/api/automation-calendar/stream", any(dispatch))
         .route("/api/agents/{id}/turns/stream", any(dispatch))
         .route("/api/threads/{id}/turns/stream", any(dispatch))
         .route("/api/channels/{id}/turns/stream", any(dispatch))

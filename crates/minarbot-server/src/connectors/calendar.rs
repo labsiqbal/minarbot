@@ -1,23 +1,4 @@
 use super::*;
-use chrono::{Duration, LocalResult, NaiveDateTime, TimeZone};
-use chrono_tz::Tz;
-
-fn once(spec: &Value, zone: &str) -> Option<i64> {
-    let zone = zone.parse::<Tz>().ok()?;
-    let raw = format!("{}T{}:00", string(spec, "date"), string(spec, "time"));
-    let mut wall = NaiveDateTime::parse_from_str(&raw, "%Y-%m-%dT%H:%M:%S").ok()?;
-    if wall.format("%Y-%m-%dT%H:%M:%S").to_string() != raw {
-        return None;
-    }
-    for _ in 0..=2880 {
-        match zone.from_local_datetime(&wall) {
-            LocalResult::Single(at) => return Some(at.timestamp_millis()),
-            LocalResult::Ambiguous(a, b) => return Some(a.min(b).timestamp_millis()),
-            LocalResult::None => wall = wall.checked_add_signed(Duration::minutes(1))?,
-        }
-    }
-    None
-}
 fn escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace("\r\n", "\\n")
@@ -64,12 +45,13 @@ pub fn render(db: &Connection, entries: &[Value], now: i64) -> Result<String> {
         }
         let at = if spec["kind"] == "once" {
             match row["pendingDueAt"].as_i64().or_else(|| {
-                once(
+                crate::automation::schedule::once(
                     &spec,
                     row["zone"]
                         .as_str()
                         .unwrap_or_else(|| string(row, "schedule_zone")),
                 )
+                .ok()
             }) {
                 Some(at) => at,
                 None => {
@@ -119,13 +101,16 @@ pub fn render(db: &Connection, entries: &[Value], now: i64) -> Result<String> {
 pub fn export(db: &Connection, owner: &str, now: i64) -> Result<Response> {
     crate::data::agents::read(db, owner)?;
     let entries=all(db,"SELECT * FROM routines WHERE agent=? AND enabled=1 AND trigger='schedule' ORDER BY next_at",[owner])?;
+    download(db, &entries, now)
+}
+pub fn download(db: &Connection, entries: &[Value], now: i64) -> Result<Response> {
     Response::builder()
         .header("Content-Type", "text/calendar; charset=utf-8")
         .header(
             "Content-Disposition",
             "attachment; filename=\"minarbot-routines.ics\"",
         )
-        .body(axum::body::Body::from(render(db, &entries, now)?))
+        .body(axum::body::Body::from(render(db, entries, now)?))
         .map_err(|_| Failure::storage())
 }
 

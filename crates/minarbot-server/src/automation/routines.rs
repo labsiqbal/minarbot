@@ -248,6 +248,9 @@ pub fn route(
         }
         return Ok((200,json!(all(db,"SELECT routine_runs.*,turns.thread,turns.status,turns.paused,turns.no_update,turns.reply,turns.error,turns.created FROM routine_runs JOIN turns ON turns.id=routine_runs.turn JOIN threads ON threads.id=turns.thread WHERE routine=? AND threads.deleted=0 ORDER BY turns.seq DESC LIMIT 100",[p[2]])?)));
     }
+    if get && p.len() == 3 && p[1] == "routines" && q.is_empty() {
+        return Ok((200, present(db, read(db, p[2])?)?));
+    }
     if !post {
         return Err(error(404, "Route not found."));
     }
@@ -334,19 +337,13 @@ pub fn tick(state: &AppState, db: &Connection) -> Result<()> {
         if admitted==10 {break;}
         if busy(db,string(&r,"id"))? || db.query_row("SELECT count(*) FROM turns WHERE agent=? AND status IN('queued','running')",[string(&r,"agent")],|r|r.get::<_,i64>(0))? >=100 {continue;}
         if binding(db,string(&r,"agent"),&r["project"],string(&r,"report_to")).is_err(){continue;}
-        let at=r["next_at"].as_i64().ok_or_else(Failure::storage)?;let interval=r["interval_ms"].as_i64();let mut missed=interval.map(|n|(now-at)/n).unwrap_or(0);let mut next=interval.map(|n|at+(missed+1)*n);
-        if r["schedule_json"].is_string() {
-            let spec=data::json(&r["schedule_json"])?;
-            if spec["kind"]=="cron" {
-                missed=0;
-                schedule::scan(string(&spec,"expression"),string(&r,"schedule_zone"),at,now+1825*86400000,|time,index| {
-                    if index == 0 {
-                        if time <= now { missed += 1; } else { next=Some(time); return Ok(false); }
-                    }
-                    Ok(true)
-                })?;
-            }
-        }
+        let at=r["next_at"].as_i64().ok_or_else(Failure::storage)?;
+        let spec=r["schedule_json"].as_str().map(serde_json::from_str::<Value>).transpose().map_err(|_|Failure::storage())?;
+        let (missed, next) = if let Some(spec)=spec.filter(|s|s["kind"]=="cron") {
+            schedule::advance_cron(string(&spec,"expression"),string(&r,"schedule_zone"),at,now,true)?
+        } else {
+            schedule::elapsed(at, r["interval_ms"].as_i64(), now)
+        };
 
         let (turn,thread)=enqueue(state,db,string(&r,"agent"),&format!("{} · {}",string(&r,"name"),iso(db,now)?),string(&r,"prompt"))?;
         db.execute("INSERT INTO routine_runs(routine,scheduled_at,turn,missed) VALUES(?,?,?,?)",params![string(&r,"id"),at,turn,missed])?;snapshot(db,&r,&turn,&thread)?;

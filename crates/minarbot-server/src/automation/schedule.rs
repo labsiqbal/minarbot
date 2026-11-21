@@ -3,6 +3,7 @@ use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDateTime, Offset, T
 use chrono_tz::Tz;
 
 pub const MAX_TIME: i64 = 253370764799999;
+pub const CRON_HORIZON: i64 = 1825 * 86400000;
 fn invalid() -> Failure {
     error(400, "Invalid schedule.")
 }
@@ -267,6 +268,61 @@ pub fn scan(
     }
     Ok(())
 }
+
+pub fn cron_occurrences(
+    expression: &str,
+    zone: &str,
+    after: i64,
+    through: i64,
+    first_fold_only: bool,
+    mut visit: impl FnMut(i64) -> Result<bool>,
+) -> Result<()> {
+    scan(expression, zone, after, through, |at, fold| {
+        if first_fold_only && fold != 0 {
+            Ok(true)
+        } else {
+            visit(at)
+        }
+    })
+}
+
+// Number of elapsed intervals after the due run, and the next instant after `now`.
+pub fn elapsed(due: i64, duration: Option<i64>, now: i64) -> (i64, Option<i64>) {
+    let Some(duration) = duration.filter(|n| *n > 0) else {
+        return (0, None);
+    };
+    let missed = (now - due).max(0) / duration;
+    let next = due.saturating_add((missed + 1).saturating_mul(duration));
+    (missed, (next <= MAX_TIME).then_some(next))
+}
+
+pub fn advance_cron(
+    expression: &str,
+    zone: &str,
+    after: i64,
+    now: i64,
+    first_fold_only: bool,
+) -> Result<(i64, Option<i64>)> {
+    let mut missed = 0;
+    let mut next = None;
+    cron_occurrences(
+        expression,
+        zone,
+        after,
+        now.saturating_add(CRON_HORIZON),
+        first_fold_only,
+        |at| {
+            if at > now {
+                next = Some(at);
+                Ok(false)
+            } else {
+                missed += 1;
+                Ok(true)
+            }
+        },
+    )?;
+    Ok((missed, next))
+}
 #[cfg(test)]
 fn candidates(expression: &str, zone: &str, after: i64, through: i64) -> Result<Vec<(i64, u8)>> {
     let mut result = Vec::new();
@@ -375,6 +431,7 @@ pub fn preview(q: &[(String, String)], now: i64) -> Result<Value> {
         return Err(error(400, "Invalid schedule preview."));
     }
     let zone = zone(data::param(q, "zone"))?;
+    let mut resolved = None;
     let times = if let Some(raw) = data::param(q, "schedule") {
         let value: Value =
             serde_json::from_str(raw).map_err(|_| error(400, "Invalid schedule preview."))?;
@@ -383,11 +440,18 @@ pub fn preview(q: &[(String, String)], now: i64) -> Result<Value> {
         } else {
             local(&value, &zone, now)?.0
         };
+        if spec["kind"] == "once" {
+            resolved = Some(once(&spec, &zone)?);
+        }
         times(&spec, &zone, now, 3)?
     } else {
         vec![]
     };
-    Ok(json!({"zone":zone,"times":times}))
+    let mut response = json!({"zone":zone,"times":times});
+    if let Some(at) = resolved {
+        response["at"] = json!(at);
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
