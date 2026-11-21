@@ -2,5 +2,5 @@
   "category": "html",
   "timeSeconds": 150,
   "tokenBudget": 150000,
-  "checker": "../../checkers.mjs"
+  "checker": "checker.mjs"
 }
