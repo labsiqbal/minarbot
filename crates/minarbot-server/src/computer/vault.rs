@@ -73,9 +73,9 @@ pub(super) fn key(state: &AppState, db: &Connection, create: bool) -> Result<Les
         }
         None => return Err(unavailable()),
     };
-    if !name
+    if name
         .strip_prefix("vault-aead/")
-        .is_some_and(|id| crate::web::id(id).is_some())
+        .is_none_or(|id| crate::web::id(id).is_none())
     {
         return Err(Failure::storage());
     }
