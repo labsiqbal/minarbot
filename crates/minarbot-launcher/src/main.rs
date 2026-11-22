@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 mod backup;
-mod config;
+use minarbot_launcher::config;
 mod runtime;
 use minarbot_launcher::{files, DATABASE_NAME};
 #[cfg(test)]

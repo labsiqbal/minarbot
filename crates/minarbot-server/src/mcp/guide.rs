@@ -1,5 +1,5 @@
 use super::Result;
-use super::{features, validate};
+use super::{features, guide_infra, validate};
 use crate::{
     data::{self, all, closed, error, exists, one, string, transaction, uuid},
     web::Failure,
@@ -17,6 +17,8 @@ const PAGES: &str = concat!(
     include_str!("../../../../app/guide/agents.md"),
     "\n",
     include_str!("../../../../app/guide/connections.md"),
+    "\n",
+    include_str!("../../../../app/guide/infrastructure.md"),
     "\n",
     include_str!("../../../../app/guide/work.md"),
     "\n",
@@ -105,7 +107,9 @@ pub fn instructions() -> String {
          Use feature tools to propose only the requested changes. Each write returns a proposed change set. \
          Tell the user to use Apply or Cancel in Minarbot. Text agreement cannot apply it. \
          Propose prerequisites first. Use list_guide_agents to check that an agent was created before proposing its routines or app access. \
-         Never ask for secrets. For sign-ins or settings without a tool, open the appropriate screen. \
+         Direct users to Vault for SSH passwords. Ask for the Vault entry name only. Keep credentials and pairing codes out of chat. \
+         Use a status tool to verify setup after Apply. Browser-only install commands and QR codes are available through the setup cards or Settings. \
+         For sign-ins or settings without a tool, open the appropriate screen. \
          For help, use this guide and open_guide_screen to attach a screen link when useful. \
          Report proposed, applied and cancelled changes accurately.\n\n{PAGES}"
     )
@@ -137,6 +141,13 @@ pub fn declarations() -> Result<Vec<Value>> {
         json!({"name":"open_guide_screen","description":"Attach a user-clickable link to a screen in the product guide.","inputSchema":{"type":"object","properties":{"screen":{"enum":screen_ids}},"required":["screen"],"additionalProperties":false}}),
         json!({"name":"connect_app","description":"Propose starting sign-in to a Composio app. After Apply the user finishes sign-in in their browser.","inputSchema":{"type":"object","properties":{"requestId":uuid,"toolkit":toolkit},"required":["requestId","toolkit"],"additionalProperties":false}}),
         json!({"name":"set_connected_app_access","description":"Propose enabling or disabling an existing connected app for an agent. Read its current revision using list_connected_apps first (0 if absent).","inputSchema":{"type":"object","properties":{"requestId":uuid,"agent":uuid,"toolkit":toolkit,"revision":{"type":"integer","minimum":0},"enabled":{"type":"boolean"}},"required":["requestId","agent","toolkit","revision","enabled"],"additionalProperties":false}}),
+        json!({"name":"add_guide_machine","description":"Propose adding a machine by name and its exact HTTPS origin. Apply reveals a one-time install command in the card and tracks pairing health.","inputSchema":{"type":"object","properties":{"requestId":uuid,"name":{"type":"string","minLength":1,"maxLength":120},"origin":{"type":"string","maxLength":2048}},"required":["requestId","name","origin"],"additionalProperties":false}}),
+        json!({"name":"install_guide_vps","description":"Propose a fresh Linux Minarbot install over SSH. Ask for SSH host, user, trusted Ed25519 host public key, and the VPS HTTPS origin. Reference the Vault secret by name. Password goes only in Vault. Default ports are SSH 22 and Minarbot 4317.","inputSchema":{"type":"object","properties":{"requestId":uuid,"host":{"type":"string","minLength":1,"maxLength":253},"user":{"type":"string","minLength":1,"maxLength":64},"port":{"type":"integer","minimum":1,"maximum":65535},"servicePort":{"type":"integer","minimum":1,"maximum":65535},"origin":{"type":"string","maxLength":2048},"hostKey":{"type":"string","maxLength":100},"vaultEntry":{"type":"string","pattern":"^[a-z0-9-]{1,64}$"}},"required":["requestId","host","user","origin","hostKey","vaultEntry"],"additionalProperties":false}}),
+        json!({"name":"configure_guide_remote_access","description":"Propose adding the exact origin found by inspect_guide_remote_access to launcher.env. Verify after restart and offer Devices pairing QR.","inputSchema":{"type":"object","properties":{"requestId":uuid,"origin":{"type":"string","maxLength":2048}},"required":["requestId","origin"],"additionalProperties":false}}),
+        json!({"name":"setup_guide_computer","description":"Propose starting Computer setup. Apply runs the existing setup flow and reports missing programs.","inputSchema":{"type":"object","properties":{"requestId":uuid},"required":["requestId"],"additionalProperties":false}}),
+        json!({"name":"list_guide_machines","description":"Check pairing and health. Filter by the target HTTPS origin when adding a machine.","inputSchema":{"type":"object","properties":{"origin":{"type":"string","maxLength":2048}},"additionalProperties":false}}),
+        json!({"name":"inspect_guide_remote_access","description":"Inspect Tailscale sign-in, MagicDNS, HTTPS Serve for Minarbot and whether its pairing page is reachable from this server.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
+        json!({"name":"read_guide_computer_setup","description":"Read Computer setup state and missing programs.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
     ]);
     for spec in &mut specs {
         let name = string(spec, "name").to_owned();
@@ -155,7 +166,7 @@ pub fn declarations() -> Result<Vec<Value>> {
                 "Propose a routine owned by an existing agent. Manual triggers need no schedule."
             );
         }
-        if WRITES.contains(&name.as_str()) {
+        if WRITES.contains(&name.as_str()) || guide_infra::WRITES.contains(&name.as_str()) {
             spec["description"] = json!(format!(
                 "{} Requires Apply in Minarbot before any settings change.",
                 string(spec, "description")
@@ -166,6 +177,11 @@ pub fn declarations() -> Result<Vec<Value>> {
 }
 
 fn preview(plan: &Value) -> Result<Value> {
+    if plan.get("guideOperation").is_some() {
+        return Ok(
+            json!({"tool":plan["tool"],"target":plan["target"],"settings":plan["settings"]}),
+        );
+    }
     let mut settings = plan["body"]
         .as_object()
         .cloned()
@@ -280,7 +296,7 @@ pub async fn call(state: &AppState, turn: &Value, name: &str, args: &Value) -> R
         {
             return Err(error(409, "Guide conversation is unavailable."));
         }
-        if WRITES.contains(&name) {
+        if WRITES.contains(&name) || guide_infra::WRITES.contains(&name) {
             let request = string(args, "requestId");
             let fingerprint = crate::db::digest(&json!([name, args]).to_string());
             let receipt = one(
@@ -321,9 +337,23 @@ pub async fn call(state: &AppState, turn: &Value, name: &str, args: &Value) -> R
                 ));
             }
             let id = ::uuid::Uuid::new_v4().to_string();
-            let mut plan = plan(db, name, args, &id)?;
+            let mut plan = if guide_infra::WRITES.contains(&name) {
+                let mut plan = guide_infra::plan(state, db, name, args)?;
+                plan["tool"] = json!(name);
+                plan
+            } else {
+                plan(db, name, args, &id)?
+            };
             plan["requestDigest"] = json!(fingerprint);
-            if plan != features::clean(state, db, &plan)? {
+            let vault_reflected = if guide_infra::WRITES.contains(&name) {
+                let bytes = plan.to_string();
+                crate::computer::vault::redactions(state, db)?
+                    .iter()
+                    .any(|secret| super::secrets::reflected(bytes.as_bytes(), secret))
+            } else {
+                false
+            };
+            if vault_reflected || plan != features::clean(state, db, &plan)? {
                 return Err(error(400, "Remove credentials from the proposed change."));
             }
             let change = preview(&plan)?;
@@ -365,7 +395,11 @@ pub async fn call(state: &AppState, turn: &Value, name: &str, args: &Value) -> R
             _ => {}
         }
     }
-    let result = features::read(state, &json!({"kind":"peer"}), name, args).await?;
+    let result = if guide_infra::READS.contains(&name) {
+        guide_infra::read(state, name, args).await?
+    } else {
+        features::read(state, &json!({"kind":"peer"}), name, args).await?
+    };
     let lock = state.database.lock().map_err(|_| Failure::storage())?;
     features::clean(state, &lock.connection, &result)
 }
@@ -441,6 +475,10 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
         return Err(error(400, "Invalid change request."));
     }
     let headers = request.headers();
+    let remote = request
+        .extensions()
+        .get::<crate::auth::pairing::BrowserAccess>()
+        .cloned();
     if headers.contains_key("authorization")
         || !data::origin(state, headers)
         || crate::text_header(headers, "sec-fetch-site") != Some("same-origin")
@@ -465,6 +503,18 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
         if data::agents::hidden(&lock.connection, ID)? {
             return Err(error(409, "Restore the guide before reviewing changes."));
         }
+        if guide_infra::WRITES.contains(&string(&body["change"], "tool"))
+            && remote
+                .as_ref()
+                .map(|access| access.paired(&lock.connection, state.config.now()))
+                .transpose()?
+                == Some(false)
+        {
+            return Err(error(
+                403,
+                "Pair this browser before reviewing infrastructure changes.",
+            ));
+        }
         claim(
             &lock.connection,
             &id,
@@ -476,23 +526,37 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     if action == "cancel" {
         return Ok(crate::json_response(200, json!({"status":"cancelled"})));
     }
+    if plan.get("guideOperation").is_some() {
+        let state = state.clone();
+        return tokio::spawn(async move {
+            let result = guide_infra::apply(&state, &id, &plan).await;
+            let status = record_apply(&state, &id, &result)?;
+            let mut result = result?;
+            result["status"] = json!(status);
+            Ok(crate::json_response(200, result))
+        })
+        .await
+        .map_err(|_| Failure::storage())?;
+    }
     // An interrupted Apply remains consumed. Existing feature commands keep their own receipts.
     let result = features::api(state, string(&plan, "path"), plan.get("body")).await;
-    let status = match &result {
+    let status = record_apply(state, &id, &result)?;
+    Ok(crate::json_response(
+        200,
+        json!({"status":status,"redirect_url":result?["redirect_url"]}),
+    ))
+}
+
+fn record_apply(state: &AppState, id: &str, result: &Result<Value>) -> Result<&'static str> {
+    let status = match result {
         Ok(_) => "applied",
         Err(error) if error.status < 500 => "failed",
         Err(_) => "unknown",
     };
     let lock = state.database.lock().map_err(|_| Failure::storage())?;
-    lock.connection.execute(
-        "UPDATE guide_changes SET status=? WHERE id=?",
-        [status, &id],
-    )?;
-    let result = result?;
-    Ok(crate::json_response(
-        200,
-        json!({"status":status,"redirect_url":result["redirect_url"]}),
-    ))
+    lock.connection
+        .execute("UPDATE guide_changes SET status=? WHERE id=?", [status, id])?;
+    Ok(status)
 }
 
 #[cfg(test)]

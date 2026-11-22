@@ -76,9 +76,11 @@ impl Config {
                 )
             })
             .collect();
+        env.remove("MINARBOT_LAUNCHER_ENV_FILE");
         if let Some(file) = value["envFile"].as_str() {
             private_file(Path::new(file))?;
             env.extend(parse_env(&std::fs::read_to_string(file)?));
+            env.insert("MINARBOT_LAUNCHER_ENV_FILE".into(), file.into());
         }
         env.insert("PORT".into(), port.to_string());
         for (key, path) in [

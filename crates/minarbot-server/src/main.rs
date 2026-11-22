@@ -662,6 +662,9 @@ async fn canonical_request(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> db::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some(mcp::guide_infra::ASKPASS_COMMAND) {
+        return mcp::guide_infra::askpass();
+    }
     if std::env::args().nth(1).as_deref() == Some("--desktop-supervisor") {
         if !platform::LINUX_SANDBOX {
             return Err(platform::COMPUTER_UNAVAILABLE.into());

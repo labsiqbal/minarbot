@@ -55,6 +55,15 @@ pub fn initialize_canonical(db: &rusqlite::Connection) -> crate::db::Result<()> 
         .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.message.into() })
 }
 
+pub(crate) fn guide_setup(state: &AppState) -> Result<Value> {
+    let _ = setup::begin(state, true)?;
+    state.computer.setup.status()
+}
+
+pub(crate) fn guide_setup_status(state: &AppState) -> Result<Value> {
+    state.computer.setup.status()
+}
+
 fn transaction<T>(
     db: &rusqlite::Connection,
     work: impl FnOnce(&rusqlite::Connection) -> Result<T>,
