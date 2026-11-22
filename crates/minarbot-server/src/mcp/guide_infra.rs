@@ -316,7 +316,8 @@ fn write_allowed_origin(path: &Path, active: &[String], desired: &str) -> Result
     if !lock.metadata().map_err(|_| error())?.is_file() {
         return Err(error());
     }
-    lock.try_lock().map_err(|_| error())?;
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive)
+        .map_err(|_| error())?;
     let mut file = fs::OpenOptions::new()
         .read(true)
         .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
