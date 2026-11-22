@@ -31,6 +31,8 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/settings/library-docs', 'Checks Context7 reachability and Vault key status.'],
     ['/api/settings/web-search', 'Reads or saves the local SearXNG URL.'],
     ['/api/settings/web-search/test', 'Tests a SearXNG URL with one JSON search.'],
+    ['/api/settings/craft-anything', 'Reads local Craft Anything installation and grants.'],
+    ['/api/settings/craft-anything/{action}', 'Manages the local Craft Anything install and grants.'],
     ['/api/engine-logins', 'Lists and creates local engine login profiles.'],
     ['/api/engine-logins/{id}/check', 'Checks sign-in for a local engine login.'],
     ['/api/engine-logins/{id}/remove', 'Removes an unused local engine login.'],
