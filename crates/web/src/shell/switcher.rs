@@ -356,7 +356,12 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
     };
     view! {
         <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
-        <dialog node_ref=dialog class="k-dialog k-dialog--md workspace-dialog" aria-label="Quick switcher" closedby="any" on:close=move |_| {
+        <dialog node_ref=dialog class="k-dialog k-dialog--md workspace-dialog" aria-label="Quick switcher" closedby="any"
+          on:cancel=move |event: web_sys::Event| {
+            event.prevent_default();
+            opened.set(false);
+        } on:close=move |_| {
+            if dialog.get_untracked().is_some_and(|dialog| dialog.open()) { return; }
             opened.set(false);
             if document().active_element().is_none_or(|element| element.tag_name() == "BODY") {
                 use wasm_bindgen::JsCast;

@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [features]
-conversation = []
+conversation = ["serde_json/preserve_order"]
 workflows = []
 
 [dependencies]

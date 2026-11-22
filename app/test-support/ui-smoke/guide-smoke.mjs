@@ -80,6 +80,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROME ?? '/usr/bin/google-chrome', args: ['--no-sandbox'] });
   const viewport = { width: 1280, height: 820 };
   const page = await browser.newPage({ viewport, reducedMotion: 'reduce' });
+  await page.addInitScript(() => localStorage.setItem('minarbot:details-open', '0'));
   const failures = [];
   page.on('pageerror', error => failures.push(error.message));
   page.on('console', event => { if (event.type() === 'error') failures.push(event.text()); });
@@ -90,6 +91,7 @@ try {
       await page.setViewportSize(size);
       for (const theme of ['dark', 'light']) {
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        await region.evaluate(element => element.scrollIntoView({ block: 'center' }));
         await region.screenshot({ path: join(output, `${client}-${label}-${layout}-${theme}.png`), animations: 'disabled', mask });
       }
     }
@@ -102,10 +104,11 @@ try {
   const composer = page.getByRole('textbox', { name: `Message ${guide.name}` });
   async function send(step) {
     const [prompt, reply] = turns[step];
-    const before = await page.getByText(reply, { exact: true }).count();
+    const replies = page.getByLabel('Agent reply', { exact: true }).getByText(reply, { exact: true });
+    const before = await replies.count();
     await composer.fill(prompt);
     await composer.press('Enter');
-    await page.getByText(reply, { exact: true }).nth(before).waitFor();
+    await replies.nth(before).waitFor();
   }
   await send(0);
   await send(1);

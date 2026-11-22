@@ -132,6 +132,7 @@
 .leptos-workspace .system-dialog { inset: 50% auto auto 50%; margin: 0; padding: 0; color: var(--color-text-primary); }
 .leptos-workspace .system-dialog:not([open]) { display: none; }
 .leptos-workspace .system-dialog .k-dialog__foot { flex-wrap: wrap; }
+.leptos-workspace .system-dialog:has(#updates-plan-title) .k-dialog__foot { flex-wrap: nowrap; }
 .leptos-workspace .system-disclosure > summary { display: inline-flex; list-style: none; }
 .leptos-workspace .system-disclosure > summary::before { content: none; }
 .leptos-workspace .system-disclosure > summary::-webkit-details-marker { display: none; }
