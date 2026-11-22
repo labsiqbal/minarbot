@@ -93,8 +93,6 @@ for (const mode of ['canonical', 'local'] as const) {
       expected.exec(readFileSync(new URL('../crates/minarbot-server/src/files/schema.sql', import.meta.url), 'utf8'));
       expected.exec('ALTER TABLE agents ADD COLUMN library_docs_access INTEGER NOT NULL DEFAULT 1 CHECK(library_docs_access IN(0,1))');
       expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/library_docs/schema.sql', import.meta.url), 'utf8'));
-      if (mode === 'local') expected.exec('CREATE TABLE craft_grants(agent TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE) STRICT; CREATE TABLE craft_deep(project TEXT PRIMARY KEY REFERENCES local_projects(id) ON DELETE CASCADE) STRICT;');
-      expected.exec(readFileSync(new URL('../crates/minarbot-server/src/mcp/schema.sql', import.meta.url), 'utf8'));
       addMemorySchema(expected, mode);
       const current = snapshot(expected);
       await startAndClose(fresh, mode);
