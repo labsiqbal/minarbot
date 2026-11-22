@@ -97,11 +97,15 @@ export function applyColorTheme(root: HTMLElement, theme: ColorTheme) {
     const style = document.createElement('style');
     style.id = 'minarbot-color-themes';
     style.nonce = document.querySelector('meta[name="csp-nonce"]')?.getAttribute('content') ?? '';
-    style.textContent = colorThemes.map(({ id }) => {
-      const rule = (mode: ColorMode, preference: string) => `:root[data-color-theme='${id}'][data-theme='${preference}'], .theme-preview[data-color-theme='${id}'][data-theme='${preference}'] { ${Object.entries(themeTokenValues(id, mode)).map(([name, value]) => `${name}: ${value};`).join(' ')} }`;
-      return `${rule('light', 'light')} ${rule('dark', 'dark')} ${rule('light', 'system')} @media (prefers-color-scheme: dark) { ${rule('dark', 'system')} }`;
-    }).join('\n');
+    style.textContent = themeStyles();
     document.head.append(style);
   }
   root.dataset.colorTheme = theme;
+}
+
+export function themeStyles() {
+  return colorThemes.map(({ id }) => {
+    const rule = (mode: ColorMode, preference: string) => `:root[data-color-theme='${id}'][data-theme='${preference}'], .theme-preview[data-color-theme='${id}'][data-theme='${preference}'] { ${Object.entries(themeTokenValues(id, mode)).map(([name, value]) => `${name}: ${value};`).join(' ')} }`;
+    return `${rule('light', 'light')} ${rule('dark', 'dark')} ${rule('light', 'system')} @media (prefers-color-scheme: dark) { ${rule('dark', 'system')} }`;
+  }).join('\n');
 }

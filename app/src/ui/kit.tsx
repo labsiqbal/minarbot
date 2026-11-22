@@ -135,8 +135,21 @@ export function CodeBlock({ children, label, maxHeight = 280 }: { children: Reac
 }
 
 export function Segmented<T extends string>({ value, onChange, options, label, disabled }: { value: T; onChange: (value: T) => void; options: { value: T; label: ReactNode; description?: ReactNode }[]; label: string; disabled?: boolean }) {
-  return <div className="k-choice" role="radiogroup" aria-label={label}>
-    {options.map(option => <button key={option.value} type="button" role="radio" aria-checked={value === option.value} disabled={disabled} className={cx('k-choice__opt', value === option.value && 'is-active')} onClick={() => onChange(option.value)}>
+  return <div className="k-choice" role="radiogroup" aria-label={label} onKeyDown={event => {
+    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+    const index = buttons.indexOf(event.target as HTMLButtonElement);
+    if (index < 0) return;
+    let next: number;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % buttons.length;
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + buttons.length) % buttons.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = buttons.length - 1;
+    else return;
+    event.preventDefault();
+    buttons[next]?.focus();
+    buttons[next]?.click();
+  }}>
+    {options.map(option => <button key={option.value} type="button" role="radio" aria-checked={value === option.value} tabIndex={value === option.value ? 0 : -1} disabled={disabled} className={cx('k-choice__opt', value === option.value && 'is-active')} onClick={() => onChange(option.value)}>
       <span className="k-choice__title">{option.label}</span>{option.description && <span className="k-choice__sub">{option.description}</span>}
     </button>)}
   </div>;

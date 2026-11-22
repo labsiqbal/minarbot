@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+mod appearance;
 mod auth;
 mod automation;
 mod computer;
@@ -210,10 +211,15 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
     if data::handles(path) {
         return data::local(state, request).await;
     }
-    if request.method() == Method::GET && path != "/api" && !path.starts_with("/api/") {
+    if (request.method() == Method::GET
+        || request.method() == Method::HEAD && path.starts_with(appearance::NAMESPACE))
+        && path != "/api"
+        && !path.starts_with("/api/")
+    {
         return static_ui(
             state,
             path,
+            request.uri().query().unwrap_or(""),
             accepts_gzip(text_header(request.headers(), "accept-encoding")),
         )
         .await;
@@ -253,28 +259,61 @@ pub(crate) fn public_ui_asset(path: &str) -> bool {
             | "/pair.css"
     )
 }
-async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Response, Failure> {
-    let hashed = path.starts_with("/assets/");
+async fn static_ui(
+    state: &AppState,
+    path: &str,
+    query: &str,
+    gzip_ok: bool,
+) -> Result<Response, Failure> {
+    let leptos_asset = path.starts_with(appearance::NAMESPACE);
+    if leptos_asset && !appearance::asset(path) {
+        return Ok(local_error(404, "Page not found."));
+    }
+    let hashed = path.starts_with("/assets/") || leptos_asset;
     let spa = !hashed && !public_ui_asset(path);
+    let leptos_document = state.config.dist.join(appearance::DOCUMENT);
+    let pilot = spa
+        && state.config.appearance_client == config::AppearanceClient::Leptos
+        && tokio::fs::try_exists(&leptos_document)
+            .await
+            .unwrap_or(false);
+    let leptos_page = pilot && path == appearance::ROUTE && !appearance::react_override(query);
     let file = state.config.dist.join(if spa {
-        "index.html"
+        if leptos_page {
+            appearance::DOCUMENT
+        } else {
+            "index.html"
+        }
     } else {
         path.trim_start_matches('/')
     });
     if !spa && path.split('/').any(|part| part == "..") {
         return Ok(local_error(404, "Page not found."));
     }
-    let mut bytes = match tokio::fs::read(&file).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return Ok(local_error(
-                404,
-                "App has not been built yet. Run npm run build.",
-            ))
-        }
+    let precompressed = if leptos_asset && gzip_ok {
+        let mut gzip_file = file.as_os_str().to_owned();
+        gzip_file.push(".gz");
+        tokio::fs::read(gzip_file).await.ok()
+    } else {
+        None
+    };
+    let encoded = precompressed.is_some();
+    let bytes = match precompressed {
+        Some(bytes) => Ok(bytes),
+        None => tokio::fs::read(&file).await,
+    };
+    let Ok(mut bytes) = bytes else {
+        return Ok(if leptos_asset {
+            local_error(404, "Page not found.")
+        } else {
+            local_error(404, "App has not been built yet. Run npm run build.")
+        });
     };
     let mut policy = None;
-    if spa {
+    if leptos_page {
+        bytes = appearance::document(&String::from_utf8_lossy(&bytes), query).into_bytes();
+        policy = Some(POLICY.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'"));
+    } else if spa {
         let html = String::from_utf8_lossy(&bytes);
         let Some(end) = html.find("</head>") else {
             return Ok(local_error(500, "Built app is missing </head>."));
@@ -282,8 +321,13 @@ async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Respon
         let mut random = [0; 16];
         getrandom::getrandom(&mut random).map_err(|_| Failure::storage())?;
         let nonce = STANDARD.encode(random);
+        let selector = if pilot {
+            "<meta name=\"minarbot-appearance-client\" content=\"leptos\">"
+        } else {
+            ""
+        };
         bytes = format!(
-            "{}<meta name=\"csp-nonce\" content=\"{nonce}\">{}",
+            "{}<meta name=\"csp-nonce\" content=\"{nonce}\">{selector}{}",
             &html[..end],
             &html[end..]
         )
@@ -301,6 +345,7 @@ async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Respon
         Some("js") => "text/javascript",
         Some("css") => "text/css",
         Some("woff2") => "font/woff2",
+        Some("wasm") => "application/wasm",
         _ => "application/octet-stream",
     };
     let status = if spa && !navigation(path) {
@@ -310,10 +355,10 @@ async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Respon
     };
     let compressible = matches!(
         mime,
-        "text/html" | "text/javascript" | "text/css" | "image/svg+xml"
+        "text/html" | "text/javascript" | "text/css" | "image/svg+xml" | "application/wasm"
     );
-    let compressed = compressible && gzip_ok && bytes.len() > 1024;
-    if compressed {
+    let compress = !leptos_asset && compressible && gzip_ok && bytes.len() > 1024;
+    if compress {
         bytes = tokio::task::spawn_blocking(move || gzip(&bytes))
             .await
             .map_err(|_| Failure::storage())?
@@ -325,13 +370,13 @@ async fn static_ui(state: &AppState, path: &str, gzip_ok: bool) -> Result<Respon
             .headers_mut()
             .insert(header::VARY, HeaderValue::from_static("accept-encoding"));
     }
-    if compressed {
+    if encoded || compress {
         response
             .headers_mut()
             .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
     }
     if hashed {
-        // Vite names every built asset by its content hash.
+        // Both client builds name immutable assets by content hash.
         response.headers_mut().insert(
             header::CACHE_CONTROL,
             HeaderValue::from_static("public, max-age=31536000, immutable"),
@@ -358,7 +403,7 @@ fn navigation(path: &str) -> bool {
     }
     let parts: Vec<_> = path.split('/').skip(1).collect();
     match parts.as_slice() {
-        [""] | ["routines"] | ["workflows"] => true,
+        [""] | ["routines"] | ["workflows"] | ["calendar"] => true,
         ["settings", section] => [
             "general",
             "appearance",
@@ -370,12 +415,14 @@ fn navigation(path: &str) -> bool {
             "mcp",
             "machines",
             "devices",
+            "computer",
             "updates",
             "usage",
             "data",
             "backup",
             "mcp-server",
             "email",
+            "vault",
         ]
         .contains(section),
         ["agents" | "rooms" | "projects", value] => id(value),

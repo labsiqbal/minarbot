@@ -1,0 +1,27 @@
+@import "../../app/src/ui/tokens.css";
+@import "../../app/src/ui/base.css";
+@import "../../app/src/ui/config.css";
+@import "../../app/src/ui/legacy.css";
+@import "../../app/src/ui/minarbot.css";
+@import "../../app/src/ui/kit.css";
+@import "../../app/src/ui/density.css";
+@import "../../app/node_modules/@fontsource-variable/inter/index.css";
+
+#appearance-dialog {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--color-text-primary);
+  animation: none;
+}
+#appearance-dialog:not([open]), #appearance-dialog [hidden], #appearance-fallback[hidden] {
+  display: none;
+}
+#appearance-dialog .appearance-icon { display: contents; }
+#appearance-dialog .app-settings__search .appearance-icon svg { width: 14px; height: 14px; }
+#appearance-fallback { min-height: 100%; }
+#appearance-fallback .k-btn { text-decoration: none; }

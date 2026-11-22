@@ -1,0 +1,49 @@
+import { fileURLToPath } from 'node:url';
+import { CircleAlert, Search, X, type LucideIcon } from 'lucide-react';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { defineConfig, mergeConfig, type Plugin } from 'vite';
+import { settingsGroups } from './src/settings-groups';
+import { colorThemes, themeStyles } from './src/ui/themes';
+import app from './vite.config';
+
+const start = process.env.MINARBOT_LEPTOS_START;
+if (!start) throw new Error('Run cargo xtask leptos to build Appearance.');
+
+const svg = (icon: LucideIcon, size = 16) => renderToStaticMarkup(createElement(icon, { size, 'aria-hidden': true }));
+
+const appearanceConfig: Plugin = {
+  name: 'minarbot-appearance-config',
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: 'themes.css', source: themeStyles() });
+    this.emitFile({
+      type: 'asset', fileName: 'appearance-config.json', source: JSON.stringify({
+        colors: colorThemes,
+        groups: settingsGroups.map(({ label, items }) => ({
+          label, items: items.map(({ id, label, icon }) => ({ id, label, svg: svg(icon) })),
+        })),
+        searchIcon: svg(Search, 14),
+        closeIcon: svg(X),
+        errorIcon: svg(CircleAlert),
+      }),
+    });
+  },
+};
+
+export default defineConfig(mergeConfig(app, {
+  base: '/_leptos/',
+  publicDir: false,
+  plugins: [appearanceConfig],
+  build: {
+    reportCompressedSize: false,
+    rollupOptions: {
+      input: { start, appearance: fileURLToPath(new URL('../crates/web/appearance.css', import.meta.url)) },
+      output: {
+        hashCharacters: 'hex',
+        entryFileNames: 'assets/[name].[hash:16].js',
+        chunkFileNames: 'assets/[name].[hash:16].js',
+        assetFileNames: 'assets/[name].[hash:16][extname]',
+      },
+    },
+  },
+}));

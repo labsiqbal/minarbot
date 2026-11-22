@@ -1,4 +1,5 @@
 use super::*;
+use crate::leptos;
 use chrono::{DateTime, SecondsFormat, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -257,11 +258,17 @@ fn ancestry(root: &Path, issues: &[u64], commit: &str) -> Result<()> {
 }
 
 fn run_build(root: &Path, source: &Path) -> Result<()> {
-    for script in ["lint", "build", "test"] {
+    for script in ["lint", "build"] {
         run(Command::new("npm")
             .current_dir(source)
             .args(["run", script]))?;
     }
+    if root.join("crates/web/Cargo.toml").is_file() {
+        leptos::build(root)?;
+    }
+    run(Command::new("npm")
+        .current_dir(source)
+        .args(["run", "test"]))?;
     if root.join("Cargo.toml").is_file() {
         let checks: &[&[&str]] = &[
             &["fmt", "--check"],
@@ -434,6 +441,7 @@ pub fn pack_ci(root: &Path, binaries: &Path, directory: &Path, notes: String) ->
     if !source.join("dist/index.html").is_file() {
         return Err("Build app before CI packaging.".into());
     }
+    leptos::require_build(&source)?;
     let stage = scratch("minarbot-package-")?;
     stage_runtime(&source, stage.path())?;
     native_runtime(root, binaries, stage.path())?;
@@ -687,6 +695,7 @@ pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
                 return Err(format!("Build {file} before --dry-run.").into());
             }
         }
+        leptos::require_build(local.source)?;
     }
     let info = local.build(image)?;
     println!(
