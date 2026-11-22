@@ -45,6 +45,7 @@ export const ConnectedAppsPanel = lazyPanel(() => import('./ConnectedAppsPanel')
 export const SkillsPanel = lazyPanel(() => import('./SkillsPanel'), module => module.SkillsPanel);
 export const VaultSettings = lazyPanel(() => import('./VaultSettings'), module => module.VaultSettings);
 export const ComputerSetupPage = lazyPanel(() => import('./ComputerSetupPage'), module => module.ComputerSetupPage);
+export const CraftAnythingSettings = lazyPanel(() => import('./CraftAnythingSettings'), module => module.CraftAnythingSettings);
 export const SitesPanel = lazyPanel(() => import('./SitesPanel'), module => module.SitesPanel);
 export const AvatarPicker = lazyPanel(() => import('./ui/avatar-shapes'), module => module.AvatarPicker);
 
@@ -61,6 +62,7 @@ export const settingsPrefetch: Partial<Record<SettingsSection, () => void>> = {
   backup: BackupPanel.prefetch,
   vault: VaultSettings.prefetch,
   computer: ComputerSetupPage.prefetch,
+  'craft-anything': CraftAnythingSettings.prefetch,
 };
 
 export const panelPrefetchers = [

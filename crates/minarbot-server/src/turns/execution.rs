@@ -2,6 +2,7 @@ use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 
 pub async fn run(state: &AppState, id: &str) -> Result<()> {
+    let _craft = state.computer.craft.for_turn(id);
     let pdfs = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;

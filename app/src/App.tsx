@@ -75,7 +75,7 @@ import { QuestionCard, type Question } from './QuestionCard';
 import { ApprovalCard, type AppApproval } from './ApprovalCard';
 import { CompactionPanel } from './CompactionPanel';
 import { Suspense, useCallback, useEffect, useRef, useState, useId, type FormEvent, type ReactNode } from 'react';
-import { Link as LinkIcon, Smartphone, Archive, BarChart3, BookOpen, Cpu, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, Mail, MessageSquare, Monitor, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Link as LinkIcon, Smartphone, Archive, BarChart3, BookOpen, Cpu, Database, Download, KeyRound, Palette, Plug, SlidersHorizontal, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Ellipsis, GitFork, ListRestart, Square, Filter, FolderOpen, Hash, Mail, MessageSquare, Monitor, Sparkles, PanelLeft, PanelRight, Paperclip, Pause, Pencil, Play, Plus, RefreshCw, Search, Server, Cable, Trash2, Settings, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { Menu, type MenuItem } from './ui/Menu';
 import { PageView, useDetailsOpen } from './ui/layout';
 import { PanelResizeHandle, sidebarPanel, useResizablePanel } from './ui/resizable';
@@ -99,7 +99,7 @@ import { RoutineSchedule, scheduleLabel, type RoutineTiming } from './RoutineSch
 import { RoutineTemplatePicker, routineTemplates, type RoutineTemplate, type WebhookSource } from './RoutineTemplates';
 import '@fontsource-variable/inter';
 
-import { WorkspacePanel, MemoryPanel, WorkflowPanel, WorkflowDirectory, GeneralSettings, PresentationSettings, SharedDataPanel, UsagePanel, BackupPanel, AgentTemplateImport, AgentTemplateExport, McpServerPanel, McpPanel, HubConnection, ConnectedAppsPanel, SkillsPanel, VaultSettings, ComputerSetupPage, panelPrefetchers, settingsPrefetch } from './lazyPanels';
+import { WorkspacePanel, MemoryPanel, WorkflowPanel, WorkflowDirectory, GeneralSettings, PresentationSettings, SharedDataPanel, UsagePanel, BackupPanel, AgentTemplateImport, AgentTemplateExport, McpServerPanel, McpPanel, HubConnection, ConnectedAppsPanel, SkillsPanel, VaultSettings, ComputerSetupPage, CraftAnythingSettings, panelPrefetchers, settingsPrefetch } from './lazyPanels';
 import { usePanelPrefetch } from './hooks/usePanelPrefetch';
 
 import type { Agent } from './AgentProfileDialog';
@@ -1237,7 +1237,7 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
 const settingsGroups: { label: string; items: { id: SettingsSection; label: string; icon: typeof Settings }[] }[] = [
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
-  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'minarbot.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'email', icon: Mail, label: 'Email' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }, { id: 'vault', icon: KeyRound, label: 'Vault' }] },
+  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'minarbot.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'email', icon: Mail, label: 'Email' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }, { id: 'vault', icon: KeyRound, label: 'Vault' }, { id: 'craft-anything', icon: Sparkles, label: 'Craft Anything' }] },
   { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'devices', icon: Smartphone, label: 'Devices' }, { id: 'computer', icon: Monitor, label: 'Computer' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
@@ -1623,6 +1623,7 @@ function App() {
             : settings === 'providers' ? <ProvidersPanel request={api} />
             : settings === 'engines' ? <EnginesPanel request={api} />
             : settings === 'devices' ? <DevicesPanel request={api} />
+            : settings === 'craft-anything' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading Craft Anything...</p></Delayed>}><CraftAnythingSettings agents={directory.agents.filter(agent => !agent.hidden)} projects={projectState.projects.filter(project => !project.archived)} request={api} /></Suspense>
             : settings === 'computer' ? <Suspense fallback={<Delayed><p className="empty" role="status">Loading Computer...</p></Delayed>}><ComputerSetupPage request={api} /></Suspense>
             : settings === 'updates' ? <UpdatesPanel updates={updates} />
             : settings === 'machines' ? <MachinesPanel request={api} onChanged={() => { void remoteMachinesState.reload(); void api<Environment>('/api/environment').then(setEnvironment).catch(() => setActivityError(true)); }} />

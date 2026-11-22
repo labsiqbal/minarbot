@@ -287,11 +287,20 @@ pub async fn approve(
             return Ok(false);
         }
         let profile = agents::read(db, string(&turn, "agent"))?;
-        let binding = turns::harness::workspace(state, db, &turn)?
-            .ok_or_else(|| error(403, "Shell requires a workspace."))?;
-        if !binding.write && turns::harness::restricted(db, &turn)? {
-            return Ok(false);
-        }
+        let binding = if kind == "craft" {
+            None
+        } else {
+            let binding = turns::harness::workspace(state, db, &turn)?
+                .ok_or_else(|| error(403, "Shell requires a workspace."))?;
+            if !binding.write && turns::harness::restricted(db, &turn)? {
+                return Ok(false);
+            }
+            Some(binding)
+        };
+        let workspace = match &binding {
+            Some(binding) => binding.directory.to_str(),
+            None => Some(""),
+        };
         let secrets = data::providers::accounts(state)?
             .into_iter()
             .filter_map(|a| a.key)
@@ -304,7 +313,7 @@ pub async fn approve(
             .and_then(command_prefix);
         if !turns::harness::peer(db, turn_id)? {
             if let Some(prefix) = prefix {
-                for row in all(db,"SELECT prefix FROM harness_policies WHERE agent=? AND runtime=? AND workspace=?",rusqlite::params![turn["agent"].as_str(),profile["runtime"].as_str(),binding.directory.to_str()])?{let saved=string(&row,"prefix");if prefix==saved||prefix.starts_with(&format!("{saved} ")){return Ok(true);}}
+                for row in all(db,"SELECT prefix FROM harness_policies WHERE agent=? AND runtime=? AND workspace=?",rusqlite::params![turn["agent"].as_str(),profile["runtime"].as_str(),workspace])?{let saved=string(&row,"prefix");if prefix==saved||prefix.starts_with(&format!("{saved} ")){return Ok(true);}}
             }
         }
         let clean = |v: &str| {
@@ -323,7 +332,7 @@ pub async fn approve(
             return Err(error(502, "Harness approval arguments exceed 32 KiB."));
         }
         let wait = config::CardWait::start(state, turn_id)?;
-        db.execute("INSERT INTO harness_approvals(id,turn,agent,runtime,workspace,kind,description,command,prefix,input,state) VALUES(?,?,?,?,?,?,?,?,?,?,'approval')",rusqlite::params![id,turn_id,turn["agent"].as_str(),profile["runtime"].as_str(),binding.directory.to_str(),kind,clean(description),command.map(clean),prefix,serialized])?;
+        db.execute("INSERT INTO harness_approvals(id,turn,agent,runtime,workspace,kind,description,command,prefix,input,state) VALUES(?,?,?,?,?,?,?,?,?,?,'approval')",rusqlite::params![id,turn_id,turn["agent"].as_str(),profile["runtime"].as_str(),workspace,kind,clean(description),command.map(clean),prefix,serialized])?;
         wait
     };
     loop {
