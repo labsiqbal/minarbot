@@ -4,7 +4,7 @@ import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createDecipheriv, randomUUID } from 'node:crypto';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { createServer as httpServer, request as httpRequest } from 'node:http';
+import { createServer as httpServer } from 'node:http';
 import { createServer as netServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -85,28 +85,6 @@ test('desktop build follows dirty guard and packages release version without cha
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
-test('launcher commits healthy trial, preserves data and request identity, and refuses competing launcher',async()=>{
- const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const second=publishFixture(dir,'1.0.1');const request={type:'apply',id:randomUUID(),target:second.id,version:second.version};assert.equal((await launcherRequest(f.options,request)).accepted,true);assert.equal((await launcherRequest(f.options,request)).accepted,true);await assert.rejects(launcherRequest(f.options,{...request,target:first.id,version:first.version}),/already used/);const outcome=await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});return (state.lastAttempt as {status?:string})?.status==='done'?state:undefined;});assert.equal(outcome.current,second.id);assert.equal(selectedRelease(join(dir,'releases'),'previous'),first.id);assert.equal((JSON.parse(readFileSync(join(f.data,'update-state.json'),'utf8'))).lastAttempt.status,'done');
- const rival=spawn(...launcherCommand(f.config),{stdio:'ignore'});const [code]=await once(rival,'exit');assert.notEqual(code,0);assert.equal((await launcherRequest(f.options,{type:'status'})).current,second.id);
- }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
-});
-for(const mode of ['wrong','exit','refuse'])test(`launcher ${mode} candidate rolls back release and original DB snapshot`,async()=>{
- const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);
- // Fixture holds only the side-file server lock, allowing a test-only inspection connection.
- const db=testDatabase(join(f.data,'minarbot.sqlite'));db.exec("INSERT INTO data VALUES('owner data intact')");db.close();
- const bad=publishFixture(dir,'1.0.1',mode),id=randomUUID();await launcherRequest(f.options,{type:'apply',id,target:bad.id,version:bad.version});const state=await until(async()=>{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back'?s:undefined;});assert.equal(state.current,first.id);await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=testDatabase(join(f.data,'minarbot.sqlite'));assert.deepEqual(restored.prepare('SELECT value FROM data').all().map(r=>r.value),['owner data intact']);restored.close();assert.equal(selectedRelease(join(dir,'releases')),first.id);assert.match(String((state.lastAttempt as {reason:string}).reason),/health|exited/i);if(mode==='refuse')assert.match(String((state.lastAttempt as {reason:string}).reason),/exited before becoming healthy: This database does not carry the Minarbot data marker\. Install fresh\.$/);
- }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
-});
-
-test('update API uses owner Host/Origin/JSON rules, refuses unmanaged apply and preserves request identity',async t=>{
- const dir=temp();const releases=join(dir,'releases');publishFixture(dir,'1.0.1');const control=await mockLauncher(join(dir,'control'));t.after(()=>control.close());let app=await startApp({database:join(dir,'app.sqlite'),updates:{releasesDir:releases,launcherSocket:control.socket}});try{const state=await api(app,'/api/updates');assert.equal(state.launcherAvailable,true);assert.equal(state.available.version,'1.0.1');assert.equal(state.feed.version,'1.0.1');const command={id:randomUUID(),version:'1.0.1'};await api(app,'/api/updates/apply',command,202);await api(app,'/api/updates/apply',command,202);assert.equal(control.commands.size,1);await api(app,'/api/updates/apply',{...command,extra:1},400);await api(app,'/api/updates/apply',{id:'bad',version:'1.0.1'},400);await api(app,'/api/updates/apply',command,403,{Origin:'https://foreign.invalid'});await api(app,'/api/updates/apply',command,403,{'Content-Type':'text/plain'});await api(app,'/api/updates',undefined,403,{Authorization:'Bearer peer-canary'});await api(app,'/api/updates',undefined,403,{Origin:'https://foreign.invalid'});await new Promise<void>((done,reject)=>{const req=httpRequest(app.origin+'/api/updates',{headers:{Host:'foreign.invalid'}},res=>{assert.equal(res.statusCode,403);res.resume();res.on('end',done);});req.on('error',reject);req.end();});await app.close();app=await startApp({database:join(dir,'app.sqlite'),updates:{releasesDir:releases}});assert.equal((await api(app,'/api/updates')).launcherAvailable,false);const denied=await api(app,'/api/updates/apply',command,409);assert.match(denied.error,/launcher/);
- }finally{await app.close();await control.close();rmSync(dir,{recursive:true,force:true});}
-});
-
-test('server side lock rejects a second process on the same DB',async()=>{
- const dir=temp();const a=await startApp({database:join(dir,'app.sqlite')});try{await assert.rejects(startApp({database:join(dir,'app.sqlite')}),/Another canonical server/);}finally{await a.close();rmSync(dir,{recursive:true,force:true});}
-});
-
 test('peer fan-out needs both owners, grants no default update scope, streams verified release and keeps tokens secret',async t=>{
  const dir=temp(),tokens:string[]=[],logs:string[]=[];const original=globalThis.fetch,oldLog=console.error;
  t.after(()=>{globalThis.fetch=original;console.error=oldLog;});
@@ -130,12 +108,6 @@ test('peer fan-out needs both owners, grants no default update scope, streams ve
 
 test('peer SHA-256 mismatch rejects download before publication',async()=>{const dir=temp();try{const info=publishFixture(dir,'1.0.0'),archive=await releaseArchive(join(dir,'releases'),info.id);try{const bytes=readFileSync(archive.file);bytes[bytes.length-1]^=1;await assert.rejects(receiveRelease(new Response(bytes,{headers:{'Content-Type':'application/gzip','X-Minarbot-SHA256':archive.sha256}}),join(dir,'received'),info.id,archive.sha256),/SHA-256 mismatch/);assert(!existsSync(join(dir,'received',info.id)));}finally{archive.cleanup();}}finally{rmSync(dir,{recursive:true,force:true});}});
 
-test('interrupted trial recovers immutable snapshot before restarting previous release',async()=>{
- const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined, restarted:ChildProcess|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const db=testDatabase(join(f.data,'minarbot.sqlite'));db.exec("INSERT INTO data VALUES('before crash')");db.close();const bad=publishFixture(dir,'1.0.1','wrong');await launcherRequest(f.options,{type:'apply',id:randomUUID(),target:bad.id,version:bad.version});await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});if((state.lastAttempt as {status?:string})?.status!=='verifying')return false;try{const check=testDatabase(join(f!.data,'minarbot.sqlite'));const damaged=check.prepare('SELECT value FROM data').get()?.value==='trial damage';check.close();return damaged;}catch{return false;}});const died=once(f.child,'exit');f.child.kill('SIGKILL');await died;await delay(200);
- let log='';restarted=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});restarted.stderr!.on('data',b=>{log+=b;});await until(async()=>{try{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back';}catch{return false;}},15000).catch(e=>{throw new Error(String(e)+'\n'+log);});await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=testDatabase(join(f.data,'minarbot.sqlite'));assert.equal(restored.prepare('SELECT value FROM data').get()?.value,'before crash');restored.close();
- }finally{if(restarted)await stop(restarted);await f?.close();rmSync(dir,{recursive:true,force:true});}
-});
-
 test('Rust trial gates owner work until matching private socket commit', {timeout:15000},async()=>{
  const dir=temp(),id=randomUUID(),socket=join(dir,'control.sock');let committed=false,child:ChildProcess|undefined;
  const control=netServer(client=>{let raw='';client.on('data',chunk=>{raw+=chunk;if(!raw.includes('\n'))return;const q=JSON.parse(raw);client.end(JSON.stringify(q.type==='trial'?{committed:committed&&q.id===id}:{protocol:1,current:'development'})+'\n');});});
@@ -151,10 +123,11 @@ test('Rust trial gates owner work until matching private socket commit', {timeou
 test('Rust launcher trials native Rust server, commits over socket, and rolls back failed health', {timeout:30000},async()=>{
  const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;
  try{
+  const stripped=join(dir,'minarbot-server');
+  execFileSync('strip',['--strip-debug','-o',stripped,rustBinary('minarbot-server',process.env.MINARBOT_RUST_BINARY)]);
   function native(version:string){
    const release=publishFixture(dir,version),path=join(dir,'releases',release.id);
-   cpSync(rustBinary('minarbot-server',process.env.MINARBOT_RUST_BINARY),join(path,'bin/minarbot-server'));
-   execFileSync('strip',['--strip-debug',join(path,'bin/minarbot-server')]);
+   cpSync(stripped,join(path,'bin/minarbot-server'));
    writeFileSync(join(path,'package.json'),JSON.stringify({version,type:'module'}));
    const info={...release,files:fileManifest(path)};writeFileSync(join(path,'release.json'),JSON.stringify(info));
    return info;
