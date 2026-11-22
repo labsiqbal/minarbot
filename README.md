@@ -83,6 +83,18 @@ Enable **Always-on Computer** in the agent’s settings to start its Computer, s
 
 Chrome uses the same profile after each start. For encryption at rest on Linux, put `agent-desktops` on an encrypted filesystem such as a LUKS volume. Set `MINARBOT_DESKTOP_DATA_DIR` to an existing absolute subdirectory inside that volume and mount it before starting Minarbot. To keep existing logins, move the `agent-desktops` directory into that location while Minarbot is stopped. Minarbot uses Chrome’s basic password store. On an unencrypted filesystem, profile data, including cookies and local storage, has filesystem permissions only. Volume encryption covers the desktop profile and home while the volume is locked. Browser data is readable by the desktop while it runs. Provision encryption separately for backups and the server database.
 
+### Library docs
+
+Minarbot reads manifests and lockfiles in the agent's current working folder. It adds a short summary of detected versions to the turn and exposes `project_stack` and `library_docs` in API, Codex, Claude Code, and ACP turns. `library_docs` uses the detected version if there is exactly one. Use `version` to select among multiple versions. The tool labels the source and returns `source_version: null` when the source cannot verify its version.
+
+Library docs are on by default. In the agent profile's **Advanced** tab, turn off **Library docs** to disable both tools and the stack summary. Turning off **Web access** also disables them.
+
+**Settings → General → Library docs** shows the connection and key status. Anonymous lookups use Context7's lower rate limits. To use a key, add a Vault **Secret** named `context7-api-key`, scoped to `https://context7.com`, with no agent grants. The server sends it only as a bearer header to Context7. Delete the Vault entry to return to anonymous use.
+
+The hosted API receives the library name or its public Context7 ID, the requested version when available, and a short public API topic. Minarbot keeps manifest contents, file paths, project metadata, conversation history and project credentials out of these requests. Use public identifiers and keywords in tool arguments. Context7 may retain lookup queries under its data privacy policy. [Context7 data privacy](https://context7.com/docs/security/data-privacy)
+
+Minarbot calls the documented v2 search and context endpoints. The reference MCP server is MIT-licensed and is used as API documentation. The hosted service has its own terms and rate limits. Lookups run on demand, respect `Retry-After`, and use official sources after an error or index/version miss. Successful Context7 excerpts are cached locally for 24 hours, official excerpts for one hour. Documentation excerpts remain subject to the original sources' terms. [API guide](https://context7.com/docs/api-guide) · [MCP client reference](https://github.com/upstash/context7/blob/b1e3611e32a8b1369ae526cacdf335ddfd6e5fbb/packages/mcp/src/lib/api.ts) · [MIT license](https://github.com/upstash/context7/blob/b1e3611e32a8b1369ae526cacdf335ddfd6e5fbb/LICENSE) · [Upstash terms](https://upstash.com/legal/terms)
+
 ### Routine templates
 
 Choose **Routines** → **New from template**. Register the URL from **Webhook settings** with the source. Paste the source’s signing secret into Minarbot to enable delivery. Schedule uses the routine’s time and timezone settings.
@@ -136,7 +148,7 @@ Release runs app lint, the React and Leptos builds, and app tests. It runs Cargo
 
 Retry a completed local build with `cargo xtask release --github-only <release-id> --releases <directory>`. CI packages runtimes with `--pack-ci <binary-directory> --output <directory> --notes <notes>` and uploads a draft with `--draft-ci <directory> --notes <notes>`. Finalize that draft using `cargo xtask release --sign-ci <version>`. Signing uses `--signing-key`, `MINARBOT_RELEASE_SIGNING_KEY`, or the default `~/.config/minarbot-release/signing-ed25519.pem`.
 
-For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after building `app/dist`, running `cargo xtask leptos`, and building `target/release`. This stages the release and unsigned manifest locally. Pass `--desktop` for the AppImage and updater metadata. `--issues` reads issue comments and checks their branch tips.
+For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after building `app/dist`, running `cargo xtask leptos`, and building `target/release`. This stages the release and unsigned manifest locally. Pass `--desktop` for Electron and Tauri AppImages and their updater metadata. See the [Tauri pilot](desktop/tauri/README.md) for build prerequisites, signing and the packaged acceptance matrix. `--issues` reads issue comments and checks their branch tips.
 
 Use `cargo xtask install-smoke target/debug` to exercise the installer against a local fixture. Check a served build with `cargo xtask check-served <origin> --present <text> --expect-version <version>`.
 

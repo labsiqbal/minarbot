@@ -85,6 +85,7 @@ impl Store<'_> {
         let disabled = json!(disabled_agents).to_string();
         let fact = self.db.query_row(
             "SELECT f.raw,f.offset,f.attempts FROM memory_facts f JOIN memory_units u ON u.id=f.raw
+             JOIN memory_units fact ON fact.id=f.unit AND fact.removed=0
              WHERE f.consolidated=0 AND f.attempts<3 AND f.ready_at<=? AND u.removed=0
                AND NOT EXISTS(SELECT 1 FROM json_each(?2) WHERE value=json_extract(u.source,'$.agent'))
              ORDER BY f.ready_at,f.unit LIMIT 1",

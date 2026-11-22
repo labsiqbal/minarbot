@@ -151,10 +151,38 @@ def extract(archive, destination, manifest):
                 if member.mode & 0o111:
                     target.chmod(0o700)
     info = json.loads((destination / 'release.json').read_bytes())
-    require(all(info.get(k) == manifest[k] for k in ('id', 'version', 'commit')),
-            'Archive release metadata does not match the signed manifest.')
+    if manifest is not None:
+        require(all(info.get(k) == manifest[k] for k in ('id', 'version', 'commit')),
+                'Archive release metadata does not match the signed manifest.')
     require(all(os.access(destination / 'bin' / binary, os.X_OK) for binary in
                 ('minarbot-server', 'minarbot-launcher')), 'Release lacks Rust binaries.')
+    return info
+
+
+def extract_bundled(stage, args):
+    # The signed Tauri installer pins this archive digest in its native executable.
+    archive = stage / 'runtime.tar.gz'
+    checksum = hashlib.sha256()
+    fd = os.open(args.archive, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as source, archive.open('xb') as target:
+        status = os.fstat(source.fileno())
+        require(stat.S_ISREG(status.st_mode) and 0 < status.st_size <= LIMIT,
+                'Invalid desktop runtime archive size.')
+        remaining = status.st_size
+        while remaining:
+            chunk = source.read(min(65536, remaining))
+            require(chunk, 'Desktop runtime archive changed.')
+            remaining -= len(chunk)
+            checksum.update(chunk)
+            target.write(chunk)
+    require(checksum.hexdigest() == args.archive_sha256, 'Release archive SHA-256 mismatch.')
+    info = extract(archive, stage / 'release', None)
+    release_id, version, commit = (info.get(key, '') for key in ('id', 'version', 'commit'))
+    require(re.fullmatch(ID, release_id) and re.fullmatch(VERSION, version)
+            and re.fullmatch(r'[a-f0-9]{40}', commit) and release_id.startswith(version + '-')
+            and commit.startswith(release_id[len(version) + 1:]) and args.tag == 'v' + version,
+            'Invalid bundled release metadata.')
+    return release_id
 
 
 def write_private(path, value):
@@ -195,9 +223,12 @@ def local_install(root, config, args, system, arch, base):
             require(not current.exists(), 'Existing current path must be a symlink.')
             with tempfile.TemporaryDirectory(prefix='.install-', dir=releases) as temporary:
                 stage = Path(temporary)
-                archive, manifest = signed_archive(stage, base, system, arch, args.tag, args.archive)
-                release_id = manifest['id']
-                extract(archive, stage / 'release', manifest)
+                if args.archive_sha256:
+                    release_id = extract_bundled(stage, args)
+                else:
+                    archive, manifest = signed_archive(stage, base, system, arch, args.tag, args.archive)
+                    release_id = manifest['id']
+                    extract(archive, stage / 'release', manifest)
                 destination = releases / release_id
                 require(not destination.is_symlink(), 'Invalid existing Minarbot release directory.')
                 if not destination.exists():
@@ -325,6 +356,7 @@ def main():
     parser.add_argument('--wsl', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--tag', help=argparse.SUPPRESS)
     parser.add_argument('--archive', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--archive-sha256', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.token_stdin:
         require(args.token is None, 'Choose one install token input.')
@@ -342,6 +374,8 @@ def main():
     require(args.port is None or 1 <= args.port <= 65535, 'Invalid port.')
     require(args.tag is None or re.fullmatch('v' + VERSION, args.tag), 'Invalid release tag.')
     require(args.archive is None or (args.tag and args.wsl), 'Embedded archive requires WSL and a release tag.')
+    require(args.archive_sha256 is None or (args.archive and re.fullmatch(r'[a-f0-9]{64}', args.archive_sha256)),
+            'Embedded digest requires a bundled archive.')
     home = Path(os.environ.get('HOME', ''))
     require(home.is_absolute(), 'HOME must be absolute.')
     system = {'Linux': 'linux', 'Darwin': 'macos'}.get(platform.system())

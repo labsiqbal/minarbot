@@ -278,6 +278,7 @@ pub fn handles(path: &str) -> bool {
             | ["api", "provider-accounts", _, "test" | "edit" | "delete"]
             | ["api", "sidebar", "summary"]
             | ["api", "conversations", "settings"]
+            | ["api", "settings", "library-docs"]
             | ["api", "settings", "web-search"]
             | ["api", "settings", "web-search", "test"]
             | ["api", "threads", _]
@@ -321,6 +322,13 @@ pub fn handles(path: &str) -> bool {
             | ["api", "threads", _, "edit" | "delete" | "fork-context"]
             | ["api", "channels", _, "memory" | "edit" | "read"]
             | ["api", "agents" | "channels", _, "history", "search"]
+            | [
+                "api",
+                "agents" | "channels",
+                _,
+                "memory",
+                "knowledge" | "questions"
+            ]
             | ["api", "channels", _, "turns"]
             | [
                 "api",
@@ -433,6 +441,25 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
             ));
         }
         return provider_store::route(state, &parts, &method, &q, &body).await;
+    }
+    if path == "/api/settings/library-docs" {
+        if headers.contains_key("authorization")
+            || headers.contains_key("origin") && !origin(state, &headers)
+        {
+            return Err(error(
+                403,
+                "Library docs settings require the local owner in Minarbot.",
+            ));
+        }
+        if method != Method::GET || !q.is_empty() {
+            return Err(error(
+                400,
+                "Use GET with no parameters for library docs status.",
+            ));
+        }
+        return crate::turns::library_docs::settings(state)
+            .await
+            .map(|value| json_response(200, value));
     }
     if matches!(
         parts.as_slice(),
@@ -570,6 +597,16 @@ fn route(
         }
         ["api", kind, id, "memory"] if ["agents", "channels"].contains(kind) => {
             memory::route(db, kind, id, v, q, get)?
+        }
+        ["api", kind @ ("agents" | "channels"), id, "memory", view @ ("knowledge" | "questions")] =>
+        {
+            if state.auth.is_some()
+                || headers.contains_key("authorization")
+                || headers.contains_key("origin") && !origin(state, headers)
+            {
+                return Err(error(403, "Memory requires the local owner in Minarbot."));
+            }
+            memory::knowledge::route(db, kind, id, *view == "questions", v, q, get)?
         }
         ["api", kind, id, "panel"] => {
             if headers.contains_key("authorization")
@@ -728,6 +765,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/{id}/template", any(crate::dispatch))
         .route("/api/agents/{id}/memory", any(crate::dispatch))
         .route("/api/channels/{id}/memory", any(crate::dispatch))
+        .route("/api/agents/{id}/memory/knowledge", any(crate::dispatch))
+        .route("/api/channels/{id}/memory/knowledge", any(crate::dispatch))
+        .route("/api/agents/{id}/memory/questions", any(crate::dispatch))
+        .route("/api/channels/{id}/memory/questions", any(crate::dispatch))
         .route("/api/agents/{id}/history/search", any(crate::dispatch))
         .route("/api/channels/{id}/history/search", any(crate::dispatch))
         .route("/api/agents/{id}/threads", any(crate::dispatch))
@@ -757,6 +798,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/provider-accounts/{id}/edit", any(crate::dispatch))
         .route("/api/provider-accounts/{id}/delete", any(crate::dispatch))
         .route("/api/conversations/settings", any(crate::dispatch))
+        .route("/api/settings/library-docs", any(crate::dispatch))
         .route("/api/settings/web-search", any(crate::dispatch))
         .route("/api/settings/web-search/test", any(crate::dispatch))
 }

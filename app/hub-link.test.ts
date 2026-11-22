@@ -346,8 +346,29 @@ test('revoking alpha preserves simultaneous beta work on the same node',async t=
   const a=f.post(f.alice,[alpha.participationId]);await until(()=>held.length===1);
   const b=f.r.post(betaCtx,{requestId:randomUUID(),sectionId:beta.sectionId,text:'Beta work',mentions:[bp.participationId]});await until(()=>held.length===2);
   const generation=f.a.one('SELECT connection_generation FROM nodes WHERE id=?',node.nodeId)!.connection_generation;
-  f.a.withdraw(f.ctx(f.alice),alpha.participationId);f.transport.flush();await until(()=>f.r.turn(f.ctx(f.alice),a.turnIds[0]).state==='unknown');
-  held[0]('Late alpha');held[1]('Beta stays connected');await until(()=>f.r.turn(betaCtx,b.turnIds[0]).state==='done');
+  // Revoke when Alpha's result is already in flight, before the hub accepts it.
+  const send=WebSocket.prototype.send;
+  WebSocket.prototype.send=function(data:unknown,...args:unknown[]){
+    const message=typeof data==='string'?JSON.parse(data).body:undefined;
+    if(message?.kind==='turn.result'&&message.frame.kind==='turn.final'&&message.frame.turnId===a.turnIds[0]){
+      f.a.withdraw(f.ctx(f.alice),alpha.participationId);
+      f.transport.flush();
+    }
+    return Reflect.apply(send,this,[data,...args]);
+  };
+  try {
+    held[0]('Late alpha');
+    await until(()=>f.r.turn(f.ctx(f.alice),a.turnIds[0]).state==='unknown','Alpha revoked during result delivery');
+    held[1]('Beta stays connected');
+    await until(()=>{
+      const state=f.r.turn(betaCtx,b.turnIds[0]).state;
+      assert(['admitted','done'].includes(String(state)),`Unexpected Beta turn state: ${state}`);
+      return state==='done';
+    },'Beta result after Alpha revocation');
+  } finally {
+    WebSocket.prototype.send=send;
+  }
+  assert(!f.r.history(f.ctx(f.alice),f.project.sectionId).results.some(frame=>frame.kind==='turn.final'));
   assert.equal(f.a.one('SELECT connection_generation FROM nodes WHERE id=?',node.nodeId)!.connection_generation,generation);assert.equal(node.app.hubLink!.status().connected,true);assert.equal(f.calls,2);
 });
 

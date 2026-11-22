@@ -677,6 +677,22 @@ async fn canonical_request(
     ))
 }
 
+fn initialize_local(database: &db::Database) -> db::Result<()> {
+    let db = &database.connection;
+    files::init(db)?;
+    data::initialize(database)?;
+    turns::initialize(db).map_err(|e| e.message)?;
+    connectors::initialize(db).map_err(|e| e.message)?;
+    automation::initialize(db).map_err(|e| e.message)?;
+    harness::initialize(db).map_err(|e| e.message)?;
+    mcp::initialize(db).map_err(|e| e.message)?;
+    mcp::guide::initialize(db).map_err(|e| e.message)?;
+    computer::initialize(db)?;
+    updates::initialize(db)?;
+    db.execute_batch(include_str!("data/attention.sql"))?;
+    Ok(())
+}
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> db::Result<()> {
     if std::env::args().nth(1).as_deref() == Some(mcp::guide_infra::ASKPASS_COMMAND) {
@@ -754,19 +770,7 @@ async fn main() -> db::Result<()> {
     {
         let guard = database.lock().map_err(|_| "Database lock poisoned")?;
         if config.auth.is_none() {
-            files::init(&guard.connection)?;
-            data::initialize(&guard)?;
-            turns::initialize(&guard.connection).map_err(|e| e.message)?;
-            connectors::initialize(&guard.connection).map_err(|e| e.message)?;
-            automation::initialize(&guard.connection).map_err(|e| e.message)?;
-            harness::initialize(&guard.connection).map_err(|e| e.message)?;
-            mcp::initialize(&guard.connection).map_err(|e| e.message)?;
-            mcp::guide::initialize(&guard.connection).map_err(|e| e.message)?;
-            computer::initialize(&guard.connection)?;
-            updates::initialize(&guard.connection)?;
-            guard
-                .connection
-                .execute_batch(include_str!("data/attention.sql"))?;
+            initialize_local(&guard)?;
         } else {
             db::provider_tables(&guard.connection)?;
             data::initialize_canonical(&guard)?;

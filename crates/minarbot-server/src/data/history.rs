@@ -516,6 +516,12 @@ fn activity(db: &Connection, id: &str) -> Result<Value> {
     .ok_or_else(Failure::storage)?;
     v["dispatch"]=json!(all(db,"SELECT source_turn,target_turn,mode FROM dispatch_links WHERE source_turn=? OR target_turn=? ORDER BY created",[id,id])?);
     v["calls"]=json!(all(db,"SELECT seq,model,purpose,phase,status,created,finished FROM provider_calls WHERE turn=? ORDER BY seq",[id])?);
+    v["memory_recall"] = row(
+        db,
+        "memory_recall_metrics",
+        "SELECT added_tokens AS token_upper_bound,units FROM memory_recall_metrics WHERE turn=?",
+        [id],
+    )?;
     let mut tools=rows(db,"flow_tool_calls","SELECT call_id AS id,json_extract(call,'$.function.name') AS name,coalesce(after_action,0) AS after_action,CASE WHEN json_valid(result) THEN (coalesce(json_type(result,'$.error'),'null') <> 'null' OR coalesce(json_extract(result,'$.exitCode'),0) <> 0 OR coalesce(json_extract(result,'$.isError'),0)=1 OR coalesce(json_extract(result,'$.status'),'') IN('error','failed')) ELSE 0 END AS failed FROM flow_tool_calls WHERE turn=? ORDER BY after_action,after_output,seq",[id])?;
     if table(db, "files")? {
         tools.extend(rows(db,"generated_files","SELECT g.call_id AS id,json_extract(g.call,'$.function.name') AS name,'Created '||f.name AS title,coalesce(g.after_action,0) AS after_action,0 AS failed FROM generated_files g JOIN files f ON f.id=g.file WHERE g.turn=? ORDER BY g.seq",[id])?);

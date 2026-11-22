@@ -76,6 +76,10 @@ document.querySelector('button').onclick = () => {
     'csv-research': {
         'csv-facts.json': '{"mediaType":"text/csv","extension":"csv","rfc":4180,"source":"https://www.iana.org/assignments/media-types/text/csv"}',
     },
+    'pgx-row-docs': { 'pgx-rows.json': JSON.stringify({
+        version: 'v5.7.2', helper: 'CollectExactlyOneRow', zeroRows: 'ErrNoRows', multipleRows: 'ErrTooManyRows',
+        source: 'https://pkg.go.dev/github.com/jackc/pgx/v5@v5.7.2#CollectExactlyOneRow',
+    }) },
     'browser-booking': {},
     'browser-ticket': {},
     'handover-doc': {

@@ -7,6 +7,7 @@ param(
     [switch]$NoOpen,
     [string]$InstallerPath,
     [string]$ArchivePath,
+    [string]$ArchiveSha256,
     [string]$Tag
 )
 $ErrorActionPreference = 'Stop'
@@ -33,6 +34,7 @@ function Quote-ProcessArgument([string]$Value) {
 if ([bool]$Source -ne [bool]$Token) { throw 'Pass both -Source and -Token to pair.' }
 if ($Token -and $Token -cnotmatch '^bsi_[A-Za-z0-9_-]{43}$') { throw 'Install token is invalid.' }
 if ($ArchivePath -and (-not $InstallerPath -or -not $Tag)) { throw 'Embedded archive requires its installer and release tag.' }
+if ($ArchiveSha256 -and (-not $ArchivePath -or $ArchiveSha256 -cnotmatch '^[a-f0-9]{64}$')) { throw 'Embedded digest requires a bundled archive.' }
 if (-not $Source -and (Get-LocalEnvironment)) {
     if (-not $NoOpen) { Start-Process $origin }
     return
@@ -58,6 +60,7 @@ try {
     }
     $wslArguments = @('-d', $Distro, '--exec', 'sh', (Convert-ToWslPath $InstallerPath), '--wsl', '--no-open')
     if ($ArchivePath) { $wslArguments += @('--archive', (Convert-ToWslPath $ArchivePath), '--tag', $Tag) }
+    if ($ArchiveSha256) { $wslArguments += @('--archive-sha256', $ArchiveSha256) }
     if ($Source) { $wslArguments += @('--source', $Source, '--token', $Token) }
     if ($Name) { $wslArguments += @('--name', $Name) }
     $quoted = ($wslArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join ' '
