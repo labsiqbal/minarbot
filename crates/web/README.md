@@ -12,7 +12,7 @@ From the repository root, install the app dependencies and run its normal build.
 cargo xtask leptos
 ```
 
-The command builds the separate Cargo workspace with the Rust toolchain pinned in `rust-toolchain.toml`. It validates the pinned wasm-bindgen CLI archive against its upstream digest, uses the app's Vite CSS transforms and publishes the generated files to `app/dist/_leptos`. CI and the local release gate build Appearance after the React build. Release packaging includes both clients.
+The command builds the separate Cargo workspace with the Rust toolchain pinned in `rust-toolchain.toml`. It validates the pinned wasm-bindgen and Binaryen CLI archives against upstream digests, applies the `wasm-release` profile and `wasm-opt -Oz`, and publishes the route-group documents and hashed assets to `app/dist/_leptos`. Release packaging includes both clients.
 
 Sources for tokens, kit styles, palette CSS and settings navigation live under `app/src`. Runtime theme and text size changes run in Rust. The JavaScript module loads the Wasm with two bounded fetch attempts. The HTML exposes the React fallback and return link throughout startup.
 
@@ -41,25 +41,32 @@ Email, MCP connections, Vault, Craft Anything, Machines, Devices, Computer,
 Updates, Usage, Shared data, Backup & restore, and External access use Leptos
 when `MINARBOT_APPEARANCE_CLIENT=leptos`. First-run setup, project overview,
 the Rust-rendered `/pair` form, `/routines`, `/workflows`, `/calendar`, and the
-project Calendar tab also use Leptos. The automation routes share a mounted
-workspace shell. Settings return links and browser history retain the selected
-route. React remains the default for the staged rollout in #67.
+project Calendar tab also use Leptos. The three automation routes share a mounted
+workspace shell and load the `workflows` bundle. The project Calendar link loads
+the same bundle. Setup and Settings use `appearance`, and the #63 agent, named
+conversation and room pilot uses `conversation` when its URL includes
+`?ui=leptos`. Settings return links and browser history retain the selected route.
+React remains the default for the staged rollout in #67.
 
 ## React inventory for #67
 
-These surfaces still use React on the #64 branch, based on `b9980df`, with the
-Leptos selector enabled. #63 on main provides a separate `?ui=leptos` pilot for
-agent, side conversation, and room URLs. Recheck the inventory on the merged
-branch before the default switch.
+Inventory against main `865acc8` plus #64, with the server's Leptos selector
+enabled. Source paths are relative to `app/src/`. Each row is a port or cutover
+issue.
 
-| Surface | React screens and panels |
-| --- | --- |
-| Conversations | Root after setup, agent chat and email inbox, named conversations, project and channel conversations, and remote machine agent detail. Composer, attachments and voice recording, history search and summary, branch/fork and checkpoint dialogs, queue, approvals, signed event connection, Goal/Loop cards and Needs you flows. Rich Markdown, HTML replies, component replies, MCP Apps and their submit or approval dialogs. Chats/Members, Upcoming routines, Files, Changes, Preview, Computer and run inspector panels, including the standalone Computer window and result deep links. |
-| Agent management | New agent and Draft with AI, Profile, Model and Advanced tabs, avatar/look editor, visibility and deletion, folder/Computer/email settings, agent and section Memory (Notes, Learned, Standing questions), compaction, Sites, agent template import/export, agent workspace files, and embedded workflow library, editor, and runs. |
-| Navigation and Guide | Global quick switcher and cross-scope search, hidden agent management, create menu, keyboard shortcuts/help, Guide chat and connection dialog, Guide actions and infrastructure cards, and standalone update prompts. |
-| Projects | Project creation, Connected apps, Environment and MCP tabs, project source control, and project or section dialogs entered from React conversations. |
-| Canonical hub | Account sign-in and handoff, project directory and creation, invitation acceptance, agent join, machine enrollment, project members and roles, shared agents and policies, sections and room chat. |
-| Rollback and errors | Primary workspace, Settings, automation and project views with the React selector or explicit `?ui=react`. Unknown local routes and result URLs still use the React fallback. |
+| Issue group | React screens and dialogs | React sources |
+| --- | --- | --- |
+| Conversation routing and remaining chat controls | Post-setup `/`, agent Main chat, named and project conversations, and rooms use React on ordinary links. The explicit #63 pilot covers the core transcript, composer, rich replies, queue, approvals, Goals/Loops, chat list and Computer panel. Still on the React path are timeline minimap, historical paging and task-family navigation, speech playback, chat history search across conversations, fork history/origin, checkpoint restore, signed event connection, room management and the remaining dispatch controls. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `ui/AgentConversation.tsx`, `ui/ChatPrimitives.tsx`, `ui/MessageFind.tsx`, `ui/TimelineMinimap.tsx`, `ui/TurnActivity.tsx`, `ui/RunControls.tsx`, `SourceControl.tsx`, `SpeechPlayback.tsx`, `EventConnection.tsx` |
+| Agent lifecycle and profile | New agent, Draft with AI, full Profile, Model and Advanced tabs, avatar and look editor, availability/hidden agent restore and deletion, model/provider/runtime and access controls, working folder and Computer settings, Sites and template import/export. The #63 pilot has a basic profile form. | `App.tsx`, `AgentProfileDialog.tsx`, `AgentActions.tsx`, `AgentSidebar.tsx`, `AgentAvatar.tsx`, `AgentVisibility.tsx`, `AgentFolderSettings.tsx`, `AgentComputerSettings.tsx`, `SitesPanel.tsx`, `AgentTemplateImport.tsx` |
+| Memory and history summary | Agent and section Memory, including Notes, Learned and Standing questions, search, source links, edit, pin, forget and undo. History summary and compaction controls from chat and profile. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
+| Workspace search and Needs you | Quick switcher search over conversations, hidden agents and remote agents, plus restore and create actions. Needs you routes pending questions/approvals to exact conversations and focuses their input. Leptos has basic directory search, a quick switcher, keyboard help and sidebar badges. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useQuickSwitcher.ts`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx`, `QuestionCard.tsx`, `ApprovalCard.tsx`, `HarnessApprovalCard.tsx`, `HelpPage.tsx` |
+| Guide and update prompts | Guide chat on ordinary links, AI connection/preferences dialog and Guide change cards for routine/agent proposals, infrastructure setup, machine install/pairing status and approval. Sidebar update capsule, release notes and Update everything dialog. | `App.tsx`, `GuideActions.tsx`, `FirstRun.tsx`, `SidebarUpdateCapsule.tsx`, `SidebarUpdateReleaseNotes.tsx`, `UpdateEverythingDialog.tsx`, `hooks/useUpdateEverything.ts` |
+| Agent inbox and remote agent detail | Agent email inbox and message content at `/agents/:id/inbox`, and paired-machine agent detail at `/machines/:id/agents/:id`. | `App.tsx`, `AgentEmail.tsx`, `MachinesPanel.tsx`, `AgentActions.tsx` |
+| Conversation files, results and Computer | Full workspace browser, contextual file attachment and artifact previews, Changes/diff/source control, Preview, result file/URL/Computer deep links, standalone Computer window, and secure Computer request dialogs. Corresponding #63 Files, Computer and Run panels are available in the pilot. | `App.tsx`, `RightPanel.tsx`, `RightPanelFiles.tsx`, `RightPanelDiff.tsx`, `WorkspacePanel.tsx`, `HtmlPreview.tsx`, `ResultURLPreview.tsx`, `SourceControl.tsx`, `ComputerViewer.tsx`, `AgentComputerPanel.tsx`, `SecureComputerRequest.tsx`, `RunInspector.tsx` |
+| Automation embedded in conversations | Agent/section Upcoming routines, inbound routine reports and deep links, and the agent-scoped workflow library, editor, versions, webhook/schedule forms and run inspector with inline step conversations. | `App.tsx`, `WorkflowPanel.tsx`, `WorkflowEditor.tsx`, `WorkflowGraph.tsx`, `WorkflowSchedule.tsx`, `WorkflowWebhook.tsx`, `WorkflowInbox.tsx` |
+| Project management and integrations | New project, project-scoped Connected apps, Environment and MCP tabs, project source control, sidebar rename/archive/restore and section settings. Overview, its member/folder forms, section creation and Calendar have Leptos entry points. | `App.tsx`, `Projects.tsx`, `ConnectedAppsPanel.tsx`, `DiscordSettings.tsx`, `WhatsAppSettings.tsx`, `ProjectEnvironmentPanel.tsx`, `McpPanel.tsx`, `SourceControl.tsx` |
+| Canonical hub | Clerk sign-in/session handoff, project directory and creation, invitation acceptance, account/machine enrollment, join agent, project members/roles/invitations, participating agents/policies/consent, sections and room chat. | `hub/main.tsx`, `hub/HubApp.tsx`, `hub/client.ts` |
+| Fallback and retirement | Workspace loading/error/404, then the full React workspace, setup, Settings, Project and Automation when explicitly selected or when a Leptos document is unavailable. Keep rollback available for the staged releases. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `FirstRun.tsx`, `settings-groups.ts`, `lazyPanels.tsx`, `Projects.tsx`, `AutomationCalendar.tsx`, `AutomationCalendarDialog.tsx`, `RoutineSchedule.tsx`, `RoutineTemplates.tsx`, `WorkflowDirectory.tsx` |
 
 Workflow step conversations open the existing conversation route. Browser Back
 restores the run and focuses the step link. The embedded step conversation in
@@ -96,8 +103,10 @@ node --experimental-strip-types test-support/ui-smoke/automation-parity-smoke.mj
 MINARBOT_SMOKE_UI=leptos node --experimental-strip-types test-support/ui-smoke/automation-calendar-smoke.mjs /tmp/minarbot-calendar-leptos
 ```
 
-The parity receipt records 40 warmed switches per route and client, measured
-from clicking an automation control to layout of the visible route heading.
+Set `MINARBOT_AUTOMATION_COLD_BENCH=20` to record cold readiness for all three
+automation routes in fresh Chromium contexts. The receipt also records 40
+warmed switches per route and client, measured from clicking an automation
+control to layout of the visible route heading.
 
 ## Warm navigation in #62
 
