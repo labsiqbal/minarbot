@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub const WAIT: Duration = Duration::from_secs(15);
+const STARTUP_WAIT: Duration = Duration::from_secs(60);
 
 pub struct TestRoot(PathBuf);
 
@@ -74,7 +75,8 @@ impl TestRoot {
                 .stderr(File::create(&stderr)?)
                 .spawn()?,
         );
-        let ready = timeout(WAIT, async {
+        // Database initialization and migrations can wait on shared disk I/O.
+        let ready = timeout(STARTUP_WAIT, async {
             loop {
                 if let Some(status) = child.0.try_wait()? {
                     return Err(format!("Minarbot exited during startup ({status})").into());
