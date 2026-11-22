@@ -1,8 +1,8 @@
 <style>
-  body { margin: 0; }
+  html { padding: 0; font-size: var(--text-sm, 0.8125rem); }
   #diagram { display: grid; justify-items: center; }
   #diagram svg { max-width: 100%; height: auto; }
-  #description, #fallback { margin: 0; padding: 8px; }
+  #description, #fallback { margin: 0 0 8px; color: var(--muted-foreground); }
   #fallback { overflow-wrap: anywhere; white-space: pre-wrap; }
 </style>
 <p id="description"></p>
@@ -20,16 +20,37 @@
     if (!window.mermaid) return;
     rendering = true;
     try {
+      const styles = getComputedStyle(document.documentElement);
+      const token = name => styles.getPropertyValue(name).trim();
+      const text = token('--foreground');
+      const fill = token('--primary-soft') || token('--muted');
+      const border = token('--primary');
+      const line = token('--muted-foreground');
+      const mode = document.documentElement.dataset.theme;
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: 'strict',
-        theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'neutral',
+        theme: 'base',
+        themeVariables: {
+          darkMode: mode === 'dark',
+          fontFamily: token('--font-sans'),
+          fontSize: styles.fontSize,
+          background: token('--background'),
+          primaryColor: fill,
+          primaryBorderColor: border,
+          primaryTextColor: text,
+          textColor: text,
+          lineColor: line,
+          defaultLinkColor: line,
+          edgeLabelBackground: token('--card'),
+        },
         maxTextSize: 8000,
         maxEdges: 200,
         flowchart: { htmlLabels: false },
       });
       const { svg } = await mermaid.render('minarbot-diagram', source.textContent, diagram);
       diagram.innerHTML = svg;
+      diagram.dataset.theme = mode;
       source.hidden = true;
     } catch {
       diagram.replaceChildren();

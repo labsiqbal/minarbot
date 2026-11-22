@@ -11,12 +11,14 @@ const themeTokens = {
   '--card': '--color-bg-elevated',
   '--border': '--color-border-primary',
   '--primary': '--color-brand',
+  '--primary-soft': '--color-brand-soft',
   '--primary-foreground': '--bot-on-action',
   '--accent': '--color-brand-text',
   '--ring': '--color-border-focus',
   '--chart-1': '--color-brand',
   '--radius': '--radius-md',
   '--font-sans': '--font-stack',
+  '--text-sm': '--text-sm',
   '--font-mono': '--font-mono-stack',
 };
 

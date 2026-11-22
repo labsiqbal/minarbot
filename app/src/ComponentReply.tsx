@@ -53,21 +53,21 @@ function CartesianChart({ points, bar }: { points: Point[]; bar: boolean }) {
   const labelIndexes = new Set(Array.from({ length: Math.min(5, points.length) }, (_, index) =>
     Math.round(index * (points.length - 1) / Math.max(1, Math.min(5, points.length) - 1))));
   const barWidth = Math.min(34, step * 0.58);
-  return <svg className="component-cartesian" viewBox="0 0 426 152" aria-hidden="true">
-    {ticks.map(tick => <g key={tick}>
-      <line className={tick === 0 ? 'component-baseline' : 'component-gridline'} x1={left} x2={right} y1={y(tick)} y2={y(tick)} />
-      {(tick === 0 || Math.abs(y(tick) - y(0)) > 13) && <text x={left - 7} y={y(tick)} dominantBaseline="middle" textAnchor="end">{numberLabel.format(tick)}</text>}
-    </g>)}
-    {bar ? points.map((point, i) => <rect key={i} className="component-plot-fill" x={x(i) - barWidth / 2} y={Math.min(y(0), y(point.value))} width={barWidth} height={Math.abs(y(point.value) - y(0))} rx={2} />) : <>
-      <polyline className="component-plot-line" points={points.map((point, i) => `${x(i)},${y(point.value)}`).join(' ')} />
-      {points.map((point, i) => <circle key={i} className="component-plot-fill" cx={x(i)} cy={y(point.value)} r={3} />)}
-    </>}
-    {points.map((point, i) => {
-      if (!labelIndexes.has(i)) return null;
-      const label = Array.from(point.label);
-      return <text key={i} x={x(i)} y={146} textAnchor="middle">{label.length > 9 ? `${label.slice(0, 8).join('')}…` : point.label}</text>;
-    })}
-  </svg>;
+  return <div className="component-cartesian" aria-hidden="true">
+    <svg viewBox="0 0 426 152">
+      {ticks.map(tick => <line key={tick} className={tick === 0 ? 'component-baseline' : 'component-gridline'} x1={left} x2={right} y1={y(tick)} y2={y(tick)} />)}
+      {bar ? points.map((point, i) => <rect key={i} className="component-plot-fill" x={x(i) - barWidth / 2} y={Math.min(y(0), y(point.value))} width={barWidth} height={Math.abs(y(point.value) - y(0))} rx={2} />) : <>
+        <polyline className="component-plot-line" points={points.map((point, i) => `${x(i)},${y(point.value)}`).join(' ')} />
+        {points.map((point, i) => <circle key={i} className="component-plot-fill" cx={x(i)} cy={y(point.value)} r={3} />)}
+      </>}
+    </svg>
+    {ticks.filter(tick => tick === 0 || Math.abs(y(tick) - y(0)) > 13).map(tick =>
+      <span className="component-axis-value" key={tick} style={{ top: `${y(tick) / 152 * 100}%` }}>{numberLabel.format(tick)}</span>
+    )}
+    {points.map((point, i) => labelIndexes.has(i) &&
+      <span className="component-axis-label" key={i} style={{ left: `${x(i) / 426 * 100}%` }}>{point.label}</span>
+    )}
+  </div>;
 }
 
 function PieChart({ points }: { points: Point[] }) {

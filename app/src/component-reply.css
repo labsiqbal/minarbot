@@ -69,7 +69,9 @@
 
 .component-chart-data summary {
   cursor: pointer;
-  padding-block: 5px;
+  inline-size: fit-content;
+  padding: 5px 4px;
+  border-radius: var(--radius-sm);
   color: var(--color-brand-text);
   font-size: var(--text-sm);
 }
@@ -77,16 +79,32 @@
 .component-chart-data .component-table { margin-block-start: 6px; }
 
 .component-cartesian {
-  display: block;
-  inline-size: 100%;
-  max-block-size: 220px;
-  overflow: visible;
-}
-
-.component-cartesian text {
-  fill: var(--color-text-secondary);
-  font-size: 11px;
+  position: relative;
+  inline-size: min(100%, 616px);
+  margin-inline: auto;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
+}
+.component-cartesian svg { display: block; inline-size: 100%; }
+
+.component-axis-value, .component-axis-label {
+  position: absolute;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: 1;
+}
+.component-axis-value {
+  right: 89%;
+  max-inline-size: 11%;
+  transform: translateY(-50%);
+  text-align: end;
+}
+.component-axis-label {
+  top: 87%;
+  max-inline-size: 17%;
+  transform: translateX(-50%);
 }
 
 .component-gridline { stroke: var(--color-border-secondary); }

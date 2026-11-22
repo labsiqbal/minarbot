@@ -146,13 +146,17 @@ try {
   await page.getByText('Waiting for your input', { exact: true }).waitFor();
   await disclosure.press('Enter');
   assert.match(await chartTable.ariaSnapshot(), /columnheader "Value"[\s\S]*rowheader "Week 4"[\s\S]*cell "67"/);
+  assert.equal(await disclosure.evaluate(summary => summary.matches(':focus-visible') && getComputedStyle(summary).outlineStyle === 'solid'), true);
+  await disclosure.evaluate(summary => summary.blur());
+  assert.equal(await disclosure.evaluate(summary => getComputedStyle(summary).outlineStyle), 'none');
   await page.getByRole('table', { name: 'October totals' }).waitFor();
   await page.getByRole('heading', { name: 'Net change' }).waitFor();
   await page.getByRole('heading', { name: 'Signup channels' }).waitFor();
   await page.getByRole('heading', { name: 'New accounts' }).waitFor();
   await page.getByRole('heading', { name: 'Launch milestones' }).waitFor();
   const frame = page.locator('iframe[title="Signup journey"]');
-  const diagram = frame.contentFrame().locator('#diagram svg');
+  const diagramFrame = frame.contentFrame();
+  const diagram = diagramFrame.locator('#diagram svg');
   await frame.scrollIntoViewIfNeeded();
   await diagram.waitFor();
   assert.equal(await frame.getAttribute('sandbox'), 'allow-scripts allow-forms');
@@ -163,8 +167,35 @@ try {
 
   for (const mode of ['dark', 'light']) {
     await page.evaluate(mode => { document.documentElement.dataset.theme = mode; }, mode);
-    await chart.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(work, `catalog-${mode}.png`), animations: 'disabled' });
+    const chartTypography = await page.evaluate(() => ['.component-axis-label', '.component-axis-value', '.component-timeline li > span'].map(selector => {
+      const style = getComputedStyle(document.querySelector(selector));
+      return [style.fontSize, style.color];
+    }));
+    assert.deepEqual(chartTypography[0], chartTypography[2]);
+    assert.deepEqual(chartTypography[1], chartTypography[2]);
+    await chart.locator('..').screenshot({ path: join(work, `catalog-${mode}.png`), animations: 'disabled' });
+    await diagramFrame.locator(`#diagram[data-theme="${mode}"] svg`).waitFor();
+    const diagramStyles = await diagram.evaluate(svg => {
+      const root = getComputedStyle(document.documentElement);
+      const token = name => {
+        const probe = document.createElement('span');
+        probe.style.color = root.getPropertyValue(name).trim();
+        document.body.append(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      };
+      const node = getComputedStyle(svg.querySelector('.node rect'));
+      const label = getComputedStyle(svg.querySelector('.node text'));
+      const edge = getComputedStyle(svg.querySelector('.flowchart-link'));
+      return {
+        expected: [token('--primary-soft'), token('--primary'), token('--foreground'), token('--muted-foreground'), root.fontSize, root.fontFamily],
+        actual: [node.fill, node.stroke, label.fill, edge.stroke, label.fontSize, label.fontFamily],
+        captionLeft: document.querySelector('#description').getBoundingClientRect().left,
+      };
+    });
+    assert.deepEqual(diagramStyles.actual, diagramStyles.expected);
+    assert.equal(diagramStyles.captionLeft, 0);
     await formRegion.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(work, `form-${mode}.png`), animations: 'disabled' });
   }
