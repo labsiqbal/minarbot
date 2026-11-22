@@ -23,6 +23,9 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .conversation-layout .conversation-panel { flex: 0 1 360px; width: 360px; min-width: 0; }
 .conversation-panel > .k-tabs > .k-tabs__list > .k-tabs__tab[hidden] { display: none; }
 .conversation-panel a.panel-row { text-decoration: none; }
+.conversation-panel .panel-row > .appearance-icon > svg { width: 16px; height: 16px; }
+.conversation-panel .details-list-actions > button svg { width: 15px; height: 15px; }
+.right-panel.conversation-panel .details__identity { padding-inline: 20px; }
 .right-panel.conversation-panel .details__identity + .details__sections { padding-block-start: 28px; }
 .conversation-layout .conversation-panel .right-panel__body { overflow: auto; min-height: 0; }
 .conversation-card { padding: 12px; margin: 8px 0; }
