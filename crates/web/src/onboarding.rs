@@ -614,7 +614,9 @@ fn computer(error_icon: String, monitor: String) -> impl IntoView {
                         "ready" => value.runtime.map_or_else(|| "Ready".into(), |runtime| format!("Ready · {runtime}")),
                         _ => "Setup failed".into(),
                     })}</span>
-                    <span class="k-row__meta">{move || status.get().filter(|value| !value.missing_programs.is_empty()).map(|value| format!("Missing programs - {}", value.missing_programs.join(", ")))}</span>
+                    <span class="k-row__meta" hidden=move || status.with(|value| value.as_ref().is_none_or(|value| value.missing_programs.is_empty()))>
+                        {move || status.get().map(|value| format!("Missing programs - {}", value.missing_programs.join(", ")))}
+                    </span>
                 </span></div><span class="k-row__trailing">
                     <button type="button" class="k-btn k-btn--md k-btn--secondary" hidden=move || !status.with(|value| value.as_ref().is_some_and(|value| value.can_setup))
                         disabled=move || busy.get() || status.with(|value| value.as_ref().is_some_and(|value| value.state == "downloading"))
