@@ -204,11 +204,17 @@ async function rollout(page, origin) {
   await page.reload({ waitUntil: 'commit' });
   await ready(page, 'react');
   await open(page, origin, 'leptos', url.slice(origin.length));
+  const settingsStart = await page.evaluate(() => performance.timeOrigin);
+  await button(page, 'Vault').click();
+  await page.waitForURL(origin + '/settings/vault?from=%2Froutines');
+  await panel(page).getByRole('heading', { name: 'Vault', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => performance.timeOrigin), settingsStart);
   const [response] = await Promise.all([
-    page.waitForResponse(response => response.url().startsWith(origin + '/settings/vault')),
-    button(page, 'Vault').click(),
+    page.waitForResponse(response => response.url() === origin + '/routines'),
+    button(page, 'Close settings').click(),
   ]);
   assert.equal(response.status(), 200);
+  assert.equal(response.headers()['content-security-policy'].includes('wasm-unsafe-eval'), false);
 }
 
 async function faults(context, origin) {
