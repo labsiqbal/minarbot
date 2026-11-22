@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
-import { verifyRelease } from '../scripts/release-lib.mjs';
+import { verifyRelease } from './test-support/release.ts';
 const run = promisify(execFile);
 export async function releaseArchive(releases: string, target: string) {
   verifyRelease(releases, target);

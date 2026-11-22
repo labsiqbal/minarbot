@@ -8,10 +8,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
-// @ts-expect-error Plain Node release tooling.
-import { buildRelease } from '../scripts/release.mjs';
+import { buildRelease } from './test-support/release.ts';
 import { createServer as httpServer } from 'node:http';
-import { freePort } from '../scripts/test-port.mjs';
+import { freePort } from './test-support/test-process.ts';
 const exec = promisify(execFile), root = new URL('../',import.meta.url).pathname;
 const temp = () => mkdtempSync(join(tmpdir(),'minarbot-install-'));
 let testIsolation: string, originalHome: string | undefined, originalPath: string | undefined;

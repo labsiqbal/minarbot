@@ -120,7 +120,25 @@ Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_
 | `app/src` | React and TypeScript UI, built with Vite |
 | `app/*.test.ts` | Node test suite that drives the Rust server end to end |
 | `desktop` | Electron desktop app (AppImage, DMG, NSIS) |
-| `scripts` | Release, install and gate scripts |
+| `crates/xtask` | Release, packaging, smoke tests and gates |
+| `scripts` | Install scripts and release budgets |
+
+## Release tooling
+
+Run from a clean checkout at the release commit. Install dependencies with `(cd app && npm ci)` and `(cd desktop && npm ci)`. Keep local branches named in the shipped issues' claim comments until after the release.
+
+```sh
+cargo xtask release --releases ~/.local/share/minarbot-build/releases \
+  --issues 58 --desktop --no-image --notes "User-facing release notes"
+```
+
+Release runs app lint, build and tests, Cargo format, Clippy, tests and the locked release build, then the resource and production environment gates. Use `--no-github` for the local feed. Omit `--no-image` and set `MINARBOT_GHCR_USER` and `MINARBOT_GHCR_TOKEN` to publish the Computer image with the release.
+
+Retry a completed local build with `cargo xtask release --github-only <release-id> --releases <directory>`. CI packages runtimes with `--pack-ci <binary-directory> --output <directory> --notes <notes>` and uploads a draft with `--draft-ci <directory> --notes <notes>`. Finalize that draft using `cargo xtask release --sign-ci <version>`. Signing uses `--signing-key`, `MINARBOT_RELEASE_SIGNING_KEY`, or the default `~/.config/minarbot-release/signing-ed25519.pem`.
+
+For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after building `app/dist` and `target/release`. This stages the release and unsigned manifest locally. Pass `--desktop` for the AppImage and updater metadata. `--issues` reads issue comments and checks their branch tips.
+
+Use `cargo xtask install-smoke target/debug` to exercise the installer against a local fixture. Check a served build with `cargo xtask check-served <origin> --present <text> --expect-version <version>`.
 
 ## Contributing
 

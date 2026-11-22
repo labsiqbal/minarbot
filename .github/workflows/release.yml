@@ -53,11 +53,11 @@ jobs:
           npm --prefix app ci
           npm --prefix app run build
           cargo build --workspace --release --locked
-          node scripts/release.mjs --pack-ci target/release --output artifacts --notes "$RELEASE_NOTES"
+          cargo xtask release --pack-ci target/release --output artifacts --notes "$RELEASE_NOTES"
           test -n "$(find artifacts -name "*-${{ matrix.platform }}.tar.gz")"
       - name: Install and exercise the macOS service
         if: runner.os == 'macOS'
-        run: node scripts/install-smoke.mjs target/release
+        run: cargo xtask install-smoke target/release
       - uses: actions/upload-artifact@v4
         with:
           name: runtime-${{ matrix.platform }}
@@ -131,9 +131,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.23.4'
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -143,4 +140,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MINARBOT_GHCR_USER: ${{ github.actor }}
           MINARBOT_GHCR_TOKEN: ${{ github.token }}
-        run: node scripts/release.mjs --draft-ci artifacts --notes "$RELEASE_NOTES"
+        run: cargo xtask release --draft-ci artifacts --notes "$RELEASE_NOTES"
