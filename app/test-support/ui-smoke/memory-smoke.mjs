@@ -53,7 +53,7 @@ try {
     const resource = profile.getByRole('button', { name: 'Agent memory', exact: true });
     await resource.press('Enter');
     const dialog = page.getByRole('dialog', { name: 'Minarbot Memory', exact: true });
-    await dialog.getByRole('heading', { name: 'Minarbot Memory', exact: true }).waitFor();
+    await dialog.getByRole('heading', { name: 'Minarbot Memory', level: 1, exact: true }).waitFor();
     await dialog.getByText('Start the greenhouse inventory on Mondays.', { exact: true }).waitFor();
     const learned = dialog.getByRole('tab', { name: 'Learned', exact: true });
     await learned.press('Enter');
