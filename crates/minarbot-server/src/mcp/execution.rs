@@ -25,7 +25,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value, args: &Value) -> 
         for row in rows.iter().take(1) {
             let grant = data::json(&row["permitted"])?;
             let tools = data::json(&row["tools"])?;
-            out.push(json!({"id":row["id"],"name":row["name"],"url":row["url"],"enabled":row["enabled"],"revision":row["revision"],"hasToken":!string(row,"token").is_empty(),"tools":tools.as_array().ok_or_else(Failure::storage)?.iter().filter(|t|grant.as_array().is_some_and(|g|g.contains(&t["name"]))).collect::<Vec<_>>()}));
+            out.push(json!({"id":row["id"],"name":row["name"],"url":row["url"],"enabled":row["enabled"],"revision":row["revision"],"hasToken":!string(row,"token").is_empty(),"tools":tools.as_array().ok_or_else(Failure::storage)?.iter().filter(|t|super::apps::visible(t, "model") && grant.as_array().is_some_and(|g|g.contains(&t["name"]))).collect::<Vec<_>>()}));
         }
         return Ok(
             json!({"connections":out,"next_after":if rows.len()>1{rows[0]["id"].clone()}else{Value::Null}}),
@@ -101,14 +101,26 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value, args: &Value) -> 
             )
         })?;
     }
-    let future = session.call(tool, &args["arguments"]);
-    tokio::pin!(future);
-    let response = loop {
-        tokio::select! {
-         result=&mut future=>break result.map_err(|_|error(502,UNCERTAIN))?,
-         _=tokio::time::sleep(std::time::Duration::from_millis(100))=>{let guard=state.database.lock().map_err(|_|Failure::storage())?;let current=permitted(&guard.connection,turn,args).map_err(|_|error(502,UNCERTAIN))?;if current["revision"]!=row["revision"]||current["grant_revision"]!=row["grant_revision"]{return Err(error(502,UNCERTAIN));}}
+    let response = {
+        let future = session.call(tool, &args["arguments"]);
+        tokio::pin!(future);
+        loop {
+            tokio::select! {
+             result=&mut future=>break result.map_err(|_|error(502,UNCERTAIN))?,
+             _=tokio::time::sleep(std::time::Duration::from_millis(100))=>{let guard=state.database.lock().map_err(|_|Failure::storage())?;let current=permitted(&guard.connection,turn,args).map_err(|_|error(502,UNCERTAIN))?;if current["revision"]!=row["revision"]||current["grant_revision"]!=row["grant_revision"]{return Err(error(502,UNCERTAIN));}}
+            }
         }
     };
+    let snapshot = super::apps::discover(
+        state,
+        turn,
+        &mut session,
+        string(&row, "name"),
+        tool,
+        &args["arguments"],
+        &response,
+    )
+    .await;
     let (mut result, files) = content(&response, &token).map_err(|_| error(502, UNCERTAIN))?;
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
@@ -162,6 +174,11 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value, args: &Value) -> 
             }
             metas.push(meta);
         }
+        if let Some(snapshot) = snapshot {
+            let displayed =
+                super::apps::save(state, db, string(turn, "id"), &row, &token, snapshot)?;
+            result["appDisplayed"] = json!(displayed);
+        }
         result["files"] = json!(metas);
         result = connections::redact(&result, &token);
         for secret in secrets::project(state, db, Some(&project(db, turn)?))? {
@@ -186,9 +203,14 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value, args: &Value) -> 
     })
 }
 fn permitted(db: &Connection, turn: &Value, args: &Value) -> Result<Value> {
-    let scope = project(db, turn)?;
-    connections::member(db, &scope, string(turn, "agent"))?;
-    let row=one(db,"SELECT c.*,g.revision grant_revision,g.tools permitted FROM mcp_connections c JOIN mcp_grants g ON g.connection=c.id WHERE c.id=? AND g.agent=? AND c.enabled=1 AND coalesce((SELECT project FROM mcp_projects WHERE connection=c.id),'')=?",[string(args,"connection"),string(turn,"agent"),&scope])?.filter(|v|data::json(&v["permitted"]).ok().and_then(|v|v.as_array().cloned()).is_some_and(|a|a.contains(&args["name"]))).ok_or_else(||error(403,"MCP tool is not authorized for this agent yet."))?;
+    let row = granted(db, turn, string(args, "connection"), string(args, "name"))?;
+    if !data::json(&row["tools"])?.as_array().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|tool| tool["name"] == args["name"] && super::apps::visible(tool, "model"))
+    }) {
+        return Err(error(403, "MCP tool is unavailable to the model."));
+    }
     if !data::exists(
         db,
         "SELECT 1 FROM turns WHERE id=? AND agent=? AND status='running'",
@@ -199,6 +221,12 @@ fn permitted(db: &Connection, turn: &Value, args: &Value) -> Result<Value> {
             "MCP permissions or task changed before sending.",
         ));
     }
+    Ok(row)
+}
+pub(super) fn granted(db: &Connection, turn: &Value, id: &str, name: &str) -> Result<Value> {
+    let scope = project(db, turn)?;
+    connections::member(db, &scope, string(turn, "agent"))?;
+    let row=one(db,"SELECT c.*,g.revision grant_revision,g.tools permitted FROM mcp_connections c JOIN mcp_grants g ON g.connection=c.id WHERE c.id=? AND g.agent=? AND c.enabled=1 AND coalesce((SELECT project FROM mcp_projects WHERE connection=c.id),'')=?",[id,string(turn,"agent"),&scope])?.filter(|v|data::json(&v["permitted"]).ok().and_then(|v|v.as_array().cloned()).is_some_and(|a|a.iter().any(|v| v == name))).ok_or_else(||error(403,"MCP tool is not authorized for this agent yet."))?;
     Ok(row)
 }
 type File = (usize, Vec<u8>, String, String, Option<String>);
@@ -213,6 +241,9 @@ fn content(v: &Value, token: &str) -> Result<(Value, Vec<File>)> {
         .iter()
         .enumerate()
     {
+        if super::apps::is_ui_resource(item) {
+            continue;
+        }
         if item["type"] == "text" {
             text.push(json!({"type":"text","contentIndex":index,"text":connections::redact(&item["text"],token)}));
             continue;

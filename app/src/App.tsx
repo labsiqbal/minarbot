@@ -44,6 +44,8 @@ import { QueueEditor } from './QueueEditor';
 import { CancelTurn, QueuedRunsControl } from './ui/RunControls';
 import { Markdown, StreamingMarkdown } from './Markdown';
 import { HtmlReplies } from './HtmlReply';
+import { McpAppReplies, type McpAppAction } from './McpAppFrame';
+import type { McpAppReference } from './mcp-app-host';
 import type { HtmlReplyAction, HtmlReplyContext, HtmlReplyReference } from './html-reply';
 import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useTimelineFollow } from './ui/useTimelineFollow';
@@ -105,7 +107,7 @@ type Thread = { needs_you?: number; delivery?: boolean; active?: boolean; activi
 type ForkContext = { summary?: string; inherited?: string; turns: { id: string; text: string; reply: string | null }[] };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
-type Turn = { htmlReplies?: HtmlReplyReference[]; guide?: GuideActions; optimistic?: boolean; history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; panelFile?: { seq: number; id: string; name: string; openedAt: string; deleted?: number } | null; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { mcpApps?: McpAppReference[]; htmlReplies?: HtmlReplyReference[]; guide?: GuideActions; optimistic?: boolean; history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; panelFile?: { seq: number; id: string; name: string; openedAt: string; deleted?: number } | null; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 const mergeHistory = (history: Turn[], page: Turn[]) => [...new Map([...history, ...page].map(turn => [turn.id, turn])).values()].sort((a, b) => a.seq - b.seq);
 type Directory = { guide?: Agent | null; hubAvailable?: boolean; agents: Agent[]; configured: boolean; defaultModel: string };
 type Environment = { id: string; name: string; origin: string; version: string };
@@ -348,6 +350,32 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
     catch { setError('Draft was not saved. Copy your message before leaving.'); }
     composer.current?.focus();
   }
+  async function mcpAppAction(action: McpAppAction) {
+    if (requestActive.current || busy || pending || blocked || archived || !mounted.current) throw new Error('Conversation is unavailable.');
+    if (action.kind === 'context') {
+      // ponytail: reuse the composer attachment slot until it supports multiple app contexts.
+      setHtmlContext(current => action.data ? { renderId: action.id, data: action.data }
+        : current?.renderId === action.id ? undefined : current);
+      return;
+    }
+    if (!canSend) throw new Error('Conversation cannot accept messages.');
+    const context = htmlContext;
+    requestActive.current = true;
+    setBusy(true);
+    try {
+      await api<Turn>(path, { id: crypto.randomUUID(), text: action.text, ...(context && { htmlContext: context }) });
+      if (mounted.current) {
+        setHtmlContext(current => current === context ? undefined : current);
+        jumpToLatest();
+      }
+    } catch (error) {
+      if (error instanceof HttpError && error.status < 500) throw error;
+      throw new Error('Message outcome is uncertain. Check the conversation before trying again.');
+    } finally {
+      requestActive.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
   async function send(event: FormEvent, forcedMode?: 'queue' | 'steer') {
     event.preventDefault();
     if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && (!canSend || !draft.trim() && !attached.length))) return;
@@ -482,11 +510,12 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
                     {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
                     {turn.messageOrigin && turn.messageOrigin.kind !== 'peer' && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent!, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                 </HumanMessage>
-                {turn.room ? <><RoomMessages onHtmlReplyAction={htmlReplyAction} room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} skip />{answerActions(item)}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} onInspect={inspectRun} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && turnRequests(item); }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
+                {turn.room ? <><RoomMessages onMcpAppAction={archived ? undefined : mcpAppAction} onHtmlReplyAction={htmlReplyAction} room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} skip />{answerActions(item)}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} onInspect={inspectRun} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && turnRequests(item); }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
                     <TurnActivity scope={path.slice(0, -6)} turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} onInspect={inspectRun} />
                     {!channel && (!!turn.agentMessages?.length || !!turn.receivedAgentReplies?.length) && <AgentConversation items={[...(turn.agentMessages ?? []), ...(turn.receivedAgentReplies ?? []).filter(item => !turn.agentMessages?.some(sent => sent.id === item.id))]} sender={turn.agent_name ?? agent.name} scope={path.slice(0, -6)} onOpen={onOpenAgent} />}
                     <div className="message-body">
                       <HtmlReplies replies={turn.htmlReplies} scope={path.slice(0, -6)} onAction={htmlReplyAction} />
+                      <McpAppReplies apps={turn.mcpApps} scope={path.slice(0, -6)} onAction={archived ? undefined : mcpAppAction} />
                       {channel && turn.parent && <div className="room-request"><strong>{turn.messageOrigin?.name ?? turn.agent_name ?? agent.name}</strong><p>{turn.text}</p></div>}
                       {turn.dispatch_mode === 'steer' && turn.dispatch_label && ['queued', 'running'].includes(turn.status) && <p className="dispatch-receipt">{turn.dispatch_label}{turn.dispatch_target && <> · <button type="button" className="link-btn link-btn--small" onClick={() => openFocused(turn.dispatch_target!)}>View target turn</button></>}</p>}
                       {turn.status === 'cancelled' && !turn.reply && !turn.partial?.text ? null : turn.status === 'done' && !turn.reply && (turn.dispatch_label || turn.htmlReplies?.length) ? null : (turn.reply || livePartial(turn) || turn.status === 'cancelled' && turn.partial?.text) ? <div className={livePartial(turn) ? "live-answer" : "reply-answer"} aria-label={livePartial(turn) ? "Streaming answer" : "Agent reply"}><div className="legacy"><StreamingMarkdown files={turn.generatedFiles} key={turn.id} text={turn.reply ?? turn.partial?.text ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div>{livePartial(turn) && <span className="stream-caret" aria-hidden />}</div>

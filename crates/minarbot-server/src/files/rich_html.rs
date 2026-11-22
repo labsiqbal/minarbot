@@ -197,17 +197,18 @@ pub fn serve(
     if html.len() > MAX_HTML {
         return Err(Failure::storage());
     }
-    let csp = format!(
-        "{}; sandbox allow-scripts allow-forms; frame-ancestors 'self'",
-        policy(false)
-    );
+    sandboxed_document(document(&html, None), &policy(false))
+}
+
+pub fn sandboxed_document(html: String, policy: &str) -> Result<Response> {
+    let csp = format!("{policy}; sandbox allow-scripts allow-forms; frame-ancestors 'self'");
     let mut response = (
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CONTENT_DISPOSITION, "inline"),
             (header::X_FRAME_OPTIONS, "SAMEORIGIN"),
         ],
-        document(&html, None),
+        html,
     )
         .into_response();
     response.headers_mut().insert(
@@ -290,9 +291,12 @@ pub fn accept_context(
         db,
         "SELECT t.* FROM html_replies h JOIN turns t ON t.id=h.turn WHERE h.id=?",
         [id],
-    )?
-    .ok_or_else(|| error(404, "HTML reply context is unavailable."))?;
-    if crate::turns::execution::scope(&turn) != format!("{kind}:{owner}") {
+    )?;
+    let authorized = match turn {
+        Some(turn) => crate::turns::execution::scope(&turn) == format!("{kind}:{owner}"),
+        None => crate::mcp::apps::context_allowed(state, db, kind, owner, id, data)?,
+    };
+    if !authorized {
         return Err(error(404, "HTML reply context is unavailable."));
     }
     safe_input(state, db, data)?;

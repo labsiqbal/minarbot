@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS mcp_feature_commands(caller TEXT NOT NULL,request_id 
 CREATE TABLE IF NOT EXISTS mcp_server_tokens(id TEXT PRIMARY KEY,token_hash TEXT NOT NULL UNIQUE,kind TEXT NOT NULL CHECK(kind IN ('session','peer')),name TEXT NOT NULL,agent TEXT REFERENCES agents(id),turn TEXT REFERENCES turns(id),scopes TEXT NOT NULL,created INTEGER NOT NULL,last_used INTEGER,revoked INTEGER,expires INTEGER,request_digest TEXT NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS mcp_server_commands(id TEXT PRIMARY KEY,digest TEXT NOT NULL,result TEXT NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS mcp_server_messages(caller TEXT NOT NULL REFERENCES mcp_server_tokens(id),request_id TEXT NOT NULL,digest TEXT NOT NULL,turn TEXT NOT NULL UNIQUE REFERENCES turns(id),result TEXT NOT NULL,PRIMARY KEY(caller,request_id)) STRICT;
+CREATE TABLE IF NOT EXISTS mcp_apps(id TEXT PRIMARY KEY,turn TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,connection TEXT NOT NULL REFERENCES mcp_connections(id) ON DELETE CASCADE,revision INTEGER NOT NULL,title TEXT NOT NULL,html TEXT NOT NULL,bootstrap TEXT NOT NULL) STRICT;
+CREATE INDEX IF NOT EXISTS mcp_apps_turn ON mcp_apps(turn);
+CREATE TABLE IF NOT EXISTS mcp_app_approvals(app TEXT PRIMARY KEY REFERENCES mcp_apps(id) ON DELETE CASCADE,id TEXT NOT NULL,digest TEXT NOT NULL,expires INTEGER NOT NULL) STRICT;
+DELETE FROM mcp_app_approvals;
 UPDATE mcp_server_tokens SET revoked=unixepoch('subsec')*1000 WHERE kind='session' AND revoked IS NULL;
 DELETE FROM mcp_tests;
 DELETE FROM mcp_test_projects;

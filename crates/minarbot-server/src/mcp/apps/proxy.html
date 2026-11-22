@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>MCP app sandbox</title>
+<style>
+html, body, iframe { width: 100%; height: 100%; margin: 0; border: 0; }
+iframe { display: block; }
+</style>
+<script>
+/* Relay adapted from CopilotKit (MIT, app/t3/CopilotKit-NOTICE). */
+(() => {
+  const channel = new URLSearchParams(location.hash.slice(1)).get('bridge');
+  if (parent === window || !channel) return;
+  const send = data => parent.postMessage({ channel, ...data }, location.origin);
+  let loads = 0;
+  let closed = false;
+  window.addEventListener('load', event => {
+    if (event.target !== document.querySelector('iframe')) return;
+    if (++loads > 1) {
+      closed = true;
+      send({ closed: true });
+    }
+  }, true);
+  window.addEventListener('message', event => {
+    if (closed) return;
+    const inner = document.querySelector('iframe')?.contentWindow;
+    if (!inner) return;
+    if (event.source === parent && event.origin === location.origin && event.data?.channel === channel) {
+      inner.postMessage(event.data.rpc, '*');
+    }
+    if (event.source !== inner || event.origin !== 'null') return;
+    if (event.data?.minarbotAppUnloaded === true) {
+      closed = true;
+      send({ closed: true });
+    } else if (event.data?.jsonrpc === '2.0' && !event.data.method?.startsWith?.('ui/notifications/sandbox-')) {
+      send({ rpc: event.data });
+    }
+  });
+})();
+</script>
+<body>
+<iframe title="MCP app content" sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer" srcdoc="{{APP_DOCUMENT}}"></iframe>
+</body>
+</html>
