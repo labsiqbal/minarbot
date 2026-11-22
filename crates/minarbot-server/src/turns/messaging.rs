@@ -68,6 +68,15 @@ pub fn capture(db: &Connection, turn: &str) -> Result<Vec<Value>> {
     .collect()
 }
 pub fn roster(db: &Connection, turn: &Value, after: &str) -> Result<Vec<Value>> {
+    eligible_agents(db, turn, after, None)
+}
+
+fn eligible_agents(
+    db: &Connection,
+    turn: &Value,
+    after: &str,
+    recipients: Option<&[String]>,
+) -> Result<Vec<Value>> {
     let lineage = ancestors(db, string(turn, "id"))?;
     let channel = lineage.iter().find_map(|r| r["channel"].as_str());
     let room = exists(
@@ -80,7 +89,25 @@ pub fn roster(db: &Connection, turn: &Value, after: &str) -> Result<Vec<Value>> 
         .take(if room { 1 } else { lineage.len() })
         .map(|r| r["agent"].clone())
         .collect();
-    let mut rows=all(db,"SELECT id,name,role,substr(instructions,1,300) AS description FROM agents WHERE id>? AND id<>? AND id NOT IN(SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM agent_visibility WHERE agent=agents.id AND hidden=1) AND (? IS NULL OR id IN(SELECT agent FROM channel_members WHERE channel=?)) ORDER BY id LIMIT 11",params![after,crate::mcp::guide::ID,json!(excluded).to_string(),channel,channel])?;
+    // Check explicit recipients against the same eligibility rules before paging.
+    let recipients_json = recipients.map(|ids| json!(ids).to_string());
+    let mut rows = all(
+        db,
+        "SELECT id,name,role,substr(instructions,1,300) AS description FROM agents
+         WHERE id>? AND id<>? AND id NOT IN(SELECT value FROM json_each(?))
+         AND NOT EXISTS(SELECT 1 FROM agent_visibility WHERE agent=agents.id AND hidden=1)
+         AND (? IS NULL OR id IN(SELECT agent FROM channel_members WHERE channel=?))
+         AND (?6 IS NULL OR id IN(SELECT value FROM json_each(?6)))
+         ORDER BY id LIMIT 11",
+        params![
+            after,
+            crate::mcp::guide::ID,
+            json!(excluded).to_string(),
+            channel,
+            channel,
+            recipients_json
+        ],
+    )?;
     for row in &mut rows {
         let active=all(db,"SELECT status,channel FROM turns WHERE agent=? AND (status IN('queued','running') OR paused=1)",[string(row,"id")])?;
         row["status"] = json!(if active.iter().any(|r| r["status"] == "running") {
@@ -108,7 +135,8 @@ pub fn roster(db: &Connection, turn: &Value, after: &str) -> Result<Vec<Value>> 
     }
     if channel.is_none() {
         for mut row in crate::computer::remote::roster(db, true)? {
-            if string(&row, "id") > after {
+            let id = string(&row, "id");
+            if id > after && recipients.is_none_or(|ids| ids.iter().any(|value| value == id)) {
                 row["queuedMessages"] = json!(0);
                 rows.push(row);
             }
@@ -136,6 +164,7 @@ fn resolve(db: &Connection, name: &str) -> Result<Option<String>> {
         },
     )
 }
+
 fn enforce(state: &AppState, db: &Connection, turn: &Value, count: usize) -> Result<()> {
     let rows = ancestors(db, string(turn, "id"))?;
     let root = rows
@@ -295,7 +324,7 @@ fn send(
             "Task stopped or this message does not request a reply.",
         ));
     }
-    let available = roster(db, turn, "")?;
+    let available = eligible_agents(db, turn, "", Some(recipients))?;
     if recipients
         .iter()
         .any(|id| !available.iter().any(|a| a["id"] == *id))
@@ -470,21 +499,19 @@ pub fn run(
             )
         }
         "interrupt_agent" => {
-            let recipient = string(args, "recipient");
+            let recipient = string(args, "recipient").to_owned();
             let reason = field(args, "reason", 2000)?;
             if !closed(args, &["recipient", "reason"])
                 || !turn["channel"].is_null()
                 || !allowed(db, string(turn, "id"))?
-                || !roster(db, turn, "")?
-                    .iter()
-                    .any(|row| row["id"] == recipient)
+                || eligible_agents(db, turn, "", Some(std::slice::from_ref(&recipient)))?.is_empty()
             {
                 return Err(error(
                     409,
                     "You can only stop teammate work you requested in a private conversation.",
                 ));
             }
-            let rows = all(db,"SELECT t.id FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request JOIN turns source ON source.id=r.turn JOIN turns t ON t.id=d.turn WHERE source.agent=? AND t.agent=? AND (t.status IN('queued','running') OR t.paused=1) AND r.settled=0 AND t.channel IS NULL",[string(turn,"agent"),recipient])?;
+            let rows = all(db,"SELECT t.id FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request JOIN turns source ON source.id=r.turn JOIN turns t ON t.id=d.turn WHERE source.agent=? AND t.agent=? AND (t.status IN('queued','running') OR t.paused=1) AND r.settled=0 AND t.channel IS NULL",[string(turn,"agent"),&recipient])?;
             if rows.is_empty() {
                 return Err(error(409, "You have no active work for this recipient."));
             }
@@ -501,7 +528,7 @@ pub fn run(
                 return Err(error(409, "You have no active work for this recipient."));
             }
             let cancelled = cancel(db, &roots, &format!("Stopped by requester: {reason}"))?;
-            let mut result = send(state,db,turn,call,&[recipient.to_owned()],&format!("The work I asked for has been stopped. Reason: {reason}\nNotice only; do not continue the work or send a reply."),false)?;
+            let mut result = send(state,db,turn,call,std::slice::from_ref(&recipient),&format!("The work I asked for has been stopped. Reason: {reason}\nNotice only; do not continue the work or send a reply."),false)?;
             result["status"] = json!("interrupted");
             result["recipient"] = json!(recipient);
             result["cancelled"] = json!(cancelled);

@@ -1623,7 +1623,18 @@ try {
     await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
     await panel.getByRole('button', { name: 'Close settings', exact: true }).click();
   });
-  await check('Create second agent', () => createAgent(helper));
+  await check('Create second agent', async () => {
+    const path = '**/api/agents';
+    const setHelperId = route => {
+      const request = route.request();
+      if (request.method() !== 'POST') return route.fallback();
+      // Keep the delegation recipient past the first roster page.
+      return route.fallback({ postData: { ...request.postDataJSON(), id: 'ffffffff-ffff-4fff-bfff-ffffffffffff' } });
+    };
+    await page.route(path, setHelperId);
+    try { await createAgent(helper); }
+    finally { await page.unroute(path, setHelperId); }
+  });
   await check('Create quiet reviewer', () => createAgent(quiet));
   await check('Migrated chatroom appears as project with original history', async () => {
     const agents=await fetch(origin+'/api/agents').then(r=>r.json());
