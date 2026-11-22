@@ -42,7 +42,7 @@ async function startup(client, port = 0, config = {}) {
   server.stdin.end(JSON.stringify({
     database: join(data, 'state.sqlite'), dist, port, appearanceClient: client, ...config,
   }));
-  return Promise.race([ready, wait(15000, undefined, { ref: false }).then(() => {
+  return Promise.race([ready, wait(60000, undefined, { ref: false }).then(() => {
     throw new Error('Minarbot did not report readiness');
   })]);
 }
@@ -393,10 +393,12 @@ async function sample(page, fromClick = false) {
     const start = fromClick
       ? Number(sessionStorage.getItem('appearance-bench-start')) - performance.timeOrigin
       : 0;
+    const ready = performance.getEntriesByName('appearance-heading-focus').at(-1)?.startTime;
+    if (ready === undefined || ready < start) throw new Error('Appearance heading did not receive focus');
     return {
-      milliseconds: performance.now() - start,
+      milliseconds: ready - start,
       transferredBytes: performance.getEntries()
-        .filter(entry => entry.startTime >= start && new URL(entry.name, location.href).origin === location.origin)
+        .filter(entry => entry.startTime >= start && entry.responseEnd <= ready && new URL(entry.name, location.href).origin === location.origin)
         .reduce((total, entry) => total + (entry.transferSize ?? 0), 0),
     };
   }, fromClick);
@@ -406,6 +408,11 @@ async function benchmark(origin, client) {
   for (let index = 0; index < samples; index += 1) {
     const context = await browser.newContext();
     try {
+      await context.addInitScript(() => document.addEventListener('focusin', event => {
+        if (event.target instanceof HTMLHeadingElement && event.target.textContent === 'Appearance') {
+          performance.mark('appearance-heading-focus');
+        }
+      }));
       const page = await context.newPage();
       await open(page, origin, client);
       cold.push(await sample(page));

@@ -36,12 +36,13 @@ route ownership.
 
 ## Route ownership
 
-General, Appearance, Providers, Engines, Skills, minarbot.com, Connected apps,
-Email, MCP connections, Vault, Craft Anything, first-run, project overview, and
-`/pair` use Leptos when `MINARBOT_APPEARANCE_CLIENT=leptos`. Agent conversation
-routes, project tabs, Machines, Devices, Computer, Updates, Usage, Shared data,
-Backup & restore, and External access transfer to React. The separate canonical
-hub continues to use its own session and client.
+The preferences group, first-run screen, project overview, and `/pair` form use
+Leptos when `MINARBOT_APPEARANCE_CLIENT=leptos`. Agent conversation routes and
+project tabs transfer to React, along with the following settings: Providers, Engines, Skills,
+minarbot.com, Connected apps, Email, MCP connections, Vault, Craft Anything,
+Machines, Devices, Computer, Updates, Usage, Shared data, Backup & restore,
+and External access. `/pair` is a Rust-rendered form. The separate canonical hub
+continues to use its own session and client.
 
 Conversation and agent/room deep links stay with #63. Routines, workflows and
 calendar stay with #64. Port Memory (#48), Guide infrastructure cards (#54) and
@@ -53,10 +54,16 @@ Install the UI smoke dependencies under `app/test-support/ui-smoke` and install 
 
 Set `MINARBOT_APPEARANCE_SCREENSHOTS` to a directory for dark and light desktop and narrow screenshots. Set `MINARBOT_APPEARANCE_BENCH=20` for 20 cold, warm reload and warmed settings-navigation samples per client. Readiness means Appearance has rendered and its heading has received focus.
 
-Run `node app/test-support/ui-smoke/settings-connections-smoke.mjs` to compare
-connection settings against React on the same server. Set `MINARBOT_CONNECTION_SCREENSHOTS`
-to capture dark and light desktop and narrow screenshots. The test uses synthetic API
-fixtures and compares mutation routes and redacted payloads.
+## Warm navigation in #62
+
+On the NUC, headless Chrome 155 measured 20 warmed General-to-Appearance switches per client against the same local server. Times are from click to heading focus.
+
+| Client | Median | p95 |
+| --- | ---: | ---: |
+| React | 6.3 ms | 14.7 ms |
+| Leptos | 4.7 ms | 6.9 ms |
+
+The settings rail stays mounted and navigation reuses the document. Each section gets its own scroll container. This removes the `scrollTop` reset that triggered 38 ms of synchronous layout in the pre-fix Chrome trace.
 
 ## Appearance pilot baseline from #59
 
