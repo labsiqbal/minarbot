@@ -1,9 +1,9 @@
 use crate::appearance::{self, ColorTheme};
-use gloo_net::http::Request;
+use crate::{general, routes::SettingsRoute};
 use leptos::prelude::*;
 use serde::Deserialize;
 use wasm_bindgen::JsCast;
-use web_sys::{Element, HtmlElement, HtmlInputElement, KeyboardEvent, UrlSearchParams};
+use web_sys::{Element, HtmlElement, KeyboardEvent, UrlSearchParams};
 
 const RETURN_FOCUS_KEY: &str = "minarbot:appearance-return-focus";
 
@@ -11,10 +11,11 @@ const RETURN_FOCUS_KEY: &str = "minarbot:appearance-return-focus";
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub colors: Vec<ColorTheme>,
+    pub workspace_icons: crate::shell::Icons,
     groups: Vec<Group>,
     search_icon: String,
     close_icon: String,
-    error_icon: String,
+    pub(crate) error_icon: String,
 }
 
 #[derive(Deserialize)]
@@ -28,13 +29,6 @@ struct Item {
     id: String,
     label: String,
     svg: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Directory {
-    #[serde(default)]
-    hub_available: bool,
 }
 
 fn buttons(container: &Element) -> Vec<HtmlElement> {
@@ -93,51 +87,73 @@ fn visible(item: &Item, group: &str, query: &str, hub: bool) -> bool {
     (item.id != "hub" || hub) && query.split_whitespace().all(|term| label.contains(term))
 }
 
-pub fn shell(config: Config, return_to: String) -> impl IntoView {
+pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl IntoView {
+    let route = RwSignal::new(route);
+    let listener = window_event_listener(leptos::ev::popstate, move |_| {
+        if let Some(route_now) = current() {
+            route.set(route_now);
+            document().set_title(&format!("{} · Minarbot", route_now.title()));
+        }
+    });
+    on_cleanup(move || listener.remove());
     let query = RwSignal::new(String::new());
-    let hub = RwSignal::new(false);
     let input = NodeRef::<leptos::html::Input>::new();
     let nav = NodeRef::<leptos::html::Nav>::new();
     let return_to = StoredValue::new(return_to);
     let groups = StoredValue::new(config.groups);
-    leptos::task::spawn_local(async move {
-        if let Ok(response) = Request::get("/api/agents").send().await {
-            if let Ok(directory) = response.json::<Directory>().await {
-                hub.set(directory.hub_available);
-            }
+    let colors = StoredValue::new(config.colors);
+    let error_icon = StoredValue::new(config.error_icon);
+    let main = NodeRef::<leptos::html::Main>::new();
+    Effect::new(move |_| {
+        let _ = route.get();
+        if let Some(main) = main.get() {
+            main.set_scroll_top(0);
+            focus_heading();
         }
     });
+    let directory = use_context::<ReadSignal<Option<Result<crate::shell::Directory, String>>>>();
+    let hub = move || {
+        directory.is_some_and(|directory| {
+            directory.with(|value| {
+                value
+                    .as_ref()
+                    .and_then(|result| result.as_ref().ok())
+                    .is_some_and(|directory| directory.hub_available)
+            })
+        })
+    };
 
     let rail = groups.with_value(|rows| rows.iter().enumerate().map(|(index, group)| {
         let group_id = format!("settings-group-{index}");
         let heading_id = group_id.clone();
         let hidden = move || groups.with_value(|groups| {
             let group = &groups[index];
-            !query.with(|query| group.items.iter().any(|item| visible(item, &group.label, query, hub.get())))
+            !query.with(|query| group.items.iter().any(|item| visible(item, &group.label, query, hub())))
         });
         let items = group.items.iter().enumerate().map(|(item_index, item)| {
-            let active = item.id == "appearance";
-            let section = item.id.clone();
+            let path = format!("/settings/{}", item.id);
+            let target = SettingsRoute::from_path(&path);
+            let active = move || target == Some(route.get());
             view! {
                 <button type="button" class="cfg-nav__item" class:is-active=active
-                    aria-label=item.label.clone() title=item.label.clone() aria-current=active.then_some("page")
+                    aria-label=item.label.clone() title=item.label.clone() aria-current=move || active().then_some("page")
                     hidden=move || groups.with_value(|groups| {
                         let group = &groups[index];
-                        !query.with(|query| visible(&group.items[item_index], &group.label, query, hub.get()))
+                        !query.with(|query| visible(&group.items[item_index], &group.label, query, hub()))
                     })
                     on:click=move |_| {
-                        if active {
-                            if let Some(heading) = document().get_element_by_id("appearance-title").and_then(|element| element.dyn_into::<HtmlElement>().ok()) {
-                                let _ = heading.focus();
-                            }
-                        } else if let Ok(params) = UrlSearchParams::new() {
-                            return_to.with_value(|path| {
-                                if path != "/" {
-                                    params.set("from", path);
+                        if target == Some(route.get_untracked()) {
+                            focus_heading();
+                        } else {
+                            let url = return_to.with_value(|from| section_url(&path, from));
+                            if let Some(next) = target {
+                                if window().history().and_then(|history| history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url))).is_ok() {
+                                    route.set(next);
+                                    document().set_title(&format!("{} · Minarbot", next.title()));
+                                    return;
                                 }
-                            });
-                            let suffix = params.to_string().as_string().filter(|value| !value.is_empty()).map(|value| format!("?{value}")).unwrap_or_default();
-                            let _ = window().location().assign(&format!("/settings/{section}{suffix}"));
+                            }
+                            let _ = window().location().assign(&url);
                         }
                     }>
                     <span class="appearance-icon" aria-hidden="true" inner_html=item.svg.clone()></span>
@@ -163,7 +179,9 @@ pub fn shell(config: Config, return_to: String) -> impl IntoView {
             on:keydown=move |event: KeyboardEvent| {
                 if event.key() == "/" && !event.default_prevented() && !event.is_composing()
                     && !event.ctrl_key() && !event.meta_key() && !event.alt_key()
-                    && !event.target().is_some_and(|target| target.is_instance_of::<HtmlInputElement>())
+                    && event.target().and_then(|target| target.dyn_into::<Element>().ok()).is_none_or(|target|
+                        target.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])").ok().flatten().is_none()
+                    )
                 {
                     if let Some(input) = input.get().filter(|input| input.offset_width() > 0) {
                         event.prevent_default();
@@ -199,7 +217,7 @@ pub fn shell(config: Config, return_to: String) -> impl IntoView {
                     on:keydown=move |event| move_focus(&event, "nav", false)>
                     {rail}
                     <p class="app-settings__no-results" role="status" hidden=move || groups.with_value(|groups|
-                        query.with(|query| groups.iter().any(|group| group.items.iter().any(|item| visible(item, &group.label, query, hub.get()))))
+                        query.with(|query| groups.iter().any(|group| group.items.iter().any(|item| visible(item, &group.label, query, hub()))))
                     )>"No settings found"</p>
                 </nav>
             </aside>
@@ -207,11 +225,41 @@ pub fn shell(config: Config, return_to: String) -> impl IntoView {
                 on:click=move |_| return_to.with_value(|path| close(path))
                 inner_html=config.close_icon>
             </button>
-            <main class="app-settings__main">
+            <main class="app-settings__main" node_ref=main>
                 <div class="app-settings__page legacy app-settings__page--preferences">
-                    {appearance::panel(config.colors, config.error_icon)}
+                    {move || match route.get() {
+                        SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
+                        SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
+                    }}
                 </div>
             </main>
         </dialog>
+    }
+}
+
+pub fn section_url(path: &str, from: &str) -> String {
+    if from != "/" {
+        if let Ok(params) = UrlSearchParams::new() {
+            params.set("from", from);
+            if let Some(query) = params.to_string().as_string() {
+                return format!("{path}?{query}");
+            }
+        }
+    }
+    path.to_owned()
+}
+
+fn current() -> Option<SettingsRoute> {
+    SettingsRoute::from_path(&window().location().pathname().ok()?)
+}
+
+pub fn focus_heading() {
+    if let Some(heading) = document()
+        .query_selector("#appearance-dialog .app-settings__page h1")
+        .ok()
+        .flatten()
+        .and_then(|element| element.dyn_into::<HtmlElement>().ok())
+    {
+        let _ = heading.focus();
     }
 }

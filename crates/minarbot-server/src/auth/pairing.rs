@@ -154,17 +154,49 @@ impl BrowserAccess {
     }
 }
 
-fn page(status: StatusCode, error: &str, secure: bool) -> Response {
-    let form = r#"<form method="post" action="/pair">
+async fn page(
+    state: &AppState,
+    status: StatusCode,
+    error: &str,
+    secure: bool,
+    query: &str,
+) -> Response {
+    let mut script = String::new();
+    if secure
+        && state.config.appearance_client == crate::config::AppearanceClient::Leptos
+        && !crate::appearance::react_override(query)
+    {
+        if let Ok(document) =
+            tokio::fs::read_to_string(state.config.dist.join(crate::appearance::DOCUMENT)).await
+        {
+            if let Some(src) = crate::appearance::startup_asset(&document) {
+                script = format!(r#"<script type="module" src="{src}"></script>"#);
+            }
+        }
+    }
+    let pilot = !script.is_empty();
+    let root = if pilot {
+        r#"<div id="leptos-root" data-pairing></div>"#
+    } else {
+        ""
+    };
+    let action = if crate::appearance::react_override(query) {
+        "/pair?ui=react"
+    } else {
+        "/pair"
+    };
+    let form = format!(
+        r#"<form method="post" action="{action}">
 <label for="code">Pairing code</label>
-<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{{6}}" maxlength="6" required>
 <label for="name">Device name</label>
 <input id="name" name="name" maxlength="64" required>
 <button type="submit">Pair device</button>
-</form>"#;
+</form>"#
+    );
     let error = html_escape(error);
     let content = if secure {
-        form
+        form.as_str()
     } else {
         "<p>Open Minarbot over HTTPS to pair this device.</p>"
     };
@@ -178,14 +210,20 @@ fn page(status: StatusCode, error: &str, secure: bool) -> Response {
 <meta name="color-scheme" content="light dark">
 <link rel="stylesheet" href="/pair.css">
 <title>Pair device · Minarbot</title>
-</head><body><main>
+{script}</head><body><main id="appearance-fallback">
 <h1>Pair this device</h1>
 <p>Get a code from Settings &gt; Devices on a browser that can open Minarbot.</p>
 {error}{content}
-</main></body></html>"#
+</main>{root}</body></html>"#
         )),
     )
         .into_response();
+    if pilot {
+        response.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(crate::appearance::POLICY),
+        );
+    }
     crate::security_headers(&mut response);
     // Native form POSTs need their same-origin Origin header for CSRF validation.
     response.headers_mut().insert(
@@ -240,8 +278,9 @@ fn form_field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
 
 async fn pair(state: &AppState, request: Request, origin: &str) -> Result<Response> {
     let secure = secure(&state.config, origin);
+    let query = request.uri().query().unwrap_or_default().to_owned();
     match *request.method() {
-        Method::GET | Method::HEAD => Ok(page(StatusCode::OK, "", secure)),
+        Method::GET | Method::HEAD => Ok(page(state, StatusCode::OK, "", secure, &query).await),
         Method::POST
             if secure
                 && exact_origin(&request, origin)
@@ -269,10 +308,13 @@ async fn pair(state: &AppState, request: Request, origin: &str) -> Result<Respon
                     Ok(response)
                 }
                 Err(error) => Ok(page(
+                    state,
                     StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                     &error.message,
                     true,
-                )),
+                    &query,
+                )
+                .await),
             }
         }
         _ => Err(forbidden()),
@@ -487,7 +529,11 @@ async fn check(state: &AppState, mut request: Request, next: Next) -> Result<Res
                 || !required,
         )
     };
-    let asset = crate::public_ui_asset(path) || path.starts_with("/assets/");
+    let asset = crate::public_ui_asset(path)
+        || path.starts_with("/assets/")
+        || (origin.is_some()
+            && matches!(*request.method(), Method::GET | Method::HEAD)
+            && crate::appearance::asset(path));
     if !admitted && !asset {
         if origin.is_some()
             && matches!(*request.method(), Method::GET | Method::HEAD)
@@ -495,10 +541,13 @@ async fn check(state: &AppState, mut request: Request, next: Next) -> Result<Res
             && !path.starts_with("/api/")
         {
             return Ok(page(
+                state,
                 StatusCode::UNAUTHORIZED,
                 "",
                 secure(&state.config, origin.unwrap_or_default()),
-            ));
+                request.uri().query().unwrap_or_default(),
+            )
+            .await);
         }
         return Err(denied());
     }

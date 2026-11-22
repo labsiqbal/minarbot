@@ -1,35 +1,35 @@
-import init, { mount_appearance, mount_conversation } from './appearance.js';
+import init, { __MOUNT__ as mount } from './__APP__.js';
 
 const status = document.getElementById('appearance-startup');
-const conversation = document.body.dataset.view === 'conversation';
-const label = conversation ? 'conversation' : 'Appearance';
+const fallback = document.getElementById('appearance-fallback');
+const title = fallback.querySelector('h1')?.textContent ?? 'Conversation';
 let ready = false;
 
 for (const cache of ['default', 'reload']) {
   try {
     const response = await fetch('__WASM_URL__', { cache, signal: AbortSignal.timeout(4000) });
-    if (!response.ok) throw new Error(label + ' download failed');
+    if (!response.ok) throw new Error('Minarbot download failed');
     await init({ module_or_path: response });
     ready = true;
     break;
   } catch {
-    status.textContent = 'Retrying ' + label + '…';
+    if (status) status.textContent = `Retrying ${title}…`;
   }
 }
 
 if (ready) {
   try {
-    if (conversation) {
-      const { browserAdapter } = await import('minarbot-conversation-adapter');
-      globalThis.MinarbotConversation = browserAdapter;
-      mount_conversation();
-    } else {
-      mount_appearance();
+    const pairing = document.querySelector('#leptos-root[data-pairing]');
+    const editing = pairing && (fallback.contains(document.activeElement)
+      || Array.from(fallback.querySelectorAll('input')).some(input => input.value));
+    if (!editing) {
+      __ADAPTER__
+      mount();
+      fallback.hidden = true;
     }
-    document.getElementById('appearance-fallback').hidden = true;
   } catch {
     document.getElementById('leptos-root').replaceChildren();
     ready = false;
   }
 }
-if (!ready) status.textContent = label + ' could not load.';
+if (!ready && status) status.textContent = `${title} could not load. Open standard ${title} to continue.`;

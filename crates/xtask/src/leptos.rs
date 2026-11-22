@@ -82,56 +82,71 @@ pub fn build(root: &Path) -> Result<()> {
     fs::create_dir_all(&target)?;
     let cli = bindgen(&target)?;
     let began = Instant::now();
-    run(Command::new("cargo")
-        .current_dir(&web)
-        .env_remove("RUSTUP_TOOLCHAIN")
-        .env("CARGO_TARGET_DIR", &target)
-        .args([
-            "build",
-            "--locked",
-            "--release",
-            "--target",
-            "wasm32-unknown-unknown",
-        ]))?;
-    let cargo_time = began.elapsed();
-    let package_began = Instant::now();
     let dist = app.join("dist");
     fs::create_dir_all(&dist)?;
     let temp = private_stage("bindgen-", &target)?;
     let stage = private_stage(".leptos-", &dist)?;
     let assets = stage.path().join("assets");
     fs::create_dir(&assets)?;
-    run(Command::new(&cli)
-        .args([
-            "--target",
-            "web",
-            "--out-name",
-            "appearance",
-            "--no-typescript",
-            "--out-dir",
-        ])
-        .arg(temp.path())
-        .arg(target.join("wasm32-unknown-unknown/release/minarbot_web.wasm")))?;
-    let wasm = hash_asset(
-        &temp.path().join("appearance_bg.wasm"),
-        &assets,
-        "appearance",
-        "wasm",
-    )?;
-    let glue = temp.path().join("appearance.js");
-    fs::write(
-        &glue,
-        fs::read_to_string(&glue)?.replace("appearance_bg.wasm", &wasm),
-    )?;
-    let start_source = temp.path().join("start.js");
-    fs::write(
-        &start_source,
-        fs::read_to_string(web.join("start.js"))?.replace("__WASM_URL__", &wasm),
-    )?;
+    for (name, start, features) in [
+        ("appearance", "start", &[][..]),
+        (
+            "conversation",
+            "conversation-start",
+            &["--features", "conversation"][..],
+        ),
+    ] {
+        run(Command::new("cargo")
+            .current_dir(&web)
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .env("CARGO_TARGET_DIR", &target)
+            .args([
+                "build",
+                "--locked",
+                "--release",
+                "--target",
+                "wasm32-unknown-unknown",
+            ])
+            .args(features))?;
+        run(Command::new(&cli)
+            .args([
+                "--target",
+                "web",
+                "--out-name",
+                name,
+                "--no-typescript",
+                "--out-dir",
+            ])
+            .arg(temp.path())
+            .arg(target.join("wasm32-unknown-unknown/release/minarbot_web.wasm")))?;
+        let wasm_name = format!("{name}_bg.wasm");
+        let wasm = hash_asset(&temp.path().join(&wasm_name), &assets, name, "wasm")?;
+        let glue = temp.path().join(format!("{name}.js"));
+        fs::write(&glue, fs::read_to_string(&glue)?.replace(&wasm_name, &wasm))?;
+        let adapter = if name == "conversation" {
+            "globalThis.MinarbotConversation = (await import('minarbot-conversation-adapter')).browserAdapter;"
+        } else {
+            ""
+        };
+        fs::write(
+            temp.path().join(format!("{start}.js")),
+            fs::read_to_string(web.join("start.js"))?
+                .replace("__APP__", name)
+                .replace("__MOUNT__", &format!("mount_{name}"))
+                .replace("__WASM_URL__", &wasm)
+                .replace("__ADAPTER__", adapter),
+        )?;
+    }
+    let cargo_time = began.elapsed();
+    let package_began = Instant::now();
     let bundle = temp.path().join("bundle");
     run(Command::new("node")
         .current_dir(&app)
-        .env("MINARBOT_LEPTOS_START", start_source)
+        .env("MINARBOT_LEPTOS_START", temp.path().join("start.js"))
+        .env(
+            "MINARBOT_LEPTOS_CONVERSATION_START",
+            temp.path().join("conversation-start.js"),
+        )
         .args([
             "node_modules/vite/bin/vite.js",
             "build",
@@ -144,7 +159,8 @@ pub fn build(root: &Path) -> Result<()> {
     let themes = hash_asset(&bundle.join("themes.css"), &assets, "themes", "css")?;
     let icon = hash_asset(&app.join("src/favicon.svg"), &assets, "minarbot", "svg")?;
     let mut sizes = BTreeMap::new();
-    let (mut styles, mut conversation_styles, mut start) = (None, None, None);
+    let (mut styles, mut conversation_styles, mut start, mut conversation_start) =
+        (None, None, None, None);
     let entries = fs::read_dir(&assets)?.collect::<std::io::Result<Vec<_>>>()?;
     for entry in entries {
         let name = entry
@@ -161,6 +177,9 @@ pub fn build(root: &Path) -> Result<()> {
         if name.starts_with("start.") && name.ends_with(".js") {
             start = Some(url());
         }
+        if name.starts_with("conversation-start.") && name.ends_with(".js") {
+            conversation_start = Some(url());
+        }
         let mut size = json!({ "raw": entry.metadata()?.len() });
         if !name.ends_with(".woff2") {
             let gzip = assets.join(format!("{name}.gz"));
@@ -173,16 +192,18 @@ pub fn build(root: &Path) -> Result<()> {
         sizes.insert(format!("assets/{name}"), size);
     }
     let config = fs::read_to_string(bundle.join("appearance-config.json"))?.replace('<', "\\u003c");
-    let start = start.ok_or("Leptos bootstrap is missing.")?;
-    for (name, styles) in [
-        ("appearance.html", styles),
-        ("conversation.html", conversation_styles),
+    for (name, styles, start) in [
+        ("appearance.html", styles, start),
+        ("conversation.html", conversation_styles, conversation_start),
     ] {
         let html = fs::read_to_string(web.join(name))?
             .replace("__ICON_URL__", &icon)
             .replace("__STYLES_URL__", &styles.ok_or("Leptos CSS is missing.")?)
             .replace("__THEMES_URL__", &themes)
-            .replace("__START_URL__", &start)
+            .replace(
+                "__START_URL__",
+                &start.ok_or("Leptos bootstrap is missing.")?,
+            )
             .replace("__CONFIG__", &config);
         fs::write(stage.path().join(name), html)?;
     }

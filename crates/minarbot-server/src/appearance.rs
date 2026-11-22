@@ -1,6 +1,12 @@
 use url::form_urlencoded;
 
-pub const ROUTE: &str = "/settings/appearance";
+#[path = "../../web/src/routes.rs"]
+mod routes;
+pub use routes::SettingsRoute;
+#[path = "../../web/src/workspace_route.rs"]
+mod workspace_route;
+pub use workspace_route::WorkspaceRoute;
+
 pub const NAMESPACE: &str = "/_leptos/";
 pub const DOCUMENT: &str = "_leptos/appearance.html";
 pub const CONVERSATION_DOCUMENT: &str = "_leptos/conversation.html";
@@ -22,6 +28,15 @@ pub fn conversation_document(html: &str, path: &str, query: &str) -> String {
         &format!("{path}?{}", params.finish()).replace('&', "&amp;"),
     )
 }
+
+/// Pairing may load only the hashed startup module from the packaged document.
+pub fn startup_asset(document: &str) -> Option<&str> {
+    let (_, rest) = document.split_once(r#"<script type="module" src=""#)?;
+    let (src, _) = rest.split_once('"')?;
+    (src.ends_with(".js") && asset(src)).then_some(src)
+}
+
+pub const POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self' https: http:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 pub fn asset(path: &str) -> bool {
     let Some((name, hash, extension)) = path
@@ -47,7 +62,30 @@ pub fn react_override(query: &str) -> bool {
     form_urlencoded::parse(query.as_bytes()).any(|(key, value)| key == "ui" && value == "react")
 }
 
-pub fn document(html: &str, query: &str) -> String {
+pub fn route_title(state: &crate::AppState, path: &str, query: &str) -> Option<&'static str> {
+    if let Some(section) = SettingsRoute::from_path(path) {
+        return Some(section.title());
+    }
+    if form_urlencoded::parse(query.as_bytes())
+        .any(|(key, _)| matches!(key.as_ref(), "result" | "computer"))
+    {
+        return None;
+    }
+    match WorkspaceRoute::from_path(path)? {
+        WorkspaceRoute::Setup => {
+            let db = state.database.lock().ok()?;
+            let directory = crate::data::agents::list(state, &db.connection).ok()?;
+            let ready = directory["agents"]
+                .as_array()?
+                .iter()
+                .any(|agent| agent["runnable"] == true && agent["hidden"] != true);
+            (!ready).then(|| WorkspaceRoute::Setup.title())
+        }
+        project => Some(project.title()),
+    }
+}
+
+pub fn document(html: &str, route: &str, title: &str, query: &str) -> String {
     let from = form_urlencoded::parse(query.as_bytes())
         .find_map(|(key, value)| (key == "from").then_some(value))
         .filter(|value| {
@@ -63,7 +101,7 @@ pub fn document(html: &str, query: &str) -> String {
     if let Some(from) = &from {
         params.append_pair("from", from);
     }
-    let react = format!("{ROUTE}?{}", params.finish());
+    let react = format!("{route}?{}", params.finish());
     let escape = |value: &str| {
         value
             .replace('&', "&amp;")
@@ -72,7 +110,8 @@ pub fn document(html: &str, query: &str) -> String {
             .replace('>', "&gt;")
     };
     let react = escape(&react);
-    html.split("__RETURN_TO__")
+    html.replace("__SETTINGS_TITLE__", title)
+        .split("__RETURN_TO__")
         .map(|part| part.replace("__REACT_APPEARANCE__", &react))
         .collect::<Vec<_>>()
         .join(&escape(return_to))

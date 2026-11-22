@@ -136,6 +136,16 @@ fn choice_row(
     }
 }
 
+pub fn initialize(themes: StoredValue<Vec<ColorTheme>>) {
+    themes.with_value(|themes| apply(&read(themes).unwrap_or_default()));
+    let listener = window_event_listener(leptos::ev::storage, move |event| {
+        if event.key().is_none_or(|key| key == KEY) && event.storage_area() == storage() {
+            themes.with_value(|themes| apply(&read(themes).unwrap_or_default()));
+        }
+    });
+    on_cleanup(move || listener.remove());
+}
+
 pub fn panel(themes: Vec<ColorTheme>, error_icon: String) -> impl IntoView {
     let controls = Controls {
         value: RwSignal::new(Presentation::default()),
