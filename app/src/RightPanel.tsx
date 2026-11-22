@@ -43,8 +43,8 @@ export function useRightPanel(scope: string) {
   return { tab, panel, select, result, run, openRun, file: result?.view === 'file' ? { path: result.path, name: result.name } : selection.scope === scope ? selection.file : null, selectFile };
 }
 
-export function RightPanel({ path, name, state, request, onClose, details, activity, members, attached = [], attachedCount = attached.length, onAttach, attachDisabled = false, settings, extensions = [] }: {
-  path: string; name: string; state: ReturnType<typeof useRightPanel>; request: PanelRequest; onClose: () => void;
+export function RightPanel({ path, name, state, runStatus, request, onClose, details, activity, members, attached = [], attachedCount = attached.length, onAttach, attachDisabled = false, settings, extensions = [] }: {
+  path: string; name: string; state: ReturnType<typeof useRightPanel>; runStatus?: string; request: PanelRequest; onClose: () => void;
   details: ReactNode; activity: ReactNode; members?: { id: string; name: string; role?: string; lead?: boolean }[]; attached?: string[]; attachedCount?: number; onAttach?: (file: PanelFile) => void; attachDisabled?: boolean; settings?: ReactNode;
   /** Extra tabs: extensions={[{ value, label, content }]}. */
   extensions?: RightPanelExtension[];
@@ -101,7 +101,7 @@ export function RightPanel({ path, name, state, request, onClose, details, activ
         </>} attachedCount={attachedCount} attached={attached} onAttach={onAttach} attachDisabled={attachDisabled} key={base} base={base} files={files} workspace={context?.workspace?.name} loading={loading} request={request} />}
       </TabPanel>
       <TabPanel value="computer">{state.result?.view === 'computer' ? <ResultURLPreview key={state.result.path} target={state.result} computer={computerAvailable ? resultComputer ?? context?.computer ?? undefined : undefined} name={name} request={request} onBack={() => state.select('files')} /> : context?.computer && <div className="right-panel__computer"><ComputerViewer agent={context.computer} name={name} request={request} /></div>}</TabPanel>
-      {state.run && <TabPanel value="run"><RunInspector key={state.run.turnId} target={state.run} request={request} /></TabPanel>}
+      {state.run && <TabPanel value="run"><RunInspector key={state.run.turnId} target={state.run} request={request} turnStatus={runStatus} /></TabPanel>}
       {extensions.map(extension => <TabPanel key={extension.value} value={extension.value}>{extension.content}</TabPanel>)}
     </Tabs>
   </aside>;

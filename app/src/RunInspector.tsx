@@ -70,7 +70,11 @@ function toolState(step: Step, status: string) {
   return stepState(failed ? 'failed' : step.native?.state ?? step.tool?.state, status);
 }
 
-export function RunInspector({ target, request }: { target: RunTarget; request: PanelRequest }) {
+function providerState(call: ProviderCall, turnStatus: string) {
+  return stepState(call.status === 'interrupted' && turnStatus === 'cancelled' ? 'cancelled' : call.status, turnStatus);
+}
+
+export function RunInspector({ target, request, turnStatus }: { target: RunTarget; request: PanelRequest; turnStatus?: string }) {
   const [data, setData] = useState<Inspection | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -81,7 +85,7 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
     } catch (reason) {
       if (current()) setError(reason instanceof Error ? reason.message : 'Run could not load.');
     }
-  }, [target.turnId, request, retry]));
+  }, [target.turnId, request, retry, turnStatus]));
   const steps = data ? mergeRunSteps(data.tools, data.harness) : [];
   const selected = steps.find(step => step.id === target.stepId)
     ?? (!target.stepId && data ? steps.findLast(step => toolState(step, data.status) === 'Failed') : undefined);
@@ -89,7 +93,7 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
     {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setRetry(value => value + 1)}>Retry</Button>}>{error}</Alert>}
     {!data && !error && <SkeletonRows count={3} />}
     {data && <>
-      {data.error && <InspectText label="Run error" text={data.error} />}
+      {data.error && <InspectText label={data.status === 'cancelled' ? 'Run stopped' : 'Run error'} text={data.error} />}
       {!!data.judgments?.length && <section className="run-inspector__providers" aria-label="Goal judge">
         <h3>Goal judge</h3>
         <ul className="run-inspector__list">{data.judgments.map(judgment => <li key={judgment.turn}><details>
@@ -102,7 +106,7 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
       {data.providers.length > 0 && <section className="run-inspector__providers" aria-labelledby="run-provider-calls">
         <h3 id="run-provider-calls">Provider calls</h3>
         <ul className="run-inspector__list">{data.providers.map(call => <li key={call.seq}><details>
-          <summary><ChevronRight size={14} aria-hidden /><span>{call.model}</span><span className="run-inspector__state">{stepState(call.status)}{call.duration_ms !== null && ` · ${duration(call.duration_ms)}`}</span></summary>
+          <summary><ChevronRight size={14} aria-hidden /><span>{call.model}</span><span className="run-inspector__state">{providerState(call, turnStatus ?? data.status)}{call.duration_ms !== null && ` · ${duration(call.duration_ms)}`}</span></summary>
           <div className="run-inspector__details"><dl>
             <dt>Started</dt><dd><Time value={call.created} /></dd>
             <dt>Ended</dt><dd><Time value={call.finished} /></dd>

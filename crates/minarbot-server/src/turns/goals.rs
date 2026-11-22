@@ -173,6 +173,10 @@ fn cancel(
     let turn = string(goal, "current_turn");
     terminal(db, string(goal, "id"), status, reason)?;
     dispatch::cancel(db, turn, reason)?;
+    db.execute(
+        "UPDATE provider_calls SET status='interrupted',finished=? WHERE turn=? AND status='pending'",
+        params![iso(db, state.config.now())?, turn],
+    )?;
     state.turns.cancel(turn);
     Ok(())
 }

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
 
@@ -14,6 +15,8 @@ const answer = content => JSON.stringify({
   choices: [{ finish_reason: 'stop', message: { content } }],
   usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
 });
+const requests = [];
+let releaseContinuation;
 const provider = createServer(async (request, response) => {
   let raw = '';
   for await (const chunk of request) raw += chunk;
@@ -23,10 +26,19 @@ const provider = createServer(async (request, response) => {
     return;
   }
   const body = JSON.parse(raw);
-  const last = body.messages.at(-1)?.content ?? '';
-  if (last.includes('Continue the goal.')) return;
+  const judge = body.messages[0].content.startsWith('Judge whether');
+  const continuing = body.messages.at(-1)?.content?.includes('Continue the goal.');
+  requests.push(judge ? 'judge' : continuing ? 'continuation' : 'turn');
+  if (continuing) {
+    releaseContinuation = () => {
+      if (response.destroyed) return;
+      response.setHeader('Content-Type', 'application/json');
+      response.end(answer('Late continuation reply.'));
+    };
+    return;
+  }
   response.setHeader('Content-Type', 'application/json');
-  response.end(answer(body.messages[0].content.startsWith('Judge whether')
+  response.end(answer(judge
     ? JSON.stringify({ met: false, reason: 'Still need the verification result.', evidence: [] }) : 'First check complete.'));
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
@@ -43,6 +55,7 @@ try {
   }
   browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
   for (const theme of ['dark', 'light']) {
+    const requestStart = requests.length;
     const agent = await api('/api/agents', { id: randomUUID(), name: 'Goal fixture', model: 'fixture', instructions: 'Synthetic only.', runtime: 'api' });
     const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
     const page = await context.newPage();
@@ -59,20 +72,45 @@ try {
     await dialog.getByRole('button', { name: 'Start goal', exact: true }).click();
     const chip = page.locator('.goal-chip');
     await chip.getByText('2/5 turns').waitFor();
-    await page.getByText('Goal continued', { exact: true }).waitFor();
+    const continuation = page.getByRole('article').filter({ has: page.getByText('Goal continued', { exact: true }) });
+    await continuation.locator('.activity-label').filter({ hasText: /^Working/ }).waitFor();
     assert(await composer.evaluate(element => element === document.activeElement));
     await chip.getByRole('button', { name: 'Confirm fixture readiness' }).click();
     const judge = page.getByRole('region', { name: 'Goal judge' });
     await judge.getByText('More work').waitFor();
     await judge.getByText('Turn 1', { exact: true }).click();
     await judge.getByText('Still need the verification result.').waitFor();
+    const providerCalls = page.getByRole('region', { name: 'Provider calls' });
+    await providerCalls.getByText('Pending', { exact: true }).waitFor();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.screenshot({ path: join(screenshots, `goal-${theme}.png`), animations: 'disabled' });
+    assert.deepEqual(requests.slice(requestStart), ['turn', 'judge', 'continuation']);
+    const { current_turn: turn } = await api(`/api/agents/${agent.id}/goal`);
     await chip.getByRole('button', { name: 'Stop goal' }).click();
     await chip.getByText('Stopped', { exact: true }).waitFor();
+    releaseContinuation();
+    async function assertStopped() {
+      await setTimeout(3000);
+      assert.match(await continuation.locator('.activity-label').textContent(), /^Stopped/);
+      assert.equal(await page.getByRole('article').locator('.activity-label').filter({ hasText: /^(Working|Queued)/ }).count(), 0);
+      assert.equal(await continuation.getByRole('button', { name: 'Task actions' }).count(), 0);
+      assert.match(await providerCalls.locator('.run-inspector__state').textContent(), /^Stopped/);
+      assert(await page.locator('.run-inspector').getByText('Run stopped', { exact: true }).isVisible());
+      const conversation = await api(`/api/agents/${agent.id}/turns`);
+      assert(conversation.every(turn => !['running', 'queued'].includes(turn.status)));
+      const inspection = await api(`/api/turns/${turn}/inspect`);
+      assert.equal(inspection.status, 'cancelled');
+      assert.equal(inspection.providers.length, 1);
+      assert.equal(inspection.providers[0].status, 'interrupted');
+      assert(inspection.providers[0].finished);
+      assert.deepEqual(requests.slice(requestStart), ['turn', 'judge', 'continuation']);
+    }
+    await assertStopped();
     await page.screenshot({ path: join(screenshots, `goal-stopped-${theme}.png`), animations: 'disabled' });
     await page.reload();
     await chip.getByText('Stopped', { exact: true }).waitFor();
+    await chip.getByRole('button', { name: 'Confirm fixture readiness' }).click();
+    await assertStopped();
     await composer.fill(`/loop 5m Check ${theme} fixture readiness`);
     await composer.press('Enter');
     const loop = page.getByRole('dialog', { name: 'Schedule loop' });
