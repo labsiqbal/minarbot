@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { CalendarClock, CalendarDays, CircleAlert, Filter, Info, PanelLeft, Search, Settings, Volume2, Workflow, X, type LucideIcon } from 'lucide-react';
+import { ArrowUp, ChevronDown, Copy, Files, GitFork, MessageSquare, Mic, Monitor, PanelRight, Plus, Square, Users, Wrench, CalendarClock, CalendarDays, CircleAlert, Filter, Info, PanelLeft, Search, Settings, Volume2, Workflow, X, type LucideIcon } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -27,6 +27,14 @@ const appearanceConfig: Plugin = {
         searchIcon: svg(Search, 14),
         closeIcon: svg(X),
         errorIcon: svg(CircleAlert),
+        conversationIcons: {
+          attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
+          chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),
+          copy: svg(Copy, 14), fork: svg(GitFork, 14),
+          inspect: svg(Wrench, 14), close: svg(X),
+          chats: svg(MessageSquare, 14), files: svg(Files, 14), filter: svg(Filter, 15),
+          computer: svg(Monitor, 14), members: svg(Users, 14),
+        },
         workspaceIcons: {
           panel: svg(PanelLeft), filter: svg(Filter, 15), settings: svg(Settings),
           routines: svg(CalendarClock), workflows: svg(Workflow), calendar: svg(CalendarDays),

@@ -10,6 +10,10 @@ pub struct Agent {
     pub runnable: bool,
     #[serde(default)]
     pub hidden: bool,
+    #[serde(default)]
+    pub avatar_revision: u64,
+    pub model: Option<String>,
+    pub runtime: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -212,7 +216,7 @@ pub fn chats(chat: Chat) -> impl IntoView {
         });
     };
     load();
-    let owner = StoredValue::new(agent.id);
+    let owner = StoredValue::new(agent.id.clone());
     let key = StoredValue::new(format!("minarbot:thread-command:{}", owner.get_value()));
     let pending = RwSignal::new(saved(&key.get_value()));
     let selected = StoredValue::new(current.clone());
@@ -311,17 +315,53 @@ pub fn chats(chat: Chat) -> impl IntoView {
             json!({"path": api.get_value(), "data": {"id": id, "name": "New conversation"}}),
         ));
     };
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let role = agent
+        .role
+        .as_deref()
+        .filter(|role| !role.is_empty())
+        .unwrap_or("Agent")
+        .to_owned();
+    let model = agent
+        .runtime
+        .as_deref()
+        .filter(|runtime| *runtime != "api")
+        .map(|runtime| format!("{runtime} runtime"))
+        .or_else(|| agent.model.clone());
+    let name = agent.name.clone();
     view! {
-        <section aria-label="Agent conversations" class="k-stack">
-            <div class="k-row-actions">
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=move || busy.get() || pending.with(Option::is_some) on:click=create>"New conversation"</button>
-                <label class="k-check"><input type="checkbox" on:change=move |event| show_archived.set(event_target_checked(&event)) />"Show archived"</label>
+        <div class="details__scroll">
+        <div class="details__identity">
+            {avatar(Some(agent), &name, false, 36)}
+            <div class="details__identity-text">
+                <div class="details__name" title=name>{name.clone()}</div>
+                <div class="details__who-sub" title=role>{role.clone()}</div>
+                {model.map(|model| view! { <span class="details__model" title=model>{model.clone()}</span> })}
+            </div>
+        </div>
+        <div class="details__sections">
+        <section aria-label="Agent conversations">
+            <div class="section-label section-label--row">
+                <span>"Conversations"</span>
+                <div class="details-list-actions">
+                    <details class="chat-pilot-menu">
+                        <summary class="k-icon-btn" aria-label="Conversation filters"><span class="appearance-icon" inner_html=icons.filter></span></summary>
+                        <label class="k-pop k-check"><input type="checkbox" on:change=move |event| show_archived.set(event_target_checked(&event)) />"Show archived"</label>
+                    </details>
+                    <button type="button" class="k-icon-btn" aria-label="New conversation" title="New conversation"
+                        disabled=move || busy.get() || pending.with(Option::is_some) on:click=create><span class="appearance-icon" inner_html=icons.attach></span></button>
+                </div>
             </div>
             <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
             <div class="k-row-actions" hidden=move || pending.with(Option::is_none)>
                 <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=busy on:click=move |_| execute(None)>"Retry change"</button>
             </div>
-            <a class="panel-row panel-row--link" aria-current=main.then_some("page") href=link(&base)>"Main chat"</a>
+            <div class="panel-card">
+            <div class="conversation-row" class:is-current=main>
+                <a class="panel-row panel-row--link" class:is-current=main aria-current=main.then_some("true") href=link(&base)>
+                    <span class="appearance-icon" inner_html=icons.chats></span><span class="panel-row__title">"Main chat"</span>
+                </a>
+            </div>
             {move || threads.get().into_iter().filter(|thread| thread.archived == 0 || show_archived.get()).map(|thread| {
                 let selected = current.as_deref() == Some(thread.id.as_str());
                 let label = format!("Menu conversation {}", thread.name);
@@ -348,6 +388,7 @@ pub fn chats(chat: Chat) -> impl IntoView {
                     </div>
                 }
             }).collect_view()}
+            </div>
             <dialog node_ref=dialog class="conversation-dialog" aria-label="Conversation change"
                 on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
                 <form class="k-stack" on:submit=move |event| {
@@ -380,5 +421,7 @@ pub fn chats(chat: Chat) -> impl IntoView {
                 </form>
             </dialog>
         </section>
+        </div>
+        </div>
     }.into_any()
 }

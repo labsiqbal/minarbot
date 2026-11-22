@@ -318,8 +318,9 @@ pub(crate) fn WorkspaceShell(
                     let name_matches = format!("{} {}", project.name, project.description).to_lowercase().contains(&query);
                     let sections = project.sections.iter().filter(|section| !section.archived && (name_matches || section.name.to_lowercase().contains(&query))).map(|section| {
                         let path = format!("/rooms/{}", section.id);
+                        let href = if conversation_navigation { format!("{path}?ui=leptos") } else { path.clone() };
                         let current = base_path.with_value(|base| base == &path);
-                        view! { <a class="project-navigation__room" href=path aria-current=current.then_some("page")>{section.name.clone()}</a> }
+                        view! { <a class="project-navigation__room" href=href aria-current=current.then_some("page")>{section.name.clone()}</a> }
                     }).collect_view();
                     if !name_matches && sections.is_empty() { return None; }
                     let path = format!("/projects/{}", project.id);

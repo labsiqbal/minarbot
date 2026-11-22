@@ -115,6 +115,8 @@ pub fn build(root: &Path) -> Result<()> {
                 "--out-name",
                 name,
                 "--no-typescript",
+                "--remove-name-section",
+                "--remove-producers-section",
                 "--out-dir",
             ])
             .arg(temp.path())

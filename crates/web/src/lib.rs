@@ -89,14 +89,22 @@ pub fn mount_conversation() -> Result<(), JsValue> {
         .get_element_by_id("leptos-root")
         .ok_or_else(|| JsValue::from_str("Conversation document is incomplete"))?
         .dyn_into::<HtmlElement>()?;
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Config {
+        colors: Vec<appearance::ColorTheme>,
+        workspace_icons: shell::Icons,
+        conversation_icons: conversation::Icons,
+    }
     let config = document
         .get_element_by_id("appearance-config")
         .and_then(|element| element.text_content())
-        .and_then(|raw| serde_json::from_str::<settings::Config>(&raw).ok())
+        .and_then(|raw| serde_json::from_str::<Config>(&raw).ok())
         .ok_or_else(|| JsValue::from_str("Conversation configuration is invalid"))?;
     let path = window().location().pathname()?;
     mount_to(root, move || {
         let colors = StoredValue::new(config.colors);
+        provide_context(config.conversation_icons);
         view! {
             <shell::WorkspaceShell base_path=path colors=colors icons=config.workspace_icons conversation_navigation=true>
                 {conversation::standalone()}

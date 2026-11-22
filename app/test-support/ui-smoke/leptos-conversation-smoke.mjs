@@ -10,6 +10,7 @@ import { createInterface } from 'node:readline';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import sharp from 'sharp';
 import { desktopImage, installVncFixture } from './computer-smoke.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -76,21 +77,23 @@ try {
   await page.reload();
   assert.equal(await input.inputValue(), 'Replay fixture');
   let original, replay;
-  await page.route(url => url.origin === origin && url.pathname === turns, async route => {
-    if (route.request().method() !== 'POST') {
-      // Hold history recovery until the exact retry has reached the network.
-      if (original !== undefined && replay === undefined) return route.fulfill({ json: [] });
-      return route.continue();
+  await page.route(url => url.origin === origin && url.pathname === turns, async requestRoute => {
+    const request = requestRoute.request();
+    if (request.method() === 'GET' && original !== undefined && replay === undefined) {
+      // Hold history recovery until the retry reaches the network.
+      return requestRoute.fulfill({ json: [] });
     }
-    const raw = route.request().postData();
-    if (original === undefined) {
-      original = raw;
-      const receipt = await route.fetch();
-      assert(receipt.ok(), await receipt.text());
-      return route.abort('connectionreset');
+    if (request.method() === 'POST') {
+      const command = request.postData();
+      if (original === undefined) {
+        original = command;
+        const accepted = await requestRoute.fetch();
+        assert(accepted.ok(), await accepted.text());
+        return requestRoute.abort('connectionreset');
+      }
+      replay = command;
     }
-    replay = raw;
-    return route.continue();
+    return requestRoute.continue();
   });
   await input.press('Enter');
   await page.getByRole('button', { name: 'Retry send', exact: true }).waitFor();
@@ -122,19 +125,44 @@ try {
 
   if (output) {
     await mkdir(output, { recursive: true });
+    await page.mouse.move(0, 0);
     for (const theme of ['dark', 'light']) {
       await page.evaluate(theme => localStorage.setItem(
         'minarbot-presentation-v1', JSON.stringify({ version: 1, theme, colorTheme: 'minarbot', textSize: 'standard' }),
       ), theme);
       for (const [label, width, height] of [['desktop', 1440, 900], ['narrow', 430, 850]]) {
         await page.setViewportSize({ width, height });
-        await page.reload();
-        await page.getByText('Final answer.', { exact: false }).waitFor();
-        assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
-        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-        await page.screenshot({ path: join(output, label + '-' + theme + '.png') });
+        const images = [];
+        for (const client of ['react', 'leptos']) {
+          await page.evaluate(() => localStorage.removeItem('minarbot:details-open'));
+          await page.goto(origin + path + '?ui=' + client);
+          await page.getByText('Final answer.', { exact: true }).waitFor();
+          await page.evaluate(() => document.fonts.ready);
+          assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+          const box = page.getByRole('textbox', { name: 'Message Conversation fixture' });
+          assert.equal(await box.getAttribute('placeholder'), 'Message Conversation fixture');
+          images.push(await page.screenshot({ path: join(output, `${label}-${theme}-${client}.png`), animations: 'disabled' }));
+        }
+        await sharp({ create: { width: 2 * width, height, channels: 3, background: '#000' } })
+          .composite(images.map((input, i) => ({ input, left: i * width, top: 0 }))).png()
+          .toFile(join(output, `${label}-${theme}-pair.png`));
+        const [react, leptos] = await Promise.all(images.map(image => sharp(image).removeAlpha().raw().toBuffer()));
+        const diff = Buffer.alloc(react.length);
+        let pixels = 0;
+        for (let i = 0; i < diff.length; i += 3) {
+          const error = Math.max(...[0, 1, 2].map(channel => Math.abs(react[i + channel] - leptos[i + channel])));
+          if (error > 16) pixels++;
+          diff.fill(Math.min(255, error * 4), i, i + 3);
+        }
+        await sharp(diff, { raw: { width, height, channels: 3 } }).png()
+          .toFile(join(output, `${label}-${theme}-diff.png`));
+        console.log('Visual diff', label, theme, `${pixels}/${width * height} pixels differ by >16`);
       }
     }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(route);
+    await input.waitFor();
   }
 
   const computer = { available: true, enabled: true, state: 'running', control: { mode: 'agent', revision: 0 } };

@@ -16,6 +16,26 @@ use web_sys::{EventSource, MessageEvent, Storage};
 
 pub use routes::{standalone, Agent, Thread};
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct Icons {
+    pub attach: String,
+    pub send: String,
+    pub mic: String,
+    pub stop: String,
+    pub chevron: String,
+    pub panel: String,
+    pub search: String,
+    pub copy: String,
+    pub fork: String,
+    pub inspect: String,
+    pub chats: String,
+    pub files: String,
+    pub computer: String,
+    pub members: String,
+    pub filter: String,
+    pub close: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct ConversationConfig {
     pub base: String,
@@ -42,9 +62,24 @@ struct Segment {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
 struct Activity {
+    #[serde(default)]
+    started_at: Option<String>,
+    #[serde(default)]
+    stopped_at: Option<String>,
+    #[serde(default)]
+    calls: Vec<ProviderCall>,
+    #[serde(default)]
+    fallback_model: Option<String>,
+    #[serde(default)]
     stream: Vec<Segment>,
     tools: Vec<Value>,
     harness: Vec<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+struct ProviderCall {
+    created: String,
+    finished: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -69,6 +104,8 @@ struct Reply {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 struct Turn {
     id: String,
+    #[serde(default)]
+    created: String,
     seq: u64,
     text: String,
     status: String,
@@ -287,7 +324,7 @@ impl Chat {
             query: RwSignal::new(String::new()),
             before: RwSignal::new(None),
             tab: RwSignal::new("chats"),
-            details: RwSignal::new(false),
+            details: RwSignal::new(restore_details()),
             run: RwSignal::new(String::new()),
             config: StoredValue::new(config),
         }
@@ -455,10 +492,17 @@ impl Chat {
         });
     }
 
+    fn set_details(self, open: bool) {
+        if let Ok(Some(storage)) = window().local_storage() {
+            let _ = storage.set_item("minarbot:details-open", if open { "1" } else { "0" });
+        }
+        self.details.set(open);
+    }
+
     fn inspect(self, turn: String) {
         self.run.set(turn);
         self.tab.set("run");
-        self.details.set(true);
+        self.set_details(true);
     }
 
     fn send_from_app(self, text: &str) {
@@ -533,6 +577,27 @@ impl Chat {
             self.busy.set(false);
         });
     }
+}
+
+fn restore_details() -> bool {
+    let viewport = window()
+        .inner_width()
+        .ok()
+        .and_then(|width| width.as_f64())
+        .unwrap_or_default();
+    let storage = window().local_storage().ok().flatten();
+    let preference = |name| {
+        storage
+            .as_ref()
+            .and_then(|store| store.get_item(name).ok().flatten())
+    };
+    let sidebar = if preference("minarbot:sidebar-collapsed").as_deref() == Some("1") {
+        0.0
+    } else {
+        300.0
+    };
+    viewport - sidebar >= 920.0
+        && preference("minarbot:details-open").map_or(viewport >= 1280.0, |open| open == "1")
 }
 
 fn turn_query(chat: Chat) -> String {
@@ -692,12 +757,69 @@ extern "C" {
     #[wasm_bindgen(js_namespace = MinarbotConversation)]
     fn markdown(text: &str, scope: &str) -> String;
 
+    #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = messageTime)]
+    fn message_time(value: &str) -> String;
+
+    #[wasm_bindgen(js_namespace = MinarbotConversation, catch, js_name = writeClipboard)]
+    async fn write_clipboard(text: &str) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
+
     #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = markdownBlocks)]
     fn markdown_blocks(text: &str) -> js_sys::Array;
 }
 
 fn body(text: String, base: String) -> impl IntoView {
     view! { <div class="markdown" inner_html=markdown(&text, &base)></div> }
+}
+
+fn activity_label(turn: &Turn, now: f64) -> String {
+    let live = turn.active() && turn.paused == 0 && !turn.needs_you();
+    if turn.active()
+        && turn
+            .questions
+            .iter()
+            .any(|question| question["answer"].is_null())
+    {
+        return "Waiting for your answer".into();
+    }
+    if turn.active() && turn.paused != 0 {
+        return "Paused".into();
+    }
+    let calls = &turn.activity.calls;
+    let start = turn
+        .activity
+        .started_at
+        .as_deref()
+        .or_else(|| calls.first().map(|call| call.created.as_str()))
+        .or((turn.status != "cancelled").then_some(turn.created.as_str()));
+    let end = if turn.status == "cancelled" {
+        turn.activity.stopped_at.as_deref().map(js_sys::Date::parse)
+    } else if live {
+        Some(now)
+    } else {
+        calls
+            .last()
+            .and_then(|call| call.finished.as_deref())
+            .map(js_sys::Date::parse)
+    };
+    let duration = end.zip(start).and_then(|(end, start)| {
+        let elapsed = (end - js_sys::Date::parse(start)) / 1000.0;
+        elapsed
+            .is_finite()
+            .then(|| match elapsed.max(0.0).floor() as u64 {
+                0 => "<1s".to_owned(),
+                seconds @ 1..=59 => format!("{seconds}s"),
+                seconds => format!("{}m {}s", seconds / 60, seconds % 60),
+            })
+    });
+    let (short, long) = match turn.status.as_str() {
+        "done" => ("Worked", "Worked for"),
+        "cancelled" => ("Stopped", "Stopped after"),
+        "failed" => ("Failed", "Failed after"),
+        "interrupted" => ("Interrupted", "Interrupted after"),
+        "queued" => return "Queued".into(),
+        _ => ("Working…", "Working…"),
+    };
+    duration.map_or_else(|| short.into(), |time| format!("{long} {time}"))
 }
 
 fn attachment(file: FileRef, base: String) -> impl IntoView {
@@ -707,8 +829,91 @@ fn attachment(file: FileRef, base: String) -> impl IntoView {
     view! { <a class="k-link" href=path download=download>{name}</a> }
 }
 
-fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String) -> impl IntoView {
+fn copy_action(text: impl Fn() -> String + 'static, label: &'static str) -> impl IntoView {
+    let icon = use_context::<Icons>().unwrap_or_default().copy;
+    let feedback = RwSignal::new("");
+    view! {
+        <button type="button" class="k-icon-btn" aria-label=label title=label on:click=move |_| {
+            let text = text();
+            leptos::task::spawn_local(async move {
+                match write_clipboard(&text).await {
+                    Ok(_) => { feedback.try_set("Copied"); }
+                    Err(_) => { feedback.try_set("Text could not be copied."); }
+                }
+                set_timeout(move || { feedback.try_set(""); }, Duration::from_secs(2));
+            });
+        }><span class="appearance-icon" inner_html=icon></span></button>
+        {move || match feedback.get() {
+            "" => None,
+            "Copied" => Some(view! { <span class="sr-only" role="status">"Copied"</span> }.into_any()),
+            reason => Some(view! { <span class="message-error" role="alert">{reason}</span> }.into_any()),
+        }}
+    }
+}
+
+fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let turn_id = row.with_untracked(|turn| turn.id.clone());
+    let endpoint = format!("{}/turns/{turn_id}/fork", chat.base());
+    let key = format!("minarbot:fork:{turn_id}");
+    let finished = move || {
+        row.with(|turn| {
+            turn.activity
+                .calls
+                .last()
+                .and_then(|call| call.finished.clone())
+                .unwrap_or_else(|| turn.created.clone())
+        })
+    };
+    let busy = RwSignal::new(false);
+    let error = RwSignal::new(String::new());
+    view! {
+        <div class="turn-controls answer-actions" role="group" aria-label="Reply actions"
+            hidden=move || !row.with(|turn| matches!(turn.status.as_str(), "done" | "cancelled" | "failed" | "interrupted"))>
+            {copy_action(move || row.with(|turn| turn.reply.clone().or_else(|| turn.partial.as_ref().map(|partial| partial.text.clone())).or_else(|| turn.error.clone()).unwrap_or_default()), "Copy reply")}
+            <button type="button" class="k-icon-btn" aria-label="Fork from here" title="Fork from here" disabled=busy on:click=move |_| {
+                if busy.get_untracked() { return }
+                let Some(id) = saved(&key).or_else(uuid).filter(|id| protocol::id(id)) else { error.set("Fork recovery could not be read.".into()); return };
+                if !save(&key, &id) { error.set("Fork request could not be saved.".into()); return }
+                let endpoint = endpoint.clone();
+                let key = key.clone();
+                busy.set(true);
+                leptos::task::spawn_local(async move {
+                    match post::<Thread>(&endpoint, &serde_json::json!({"id": id}).to_string()).await {
+                        Ok(thread) if protocol::id(&thread.agent) && protocol::id(&thread.id) => {
+                            let _ = remove(&key);
+                            let _ = window().location().set_href(&routes::link(&format!("/agents/{}/conversations/{}", thread.agent, thread.id)));
+                        }
+                        Ok(_) => { error.try_set("Fork response was invalid.".into()); }
+                        Err(reason) => { error.try_set(reason.message); }
+                    }
+                    busy.try_set(false);
+                });
+            }><span class="appearance-icon" inner_html=icons.fork.clone()></span></button>
+            <time class="message-time" datetime=finished>{move || message_time(&finished())}</time>
+            {move || (!error.with(String::is_empty)).then(|| view! { <span class="message-error" role="alert">{error}</span> })}
+        </div>
+    }
+}
+
+fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) -> impl IntoView {
     let inspect_id = id.clone();
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let now = RwSignal::new(js_sys::Date::now());
+    Effect::new(move |_| {
+        if row.with(|turn| turn.active() && turn.paused == 0 && !turn.needs_you()) {
+            let interval = set_interval_with_handle(
+                move || now.set(js_sys::Date::now()),
+                Duration::from_secs(1),
+            )
+            .ok();
+            on_cleanup(move || {
+                if let Some(interval) = interval {
+                    interval.clear();
+                }
+            });
+        }
+    });
     let base = chat.base();
     let text_base = base.clone();
     let rich_base = base.clone();
@@ -762,43 +967,158 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String) -> impl IntoView {
         Memo::new(move |_| row.with(|turn| turn.parent.is_none().then(|| turn.text.clone())));
     let outputs = Memo::new(move |_| row.with(|turn| turn.generated.clone()));
     view! {
-        <article class="turn-block" id=format!("turn-{id}") tabindex="-1">
-            <div class="human-message" hidden=move || prompt.get().is_none()>
-                <div class="human-bubble message-plain">{prompt}</div>
+        <article class="turn-block" class:is-latest=move || latest.get() id=format!("turn-{id}") tabindex="0">
+            <div class="human-message" tabindex="-1" aria-label="Your message"
+                hidden=move || row.with(|turn| turn.goal_continuation || turn.parent.is_some())>
+                <div class="human-bubble message-plain" hidden=move || prompt.with(|text| text.as_ref().is_none_or(|text| text.trim().is_empty()))>{prompt}</div>
                 {move || row.with(|turn| turn.files.iter().filter(|file| !file.deleted).cloned().map(|file| attachment(file, base.clone())).collect_view())}
+                <div class="turn-meta human-meta">
+                    <time class="message-time" datetime=move || row.with(|turn| turn.created.clone())>{move || row.with(|turn| message_time(&turn.created))}</time>
+                    {copy_action(move || row.with_untracked(|turn| turn.text.clone()), "Copy message")}
+                </div>
             </div>
+            <Show when=move || row.with(|turn| turn.goal_continuation)>
+                <p class="message-muted goal-continuation">"Goal continued"</p>
+            </Show>
             <div class="agent-message">
                 <div class="message-column">
-                    <div class="agent-identity">
+                    <div class="agent-identity" hidden=move || chat.config.with_value(|config| !config.channel || config.members.len() < 2)>
                         <strong class="message-name">{move || row.with(|turn| turn.agent_name.clone()).unwrap_or_else(|| chat.config.with_value(|c| c.name.clone()))}</strong>
-                        <span class="message-role activity-label" role="status">{move || row.with(|turn| if turn.harness_approvals.iter().any(|approval| approval["kind"] == "form" && approval["state"] == "approval") { "Waiting for your input" } else if turn.needs_you() { "Needs you" } else if turn.paused != 0 && turn.active() { "Paused" } else {
-                            match turn.status.as_str() { "queued" => "Queued", "running" => "Working…", "done" => "Done", "cancelled" => "Stopped", "failed" => "Failed", "interrupted" => "Interrupted", _ => "Waiting" }
-                        })}</span>
-                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" aria-label="Inspect run" on:click=move |_| chat.inspect(inspect_id.clone())>"Inspect"</button>
                     </div>
-                    <Show when=move || row.with(|turn| turn.goal_continuation)>
-                        <p class="message-muted">"Goal continued"</p>
-                    </Show>
-                    <details class="steps" hidden=move || activity.with(Vec::is_empty)>
-                        <summary class="steps__toggle">"Work log"</summary>
-                        {move || activity.get().into_iter().map(|step| view! { <p>{step.text}</p> }).collect_view()}
-                    </details>
+                    <div class="turn-activity">
+                        {move || {
+                            if activity.with(Vec::is_empty) {
+                                view! {
+                                    <div class="turn-activity__header">
+                                        <span class="activity-label">
+                                            <span class="activity-working" aria-hidden="true" hidden=move || !row.with(|turn| turn.status == "running" && turn.paused == 0 && !turn.needs_you())></span>
+                                            {move || row.with(|turn| activity_label(turn, now.get()))}
+                                        </span>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <details class="turn-activity__details">
+                                        <summary class="turn-activity__header k-collapsible__trigger">
+                                            <span class="activity-label">{move || row.with(|turn| activity_label(turn, now.get()))}</span>
+                                            <span class="appearance-icon k-collapsible__chev" inner_html=icons.chevron.clone()></span>
+                                        </summary>
+                                        <ol class="activity-list" aria-label="Turn activity">
+                                            {move || activity.get().into_iter().map(|step| view! { <li>{step.text}</li> }).collect_view()}
+                                        </ol>
+                                    </details>
+                                }.into_any()
+                            }
+                        }}
+                        <button type="button" class="link-btn link-btn--small conversation-inspect" aria-label="Inspect run" title="Inspect run" on:click=move |_| chat.inspect(inspect_id.clone())>
+                            <span class="appearance-icon" inner_html=icons.inspect></span>
+                        </button>
+                    </div>
                     <div class="message-body" aria-label=label hidden=move || answer.with(String::is_empty)>
                         <div class="legacy stream-markdown">
                             <For each=move || blocks.get() key=|(index, block): &(usize, String)| (*index, block.clone())
                                 children=move |(_, block)| body(block, text_base.clone()) />
                         </div>
                     </div>
-                    <p class="message-muted">{move || row.with(|turn| turn.dispatch_label.clone())}</p>
+                    {move || row.with(|turn| {
+                        let label = if turn.active() && turn.harness_approvals.iter().any(|approval| approval["kind"] == "form" && approval["state"] == "approval") { "Waiting for your input" }
+                            else if turn.needs_you() { "Waiting for approval" }
+                            else if turn.active() && turn.paused != 0 { "Paused" } else { "" };
+                        let text = match (label, turn.activity.fallback_model.is_some()) {
+                            ("", true) => "Fallback model used".into(),
+                            (_, true) => format!("{label} · Fallback model used"),
+                            (_, false) => label.into(),
+                        };
+                        (!label.is_empty() || turn.activity.fallback_model.is_some()).then(|| view! {
+                            <div class="turn-meta agent-meta"><span class="turn-status is-attention"><i aria-hidden="true"></i>{text}</span></div>
+                        })
+                    })}
+                    {move || row.with(|turn| turn.dispatch_label.clone()).map(|text| view! { <p class="dispatch-receipt">{text}</p> })}
                     <p class="message-error" hidden=move || row.with(|turn| turn.error.is_none())>{move || row.with(|turn| turn.error.clone())}</p>
                     {move || outputs.get().into_iter().filter(|file| !file.deleted).map(|file| attachment(file, rich_base.clone())).collect_view()}
                     {panels::rich_replies(chat, row)}
                     {panels::exchanges(chat, row)}
+                    {answer_actions(chat, row)}
                     {controls::turn_controls(chat, row)}
                     {queue::editor(chat, row)}
                 </div>
             </div>
         </article>
+    }
+}
+
+fn avatar(agent: Option<Agent>, name: &str, channel: bool, size: u8) -> impl IntoView {
+    let image = agent.filter(|agent| agent.avatar_revision > 0 && protocol::id(&agent.id));
+    let initial = if channel {
+        "#".into()
+    } else {
+        name.chars()
+            .next()
+            .map_or_else(String::new, |letter| letter.to_uppercase().collect())
+    };
+    view! {
+        <span class="avatar bs-avatar" class:is-channel=channel style:width=format!("{size}px") style:height=format!("{size}px") style:font-size=format!("{}px", (size as f32 * 0.42).round()) aria-hidden="true">
+            {image.map(|agent| view! { <img src=format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision) alt="" /> }.into_any()).unwrap_or_else(|| initial.into_any())}
+        </span>
+    }
+}
+
+fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> impl IntoView {
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let menu = NodeRef::<leptos::html::Details>::new();
+    let title = config.name.clone();
+    let toggle_details = move || chat.set_details(!chat.details.get_untracked());
+    let keys = window_event_listener(leptos::ev::keydown, move |event| {
+        if !(event.ctrl_key() || event.meta_key())
+            || document()
+                .query_selector("dialog[open]")
+                .ok()
+                .flatten()
+                .is_some()
+        {
+            return;
+        }
+        if event.shift_key() && event.key().eq_ignore_ascii_case("b") {
+            event.prevent_default();
+            toggle_details();
+        } else if event.key().eq_ignore_ascii_case("f") {
+            event.prevent_default();
+            searching.set(true);
+        }
+    });
+    on_cleanup(move || keys.remove());
+    view! {
+        <header class="chat__header">
+            <details class="chat__pill-anchor chat-pilot-menu" node_ref=menu on:keydown=move |event| {
+                if event.key() == "Escape" {
+                    if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                }
+            }>
+                <summary class="chat__pill">
+                    {avatar(config.agent, &config.name, config.channel, 24)}
+                    <span class="chat__pill-name">{title.clone()}</span>
+                    <span class="appearance-icon chat__pill-chev" inner_html=icons.chevron></span>
+                </summary>
+                <nav class="k-pop chat-pilot-menu__items" aria-label=format!("Menu {title}")>
+                    <button type="button" class="k-menu__item" on:click=move |_| {
+                        if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                        searching.set(true);
+                    }><span class="appearance-icon" inner_html=icons.search></span>"Find messages"</button>
+                    <button type="button" class="k-menu__item" on:click=move |_| {
+                        if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                        toggle_details();
+                    }><span class="appearance-icon" inner_html=icons.panel.clone()></span>
+                      {move || if chat.details.get() { "Hide panel" } else { "Show panel" }}</button>
+                </nav>
+            </details>
+            <div class="chat__header-right">
+                <button type="button" class="icon-btn icon-btn--bordered" aria-label="Show details"
+                    title="Show details (Ctrl/Cmd+Shift+B)" aria-keyshortcuts="Control+Shift+B Meta+Shift+B"
+                    hidden=move || chat.details.get() on:click=move |_| chat.set_details(true)>
+                    <span class="appearance-icon" inner_html=icons.panel></span>
+                </button>
+            </div>
+        </header>
     }
 }
 
@@ -812,7 +1132,7 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
     let filter = RwSignal::new(String::new());
     let searching = RwSignal::new(false);
     let rows = Memo::new(move |_| chat.turns.with(|rows| rows.clone().unwrap_or_default()));
-    let timeline = NodeRef::<leptos::html::Div>::new();
+    let timeline = NodeRef::<leptos::html::Section>::new();
     let follow = RwSignal::new(true);
     Effect::new(move |_| {
         rows.track();
@@ -836,19 +1156,8 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
     });
     let label = format!("Conversation with {}", config.name);
     view! {
-        <div class="conversation-layout bs-root">
-            <main class="chat conversation-chat" aria-label=label>
-                <header class="conversation-header">
-                    <h1>{config.name}</h1>
-                    <div class="k-row-actions">
-                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" aria-expanded=move || searching.get().to_string()
-                            on:click=move |_| searching.update(|open| *open = !*open)>"Find messages"</button>
-                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" aria-expanded=move || chat.details.get().to_string()
-                            on:click=move |_| chat.details.update(|open| *open = !*open)>
-                            {move || if chat.details.get() { "Hide details" } else { "Show details" }}
-                        </button>
-                    </div>
-                </header>
+        <div class="chat-row conversation-layout bs-root">
+            <main class="chat conversation-chat" class:is-finding=searching aria-label=label>
                 <form class="conversation-find k-inline" role="search" hidden=move || !searching.get() on:submit=move |event| {
                     event.prevent_default();
                     chat.before.set(None);
@@ -862,7 +1171,8 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                         chat.query.set(String::new()); filter.set(String::new()); searching.set(false);
                     }>"Close search"</button>
                 </form>
-                <div class="conversation-scroll" node_ref=timeline on:scroll=move |_| {
+                <div class="transcript-wrap">
+                <section class="transcript" aria-label="Conversation history" node_ref=timeline on:scroll=move |_| {
                     if let Some(node) = timeline.get_untracked() { follow.set(node.scroll_height() - node.client_height() - node.scroll_top() <= 80); }
                 }>
                     <div class="transcript__col">
@@ -884,11 +1194,16 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                                         if row.with_untracked(|previous| *previous != next) { row.set(next); }
                                     }
                                 });
-                                turn_view(chat, row, id)
+                                let latest_id = id.clone();
+                                let latest = Memo::new(move |_| rows.with(|turns| turns.last().is_some_and(|turn| turn.id == latest_id)));
+                                turn_view(chat, row, id, latest)
                             } />
+                        <div></div>
                     </div>
+                </section>
                 </div>
                 {controls::composer(chat, rows)}
+                {header(chat, config, searching)}
             </main>
             {panels::right_panel(chat)}
         </div>

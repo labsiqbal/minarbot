@@ -9,6 +9,7 @@ import type RFB from '@novnc/novnc';
 import { HttpError, readJson } from './http';
 import { copyText, readClipboardText } from './ui/clipboard';
 import { uploadLimitError } from './attachments';
+import { startAudioRecording } from './audio-recording';
 
 const escape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
   .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
@@ -180,5 +181,12 @@ function mountVnc(target: HTMLElement, agent: string, revision: bigint, control:
   return dispose;
 }
 
-export const browserAdapter = { markdown, markdownBlocks, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
+function record(state: (value: string) => void, file: (value: File) => void, error: (value: string) => void) {
+  const session = startAudioRecording(state, file, error);
+  return [session.stop, session.cancel];
+}
+
+const messageTime = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+export const browserAdapter = { record, messageTime, markdown, markdownBlocks, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
   writeClipboard: copyText };

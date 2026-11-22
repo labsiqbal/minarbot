@@ -9,14 +9,31 @@ extern "C" {
         path: &str,
         file: web_sys::File,
     ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
+
+    #[wasm_bindgen(js_namespace = MinarbotConversation)]
+    fn record(
+        state: &js_sys::Function,
+        file: &js_sys::Function,
+        error: &js_sys::Function,
+    ) -> js_sys::Array;
 }
 
 fn files(chat: Chat, selected: web_sys::FileList, uploading: RwSignal<bool>) {
+    upload_files(
+        chat,
+        (0..selected.length())
+            .filter_map(|index| selected.get(index))
+            .collect(),
+        uploading,
+    );
+}
+
+fn upload_files(chat: Chat, selected: Vec<web_sys::File>, uploading: RwSignal<bool>) {
     if chat.locked() || uploading.get_untracked() {
         return;
     }
-    let length = selected.length();
-    if length as usize + chat.files.with_untracked(Vec::len) > MAX_FILES {
+    let length = selected.len();
+    if length + chat.files.with_untracked(Vec::len) > MAX_FILES {
         chat.error.set("Attach up to four files.".into());
         return;
     }
@@ -26,10 +43,7 @@ fn files(chat: Chat, selected: web_sys::FileList, uploading: RwSignal<bool>) {
     uploading.set(true);
     let path = format!("{}/files", chat.base());
     leptos::task::spawn_local(async move {
-        for index in 0..length {
-            let Some(file) = selected.get(index) else {
-                continue;
-            };
+        for file in selected {
             let result = upload(&path, file).await;
             if chat.files.is_disposed() {
                 return;
@@ -64,6 +78,97 @@ fn dialog_open(dialog: NodeRef<leptos::html::Dialog>) {
     }
 }
 
+type Recording = (
+    js_sys::Array,
+    Closure<dyn FnMut(String)>,
+    Closure<dyn FnMut(web_sys::File)>,
+    Closure<dyn FnMut(String)>,
+);
+
+fn recording_control(
+    chat: Chat,
+    recording: RwSignal<&'static str>,
+    uploading: RwSignal<bool>,
+) -> impl IntoView {
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let session = StoredValue::new_local(None::<Recording>);
+    let started = RwSignal::new(0.0f64);
+    let elapsed = RwSignal::new(0u64);
+    let invoke = move |index| {
+        session.with_value(|session| {
+            if let Some((actions, _, _, _)) = session {
+                if let Ok(action) = actions.get(index).dyn_into::<js_sys::Function>() {
+                    let _ = action.call0(&wasm_bindgen::JsValue::NULL);
+                }
+            }
+        });
+    };
+    let unload = window_event_listener(leptos::ev::pagehide, move |_| invoke(1));
+    on_cleanup(move || {
+        unload.remove();
+        invoke(1);
+    });
+    Effect::new(move |_| {
+        if recording.get() != "recording" {
+            return;
+        }
+        let timer = set_interval_with_handle(
+            move || {
+                elapsed.set(
+                    ((js_sys::Date::now() - started.get_untracked()) / 1000.0).max(0.0) as u64,
+                );
+            },
+            Duration::from_millis(250),
+        )
+        .ok();
+        on_cleanup(move || {
+            if let Some(timer) = timer {
+                timer.clear();
+            }
+        });
+    });
+    view! {
+        <span class="voice-input">
+            <button type="button" class="k-icon-btn" aria-label="Record audio" title="Record audio"
+                hidden=move || recording.get() != "idle" || chat.locked() || uploading.get() || chat.files.with(|files| files.len() >= MAX_FILES)
+                on:click=move |_| {
+                    if recording.get_untracked() != "idle" || chat.locked() || uploading.get_untracked() { return }
+                    elapsed.set(0);
+                    let state = Closure::<dyn FnMut(String)>::new(move |state: String| {
+                        let state = match state.as_str() {
+                            "requesting" => "requesting",
+                            "recording" => { started.try_set(js_sys::Date::now()); "recording" }
+                            "stopping" => "stopping",
+                            _ => "idle",
+                        };
+                        recording.try_set(state);
+                    });
+                    let file = Closure::<dyn FnMut(web_sys::File)>::new(move |file| {
+                        if !chat.files.is_disposed() { upload_files(chat, vec![file], uploading); }
+                    });
+                    let error = Closure::<dyn FnMut(String)>::new(move |error| { chat.error.try_set(error); });
+                    let actions = record(state.as_ref().unchecked_ref(), file.as_ref().unchecked_ref(), error.as_ref().unchecked_ref());
+                    session.set_value(Some((actions, state, file, error)));
+                }><span class="appearance-icon" inner_html=icons.mic></span></button>
+            <span class="voice-input__pill" role="group" aria-label="Audio recording" hidden=move || recording.get() == "idle">
+                <span class="voice-input__dot" aria-hidden="true" hidden=move || recording.get() != "recording"></span>
+                <span class="voice-input__timer" role="timer">
+                    {move || match recording.get() {
+                        "recording" => { let seconds = elapsed.get(); format!("{}:{:02}", seconds / 60, seconds % 60) }
+                        "requesting" => "Connecting…".into(),
+                        _ => "Finishing…".into(),
+                    }}
+                </span>
+                <button type="button" class="k-icon-btn" aria-label="Stop recording" hidden=move || recording.get() != "recording"
+                    on:click=move |_| invoke(0)><span class="appearance-icon" inner_html=icons.stop></span></button>
+                <button type="button" class="k-icon-btn" aria-label="Cancel recording" on:click=move |_| invoke(1)>
+                    <span class="appearance-icon" inner_html=icons.close></span>
+                </button>
+            </span>
+        </span>
+    }
+}
+
 pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
     let input = NodeRef::<leptos::html::Textarea>::new();
     let file_input = NodeRef::<leptos::html::Input>::new();
@@ -73,6 +178,8 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
     let prompt = RwSignal::new(String::new());
     let interval = RwSignal::new(5);
     let uploading = RwSignal::new(false);
+    let recording = RwSignal::new("idle");
+    let icons = use_context::<Icons>().unwrap_or_default();
     let label = chat.config.with_value(|c| {
         if c.channel {
             format!("Message #{}", c.name)
@@ -86,7 +193,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
         }
     });
     let submit = move |steer| {
-        if uploading.get_untracked() {
+        if uploading.get_untracked() || recording.get_untracked() != "idle" {
             return;
         }
         if chat.pending.with_untracked(Option::is_none) && !chat.locked() {
@@ -196,8 +303,41 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
             }
         });
     });
+    let stop = RwSignal::new(false);
+    let active = Memo::new(move |_| chat.target().map(|run| run.id));
+    let value = move || {
+        chat.pending
+            .with(|pending| pending.as_ref().map(|pending| pending.command.text.clone()))
+            .unwrap_or_else(|| chat.draft.get())
+    };
+    Effect::new(move |_| {
+        let _ = value();
+        if input.get().is_some() {
+            request_animation_frame(move || {
+                if let Some(element) = input.get_untracked() {
+                    let style = element.unchecked_ref::<web_sys::HtmlElement>().style();
+                    let _ = style.set_property("height", "0px");
+                    let height = element.scroll_height();
+                    let _ = style.set_property("height", &format!("{}px", height.min(200)));
+                    let _ = style
+                        .set_property("overflow-y", if height > 200 { "auto" } else { "hidden" });
+                }
+            });
+        }
+    });
+    let send_label = move || {
+        if chat.busy.get() {
+            "Sending..."
+        } else if chat.pending.with(Option::is_some) {
+            "Retry send"
+        } else if chat.target().is_some() {
+            "Queue message"
+        } else {
+            "Send message"
+        }
+    };
     view! {
-        <footer class="conversation-composer">
+        <footer class="composer-area">
             <div class="composer__inner">
                 <p role="alert" class="composer__error" hidden=move || chat.error.with(String::is_empty)>{chat.error}</p>
                 <p role="status" class="composer__note" hidden=move || chat.pending.with(Option::is_none) || chat.busy.get()>
@@ -236,7 +376,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                         }
                     }).collect_view()}
                 </div>
-                <form class="composer" aria-label="Composer" on:submit=move |event| { event.prevent_default(); submit(false); }
+                <form class="composer" class:is-multiline=move || value().contains('\n') aria-label="Composer" on:submit=move |event| { event.prevent_default(); submit(false); }
                     on:dragover=move |event: web_sys::DragEvent| {
                         if event.data_transfer().is_some_and(|data| data.types().iter().any(|kind| kind.as_string().as_deref() == Some("Files"))) {
                             event.prevent_default();
@@ -247,9 +387,11 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                             event.prevent_default(); files(chat, list, uploading);
                         }
                     }>
-                    <textarea node_ref=input class="composer__input" id="message" rows="2" maxlength=MAX_MESSAGE
-                        aria-label=label placeholder="Write a message" readonly=move || chat.locked()
-                        prop:value=move || chat.pending.with(|pending| pending.as_ref().map(|pending| pending.command.text.clone())).unwrap_or_else(|| chat.draft.get())
+                    <div class="composer__left">
+                    <label class="sr-only" for="message">{label.clone()}</label>
+                    <textarea node_ref=input class="composer__input" id="message" rows="1" maxlength=MAX_MESSAGE
+                        placeholder=label readonly=move || chat.locked()
+                        prop:value=value
                         on:input=move |event| chat.draft(event_target_value(&event))
                         on:paste=move |event: web_sys::ClipboardEvent| {
                             if let Some(list) = event.clipboard_data().and_then(|data| data.files()).filter(|list| list.length() != 0) {
@@ -261,6 +403,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                                 event.prevent_default(); submit(event.ctrl_key() || event.meta_key());
                             }
                         } />
+                    </div>
                     {move || mentions.get().into_iter().map(|name| {
                         let label = name.clone();
                         view! { <button type="button" class="k-btn k-btn--sm k-btn--secondary" on:click=move |_| {
@@ -269,16 +412,20 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                             if let Some(input) = input.get_untracked() { let _ = input.focus(); }
                         }>{format!("@{label}")}</button> }
                     }).collect_view()}
-                    <div class="composer__bar k-row-actions">
+                    <div class="composer__toolbar">
                         <input node_ref=file_input type="file" multiple hidden on:change=move |_| {
                             if let Some(element) = file_input.get_untracked() {
                                 if let Some(list) = element.files() { files(chat, list, uploading); }
                                 element.set_value("");
                             }
                         } />
-                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" aria-label="Attach conversation file"
-                            disabled=move || chat.locked() || uploading.get() || attachments.with(|files| files.len() >= MAX_FILES)
-                            on:click=move |_| { if let Some(element) = file_input.get_untracked() { element.click(); } }>"Attach"</button>
+                        <span class="composer__plus-anchor">
+                            <button type="button" class="composer__btn" aria-label="Attach conversation file" title="Attach file"
+                                disabled=move || chat.locked() || uploading.get() || recording.get() != "idle" || attachments.with(|files| files.len() >= MAX_FILES)
+                                on:click=move |_| { if let Some(element) = file_input.get_untracked() { element.click(); } }>
+                                <span class="appearance-icon" inner_html=icons.attach></span>
+                            </button>
+                        </span>
                         <select class="k-input" aria-label="Addressed member" hidden=move || !chat.config.with_value(|c| c.channel) || chat.active.with(Vec::is_empty)
                             disabled=move || chat.locked() on:change=move |event| chat.addressed.set(event_target_value(&event))>
                             <option value="">"Everyone"</option>
@@ -290,11 +437,24 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                         <button type="button" class="k-btn k-btn--sm k-btn--ghost"
                             hidden=move || !chat.target().is_some_and(|run| run.capabilities.steer) || chat.context.with(Option::is_some)
                             disabled=move || chat.locked() || uploading.get() on:click=move |_| submit(true)>"Steer"</button>
-                        <button class="k-btn k-btn--sm k-btn--primary" type="submit"
-                            disabled=move || chat.busy.get() || chat.blocked.get() || uploading.get() || chat.config.with_value(|c| c.archived)
-                                || chat.pending.with(Option::is_none) && (!chat.can_send() || chat.draft.with(|draft| draft.trim().is_empty()) && attachments.with(Vec::is_empty))>
-                            {move || if chat.busy.get() { "Sending…" } else if chat.pending.with(Option::is_some) { "Retry send" } else if chat.target().is_some() { "Queue message" } else { "Send message" }}
-                        </button>
+                        <div class="composer__right">
+                            <span class="composer__retry" hidden=move || chat.busy.get() || chat.pending.with(Option::is_none)>"Retry send"</span>
+                            {recording_control(chat, recording, uploading)}
+                            <button class="composer__cta" type="submit" aria-label=send_label title=send_label
+                                hidden=move || active.with(Option::is_some) && value().trim().is_empty() && attachments.with(Vec::is_empty) && chat.pending.with(Option::is_none)
+                                disabled=move || chat.busy.get() || chat.blocked.get() || uploading.get() || recording.get() != "idle" || chat.config.with_value(|c| c.archived)
+                                    || chat.pending.with(Option::is_none) && (!chat.can_send() || chat.draft.with(|draft| draft.trim().is_empty()) && attachments.with(Vec::is_empty))>
+                                <span class="step__spin" aria-hidden="true" hidden=move || !chat.busy.get()></span>
+                                <span class="appearance-icon" inner_html=icons.send hidden=chat.busy></span>
+                            </button>
+                            <button type="button" class="composer__cta composer__cta--stop" aria-label="Stop" title="Stop"
+                                hidden=move || active.with(Option::is_none) || chat.config.with_value(|c| c.archived)
+                                disabled=stop on:click=move |_| {
+                                    if let Some(id) = active.get_untracked().filter(|id| protocol::id(id)) {
+                                        mutate(format!("{}/turns/{id}/cancel", chat.base()), json!({}), stop, chat.error);
+                                    }
+                                }><span class="appearance-icon" inner_html=icons.stop></span></button>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -535,18 +695,42 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let questions = Memo::new(move |_| row.with(|turn| turn.questions.clone()));
     let approvals = Memo::new(move |_| row.with(|turn| turn.approvals.clone()));
     let harness = Memo::new(move |_| row.with(|turn| turn.harness_approvals.clone()));
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let menu = NodeRef::<leptos::html::Details>::new();
+    let active = move || row.with(|turn| turn.active() && !turn.needs_you() && turn.paused == 0);
+    let resumable = move || {
+        row.with(|turn| {
+            !turn.needs_you()
+                && (turn.paused != 0 || matches!(turn.status.as_str(), "failed" | "interrupted"))
+        })
+    };
+    let available =
+        move || !chat.config.with_value(|config| config.archived) && (active() || resumable());
+    let close = move || {
+        if let Some(menu) = menu.get_untracked() {
+            menu.set_open(false);
+        }
+    };
     view! {
-        <div class="turn-controls" role="group" aria-label="Message actions">
-            <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=busy hidden=move || chat.config.with_value(|c| c.archived)
-                || row.with(|t| !t.active() || t.needs_you() || t.paused != 0)
-                on:click=move |_| { action.set("cancel"); dialog_open(confirm); }>"Stop"</button>
-            <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=busy hidden=move || chat.config.with_value(|c| c.archived)
-                || row.with(|t| !t.active() || t.needs_you() || t.paused != 0)
-                on:click=move |_| mutate(format!("{}/pause", scope.get_value()), json!({"revision": row.with_untracked(|t| t.revision)}), busy, error)>"Pause"</button>
-            <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=busy hidden=move || chat.config.with_value(|c| c.archived)
-                || row.with(|t| t.needs_you() || t.paused == 0 && !matches!(t.status.as_str(), "failed" | "interrupted"))
-                on:click=move |_| { action.set("resume"); dialog_open(confirm); }>"Resume task"</button>
-            <p role="alert" class="message-error" hidden=move || error.with(String::is_empty)>{error}</p>
+        <div class="turn-controls" role="group" aria-label="Message actions" hidden=move || !available() && error.with(String::is_empty)>
+            <details class="chat-pilot-menu turn-task-controls" node_ref=menu hidden=move || !available()
+                on:keydown=move |event| { if event.key() == "Escape" { close(); } }>
+                <summary class="k-btn k-btn--sm k-btn--ghost">"Task actions"
+                    <span class="appearance-icon" inner_html=icons.chevron></span>
+                </summary>
+                <div class="k-pop task-actions">
+                    <button type="button" class="k-menu__item" disabled=busy hidden=move || !active()
+                        on:click=move |_| { close(); action.set("cancel"); dialog_open(confirm); }>"Stop"</button>
+                    <button type="button" class="k-menu__item" disabled=busy hidden=move || !active()
+                        on:click=move |_| {
+                            close();
+                            mutate(format!("{}/pause", scope.get_value()), json!({"revision": row.with_untracked(|turn| turn.revision)}), busy, error);
+                        }>"Pause"</button>
+                    <button type="button" class="k-menu__item" disabled=busy hidden=move || !resumable()
+                        on:click=move |_| { close(); action.set("resume"); dialog_open(confirm); }>"Resume task"</button>
+                </div>
+            </details>
+            {move || (!error.with(String::is_empty)).then(|| view! { <p role="alert" class="message-error">{error}</p> })}
             <dialog node_ref=confirm class="conversation-dialog" aria-label=move || if action.get() == "resume" { "Resume task?" } else { "Stop this task?" }>
                 <form method="dialog" class="k-stack" on:submit=move |event: leptos::ev::SubmitEvent| {
                     let value = event.submitter().and_then(|element| element.get_attribute("value"));

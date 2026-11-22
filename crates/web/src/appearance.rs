@@ -70,10 +70,6 @@ fn apply(value: &Presentation) {
     }
 }
 
-pub fn restore(themes: &[ColorTheme]) {
-    apply(&read(themes).unwrap_or_default());
-}
-
 #[derive(Clone, Copy)]
 struct Controls {
     value: RwSignal<Presentation>,

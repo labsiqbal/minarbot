@@ -716,52 +716,78 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
 
 pub fn right_panel(chat: Chat) -> impl IntoView {
     let context = RwSignal::new(None::<Context>);
+    let computer_available = RwSignal::new(false);
     Effect::new(move |_| {
-        if !chat.details.get() || context.with_untracked(Option::is_some) {
+        if !chat.details.get() {
             return;
         }
         let path = format!("{}/panel", chat.base());
         leptos::task::spawn_local(async move {
             match get::<Context>(&path).await {
-                Ok(value) => context.set(Some(value)),
-                Err(reason) => chat.error.set(reason.message),
+                Ok(value) => {
+                    let agent = value.computer.clone();
+                    context.try_set(Some(value));
+                    let available = if let Some(agent) = agent.filter(|agent| protocol::id(agent)) {
+                        get::<ComputerStatus>(&format!("/api/agents/{agent}/computer"))
+                            .await
+                            .is_ok_and(|status| status.available)
+                    } else {
+                        false
+                    };
+                    computer_available.try_set(available);
+                }
+                Err(reason) => {
+                    chat.error.try_set(reason.message);
+                }
             }
         });
     });
-    let title = if chat.config.with_value(|c| c.channel) {
-        "Members"
-    } else {
-        "Chats"
-    };
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let channel = chat.config.with_value(|c| c.channel);
     let tabs = [
-        ("chats", title),
-        ("files", "Files"),
-        ("computer", "Computer"),
-        ("run", "Run"),
+        (
+            "chats",
+            if channel { "Members" } else { "Chats" },
+            if channel { icons.members } else { icons.chats },
+        ),
+        ("files", "Files", icons.files),
+        ("computer", "Computer", icons.computer),
+        ("run", "Run", icons.inspect.clone()),
     ];
     view! {
-        <Show when=move || chat.details.get()>
-            <aside class="right-panel conversation-panel" aria-label="Conversation details">
-                <div class="right-panel__header"><button type="button" class="k-btn k-btn--sm k-btn--ghost" on:click=move |_| chat.details.set(false)>"Close details"</button></div>
-                <div class="conversation-tabs" role="tablist" aria-label="Conversation panel"
+        <aside class="details right-panel conversation-panel bs-root" aria-label="Conversation details" hidden=move || !chat.details.get()>
+            <div class="right-panel__header"><div>
+                <button type="button" class="k-icon-btn" aria-label="Close details" title="Close details" on:click=move |_| chat.set_details(false)>
+                    <span class="appearance-icon" inner_html=icons.close></span>
+                </button>
+            </div></div>
+            <div class="k-tabs">
+                <div class="k-tabs__list" role="tablist" aria-label="Conversation panel" aria-orientation="horizontal"
                     on:keydown=move |event| crate::settings::move_focus(&event, "[role=tablist]", true)>
-                    {tabs.into_iter().map(|(tab, label)| view! {
-                        <button type="button" role="tab" class="k-btn k-btn--sm k-btn--ghost" class:is-active=move || chat.tab.get() == tab
+                    {tabs.into_iter().map(|(tab, label, icon)| view! {
+                        <button type="button" role="tab" class="k-tabs__tab" title=label
+                            data-state=move || if chat.tab.get() == tab { "active" } else { "inactive" }
                             aria-selected=move || (chat.tab.get() == tab).to_string() tabindex=move || if chat.tab.get() == tab { 0 } else { -1 }
-                            hidden=move || tab == "computer" && context.with(|value| value.as_ref().and_then(|value| value.computer.as_ref()).is_none())
-                            on:click=move |_| chat.tab.set(tab)>{label}</button>
+                            hidden=move || tab == "computer" && !computer_available.get() || tab == "run" && chat.run.with(String::is_empty)
+                            on:click=move |_| chat.tab.set(tab)>
+                            <span class="appearance-icon" inner_html=icon></span><span class="right-panel__tab-label">{label}</span>
+                        </button>
                     }).collect_view()}
                 </div>
-                <div class="right-panel__body" role="tabpanel" aria-label=move || chat.tab.get()>
-                    {move || match chat.tab.get() {
-                        "files" => files_panel(chat, context).into_any(),
-                        "computer" => context.with(|context| context.as_ref().and_then(|value| value.computer.clone())).filter(|agent| protocol::id(agent)).map(|agent| computer_panel(chat, agent)).into_any(),
-                        "run" => run_panel(chat).into_any(),
-                        _ => routes::chats(chat).into_any(),
+                <div class="k-tabs__panel" role="tabpanel" aria-label=move || chat.tab.get()>
+                    {move || {
+                        if !chat.details.get() { return ().into_any() }
+                        match chat.tab.get() {
+                            "files" => view! { <div class="right-panel__body">{files_panel(chat, context)}</div> }.into_any(),
+                            "computer" => context.with(|context| context.as_ref().and_then(|value| value.computer.clone()))
+                                .filter(|agent| protocol::id(agent)).map(|agent| view! { <div class="right-panel__computer">{computer_panel(chat, agent)}</div> }).into_any(),
+                            "run" => view! { <div class="right-panel__body">{run_panel(chat)}</div> }.into_any(),
+                            _ => routes::chats(chat).into_any(),
+                        }
                     }}
                 </div>
-            </aside>
-        </Show>
+            </div>
+        </aside>
     }
 }
 
