@@ -132,7 +132,8 @@ export async function r4SettingsSmoke({ check, page, origin, root, agentChat, se
   await check('R4B matching paired versions show Up to date without unavailable actions', async () => {
     const list = await page.request.get(origin + '/api/machines').then(r => r.json());
     const current = await page.request.get(origin + '/api/updates').then(r => r.json());
-    const machine = { ...(list.machines[0] ?? {}), id: 'r4-peer', name: 'R4 paired fixture', version: current.current.version, allowUpdates: false, status: 'online', agents: [] };
+    const machine = { ...(list.machines[0] ?? {}), id: 'r4-peer', name: 'R4 paired fixture', version: current.current.version, allowUpdates: true, status: 'online', agents: [] };
+    await page.route('**/api/updates', route => route.fulfill({ json: { ...current, available: undefined, feed: current.current } }));
     await page.route('**/api/machines', route => route.fulfill({ json: { machines: [machine] } }));
     await page.route('**/api/updates/machines', route => route.fulfill({ json: { machines: [{ machine: machine.id, available: false, reason: 'Enable updates on both machines.' }] } }));
     try {
@@ -141,39 +142,34 @@ export async function r4SettingsSmoke({ check, page, origin, root, agentChat, se
       assert.equal(await dialog.getByText('Enable updates on both machines.', { exact: true }).count(), 0);
       assert.equal(await row.getByRole('button').count(), 0); assert.equal(await row.getByRole('switch').count(), 0);
       await shot('R3-23-updates'); await close(dialog);
-    } finally { await page.unroute('**/api/machines'); await page.unroute('**/api/updates/machines'); }
+    } finally { await page.unroute('**/api/updates'); await page.unroute('**/api/machines'); await page.unroute('**/api/updates/machines'); }
   });
   await check('R4B Settings auto-refresh, edge alignment, peer status and theme geometry', async () => {
-    const counts = { skills: 0, apps: 0 };
-    const count = req => { const path = new URL(req.url()).pathname; if (path === '/api/skills') counts.skills++; if (path === '/api/connected-apps/key') counts.apps++; };
-    page.on('request', count);
-    try {
-      for (const [name, key] of [['Skills', 'skills'], ['Connected apps', 'apps'], ['Machines', ''], ['External access', '']]) {
-        const dialog = await settings(name); await dialog.getByRole('heading', { name, exact: true }).waitFor();
-        const header = dialog.locator('.app-settings__page > .k-page > .k-page-head');
-        const geometry = await header.evaluate(el => { const a = el.querySelector('.k-page-head__actions'); return { right: el.getBoundingClientRect().right, action: a?.getBoundingClientRect().right }; });
-        if (geometry.action) assert(Math.abs(geometry.right - geometry.action) < 1, JSON.stringify({ name, ...geometry }));
-        if (key) {
-          assert.equal(await dialog.getByRole('button', { name: /Reload|Refresh/ }).count(), 0);
-          const before = counts[key];
-          const refreshed = page.waitForResponse(r => new URL(r.url()).pathname === (key === 'skills' ? '/api/skills' : '/api/connected-apps/key'));
-          await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await refreshed;
-          await page.waitForFunction(() => !document.querySelector('.app-settings .k-skeleton'));
-          assert(counts[key] > before);
-        }
-        if (name === 'Skills') assert.equal(await dialog.getByRole('button', { name: 'Import', exact: true }).evaluate(el => el.lastElementChild?.tagName), 'svg');
-        if (name === 'External access') assert.equal(await dialog.getByText('Apps that can access Minarbot', { exact: true }).count(), 0);
-        await focusRings(dialog); await shot(`R3-21-22-${key || name.toLowerCase().replace(' ', '-')}`);
-        if (name === 'Skills') {
-          await dialog.getByRole('tab', { name: 'Packs', exact: true }).click();
-          await dialog.getByText('No packs', { exact: true }).waitFor();
-          assert.equal(await dialog.getByRole('button', { name: /Reload|Refresh/ }).count(), 0);
-          const refreshed = page.waitForResponse(r => new URL(r.url()).pathname === '/api/skill-packs');
-          await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await refreshed;
-          await focusRings(dialog); await shot('R3-21-packs');
-        }
+    for (const [name, key] of [['Skills', 'skills'], ['Connected apps', 'apps'], ['Machines', ''], ['External access', '']]) {
+      const dialog = await settings(name); await dialog.getByRole('heading', { name, exact: true }).waitFor();
+      const header = dialog.locator('.app-settings__page > .k-page > .k-page-head');
+      const geometry = await header.evaluate(el => { const a = el.querySelector('.k-page-head__actions'); return { right: el.getBoundingClientRect().right, action: a?.getBoundingClientRect().right }; });
+      if (geometry.action) assert(Math.abs(geometry.right - geometry.action) < 1, JSON.stringify({ name, ...geometry }));
+      if (key) {
+        assert.equal(await dialog.getByRole('button', { name: /Reload|Refresh/ }).count(), 0);
+        await dialog.locator('.k-skeleton').first().waitFor({ state: 'hidden' });
+        const path = key === 'skills' ? '/api/skills' : '/api/connected-apps/key';
+        const refreshed = page.waitForRequest(request => new URL(request.url()).pathname === path);
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+        assert((await (await refreshed).response())?.ok(), `${name} refresh failed`);
       }
-    } finally { page.off('request', count); }
+      if (name === 'Skills') assert.equal(await dialog.getByRole('button', { name: 'Import', exact: true }).evaluate(el => el.lastElementChild?.tagName), 'svg');
+      if (name === 'External access') assert.equal(await dialog.getByText('Apps that can access Minarbot', { exact: true }).count(), 0);
+      await focusRings(dialog); await shot(`R3-21-22-${key || name.toLowerCase().replace(' ', '-')}`);
+      if (name === 'Skills') {
+        await dialog.getByRole('tab', { name: 'Packs', exact: true }).click();
+        await dialog.getByText('No packs', { exact: true }).waitFor();
+        assert.equal(await dialog.getByRole('button', { name: /Reload|Refresh/ }).count(), 0);
+        const refreshed = page.waitForResponse(r => new URL(r.url()).pathname === '/api/skill-packs');
+        await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await refreshed;
+        await focusRings(dialog); await shot('R3-21-packs');
+      }
+    }
     const catalogRoute = /\/api\/connected-apps\?/;
     await page.route(catalogRoute, route => route.fulfill({ contentType: 'application/json', body: '{' }));
     try {

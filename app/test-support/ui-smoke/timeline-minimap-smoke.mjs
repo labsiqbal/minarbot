@@ -160,7 +160,10 @@ export async function timelineMinimapSmoke({ check, page, origin, root, agentCha
         const room = { root: turn.id, generation: randomUUID(), active: false, stopped: false, round: 1, silent: null, note: null, quiet: [], messages: [{ seq: 1, kind: 'reply', turn: turn.id, agent: agent.id, name: agent.name, role: '', text: 'First room reply' }, { seq: 2, kind: 'reply', turn: child.id, agent: agent.id, name: agent.name, role: '', text: 'Final room reply' }] };
         return [{ ...turn, room }, { ...child, room }];
       });
-      await open(true); await waitCount(4); assert.equal(await page.locator('.human-message').count(), 4);
+      await open(true);
+      await page.getByText(humans[3].text, { exact: true }).waitFor();
+      await waitCount(4);
+      assert.deepEqual(await page.locator('.transcript .human-bubble').allTextContents(), humans.map(turn => turn.text));
       await rail.focus(); await rail.press('Home'); await rail.press('Enter'); await aligned(humans[0].id);
       const position = await point(1); await page.mouse.move(position.x, position.y);
       await page.locator('.timeline-minimap__preview').getByText('Final room reply', { exact: true }).waitFor();

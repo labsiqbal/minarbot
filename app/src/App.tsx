@@ -389,6 +389,11 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const attachments = useConversationAttachments({ path: path.replace(/\/turns$/, '/files'), archived, attached: pending?.files ?? attached, onAttach: attach, locked: blocked || !!pending || busy, pastedFiles, onPasteSettled: () => setPastedFiles([]), onFiles: setPastedFiles, filesOpen: detailsOpen && rightPanel.tab === 'files', api });
   const openOutput = useCallback((file: { id: string; name: string }) => { rightPanel.selectFile({ name: file.name, path: `${path.replace(/\/turns$/, '')}/panel/files/${file.id}` }); setDetailsOpen(true); }, [rightPanel.selectFile, path, setDetailsOpen]);
   usePanelFileRequests(turns, openOutput);
+  const openFocused = (id: string, card?: string) => { findHistory.current = null; focusedOnce.current = ''; setQuery(''); setFinding(false); setFocusedTask(id); setFocusedCard(card); };
+  useNeedsYouFocus(scope, (turn, card) => {
+    setHistoryPages([]);
+    openFocused(turn, card);
+  });
   if (showMemory) return <PageView><Suspense fallback={<Delayed><p className="empty" role="status">Loading memory...</p></Delayed>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); nextFrame(() => document.querySelector<HTMLButtonElement>('.chat__pill')?.focus()); }} /></Suspense></PageView>;
   const refreshTurns = () => { window.dispatchEvent(new Event('minarbot:message-changed')); void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(optimistic.merge(data)); if (!focusedTask && !before && !finding) setTurns(optimistic.merge(mergeStream(findHistory.current ? mergeHistory(findHistory.current, data) : data))); setActiveTurns(active); }).catch(error => setError(message(error))); };
   const queued = (turn: Turn) => !channel && activeTurns.some(active => active.id !== turn.id) && turn.status === 'queued' && !turn.paused && !isTurnWaitingForInput(turn) && !turn.events?.some(event => event.status === 'waiting') && !turn.parent && !turn.waiting_for && !turn.routineReport && !turn.workflow_run && !turn.activity?.calls.length && !turn.agentMessages?.length;
@@ -408,11 +413,6 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const statusLabel = (turn: Turn) => turn.computerWait ? 'Waiting for you' : pendingApprovalSubject(turn) && !['done','cancelled'].includes(turn.status) ? 'Waiting for approval' : turn.editing ? 'Editing' : turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) ? 'Waiting for your answer' : turn.no_update ? 'No updates' : turn.paused && !['done','cancelled'].includes(turn.status) ? 'Paused' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) && turn.status === 'queued' ? 'Waiting for agent reply' : turn.waiting_for && turn.status === 'queued' ? 'Waiting for delegation' : turn.routing === 'pending' && turn.status === 'running' ? 'Selecting recipient' : turn.routing === 'clarify' ? 'Needs clarification' : turn.routing === 'none' ? 'No task needed' : turn.status === 'running' ? 'Running' : statusNames[turn.status] ?? turn.status;
   const tone = (turn: Turn) => turn.questions?.some(question => question.answer === null) && !['done','cancelled'].includes(turn.status) || turn.paused && !['done','cancelled'].includes(turn.status) ? 'attention' : ['failed','interrupted'].includes(turn.status) ? 'error' : ['queued','running'].includes(turn.status) ? 'working' : 'done';
   const time = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const openFocused = (id: string, card?: string) => { findHistory.current = null; focusedOnce.current = ''; setQuery(''); setFinding(false); setFocusedTask(id); setFocusedCard(card); };
-  useNeedsYouFocus(scope, (turn, card) => {
-    setHistoryPages([]);
-    openFocused(turn, card);
-  });
   const turnRequests = (turn: Turn) => {
     const pathToTurn = `${path}/${turn.id}`;
     const card = (kind: PendingInput['kind'], request: string, content: ReactNode) => {
@@ -1217,6 +1217,7 @@ function App() {
   const remoteMachinesState = useMachines(api);
   const remoteSelection = route.machine && route.remoteAgent ? { machine: route.machine, agent: route.remoteAgent } : null;
   const [workspaceDialog, setWorkspaceDialog] = useState<'import' | 'help' | null>(null);
+  const importAfterNewMenu = useRef(false);
   const [agentContent, setAgentContent] = useState<{ agent: Agent; kind: 'export' } | null>(null);
   const settings = route.settings ?? null;
   const updates = useUpdateEverything(api, remoteMachinesState, environment?.name ?? 'This device', settings === 'updates');
@@ -1421,10 +1422,14 @@ function App() {
           <IconButton label="Routines" aria-current={view === 'routines' ? 'page' : undefined} disabled={!directory} onClick={() => { setRoutineAgent(''); setView('routines'); setDialog(null); }}><CalendarClock size={16} aria-hidden /></IconButton>
           <IconButton label="Workflows" onPointerEnter={WorkflowDirectory.prefetch} onFocus={WorkflowDirectory.prefetch} aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
           <IconButton label="Automation calendar" aria-current={view === 'calendar' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('calendar'); setNarrowOpen(false); setDialog(null); }}><CalendarDays size={16} aria-hidden /></IconButton>
-          <ActionMenu label="Create new" trigger={<IconButton label="Create new"><Plus size={16} aria-hidden /></IconButton>} items={[
+          <ActionMenu label="Create new" onCloseAutoFocus={() => {
+            if (!importAfterNewMenu.current) return;
+            importAfterNewMenu.current = false;
+            setWorkspaceDialog('import');
+          }} trigger={<IconButton label="Create new"><Plus size={16} aria-hidden /></IconButton>} items={[
             ...(agent && !agent.builtin ? [{ label: 'New conversation', icon: <MessageSquare size={15} aria-hidden />, hint: 'Ctrl/Cmd+Shift+O', onSelect: () => { openAgent(selected); switcherFrame(() => window.dispatchEvent(new Event('minarbot:new-conversation'))); } }] : []),
             { label: 'New agent', icon: <Plus size={15} aria-hidden />, onSelect: () => setDialog('agent'), disabled: !directory },
-            { label: 'Import template', prefetch: AgentTemplateImport.prefetch, icon: <Download size={15} aria-hidden />, onSelect: () => setWorkspaceDialog('import'), disabled: !directory },
+            { label: 'Import template', prefetch: AgentTemplateImport.prefetch, icon: <Download size={15} aria-hidden />, onSelect: () => { importAfterNewMenu.current = true; }, disabled: !directory },
             { label: 'New project', icon: <FolderOpen size={15} aria-hidden />, onSelect: () => setDialog('project'), disabled: !directory },
             { label: 'Add a machine', icon: <Monitor size={15} aria-hidden />, onSelect: () => setSettings('machines') },
           ]} />
