@@ -948,7 +948,8 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
     });
     let activity = Memo::new(move |_| {
         row.with(|turn| {
-            turn.activity
+            let mut steps = turn
+                .activity
                 .stream
                 .iter()
                 .filter(|step| {
@@ -959,8 +960,36 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                                 p.seq == step.seq && p.segment.as_deref() == Some(step.id.as_str())
                             }))
                 })
-                .cloned()
-                .collect::<Vec<_>>()
+                .map(|step| (step.kind == "text", step.text.clone()))
+                .collect::<Vec<_>>();
+            for tool in turn.activity.tools.iter().chain(&turn.activity.harness) {
+                let name = tool["name"].as_str().unwrap_or_default();
+                if name.is_empty()
+                    || matches!(
+                        name,
+                        "userMessage"
+                            | "agentMessage"
+                            | "assistantMessage"
+                            | "reasoning"
+                            | "plan"
+                            | "contextCompaction"
+                            | "verificationReminder"
+                    )
+                {
+                    continue;
+                }
+                let title = tool["title"]
+                    .as_str()
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or(name);
+                if !steps
+                    .iter()
+                    .any(|(prose, text)| !prose && (text == name || text == title))
+                {
+                    steps.push((false, title.to_owned()));
+                }
+            }
+            steps
         })
     });
     let prompt =
@@ -1004,7 +1033,13 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                                             <span class="appearance-icon k-collapsible__chev" inner_html=icons.chevron.clone()></span>
                                         </summary>
                                         <ol class="activity-list" aria-label="Turn activity">
-                                            {move || activity.get().into_iter().map(|step| view! { <li>{step.text}</li> }).collect_view()}
+                                            {move || activity.get().into_iter().map(|(prose, text)| {
+                                                if prose {
+                                                    view! { <li><div class="legacy">{body(text, chat.base())}</div></li> }.into_any()
+                                                } else {
+                                                    view! { <li><span>{text}</span></li> }.into_any()
+                                                }
+                                            }).collect_view()}
                                         </ol>
                                     </details>
                                 }.into_any()
@@ -1066,6 +1101,7 @@ fn avatar(agent: Option<Agent>, name: &str, channel: bool, size: u8) -> impl Int
 fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> impl IntoView {
     let icons = use_context::<Icons>().unwrap_or_default();
     let menu = NodeRef::<leptos::html::Details>::new();
+    let trigger = NodeRef::<leptos::html::Summary>::new();
     let title = config.name.clone();
     let toggle_details = move || chat.set_details(!chat.details.get_untracked());
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
@@ -1090,11 +1126,13 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
     view! {
         <header class="chat__header">
             <details class="chat__pill-anchor chat-pilot-menu" node_ref=menu on:keydown=move |event| {
-                if event.key() == "Escape" {
+                if event.key() == "Escape" && menu.get_untracked().is_some_and(|menu| menu.open()) {
+                    event.prevent_default();
                     if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                    if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                 }
             }>
-                <summary class="chat__pill">
+                <summary class="chat__pill" node_ref=trigger>
                     {avatar(config.agent, &config.name, config.channel, 24)}
                     <span class="chat__pill-name">{title.clone()}</span>
                     <span class="appearance-icon chat__pill-chev" inner_html=icons.chevron></span>
@@ -1107,6 +1145,7 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
                     <button type="button" class="k-menu__item" on:click=move |_| {
                         if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                         toggle_details();
+                        if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                     }><span class="appearance-icon" inner_html=icons.panel.clone()></span>
                       {move || if chat.details.get() { "Hide panel" } else { "Show panel" }}</button>
                 </nav>
@@ -1131,6 +1170,16 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
     polling(chat, snapshots);
     let filter = RwSignal::new(String::new());
     let searching = RwSignal::new(false);
+    let search_input = NodeRef::<leptos::html::Input>::new();
+    Effect::new(move |_| {
+        if searching.get() {
+            request_animation_frame(move || {
+                if let Some(input) = search_input.get_untracked() {
+                    let _ = input.focus();
+                }
+            });
+        }
+    });
     let rows = Memo::new(move |_| chat.turns.with(|rows| rows.clone().unwrap_or_default()));
     let timeline = NodeRef::<leptos::html::Section>::new();
     let follow = RwSignal::new(true);
@@ -1155,21 +1204,32 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         }
     });
     let label = format!("Conversation with {}", config.name);
+    let close_search = move || {
+        chat.query.set(String::new());
+        filter.set(String::new());
+        searching.set(false);
+        if let Some(composer) = document()
+            .get_element_by_id("message")
+            .and_then(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = composer.focus();
+        }
+    };
     view! {
         <div class="chat-row conversation-layout bs-root">
             <main class="chat conversation-chat" class:is-finding=searching aria-label=label>
-                <form class="conversation-find k-inline" role="search" hidden=move || !searching.get() on:submit=move |event| {
+                <form class="conversation-find k-inline" role="search" hidden=move || !searching.get()
+                    on:keydown=move |event| { if event.key() == "Escape" { event.prevent_default(); close_search(); } }
+                    on:submit=move |event| {
                     event.prevent_default();
                     chat.before.set(None);
                     chat.focus.set(String::new());
                     chat.query.set(filter.get_untracked().trim().into());
                 }>
-                    <input type="search" class="k-input" aria-label="Find messages" maxlength="200" prop:value=filter
+                    <input node_ref=search_input type="search" class="k-input" aria-label="Find messages" maxlength="200" prop:value=filter
                         on:input=move |event| filter.set(event_target_value(&event)) />
                     <button type="submit" class="k-btn k-btn--sm k-btn--primary">"Find"</button>
-                    <button type="button" class="k-btn k-btn--sm k-btn--ghost" on:click=move |_| {
-                        chat.query.set(String::new()); filter.set(String::new()); searching.set(false);
-                    }>"Close search"</button>
+                    <button type="button" class="k-btn k-btn--sm k-btn--ghost" on:click=move |_| close_search()>"Close search"</button>
                 </form>
                 <div class="transcript-wrap">
                 <section class="transcript" aria-label="Conversation history" node_ref=timeline on:scroll=move |_| {

@@ -10,6 +10,7 @@
 .conversation-startup { padding: 24px; }
 body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .chat-pilot-menu summary { list-style: none; cursor: pointer; }
+.chat__pill-chev > svg { opacity: 0.5; flex-shrink: 0; }
 .chat-pilot-menu summary::-webkit-details-marker, .turn-activity__details summary::-webkit-details-marker { display: none; }
 .chat-pilot-menu__items { position: absolute; z-index: 6; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); min-width: 160px; }
 .conversation-layout .chat-pilot-menu.turn-task-controls { display: inline-block; position: relative; }
@@ -20,6 +21,9 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .turn-block:hover .conversation-inspect, .turn-block:focus-within .conversation-inspect { opacity: 1; }
 .conversation-layout .turn-activity__details summary { display: flex; width: 100%; list-style: none; }
 .conversation-layout .conversation-panel { flex: 0 1 360px; width: 360px; min-width: 0; }
+.conversation-panel > .k-tabs > .k-tabs__list > .k-tabs__tab[hidden] { display: none; }
+.conversation-panel a.panel-row { text-decoration: none; }
+.right-panel.conversation-panel .details__identity + .details__sections { padding-block-start: 28px; }
 .conversation-layout .conversation-panel .right-panel__body { overflow: auto; min-height: 0; }
 .conversation-card { padding: 12px; margin: 8px 0; }
 .conversation-card pre, .conversation-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; }
