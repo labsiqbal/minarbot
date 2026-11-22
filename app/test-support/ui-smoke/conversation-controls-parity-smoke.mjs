@@ -21,6 +21,7 @@ const provider = createServer(async (request, response) => {
   }));
 });
 let browser, app;
+const evidence = [], faults = [], navigation = {};
 try {
   await mkdir(output, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
@@ -106,7 +107,6 @@ try {
     roomRoot.room = { root: roomRoot.id, generation: roomRoot.id, active: true, round: 0, stopped: false, silent: null, note: null, quiet: [], messages: [] };
     roomChild.room = { ...roomRoot.room, round: 1 };
     browser = await chromium.launch({ headless: true });
-    const evidence = [], faults = [];
     const selectClient = (path, client) => app.origin + path + (client === 'react' ? '?ui=react' : '');
     for (const [size, width, height] of [['desktop', 1440, 900], ['narrow', 430, 850]]) {
       for (const theme of ['dark', 'light']) {
@@ -183,7 +183,22 @@ try {
               await page.evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
               const file = join(output, `${size}-${theme}-${name}-${client}.png`);
               const image = await page.screenshot({ path: file, animations: 'disabled', mask });
-              images.set(name, [...(images.get(name) ?? []), image]);
+              if (client === 'react') {
+                images.set(name, image);
+                return;
+              }
+              const react = images.get(name);
+              assert(react, name);
+              const pair = join(output, `${size}-${theme}-${name}-pair.png`);
+              await sharp({ create: { width: 2 * width, height, channels: 3, background: '#000' } })
+                .composite([{ input: react, left: 0, top: 0 }, { input: image, left: width, top: 0 }]).png().toFile(pair);
+              const [left, right] = await Promise.all([react, image].map(input => sharp(input).removeAlpha().raw().toBuffer()));
+              let different = 0;
+              for (let i = 0; i < left.length; i += 3) {
+                if (Math.max(Math.abs(left[i] - right[i]), Math.abs(left[i + 1] - right[i + 1]), Math.abs(left[i + 2] - right[i + 2])) > 16) different++;
+              }
+              evidence.push({ size, theme, name, pair, different, pixels: width * height });
+              console.log(`${size} ${theme} ${name} ${different}/${width * height} pixels above channel delta 16`);
             };
             const open = async path => {
               await page.goto(selectClient(path, client));
@@ -245,6 +260,7 @@ try {
             await message(waiting.id).getByRole('button', { name: 'Show event connection' }).click();
             const secret = message(waiting.id).getByLabel('Signing secret');
             await secret.waitFor();
+            await secret.evaluate(input => input.scrollIntoView({ block: 'center' }));
             await capture('signed-event', [secret]);
             await message(waiting.id).getByRole('button', { name: 'Hide connection' }).click();
             assert.equal(await secret.count(), 0);
@@ -301,22 +317,9 @@ try {
             }
           } finally { await context.close(); }
         }
-        for (const [name, [react, leptos]] of images) {
-          assert(react && leptos, name);
-          const pair = join(output, `${size}-${theme}-${name}-pair.png`);
-          await sharp({ create: { width: 2 * width, height, channels: 3, background: '#000' } })
-            .composite([{ input: react, left: 0, top: 0 }, { input: leptos, left: width, top: 0 }]).png().toFile(pair);
-          const [left, right] = await Promise.all([react, leptos].map(input => sharp(input).removeAlpha().raw().toBuffer()));
-          let different = 0;
-          for (let i = 0; i < left.length; i += 3) {
-            if (Math.max(...[0, 1, 2].map(offset => Math.abs(left[i + offset] - right[i + offset]))) > 16) different++;
-          }
-          evidence.push({ size, theme, name, pair, different, pixels: width * height });
-          console.log(`${size} ${theme} ${name} ${different}/${width * height} pixels above channel delta 16`);
-        }
+        assert.equal(evidence.filter(item => item.size === size && item.theme === theme).length, images.size);
       }
     }
-    const navigation = {};
     const samples = Number(process.env.MINARBOT_CONVERSATION_NAV_BENCH ?? 20);
     for (const client of samples ? ['react', 'leptos'] : []) {
       const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
@@ -351,13 +354,13 @@ try {
         navigation[client] = { median: (times[Math.floor((samples - 1) / 2)] + times[Math.floor(samples / 2)]) / 2, p95: times[Math.ceil(samples * .95) - 1], samples };
       } finally { await page.close(); }
     }
-    await writeFile(join(output, 'receipt.json'), JSON.stringify({ browser: browser.version(), evidence, faults, navigation }, null, 2));
     console.log('Warm conversation navigation (ms)', JSON.stringify(navigation));
     if (samples >= 20) assert(navigation.leptos.p95 <= navigation.react.p95 * 1.1, 'Warm navigation exceeds the 10% budget.');
     assert.deepEqual(faults, []);
     console.log(`PASS route selection, controls, API payloads and CSP. ${evidence.length} screenshot pairs.`);
   }
 } finally {
+  if (browser) await writeFile(join(output, 'receipt.json'), JSON.stringify({ browser: browser.version(), evidence, faults, navigation }, null, 2));
   await browser?.close();
   await app?.close();
   provider.closeAllConnections();

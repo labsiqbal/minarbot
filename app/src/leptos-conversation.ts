@@ -1,6 +1,7 @@
 import { createSpeechPlayer, voiceKey } from '../shared/speech';
 import { speechPreferenceStore } from '../shared/speech-preference';
 import { messageRanges } from './ui/messageFindRanges';
+import { turnActivitySteps } from './ui/transcript';
 import { forwardWheelToTimeline } from './ui/timelineMinimapWheel';
 import { resolveTimelineMinimapPreview } from './ui/timelineMinimapItems';
 import { marked, type Tokens } from 'marked';
@@ -218,6 +219,31 @@ function clearMatches() {
   }
 }
 
+function bindTurnTabStops(transcript: HTMLElement) {
+  const actions = 'article.turn-block :is(button, a[href], input, textarea, select, [contenteditable="true"], summary)';
+  const reset = (element: HTMLElement) => {
+    if (element.tabIndex !== -1 && !element.closest('form, dialog, [role="menu"], [role="listbox"]')) element.tabIndex = -1;
+  };
+  const observer = new MutationObserver(records => {
+    for (const record of records) for (const node of record.addedNodes) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (node.matches(actions)) reset(node);
+      node.querySelectorAll<HTMLElement>(actions).forEach(reset);
+    }
+  });
+  observer.observe(transcript, { childList: true, subtree: true });
+  transcript.querySelectorAll<HTMLElement>(actions).forEach(reset);
+  return () => observer.disconnect();
+}
+
+function postKeepalive(path: string, body: string) {
+  void fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+}
+
+function workLog(turn: string, name: string) {
+  return JSON.stringify(turnActivitySteps(JSON.parse(turn), name));
+}
+
 function bindTimelineWheel(rail: HTMLElement, viewport: HTMLElement, navigate: () => void) {
   const handler = (event: WheelEvent) => {
     if (event.defaultPrevented || event.ctrlKey || !event.deltaY) return;
@@ -269,5 +295,5 @@ function speechPlayback(listener: (enabled: boolean, owner: string, playing: boo
   };
 }
 
-export const browserAdapter = { findMatches, selectMatch, clearMatches, minimapPreview, bindTimelineWheel, speechPlayback, record, messageTime, markdown, markdownBlocks, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
+export const browserAdapter = { findMatches, selectMatch, clearMatches, minimapPreview, bindTimelineWheel, bindTurnTabStops, postKeepalive, workLog, speechPlayback, record, messageTime, markdown, markdownBlocks, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
   writeClipboard: copyText };

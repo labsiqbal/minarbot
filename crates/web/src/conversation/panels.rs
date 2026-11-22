@@ -891,7 +891,7 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
         ("computer", "Computer", icons.computer),
         ("run", "Run", icons.inspect.clone()),
     ];
-    let profile = NodeRef::<leptos::html::Dialog>::new();
+    let profile = chat.profile;
     let thread_settings = NodeRef::<leptos::html::Dialog>::new();
     let (agent, thread) = chat
         .config

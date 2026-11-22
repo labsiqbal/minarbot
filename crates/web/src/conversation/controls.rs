@@ -152,7 +152,7 @@ fn recording_control(
                 }><span class="appearance-icon" inner_html=icons.mic></span></button>
             <span class="voice-input__pill" role="group" aria-label="Audio recording" hidden=move || recording.get() == "idle">
                 <span class="voice-input__dot" aria-hidden="true" hidden=move || recording.get() != "recording"></span>
-                <span class="voice-input__timer" role="timer">
+                <span class="voice-input__timer" role="timer" aria-label="Recording duration">
                     {move || match recording.get() {
                         "recording" => { let seconds = elapsed.get(); format!("{}:{:02}", seconds / 60, seconds % 60) }
                         "requesting" => "Connecting…".into(),
@@ -363,19 +363,6 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                     <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || chat.locked() on:click=move |_| chat.context.set(None)>"Remove context"</button>
                 </div>
                 </Show>
-                <div class="k-inline">
-                    {move || attachments.get().into_iter().map(|id| {
-                        let title = file_names.with(|rows| rows.iter().find(|file| file.id == id).map(|file| file.name.clone())).unwrap_or_else(|| "Attachment".into());
-                        view! {
-                            <span class="k-badge">{title.clone()}</span>
-                            <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || chat.locked()
-                                aria-label=format!("Remove {title}") on:click=move |_| {
-                                    let mut files = chat.files.get_untracked();
-                                    files.retain(|file| *file != id); chat.attach(files);
-                                }>"Remove"</button>
-                        }
-                    }).collect_view()}
-                </div>
                 <form class="composer" class:is-multiline=move || value().contains('\n') aria-label="Composer" on:submit=move |event| { event.prevent_default(); submit(false); }
                     on:dragover=move |event: web_sys::DragEvent| {
                         if event.data_transfer().is_some_and(|data| data.types().iter().any(|kind| kind.as_string().as_deref() == Some("Files"))) {
@@ -387,6 +374,19 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                             event.prevent_default(); files(chat, list, uploading);
                         }
                     }>
+                    <div class="composer-attachments k-inline" role="group" aria-label="Composer attachments" hidden=move || attachments.with(Vec::is_empty)>
+                        {move || attachments.get().into_iter().map(|id| {
+                            let title = file_names.with(|rows| rows.iter().find(|file| file.id == id).map(|file| file.name.clone())).unwrap_or_else(|| "Attachment".into());
+                            view! {
+                                <span class="k-badge">{title.clone()}</span>
+                                <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || chat.locked()
+                                    aria-label=format!("Remove {title}") on:click=move |_| {
+                                        let mut files = chat.files.get_untracked();
+                                        files.retain(|file| *file != id); chat.attach(files);
+                                    }>"Remove"</button>
+                            }
+                        }).collect_view()}
+                    </div>
                     <div class="composer__left">
                     <label class="sr-only" for="message">{label.clone()}</label>
                     <textarea node_ref=input class="composer__input" id="message" rows="1" maxlength=MAX_MESSAGE
@@ -480,6 +480,17 @@ fn mode_form(
     let error = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let scheduled = RwSignal::new(false);
+    let agent = RwSignal::new(String::new());
+    let agent_options = StoredValue::new(chat.config.with_value(|config| {
+        std::iter::once((String::new(), "Default agent".into()))
+            .chain(
+                config
+                    .members
+                    .iter()
+                    .map(|member| (member.id.clone(), member.name.clone())),
+            )
+            .collect::<Vec<_>>()
+    }));
     let form = NodeRef::<leptos::html::Form>::new();
     let title = move || {
         if mode.get() == "goal" {
@@ -512,7 +523,7 @@ fn mode_form(
                     if kind == "goal" && !chat.files.with_untracked(Vec::is_empty) { body["files"] = json!(chat.files.get_untracked()); }
                     let until = field(&form, "until");
                     if kind == "loop" && !until.trim().is_empty() { body["until"] = json!(until.trim()); }
-                    let recipient = field(&form, "agent");
+                    let recipient = agent.get_untracked();
                     if protocol::id(&recipient) { body["recipient"] = json!(recipient); }
                     json!({"mode": kind, "body": body}).to_string()
                 };
@@ -556,10 +567,9 @@ fn mode_form(
                     </div> }.into_any()
                 }}
                 {chat.config.with_value(|c| c.channel.then(|| view! {
-                    <label class="k-field"><span>"Agent"</span><select class="k-input" name="agent">
-                        <option value="">"Default agent"</option>
-                        {c.members.iter().map(|agent| view! { <option value=agent.id.clone()>{agent.name.clone()}</option> }).collect_view()}
-                    </select></label>
+                    <crate::select::Select name="goal-agent" label="Agent"
+                        value=Signal::derive(move || agent.get()) change=Callback::new(move |value| agent.set(value))
+                        options=Signal::derive(move || agent_options.get_value()) />
                 }))}
                 <p role="alert" class="message-error" hidden=move || error.with(String::is_empty)>{error}</p>
                 <div class="k-row-actions">
@@ -759,8 +769,9 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>, skip: bool) -> impl IntoVi
         {move || harness.get().into_iter().map(|a| approval(chat, scope.get_value(), a, true)).collect_view()}
         </div>
         <div class="turn-controls" role="group" aria-label="Message actions" hidden=move || !finished() && !available() && !retry.get() && error.with(String::is_empty)>
-            {answer_actions(chat, row)}
+            {(!skip).then(|| queue::editor(chat, row))}
             {message_actions::checkpoint(chat, row)}
+            {answer_actions(chat, row)}
             {message_actions::listen(row)}
             <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=busy hidden=move || !retry.get()
                 on:click=move |_| { if let Some((path, body)) = recover() { mutate_then(path, body, busy, error, move || chat.refresh()); } }>"Retry control"</button>
@@ -776,13 +787,16 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>, skip: bool) -> impl IntoVi
                             .and_then(|summary| summary.dyn_into::<web_sys::HtmlElement>().ok()) { let _ = summary.focus(); }
                     }
                 }>
-                <summary class=move || if resumable() || skip { "k-icon-btn" } else { "k-btn k-btn--sm k-btn--ghost" }
+                <summary role="button" class=move || if resumable() || skip { "k-icon-btn" } else { "k-btn k-btn--sm k-btn--ghost" }
                     aria-label=move || if resumable() { "Recovery actions" } else if skip { "Work log actions" } else { "Task actions" }>
                     <span hidden=move || skip || resumable()>"Task actions"</span>
                     <span class="appearance-icon" hidden=move || skip || resumable() inner_html=icons.chevron></span>
                     <span class="appearance-icon" hidden=move || !skip && !resumable() inner_html=icons.more></span>
                 </summary>
                 <div class="k-pop task-actions" role="menu">
+                    <button type="button" class="k-menu__item" role="menuitem" disabled=busy
+                        hidden=move || !resumable() || chat.config.with_value(|config| config.agent.as_ref().is_none_or(|agent| agent.builtin))
+                        on:click=move |_| { close(); dialog_open(chat.profile); }>"Change model"</button>
                     <button type="button" class="k-menu__item" role="menuitem" disabled=busy hidden=move || !available() || !skip && !resumable()
                         on:click=move |_| {
                             close();
@@ -947,8 +961,13 @@ fn approval(chat: Chat, path: String, a: Value, harness: bool) -> impl IntoView 
     } else {
         "Approval"
     };
+    let region = if label == "Coding harness permission" {
+        "Coding harness approval"
+    } else {
+        label
+    };
     view! {
-        <section class="bs-root k-stack" aria-label=label>
+        <section class="bs-root k-stack" aria-label=region>
             <div class="k-card"><div class="approval-card-body k-stack">
                 <div class="k-row">
                     <div class="k-row__main">
@@ -1083,6 +1102,14 @@ fn resume_dialog(
     let recipient = RwSignal::new(String::new());
     let members = chat.config.with_value(|config| config.members.clone());
     let has_members = !members.is_empty();
+    let member_select = row.with_untracked(|turn| format!("reassign-{}", turn.id));
+    let acknowledge = row.with_untracked(|turn| format!("acknowledge-{}", turn.id));
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let options = StoredValue::new(
+        std::iter::once((String::new(), "Select agent".into()))
+            .chain(members.into_iter().map(|member| (member.id, member.name)))
+            .collect::<Vec<_>>(),
+    );
     let disabled =
         move || !checked.get() || busy.get() || chat.config.with_value(|config| config.archived);
     let submit = move |kind: &str| {
@@ -1111,28 +1138,35 @@ fn resume_dialog(
         );
     };
     view! {
-        <dialog node_ref=dialog aria-label="Resume or reassign" class="k-dialog k-dialog--md workspace-dialog"
+        <dialog node_ref=dialog aria-label="Resume or reassign" class="k-dialog k-dialog--md workspace-dialog bs-root chat-control-dialog"
             on:close=move |_| { checked.set(false); recipient.set(String::new()); }
             on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
-            <div class="k-dialog__head"><h2 class="k-dialog__title">"Resume or reassign"</h2></div>
-            <div class="k-dialog__body k-stack">
+            <div class="k-dialog__head"><h2 class="k-dialog__title">"Resume or reassign"</h2>
+                <form method="dialog"><button type="submit" class="k-icon-btn" aria-label="Close" disabled=busy><span class="appearance-icon" inner_html=icons.close></span></button></form>
+            </div>
+            <div class="k-dialog__body"><div class="k-stack">
                 <p class="k-field__hint">"Check previous results and effects in the provider. Resuming may resend steps that are not confirmed yet."</p>
-                <label class="k-check"><input type="checkbox" prop:checked=checked disabled=busy on:change=move |event| checked.set(event_target_checked(&event)) />
-                    "I have checked previous results and effects"</label>
+                <div class="k-check">
+                    <button id=acknowledge.clone() type="button" role="checkbox" class="k-check__box" autofocus disabled=busy
+                        aria-checked=move || checked.get().to_string() data-state=move || if checked.get() { "checked" } else { "unchecked" }
+                        on:click=move |_| checked.update(|value| *value = !*value)>
+                        <span class="appearance-icon" hidden=move || !checked.get()><crate::connection_ui::Icon name="check" /></span>
+                    </button>
+                    <label class="k-check__text" for=acknowledge><span class="k-check__label">"I have checked previous results and effects"</span></label>
+                </div>
                 <div><button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=disabled on:click=move |_| submit("resume")>"Resume task"</button></div>
                 <div class="k-stack" hidden=move || !has_members || row.with(|turn| turn.approvals.iter().any(|approval| approval["state"] == "ready"))>
-                    <label class="k-field"><span class="k-field__label">"New owner"</span>
-                        <select class="k-input" prop:value=recipient disabled=busy on:change=move |event| recipient.set(event_target_value(&event))>
-                            <option value="">"Select agent"</option>
-                            {members.into_iter().map(|member| view! { <option value=member.id>{member.name}</option> }).collect_view()}
-                        </select>
-                    </label>
+                    <div class="k-field"><label class="k-field__label" for=member_select.clone()>"New owner"</label>
+                        <crate::select::Select name=member_select label="New owner" described_by=None
+                            value=Signal::derive(move || recipient.get()) change=Callback::new(move |value| recipient.set(value))
+                            disabled=Signal::derive(move || busy.get()) options=Signal::derive(move || options.get_value()) />
+                    </div>
                     <div><button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || disabled() || recipient.with(String::is_empty)
                         on:click=move |_| submit("reassign")>"Reassign task"</button></div>
                 </div>
                 <p class="k-field__error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
             </div>
-            <div class="k-dialog__foot"><form method="dialog"><button type="submit" class="k-btn k-btn--secondary" disabled=busy>"Cancel"</button></form></div>
+            </div>
         </dialog>
     }
 }

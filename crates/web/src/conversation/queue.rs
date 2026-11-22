@@ -8,8 +8,10 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
         row.with_untracked(|row| row.id.clone())
     ));
     let key = StoredValue::new(format!("minarbot:queue-edit:{}", endpoint.get_value()));
-    let saved_edit = saved(&key.get_value())
-        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+    let raw_edit = saved(&key.get_value());
+    let saved_edit = raw_edit
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
         .filter(|value| {
             ["id", "editor"]
                 .iter()
@@ -45,7 +47,7 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
             .and_then(|value| serde_json::from_value::<Vec<String>>(value["files"].clone()).ok())
             .unwrap_or_default(),
     );
-    let pending = RwSignal::new(saved_edit.map(|value| value.to_string()));
+    let pending = RwSignal::new(saved_edit.and(raw_edit));
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let input = NodeRef::<leptos::html::Textarea>::new();
@@ -163,8 +165,46 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
             }
         });
     };
-    if let Ok(timer) = set_interval_with_handle(renew, Duration::from_secs(10)) {
-        on_cleanup(move || timer.clear());
+    let release = move || {
+        let Some((editor, revision)) = lease.try_get_untracked().flatten() else {
+            return;
+        };
+        let Some(id) = uuid() else { return };
+        let raw = saved(&key.get_value()).unwrap_or_else(|| {
+            json!({"id": id, "editor": editor, "revision": revision, "action": "cancel"})
+                .to_string()
+        });
+        post_keepalive(&endpoint.get_value(), &raw);
+        lease.try_set(None);
+    };
+    Effect::new(move |_| {
+        if !lease.with(Option::is_some) {
+            return;
+        }
+        let timer = set_interval_with_handle(renew, Duration::from_secs(10)).ok();
+        let hide = window_event_listener(leptos::ev::pagehide, move |_| release());
+        let reconnect = window_event_listener(leptos::ev::online, move |_| release());
+        on_cleanup(move || {
+            if let Some(timer) = timer {
+                timer.clear();
+            }
+            hide.remove();
+            reconnect.remove();
+            release();
+        });
+    });
+    if let Some(saved) = pending.get_untracked() {
+        let retry = StoredValue::new(saved);
+        if let Ok(timer) = set_interval_with_handle(
+            move || {
+                if pending.with_untracked(|pending| pending.as_ref() == Some(&retry.get_value())) {
+                    act("save");
+                }
+            },
+            Duration::from_secs(2),
+        ) {
+            on_cleanup(move || timer.clear());
+        }
     }
     view! {
         <div class="queue-editor" hidden=move || archived || row.with(|turn| turn.status != "queued") && lease.with(Option::is_none) && pending.with(Option::is_none)>
@@ -177,6 +217,12 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
                 <textarea node_ref=input class="k-input" aria-label="Replacement message" maxlength=MAX_MESSAGE prop:value=text
                     readonly=move || busy.get() || pending.with(Option::is_some)
                     on:input=move |event| change(event_target_value(&event), files.get_untracked())
+                    on:blur=move |event| {
+                        let within = input.get_untracked().and_then(|input| input.form())
+                            .zip(event.related_target().and_then(|target| target.dyn_into::<web_sys::Node>().ok()))
+                            .is_some_and(|(form, target)| form.contains(Some(&target)));
+                        if !within { act("save"); }
+                    }
                     on:keydown=move |event| { if event.key() == "Enter" && !event.shift_key() && !event.is_composing() && event.key_code() != 229 { event.prevent_default(); act("save"); } } />
                 {move || files.get().into_iter().map(|id| {
                     let name = row.with(|turn| turn.files.iter().find(|file| file.id == id).map(|file| file.name.clone())).unwrap_or_else(|| "Attachment".into());
@@ -193,7 +239,7 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
             </form>
             <button class="k-btn k-btn--sm k-btn--secondary" type="button" hidden=move || pending.with(Option::is_none) || busy.get()
                 on:click=move |_| act(if lease.with_untracked(Option::is_some) { "save" } else { "hold" })>"Retry change"</button>
-            <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
+            {move || (!error.with(String::is_empty)).then(|| view! { <p class="message-error" role="alert">{error}</p> })}
         </div>
     }
 }
@@ -210,7 +256,8 @@ pub(super) fn queued_runs(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
         })
     });
     view! {
-        <section class="queued-runs" aria-label="Queued messages" hidden=move || queued.with(Vec::is_empty)>
+        <Show when=move || !queued.with(Vec::is_empty)>
+        <section class="queued-runs" aria-label="Queued messages">
             <div class="queued-runs__heading">"Queued " <span>{move || queued.with(Vec::len)}</span>
                 <button type="button" class="k-btn k-btn--sm k-btn--ghost" on:click=move |_| controls::dialog_open(order)>"Order"</button>
             </div>
@@ -229,7 +276,8 @@ pub(super) fn queued_runs(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                 {move || if expanded.get() { "Show less".into() } else { format!("Show {} more", queued.with(Vec::len).saturating_sub(3)) }}
             </button>
         </section>
-        {order_dialog(chat, order)}
+        </Show>
+        {order_dialog(chat, order, queued)}
     }
 }
 
@@ -369,7 +417,11 @@ struct Neighbor {
     editing: bool,
 }
 
-fn order_dialog(chat: Chat, dialog: NodeRef<leptos::html::Dialog>) -> impl IntoView {
+fn order_dialog(
+    chat: Chat,
+    dialog: NodeRef<leptos::html::Dialog>,
+    queued: Memo<Vec<String>>,
+) -> impl IntoView {
     let endpoint = StoredValue::new(format!("{}/queue", chat.base()));
     let key = StoredValue::new(format!("minarbot-queue-order:{}", endpoint.get_value()));
     let pending = RwSignal::new(saved(&key.get_value()));
@@ -382,11 +434,19 @@ fn order_dialog(chat: Chat, dialog: NodeRef<leptos::html::Dialog>) -> impl IntoV
     let open = RwSignal::new(false);
     let discard = NodeRef::<leptos::html::Dialog>::new();
     let load = move || {
-        if !open.get_untracked() || busy.get_untracked() || loading.get_untracked() {
+        let recovery = pending.get_untracked();
+        let empty = queued.with_untracked(Vec::is_empty);
+        if (!open.get_untracked() && !(recovery.is_some() && empty))
+            || busy.get_untracked()
+            || loading.get_untracked()
+        {
             return;
         }
         let mut path = endpoint.get_value();
-        let cursor = cursors.with_untracked(|cursors| cursors.last().cloned());
+        let cursor = open
+            .get_untracked()
+            .then(|| cursors.with_untracked(|cursors| cursors.last().cloned()))
+            .flatten();
         if let Some((after, snapshot)) = &cursor {
             if !snapshot.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                 return;
@@ -401,7 +461,19 @@ fn order_dialog(chat: Chat, dialog: NodeRef<leptos::html::Dialog>) -> impl IntoV
             }
             loading.set(false);
             match result {
-                Ok(rows) => page.set(Some(rows)),
+                Ok(rows) => {
+                    if empty
+                        && cursor.is_none()
+                        && rows.turns.is_empty()
+                        && rows.next_after.is_none()
+                        && recovery.is_some()
+                        && saved(&key.get_value()) == recovery
+                        && remove(&key.get_value())
+                    {
+                        pending.set(None);
+                    }
+                    page.set(Some(rows));
+                }
                 Err(reason) if cursor.is_some() && reason.message.contains("changed") => {
                     notice.set("Queue changed. The list returned to the first page.");
                     page.set(None);
@@ -471,6 +543,7 @@ fn order_dialog(chat: Chat, dialog: NodeRef<leptos::html::Dialog>) -> impl IntoV
     Effect::new(move |_| {
         open.track();
         cursors.track();
+        queued.track();
         load();
     });
     let interval = set_interval_with_handle(load, Duration::from_millis(1500)).ok();
@@ -481,17 +554,23 @@ fn order_dialog(chat: Chat, dialog: NodeRef<leptos::html::Dialog>) -> impl IntoV
     });
     let icons = use_context::<Icons>().unwrap_or_default();
     let up = StoredValue::new(icons.up);
-    let down = StoredValue::new(icons.chevron);
+    let down = StoredValue::new(icons.next);
     view! {
-        <dialog class="k-dialog k-dialog--lg workspace-dialog" aria-label="Queue order" node_ref=dialog
+        <dialog class="k-dialog k-dialog--md workspace-dialog bs-root chat-control-dialog" aria-label="Queue order" node_ref=dialog
             on:toggle=move |_| { open.set(dialog.get_untracked().is_some_and(|dialog| dialog.open())); }
             on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
             <div class="k-dialog__head"><h2 class="k-dialog__title">"Queue order"</h2>
-                <form method="dialog"><button type="submit" class="k-btn k-btn--sm k-btn--ghost" disabled=busy>"Close"</button></form>
+                <form method="dialog"><button type="submit" class="k-icon-btn" aria-label="Close" disabled=busy><span class="appearance-icon" inner_html=icons.close></span></button></form>
             </div>
-            <div class="k-dialog__body k-stack">
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=move || busy.get() || loading.get()
-                    on:click=move |_| { error.set(String::new()); cursors.set(Vec::new()); load(); }>"Reload queue"</button>
+            <div class="k-dialog__body">
+                <details class="activity-section bs-root k-collapsible conversation-disclosure">
+                    <summary role="button" class="k-collapsible__trigger k-collapsible__trigger--section">
+                        <span class="k-collapsible__title">"Queue "<span class="k-badge">{move || page.with(|page| page.as_ref().map_or(0, |page| page.turns.len()))}</span></span>
+                        <span class="appearance-icon k-collapsible__chev" inner_html=icons.chevron></span>
+                    </summary>
+                    <div class="k-collapsible__content"><div class="k-stack">
+                <div class="k-row-actions"><button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=busy
+                    on:click=move |_| { error.set(String::new()); cursors.set(Vec::new()); load(); }>"Reload queue"</button></div>
                 <p role="status" hidden=move || notice.get().is_empty()>{notice}</p>
                 <p role="alert" class="k-field__error" hidden=move || error.with(String::is_empty)>{error}</p>
                 <div class="k-stack" hidden=move || pending.with(Option::is_none)>
@@ -506,11 +585,11 @@ fn order_dialog(chat: Chat, dialog: NodeRef<leptos::html::Dialog>) -> impl IntoV
                 {move || page.get().map(|page| view! { <div class="k-card">{page.turns.into_iter().map(|entry| {
                     let id = entry.neighbor.id.clone();
                     let actions = [("Move up", entry.previous, up.get_value()), ("Move down", entry.next, down.get_value())];
-                    view! { <div class="k-row k-stack">
+                    view! { <div class="k-row"><div class="k-row__main"><div class="k-row__text">
                         <span class="k-row__title message-plain">{entry.text}</span>
                         <span class="k-row__meta">{if entry.neighbor.editing { "Being edited" } else if entry.paused != 0 { "Paused" } else { "Waiting in queue" }}</span>
-                        <div class="k-row-actions">
-                            <button type="button" class="k-btn k-btn--sm" on:click=move |_| {
+                        <div class="k-row-actions queue-order-row-actions">
+                            <button type="button" class="k-btn k-btn--sm k-btn--secondary" on:click=move |_| {
                                 if let Some(dialog) = dialog.get_untracked() { dialog.close(); }
                                 chat.focus_turn(&id);
                             }>"Open message"</button>
@@ -522,7 +601,7 @@ fn order_dialog(chat: Chat, dialog: NodeRef<leptos::html::Dialog>) -> impl IntoV
                                     on:click=move |_| submit(Some((row.clone(), other.clone())))><span class="appearance-icon" inner_html=icon></span></button> })
                             }).collect_view()}
                         </div>
-                    </div> }
+                    </div></div></div> }
                 }).collect_view()}</div> })}
                 <div class="k-pager" hidden=move || cursors.with(Vec::is_empty) && page.with(|page| page.as_ref().is_none_or(|page| page.next_after.is_none()))>
                     <button type="button" class="k-btn k-btn--sm" aria-label="Previous queue page" disabled=move || busy.get() || loading.get() || cursors.with(Vec::is_empty)
@@ -534,6 +613,8 @@ fn order_dialog(chat: Chat, dialog: NodeRef<leptos::html::Dialog>) -> impl IntoV
                             }
                         }>"Next"</button>
                 </div>
+                    </div></div>
+                </details>
             </div>
         </dialog>
         <dialog class="conversation-dialog" node_ref=discard aria-label="Discard the saved order request?">

@@ -3,6 +3,20 @@ use controls::dialog_open;
 use routes::Channel;
 use serde_json::json;
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = workLog)]
+    fn work_log(turn: &str, name: &str) -> String;
+}
+
+#[derive(Deserialize)]
+struct WorkEntry {
+    text: String,
+    state: Option<String>,
+    #[serde(default)]
+    prose: bool,
+}
+
 #[derive(Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct Change {
@@ -180,16 +194,15 @@ pub(super) fn settings(room: Channel, dialog: NodeRef<leptos::html::Dialog>) -> 
                                 } />{agent.name}</label> }
                         }).collect_view()}
                     </fieldset>
-                    <label class="k-field"><span class="k-field__label">"Lead"</span>
-                        <select class="k-input" disabled=locked prop:value=lead on:change=move |event| lead.set(event_target_value(&event))>
-                            <option value="" selected=move || lead.with(String::is_empty)>"No lead"</option>
-                            {move || directory.get().into_iter().filter(|agent| members.with(|members| members.contains(&agent.id))).map(|agent| {
-                                let id = agent.id.clone();
-                                view! { <option value=agent.id selected=move || lead.with(|lead| *lead == id)>{agent.name}</option> }
-                            }).collect_view()}
-                        </select>
-                        <span class="k-field__hint">"Optional. Gives a short reply when everyone stays quiet."</span>
-                    </label>
+                    <div class="k-field"><label class="k-field__label" for="section-lead">"Lead"</label>
+                        <crate::select::Select name="section-lead" label="Lead" described_by=Some("section-lead-hint")
+                            value=Signal::derive(move || lead.get()) change=Callback::new(move |value| lead.set(value)) disabled=Signal::derive(locked)
+                            options=Signal::derive(move || std::iter::once((String::new(), "No lead".into())).chain(
+                                directory.get().into_iter().filter(|agent| members.with(|members| members.contains(&agent.id)))
+                                    .map(|agent| (agent.id, agent.name))
+                            ).collect()) />
+                        <span id="section-lead-hint" class="k-field__hint">"Optional. Gives a short reply when everyone stays quiet."</span>
+                    </div>
                     <p role="status" hidden=move || archived.get() == original>
                         {move || if archived.get() { "Section will be archived and unfinished work cancelled when you save changes." } else { "Section will be restored when you save changes." }}
                     </p>
@@ -523,15 +536,17 @@ fn member_reply(chat: Chat, item: DiscussionRow, rows: Memo<Vec<DiscussionRow>>)
     };
     let open = RwSignal::new(false);
     let icons = use_context::<Icons>().unwrap_or_default();
-    let from = name.clone();
+    let from = StoredValue::new(name.clone());
+    let chevron = StoredValue::new(icons.chevron);
     let result_name = move || {
         format!(
-            "{} from {from}",
+            "{} from {}",
             if row.with(Turn::streaming) {
                 "Streaming answer"
             } else {
                 "Answer"
-            }
+            },
+            from.get_value()
         )
     };
     view! {
@@ -539,34 +554,44 @@ fn member_reply(chat: Chat, item: DiscussionRow, rows: Memo<Vec<DiscussionRow>>)
             <div class=move || if answer.with(Option::is_some) { "room-agent__line" } else { "room-pending" } class:is-working=move || row.with(Turn::live_activity)>
                 {avatar(member, &name, false, 20)}
                 <strong class="room-agent__name message-name" title=name.clone()>{name.clone()}</strong>
-                <span class="room-agent__status" hidden=has_work>{label}</span>
-                <button type="button" class="room-agent__status" hidden=move || !has_work()
+                <Show when=has_work fallback=move || view! { <span class="room-agent__status">
+                    <span class="activity-working" aria-hidden="true" hidden=move || !row.with(|turn| turn.status == "running" && turn.live_activity())></span>{label}
+                </span> }>
+                <button type="button" class="room-agent__status"
                     aria-expanded=move || if open.get() { "true" } else { "false" } aria-label=label
                     on:click=move |_| open.update(|open| *open = !*open)>
                     <span class="activity-working" aria-hidden="true" hidden=move || !row.with(|turn| turn.status == "running" && turn.live_activity())></span>
-                    {label}<span class="appearance-icon k-collapsible__chev" inner_html=icons.chevron></span>
+                    {label}<span class="appearance-icon k-collapsible__chev" inner_html=chevron.get_value()></span>
                 </button>
+                </Show>
             </div>
             <Show when=move || open.get() && has_work()>
                 <div class="room-agent__activity">
                     <ol class="activity-list" aria-label="Turn activity">
                         {move || row.with(|turn| {
-                            turn.activity.stream.iter().filter(|step| !step.text.is_empty()).cloned().map(|step| view! {
-                                <li>{if step.kind == "text" { view! { <div class="legacy">{body(step.text, base.get_value())}</div> }.into_any() }
-                                else { view! { <span>{step.text}</span> }.into_any() }}</li>
-                            }).collect_view()
+                            let data = json!({"status": turn.status, "room": turn.room,
+                                "partial": turn.partial.as_ref().map(|part| json!({"seq": part.seq, "segment": part.segment})),
+                                "activity": {"stream": turn.activity.stream, "tools": turn.activity.tools,
+                                    "harness": turn.activity.harness, "fallback_model": turn.activity.fallback_model}});
+                            serde_json::from_str::<Vec<WorkEntry>>(&work_log(&data.to_string(), &from.get_value()))
+                                .unwrap_or_default().into_iter().map(|step| view! {
+                                    <li>{if step.prose { view! { <div class="legacy">{body(step.text, base.get_value())}</div> }.into_any() }
+                                    else { view! { <span>{step.text}{step.state.map(|state| view! {
+                                        <span class="activity-step-state" data-state=state.clone()>{format!(" {state}")}</span>
+                                    })}</span> }.into_any() }}</li>
+                                }).collect_view()
                         })}
                     </ol>
                     <button type="button" class="link-btn link-btn--small" on:click=move |_| chat.inspect(id.get_value())>"Inspect run"</button>
                 </div>
             </Show>
             {panels::rich_replies(chat, row)}
-            <div class="message-body" aria-label=result_name hidden=move || text.with(String::is_empty)>
+            <Show when=move || !text.with(String::is_empty)><div class="message-body" aria-label=result_name>
                 <div class="legacy stream-markdown">
                     <For each=move || blocks.get() key=|(index, text)| (*index, text.clone())
                         children=move |(_, text)| body(text, base.get_value()) />
                 </div>
-            </div>
+            </div></Show>
             {move || row.with(|turn| turn.generated.clone()).into_iter().filter(|file| !file.deleted).map(|file| attachment(file, base.get_value())).collect_view()}
             <p class="message-error" hidden=move || row.with(|turn| turn.error.is_none() || turn.status == "cancelled")>
                 {move || row.with(|turn| turn.error.clone())}

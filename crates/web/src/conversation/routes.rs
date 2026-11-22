@@ -119,13 +119,32 @@ fn load_error(message: &str) -> ApiError {
     }
 }
 
-async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
-    let directory: Directory = get("/api/agents").await?;
-    let agents: Vec<_> = directory
-        .agents
-        .into_iter()
-        .chain(directory.guide)
-        .collect();
+type ThreadCache = RwSignal<Option<(f64, Thread)>>;
+
+async fn load(
+    route: Route,
+    directory_cache: RwSignal<Option<(f64, Vec<Agent>)>>,
+    thread_cache: ThreadCache,
+) -> Result<ConversationConfig, ApiError> {
+    let fresh = directory_cache.get_untracked().filter(|(loaded, agents)| {
+        js_sys::Date::now() - loaded <= 10_000.0
+            && match &route {
+                Route::Agent(id, _) => agents.iter().any(|agent| agent.id == *id),
+                Route::Default | Route::Channel(_) => true,
+            }
+    });
+    let agents = if let Some((_, agents)) = fresh {
+        agents
+    } else {
+        let directory: Directory = get("/api/agents").await?;
+        let agents = directory
+            .agents
+            .into_iter()
+            .chain(directory.guide)
+            .collect::<Vec<_>>();
+        directory_cache.try_set(Some((js_sys::Date::now(), agents.clone())));
+        agents
+    };
     Ok(match route {
         Route::Default => {
             let agent = agents
@@ -154,8 +173,17 @@ async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
                 .cloned()
                 .ok_or_else(|| load_error("Agent not found."))?;
             let thread = if let Some(id) = thread_id {
-                let thread: Thread = get(&format!("/api/threads/{id}")).await?;
-                if thread.agent != agent.id || thread.deleted != 0 {
+                let cached = thread_cache.get_untracked().filter(|(loaded, thread)| {
+                    thread.id == id && js_sys::Date::now() - loaded <= 10_000.0
+                });
+                let thread = if let Some((_, thread)) = cached {
+                    thread
+                } else {
+                    let thread: Thread = get(&format!("/api/threads/{id}")).await?;
+                    thread_cache.try_set(Some((js_sys::Date::now(), thread.clone())));
+                    thread
+                };
+                if thread.id != id || thread.agent != agent.id || thread.deleted != 0 {
                     return Err(load_error("Conversation not found."));
                 }
                 Some(thread)
@@ -236,6 +264,9 @@ async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
 #[derive(Clone, Copy)]
 pub(crate) struct Navigation(pub RwSignal<String>);
 
+#[derive(Clone, Copy)]
+pub(crate) struct ProjectConversation(pub RwSignal<bool>);
+
 fn location() -> String {
     let url = window().location();
     format!(
@@ -280,9 +311,13 @@ pub(super) fn open(nav: Option<Navigation>, path: &str) {
 
 pub fn standalone() -> impl IntoView {
     let config = RwSignal::new(None);
+    let directory_cache = RwSignal::new(None);
+    let thread_cache = RwSignal::new(None::<(f64, Thread)>);
+    provide_context(thread_cache);
     let generation = RwSignal::new(0_u64);
     let error = RwSignal::new(String::new());
     let nav = use_context::<Navigation>().unwrap_or_else(|| Navigation(RwSignal::new(location())));
+    let project_conversation = use_context::<ProjectConversation>();
     let pop = window_event_listener(leptos::ev::popstate, move |_| nav.0.set(location()));
     let click = window_event_listener(leptos::ev::click, move |event| {
         if event.default_prevented()
@@ -331,7 +366,7 @@ pub fn standalone() -> impl IntoView {
         error.set(String::new());
         leptos::task::spawn_local(async move {
             let result = match route(path.split('?').next().unwrap_or_default()) {
-                Some(route) => load(route).await,
+                Some(route) => load(route, directory_cache, thread_cache).await,
                 None => Err(load_error("Conversation not found.")),
             };
             if generation.try_get_untracked() != Some(version) {
@@ -359,6 +394,14 @@ pub fn standalone() -> impl IntoView {
                         }
                     }
                     document().set_title(&format!("{} · Minarbot", value.name));
+                    if let Some(ProjectConversation(active)) = project_conversation {
+                        active.set(
+                            value
+                                .thread
+                                .as_ref()
+                                .is_some_and(|thread| thread.project.is_some()),
+                        );
+                    }
                     config.set(Some(value));
                 }
                 Err(reason) => error.set(reason.message),
@@ -370,7 +413,9 @@ pub fn standalone() -> impl IntoView {
         <p class="conversation-startup" role="status" hidden=move || config.with(Option::is_some) || !error.with(String::is_empty)>"Loading conversation…"</p>
         <div class="conversation-startup" hidden=move || error.with(String::is_empty)>
             <p class="message-error" role="alert">{error}</p>
-            <button type="button" class="k-btn k-btn--sm" on:click=move |_| revision.update(|n| *n += 1)>"Retry"</button>
+            <button type="button" class="k-btn k-btn--sm" on:click=move |_| {
+                directory_cache.set(None); thread_cache.set(None); revision.update(|n| *n += 1);
+            }>"Retry"</button>
             <a class="k-link" href="/">"Back to chats"</a>
         </div>
     }
@@ -417,6 +462,7 @@ pub fn chats(chat: Chat, edit_profile: NodeRef<leptos::html::Dialog>) -> impl In
     let pending = RwSignal::new(saved(&key.get_value()));
     let selected = StoredValue::new(current.clone());
     let nav = use_context::<Navigation>();
+    let thread_cache = use_context::<ThreadCache>();
     let dialog = NodeRef::<leptos::html::Dialog>::new();
     let editing = RwSignal::new(None::<(Thread, &'static str)>);
     let new_name = RwSignal::new(String::new());
@@ -480,6 +526,9 @@ pub fn chats(chat: Chat, edit_profile: NodeRef<leptos::html::Dialog>) -> impl In
             busy.set(false);
             match result {
                 Ok(thread) => {
+                    if let Some(cache) = thread_cache {
+                        cache.set(None);
+                    }
                     if remove(&key) {
                         pending.set(None);
                     }

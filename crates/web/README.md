@@ -78,6 +78,8 @@ Run `node --experimental-strip-types app/test-support/ui-smoke/conversation-cont
 after packaging Leptos, with `MINARBOT_RUST_BINARY` pointing at the built server.
 The smoke compares navigation, message history, and chat controls in both
 themes at desktop and narrow widths against the same disposable server.
+Run `MINARBOT_SMOKE_CONVERSATION_LEPTOS=1 node --experimental-strip-types app/test-support/ui-smoke/smoke.mjs`
+to run the existing minimap, room, streaming, and dispatch checks on Leptos.
 
 Install the UI smoke dependencies under `app/test-support/ui-smoke` and install the pinned Playwright Chromium. Run `node app/test-support/ui-smoke/appearance-smoke.mjs` with `MINARBOT_RUST_BINARY` pointing at the built server. It restarts a disposable loopback server on the same origin to verify both selectors, General API and keyboard parity, appearance persistence, and rollback.
 

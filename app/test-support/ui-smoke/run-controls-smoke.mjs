@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-export async function runControlsSmoke({ check, page, origin, visible, hidden, agentChat, model = 'smoke-primary', providerAccount = 'st1-stream', hold = 'UXA held stream', fail = 'UXA fail' }) {
+export async function runControlsSmoke({ check, page, origin, visible, hidden, agentChat, leptos = false, model = 'smoke-primary', providerAccount = 'st1-stream', hold = 'UXA held stream', fail = 'UXA fail' }) {
   const post = async (path, data) => {
     const response = await page.request.post(origin + path, { headers: { Origin: origin }, data });
     assert(response.ok(), await response.text()); return response.json();
@@ -16,7 +16,7 @@ export async function runControlsSmoke({ check, page, origin, visible, hidden, a
   const read = async () => page.request.get(origin + path).then(response => response.json());
   const open = async () => {
     await page.reload(); await page.getByRole('tab', { name: /^Agents/ }).click();
-    await page.getByRole('navigation', { name: 'Choose agent', exact: true }).getByRole('button', { name: new RegExp(`^${agent.name} `) }).click();
+    await page.getByRole('navigation', { name: 'Choose agent', exact: true }).getByRole(leptos ? 'link' : 'button', { name: new RegExp(`\\b${agent.name}\\b`) }).click();
   };
   await open();
   let box = page.getByRole('textbox', { name: `Message ${agent.name}`, exact: true });
@@ -36,8 +36,8 @@ export async function runControlsSmoke({ check, page, origin, visible, hidden, a
         const observer = new MutationObserver(() => {
           const row = [...document.querySelectorAll('main article')].find(row => row.querySelector('.human-bubble')?.textContent === text);
           if (row && /Working…/.test(row.textContent)) { window.__r3bLatency = performance.now() - start; observer.disconnect(); }
-        }); observer.observe(document.querySelector('main'), { subtree: true, childList: true, characterData: true });
-      }, { once: true });
+        }); observer.observe(element.closest('main'), { subtree: true, childList: true, characterData: true });
+      }, { once: true, capture: true });
     }, text);
     await box.press('Enter');
     await page.waitForFunction(() => window.__r3bLatency !== null);
@@ -89,8 +89,10 @@ export async function runControlsSmoke({ check, page, origin, visible, hidden, a
     await page.evaluate(path => {
       const original = window.fetch;
       window.fetch = async (...args) => {
-        if (String(args[0]) === path && args[1]?.method === 'POST') {
-          window.fetch = original; window.__uxaCancel = JSON.parse(args[1].body);
+        const [input, init] = args;
+        const request = input instanceof Request ? input : null;
+        if (new URL(request?.url ?? String(input), location.href).pathname === path && (request?.method ?? init?.method) === 'POST') {
+          window.fetch = original; window.__uxaCancel = request ? await request.clone().json() : JSON.parse(init.body);
           throw new TypeError('Synthetic Stop transport failure');
         }
         return original(...args);

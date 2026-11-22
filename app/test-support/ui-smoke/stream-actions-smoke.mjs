@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
-export async function streamActionsSmoke({ check, page, origin, screenshot, releaseStream, releaseRoom, releaseRoomDelivery, streamReply, agentChat, visible, hidden }) {
+export async function streamActionsSmoke({ check, page, origin, screenshot, releaseStream, releaseRoom, releaseRoomDelivery, streamReply, agentChat, visible, hidden, leptos = false }) {
   const post = async (path, data) => {
     const response = await page.request.post(origin + path, { headers: { Origin: origin }, data });
     assert(response.ok(), await response.text()); return response.json();
@@ -9,7 +9,7 @@ export async function streamActionsSmoke({ check, page, origin, screenshot, rele
   const create = async name => post('/api/agents', {runtime: 'api',  id: randomUUID(), name, instructions: 'Synthetic streaming fixture.', model: 'smoke-primary', backupModel: 'smoke-secondary', providerAccount: 'st1-stream' });
   const openAgent = async name => {
     await page.reload(); await page.getByRole('tab', { name: /^Agents/ }).click();
-    await page.getByRole('navigation', { name: 'Choose agent', exact: true }).getByRole('button', { name: new RegExp(`^${name} `) }).click();
+    await page.getByRole('navigation', { name: 'Choose agent', exact: true }).getByRole(leptos ? 'link' : 'button', { name: new RegExp(`\\b${name}\\b`) }).click();
   };
   const palettes = [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']];
   const capture = async label => {
@@ -116,7 +116,7 @@ export async function streamActionsSmoke({ check, page, origin, screenshot, rele
     const projectList = await page.request.get(origin + '/api/projects').then(res => res.json());
     const section = projectList.projects.find(item => item.id === project.id).sections[0];
     await page.reload(); await page.getByRole('tab', { name: /^Projects/ }).click();
-    await page.getByRole('button', { name: /^# general in ST1 Room/ }).click();
+    await page.getByRole(leptos ? 'link' : 'button', { name: /^# general in ST1 Room/ }).click();
     const box = page.getByRole('textbox', { name: 'Message #general', exact: true });
     await box.fill('ST1 room stream'); await box.press('Enter');
     const roomTurn = page.locator('.turn-block').filter({ has: page.getByText('ST1 room stream', { exact: true }) });
@@ -180,7 +180,7 @@ export async function streamActionsSmoke({ check, page, origin, screenshot, rele
     const pending = beforeReload.find(turn => turn.text === 'HRA ordered room');
     const getPartial = rows => rows.filter(turn => turn.room?.root === pending.id).map(turn => turn.partial);
     await page.reload(); await page.getByRole('tab', { name: /^Projects/ }).click();
-    await page.getByRole('button', { name: /^# general in ST1 Room/ }).click();
+    await page.getByRole(leptos ? 'link' : 'button', { name: /^# general in ST1 Room/ }).click();
     await visible(delivery.getByText('Answer from ST1 Stream: growing', { exact: true }));
     assert.deepEqual(getPartial(await page.request.get(origin + path).then(res => res.json())), getPartial(beforeReload));
     releaseRoomDelivery();

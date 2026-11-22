@@ -18,8 +18,8 @@ use serde_json::Value;
 use wasm_bindgen::{closure::Closure, prelude::wasm_bindgen, JsCast};
 use web_sys::{EventSource, MessageEvent, Storage};
 
-pub(crate) use routes::Navigation;
 pub use routes::{standalone, Agent, Thread};
+pub(crate) use routes::{Navigation, ProjectConversation};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct Icons {
@@ -67,12 +67,13 @@ pub struct ConversationConfig {
     pub room: Option<routes::Channel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, serde::Serialize)]
 struct Segment {
     seq: u64,
     id: String,
     kind: String,
     text: String,
+    state: Option<String>,
     #[serde(rename = "final")]
     finished: u8,
 }
@@ -359,6 +360,7 @@ struct Chat {
     move_focus: RwSignal<bool>,
     tab: RwSignal<&'static str>,
     details: RwSignal<bool>,
+    profile: NodeRef<leptos::html::Dialog>,
     run: RwSignal<String>,
     new_thread: RwSignal<bool>,
 }
@@ -416,6 +418,7 @@ impl Chat {
             move_focus: RwSignal::new(!focus.is_empty()),
             tab: RwSignal::new("chats"),
             details: RwSignal::new(restore_details()),
+            profile: NodeRef::new(),
             run: RwSignal::new(String::new()),
             new_thread: RwSignal::new(false),
             config: StoredValue::new(config),
@@ -961,6 +964,12 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = markdownBlocks)]
     fn markdown_blocks(text: &str) -> js_sys::Array;
+
+    #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = bindTurnTabStops)]
+    fn bind_turn_tab_stops(transcript: &web_sys::HtmlElement) -> js_sys::Function;
+
+    #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = postKeepalive)]
+    fn post_keepalive(path: &str, body: &str);
 }
 
 fn body(text: String, base: String) -> impl IntoView {
@@ -1134,6 +1143,9 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
     let inspect_icon = StoredValue::new(icons.inspect.clone());
     let inspect = Callback::new(inspect);
     let answer = Memo::new(move |_| {
+        if room_root() {
+            return String::new();
+        }
         row.with(|turn| {
             turn.reply
                 .clone()
@@ -1156,6 +1168,9 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
         })
     });
     let activity = Memo::new(move |_| {
+        if room_root() {
+            return Vec::new();
+        }
         row.with(|turn| {
             let mut steps = turn
                 .activity
@@ -1197,6 +1212,12 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
             if let Some(model) = &turn.activity.fallback_model {
                 steps.push((false, format!("Fallback model used: {model}")));
             }
+            steps.extend(turn.coordination.iter().map(|action| {
+                let owner = action["owner_name"].as_str().unwrap_or("Agent");
+                let target = action["target_name"].as_str().unwrap_or("Agent");
+                let verb = if action["kind"] == "delegate_task" { "delegated to" } else { "transferred to" };
+                (false, format!("{owner} {verb} {target}"))
+            }));
             for tool in turn.activity.tools.iter().chain(&turn.activity.harness) {
                 let name = tool["name"].as_str().unwrap_or_default();
                 if name.is_empty()
@@ -1237,7 +1258,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                         .is_some_and(|target| target.closest("input,textarea,select,[contenteditable=true],[role=menu],[role=dialog],[role=listbox],dialog").ok().flatten().is_some())
                 { return; }
                 let Some(article) = event.current_target().and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok()) else { return; };
-                let Ok(actions) = article.query_selector_all("button:not(:disabled),a[href],input:not(:disabled),textarea:not(:disabled),select:not(:disabled)") else { return; };
+                let Ok(actions) = article.query_selector_all("button:not(:disabled),a[href],input:not(:disabled),textarea:not(:disabled),select:not(:disabled),[contenteditable=true],summary") else { return; };
                 let actions = (0..actions.length()).filter_map(|index| actions.item(index))
                     .filter_map(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
                     .filter(|node| node.get_bounding_client_rect().width() > 0.0 && window().get_computed_style(node).ok().flatten().is_none_or(|style| style.get_property_value("visibility").ok().as_deref() != Some("hidden")))
@@ -1300,7 +1321,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                             } else {
                                 view! {
                                     <details class="turn-activity__details">
-                                        <summary class="turn-activity__header">
+                                        <summary class="turn-activity__header" role="button">
                                             <span class="k-collapsible__trigger">
                                             <span class="activity-label">
                                                 <span class="activity-working" aria-hidden="true" hidden=move || !working()></span>
@@ -1342,7 +1363,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                             </div>
                         </div>
                         {move || row.with(|turn| {
-                            if let Some(error) = turn.error.clone() {
+                            if let Some(error) = turn.error.clone().filter(|_| turn.status != "cancelled") {
                                 view! { <p class="message-error"><span class="appearance-icon" inner_html=icons.alert.clone()></span>{error}</p> }.into_any()
                             } else {
                                 let text = turn.approval_subject().filter(|subject| *subject != "form").map(|subject| format!("Review the {subject} to continue."))
@@ -1380,7 +1401,6 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                     {history::coordination(chat, row)}
                     {history::guidance(chat, row)}
                     {controls::turn_controls(chat, row, false)}
-                    {queue::editor(chat, row)}
                 </div>
             </div>
         </article>
@@ -1578,6 +1598,17 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
     let timeline = NodeRef::<leptos::html::Section>::new();
     let content = NodeRef::<leptos::html::Div>::new();
     let follow = RwSignal::new(true);
+    Effect::new(move |_| {
+        let Some(timeline) = timeline.get() else {
+            return;
+        };
+        let stop = StoredValue::new_local(bind_turn_tab_stops(&timeline));
+        on_cleanup(move || {
+            stop.with_value(|close| {
+                let _ = close.call0(&wasm_bindgen::JsValue::NULL);
+            });
+        });
+    });
     rooms::read(chat, follow);
     let last_scroll = RwSignal::new(0);
     let scroll_to_bottom = move |node: &web_sys::HtmlElement| {
@@ -1653,6 +1684,10 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         });
     });
     let label = format!("Conversation {}", config.name);
+    let empty_name = config
+        .agent
+        .as_ref()
+        .map_or_else(|| config.name.clone(), |agent| agent.name.clone());
     let to_latest = move || {
         if !chat.focus.with_untracked(String::is_empty)
             || !chat.history.with_untracked(Vec::is_empty)
@@ -1708,8 +1743,8 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                         </p>
                         <div class="empty-chat" hidden=move || chat.before().is_some() || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty())) || chat.config.with_value(|config| config.thread.as_ref().is_some_and(|thread| thread.fork.is_some()))>
                             {avatar(config.agent.clone(), &config.name, config.channel, 64)}
-                            <div class="empty-chat__title">{config.name.clone()}</div>
-                            {config.agent.as_ref().and_then(|agent| agent.role.clone()).map(|role| view! { <div class="empty-chat__sub">{role}</div> })}
+                            <div class="empty-chat__title">{empty_name}</div>
+                            {config.agent.as_ref().and_then(|agent| agent.role.clone()).filter(|role| !role.is_empty()).map(|role| view! { <div class="empty-chat__sub">{role}</div> })}
                         </div>
                         <For each=move || visible.get() key=|id| id.clone()
                             children=move |id| {

@@ -199,11 +199,18 @@ pub(super) fn search_all(chat: Chat, dialog: NodeRef<leptos::html::Dialog>) -> i
 }
 
 pub(super) fn merge(previous: Vec<Turn>, latest: Vec<Turn>) -> Vec<Turn> {
-    let mut combined = std::collections::BTreeMap::new();
-    for turn in previous.into_iter().chain(latest) {
-        combined.insert(turn.seq, turn);
-    }
-    combined.into_values().collect()
+    let combined = previous
+        .into_iter()
+        .chain(latest)
+        .map(|turn| (turn.id.clone(), turn))
+        .collect::<HashMap<_, _>>();
+    let mut turns = combined.into_values().collect::<Vec<_>>();
+    turns.sort_unstable_by(|left, right| {
+        left.seq
+            .cmp(&right.seq)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    turns
 }
 
 pub(super) async fn all_turns(
@@ -350,9 +357,13 @@ pub(super) fn begin_find(chat: Chat) {
 
 pub(super) fn coordination(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let actions = Memo::new(move |_| row.with(|turn| turn.coordination.clone()));
+    let chevron = use_context::<Icons>().unwrap_or_default().chevron;
     view! {
         <details class="k-collapsible conversation-disclosure" hidden=move || actions.with(Vec::is_empty)>
-            <summary class="k-collapsible__trigger">{move || format!("Task coordination ({})", actions.with(Vec::len))}</summary>
+            <summary class="k-collapsible__trigger" role="button">
+                <span class="k-collapsible__title">{move || format!("Task coordination ({})", actions.with(Vec::len))}</span>
+                <span class="appearance-icon k-collapsible__chev" inner_html=chevron></span>
+            </summary>
             {move || actions.get().into_iter().map(|action| {
                 let owner = action["owner_name"].as_str().unwrap_or("Agent");
                 let target = action["target_name"].as_str().unwrap_or("Agent");

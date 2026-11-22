@@ -3,6 +3,7 @@ import { matchOffsets } from './transcript';
 export function messageRanges(root: HTMLElement, query: string) {
   const ranges: Range[] = [];
   for (const message of root.querySelectorAll('.human-bubble, .message-body .markdown, .routine-report__body .markdown')) {
+    if (message.closest('[hidden]')) continue;
     const nodes: { node: Node; start: number; end: number }[] = [];
     let text = '';
     function visit(node: Node) {

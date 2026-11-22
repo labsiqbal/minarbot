@@ -20,6 +20,9 @@ mod pairing;
 mod projects;
 mod providers;
 mod routes;
+#[cfg(any(feature = "conversation", feature = "workflows"))]
+#[path = "automation/select.rs"]
+mod select;
 mod settings;
 mod settings_recovery;
 mod shell;
@@ -159,6 +162,7 @@ pub fn mount_conversation() -> Result<(), JsValue> {
         colors: Vec<appearance::ColorTheme>,
         workspace_icons: shell::Icons,
         conversation_icons: conversation::Icons,
+        connection_icons: connection_ui::Icons,
     }
     let config = document
         .get_element_by_id("appearance-config")
@@ -169,8 +173,10 @@ pub fn mount_conversation() -> Result<(), JsValue> {
     mount_to(root, move || {
         let colors = StoredValue::new(config.colors);
         provide_context(config.conversation_icons);
+        provide_context(config.connection_icons);
         let search = window().location().search().unwrap_or_default();
         provide_context(conversation::Navigation(RwSignal::new(format!("{path}{search}"))));
+        provide_context(conversation::ProjectConversation(RwSignal::new(false)));
         view! {
             <shell::WorkspaceShell base_path=path colors=colors icons=config.workspace_icons conversation_navigation=true>
                 {conversation::standalone()}

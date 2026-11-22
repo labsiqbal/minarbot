@@ -70,6 +70,7 @@ const appearanceConfig: Plugin = {
       },
       conversation: {
         ...shell,
+        connectionIcons: iconMap({ ...connectionIcons, check: Check }),
         conversationIcons: {
           attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
           chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),

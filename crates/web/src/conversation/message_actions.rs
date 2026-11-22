@@ -16,7 +16,7 @@ pub(super) fn events(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
                 };
                 let deadline = history::date(event["deadline"].as_f64().unwrap_or_default());
                 Some(view! { <section class="k-stack">
-                    <div class="k-row"><span class="k-row__text"><span class="k-row__title">{format!("Event {name}: {status}")}</span><span class="k-row__meta">{deadline}</span></span></div>
+                    <div class="k-row"><div class="k-row__main"><span class="k-row__text"><span class="k-row__title">{format!("Event {name}: {status}")}</span><span class="k-row__meta">{deadline}</span></span></div></div>
                     {(status == "Waiting" && !archived).then(|| event_connection(id))}
                 </section> })
             }).collect_view()}
@@ -38,7 +38,7 @@ fn event_connection(id: String) -> impl IntoView {
     let error = RwSignal::new(String::new());
     let path = format!("/api/turn-waits/{id}");
     view! {
-        <section class="k-stack bs-root">
+        <section class="k-stack bs-root event-connection">
             <h3 class="k-section__title">"Waiting for event"</h3>
             <p class="k-field__hint">"The event applies only to this request. Local URLs require Minarbot to keep running."</p>
             <p class="k-field__error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
@@ -64,7 +64,10 @@ fn event_connection(id: String) -> impl IntoView {
                 <p class="k-field__hint">{format!("Event name: {}. Deadline: {}.", value.event, history::date(value.deadline))}</p>
                 <label class="k-field"><span class="k-field__label">"Event URL"</span><input class="k-input" readonly prop:value=value.url /></label>
                 <label class="k-field"><span class="k-field__label">"Signing secret"</span><input class="k-input" readonly autocomplete="off" spellcheck="false" prop:value=value.secret /></label>
-                <p class="k-alert k-alert--warn" role="status">"The secret grants permission to resume this step. Store it only in trusted integrations; do not enter it in conversations."</p>
+                <div class="k-alert is-warn" role="status">
+                    <crate::connection_ui::Icon name="warn" />
+                    <div class="k-alert__body"><div class="k-alert__text">"The secret grants permission to resume this step. Store it only in trusted integrations; do not enter it in conversations."</div></div>
+                </div>
                 <p class="k-field__hint">"Send JSON with event, optional eventTime, and payload. The X-Minarbot-Time header contains Unix time in seconds, X-Minarbot-Id contains a unique delivery ID, and X-Minarbot-Signature contains the hexadecimal HMAC-SHA256 of the time, newline, ID, newline, then the exact JSON bytes. Use the secret as UTF-8 text."</p>
             })}
         </section>
@@ -127,7 +130,7 @@ pub(super) fn checkpoint(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let busy = RwSignal::new(false);
     let dialog = NodeRef::<leptos::html::Dialog>::new();
     let clear = NodeRef::<leptos::html::Dialog>::new();
-    let icon = use_context::<Icons>().unwrap_or_default().restore;
+    let icons = use_context::<Icons>().unwrap_or_default();
     let show = move || {
         controls::dialog_open(dialog);
         if busy.get_untracked()
@@ -206,13 +209,15 @@ pub(super) fn checkpoint(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
         <div class="bs-root checkpoint-action">
             <button type="button" class="k-icon-btn" aria-label="Restore to before this turn" title="Restore to before this turn"
                 hidden=move || !pending.with(Option::is_some) && !invalid.get() && !row.with(|row| !row.active() && row.checkpoint.as_ref().is_some_and(|point| point["restorable"] == true))
-                on:click=move |_| show()><span class="appearance-icon" inner_html=icon></span></button>
+                on:click=move |_| show()><span class="appearance-icon" inner_html=icons.restore></span></button>
             <p role="status" class="source-control__hint" hidden=move || notice.get().is_empty()>{notice}</p>
-            <dialog class="k-dialog k-dialog--md workspace-dialog" node_ref=dialog aria-label="Restore to before this turn?"
+            <dialog class="k-dialog k-dialog--md workspace-dialog bs-root chat-control-dialog" node_ref=dialog aria-label="Restore to before this turn?"
                 on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
-                <div class="k-dialog__head"><h2 class="k-dialog__title">"Restore to before this turn?"</h2></div>
-                <div class="k-dialog__body k-stack">
-                    <p class="k-field__hint">"Restore the listed workspace files. Current files are checkpointed first. HEAD and the Git index stay unchanged."</p>
+                <div class="k-dialog__head"><div><h2 class="k-dialog__title">"Restore to before this turn?"</h2>
+                    <p class="k-dialog__desc">"Restore the listed workspace files. Current files are checkpointed first. HEAD and the Git index stay unchanged."</p></div>
+                    <form method="dialog"><button type="submit" class="k-icon-btn" aria-label="Close" disabled=busy><span class="appearance-icon" inner_html=icons.close></span></button></form>
+                </div>
+                <div class="k-dialog__body">
                     <p role="alert" class="k-field__error" hidden=move || error.with(String::is_empty)>{error}</p>
                     <p role="alert" class="k-field__error" hidden=move || !invalid.get()>"Saved restoration request could not be read. Inspect workspace files before clearing it."</p>
                     <p role="status" class="k-alert k-alert--warn" hidden=move || pending.with(Option::is_none)>"Restoration was requested. Check its saved result before another write."</p>
@@ -226,9 +231,9 @@ pub(super) fn checkpoint(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
                     })}
                 </div>
                 <div class="k-dialog__foot k-row-actions">
-                    <button type="button" class="k-btn k-btn--secondary" hidden=move || !invalid.get() && pending.with(Option::is_none) disabled=busy on:click=move |_| controls::dialog_open(clear)>"Clear request"</button>
-                    <form method="dialog"><button type="submit" class="k-btn k-btn--secondary" disabled=busy>"Cancel"</button></form>
-                    <button type="button" class="k-btn k-btn--danger"
+                    <button type="button" class="k-btn k-btn--md k-btn--secondary" hidden=move || !invalid.get() && pending.with(Option::is_none) disabled=busy on:click=move |_| controls::dialog_open(clear)>"Clear request"</button>
+                    <form method="dialog"><button type="submit" class="k-btn k-btn--md k-btn--secondary" disabled=busy>"Cancel"</button></form>
+                    <button type="button" class="k-btn k-btn--md k-btn--danger"
                         disabled=move || busy.get() || invalid.get() || pending.with(Option::is_none) && preview.with(|value| value.as_ref().is_none_or(|preview| preview.files.is_empty()))
                         on:click=move |_| restore()>{move || if pending.with(Option::is_some) { "Check restoration result" } else { "Restore files" }}</button>
                 </div>

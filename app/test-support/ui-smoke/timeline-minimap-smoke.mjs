@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export async function timelineMinimapSmoke({ check, page, origin, root, agentChat }) {
+export async function timelineMinimapSmoke({ check, page, origin, root, agentChat, leptos = false }) {
   const post = async (path, data) => {
     const response = await page.request.post(origin + path, { headers: { Origin: origin }, data });
     assert(response.ok(), await response.text()); return response.json();
@@ -13,7 +13,7 @@ export async function timelineMinimapSmoke({ check, page, origin, root, agentCha
   const directPath = `/api/agents/${agent.id}/turns`, roomPath = `/api/channels/${project.sections[0].id}/turns`;
   const makeTurns = count => Array.from({ length: count }, (_, index) => ({ id: randomUUID(), seq: index + 101, text: `Minimap question ${index + 1}`, reply: `**Answer ${index + 1}** with [reference](https://example.test/hidden-target).\n\n${'Synthetic transcript content. '.repeat(14)}`, agent: agent.id, status: 'done', error: null, paused: 0, revision: 1, no_update: 0, created: '2026-11-15T00:00:00Z' }));
   let turns = makeTurns(1);
-  const older = makeTurns(6);
+  const older = makeTurns(6).map((turn, index) => ({ ...turn, seq: index + 1 }));
   const route = async route => {
     const url = new URL(route.request().url());
     if (route.request().method() !== 'GET' || ![directPath, roomPath].includes(url.pathname)) return route.continue();
@@ -25,7 +25,7 @@ export async function timelineMinimapSmoke({ check, page, origin, root, agentCha
   const open = async room => {
     await page.reload();
     await page.getByRole('tab', { name: room ? /^Projects/ : /^Agents/ }).click();
-    await page.getByRole('button', { name: room ? /^# general in MM1 Room/ : /^MM1 Minimap / }).click();
+    await page.getByRole(leptos ? 'link' : 'button', { name: room ? /^# general in MM1 Room/ : /\bMM1 Minimap\b/ }).click();
     await page.locator('.turn-block').first().waitFor();
     const hide = page.getByRole('button', { name: 'Close details', exact: true });
     if (await hide.isVisible()) await hide.click();
@@ -116,7 +116,7 @@ export async function timelineMinimapSmoke({ check, page, origin, root, agentCha
       assert.equal(await page.locator('.timeline-minimap__rail').evaluate(el => getComputedStyle(el).pointerEvents), 'none', 'Text selection must pass through rail');
       await page.evaluate(() => window.dispatchEvent(new MouseEvent('mouseup', { buttons: 0 })));
       const top = await page.locator('.transcript').evaluate(el => el.scrollTop);
-      turns = turns.map((turn, index) => index === 11 ? { ...turn, reply: null, status: 'running', partial: { text: 'Growing preview text', status: 'pending', seq: 1 } } : turn);
+      turns = turns.map((turn, index) => index === 11 ? { ...turn, reply: null, status: 'running', partial: { model: 'smoke-primary', text: 'Growing preview text', status: 'pending', seq: 1 } } : turn);
       await page.getByLabel('Streaming answer', { exact: true }).waitFor({ state: 'attached' });
       assert.equal(await page.locator('.transcript').evaluate(el => el.scrollTop), top);
       const position = await point(11); await page.mouse.move(position.x, position.y);

@@ -314,6 +314,8 @@ pub(crate) fn WorkspaceShell(
     #[cfg(feature = "conversation")]
     let conversation = use_context::<crate::conversation::Navigation>();
     #[cfg(feature = "conversation")]
+    let project_conversation = use_context::<crate::conversation::ProjectConversation>();
+    #[cfg(feature = "conversation")]
     if let Some(navigation) = conversation {
         Effect::new(move |previous: Option<String>| {
             let path = navigation.0.get();
@@ -450,7 +452,13 @@ pub(crate) fn WorkspaceShell(
         let summaries = summaries.get();
         let items = directory.agents.into_iter().chain(directory.guide).filter_map(|agent| {
             let path = format!("/agents/{}", agent.id);
-            let current = { let base = route_path(); base == path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/')) };
+            let current = {
+                let base = route_path();
+                let local = base == path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/'));
+                #[cfg(feature = "conversation")]
+                let local = local && !project_conversation.is_some_and(|active| active.0.get());
+                local
+            };
             let summary = summaries.iter().find(|row| row.agent == agent.id);
             let detail = summary.filter(|row| !row.preview.is_empty()).map(|row| plain_preview(&row.preview)).unwrap_or_else(|| agent.role.clone());
             if agent.hidden && !current || !format!("{} {}", agent.name, detail).to_lowercase().contains(&query) {
@@ -533,7 +541,7 @@ pub(crate) fn WorkspaceShell(
                         let path = format!("/rooms/{}", section.id);
                         let current = route_path() == path;
                         let href = path;
-                        view! { <div class="project-navigation__section"><a class="project-navigation__room" href=href aria-current=current.then_some("page")
+                        view! { <div class="project-navigation__section" class:is-selected=current><a class="project-navigation__room" class:is-selected=current href=href aria-current=current.then_some("page")
                             aria-label=format!("# {} in {}", section.name, project.name)><span class="appearance-icon" inner_html=section_icon.get_value()></span><span>{section.name.clone()}</span></a></div> }
                     }).collect_view();
                     if !name_matches && sections.is_empty() { return None; }
