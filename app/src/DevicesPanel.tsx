@@ -54,7 +54,8 @@ export function DevicesPanel({ request }: { request: Request }) {
   function issue() {
     void update(async () => {
       const started = Date.now();
-      const value = await request<PairingCode>(path + '/code', {});
+      const origin = new URLSearchParams(window.location.search).get('pairingOrigin');
+      const value = await request<PairingCode>(path + '/code', origin ? { origin } : {});
       setCode({ ...value, expiresAt: started + 120_000 });
     });
   }
