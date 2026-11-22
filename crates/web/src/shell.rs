@@ -1,6 +1,16 @@
 use crate::{api, appearance, settings};
 use leptos::prelude::*;
 use serde::Deserialize;
+use wasm_bindgen::JsCast;
+
+mod attention;
+mod switcher;
+
+fn start_conversation() {
+    if let Ok(event) = web_sys::Event::new("minarbot:new-conversation") {
+        let _ = window().dispatch_event(&event);
+    }
+}
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct Directory {
@@ -26,6 +36,8 @@ pub(crate) struct Agent {
     pub revision: u64,
     #[serde(default)]
     pub avatar_revision: u64,
+    #[serde(default)]
+    visibility_revision: u64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -35,6 +47,8 @@ struct Project {
     description: String,
     archived: bool,
     sections: Vec<ProjectSection>,
+    #[serde(default)]
+    threads: Vec<switcher::Thread>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -44,7 +58,7 @@ struct ProjectSection {
     archived: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Projects {
     projects: Vec<Project>,
 }
@@ -67,12 +81,12 @@ struct Summaries {
     summaries: Vec<Summary>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Machines {
     machines: Vec<Machine>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Machine {
     id: String,
     name: String,
@@ -92,6 +106,12 @@ pub(crate) struct Icons {
     search: String,
     book: String,
     quick_search: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    close: String,
+    #[serde(default)]
+    settings_choices: Vec<switcher::Setting>,
     pub info: String,
     pub voice: String,
     pub monitor: String,
@@ -104,6 +124,10 @@ pub(crate) struct Icons {
     pub hash: String,
     pub chevron: String,
 }
+
+#[cfg(feature = "conversation")]
+#[derive(Clone, Copy)]
+pub(crate) struct DirectoryRefresh(pub Callback<()>);
 
 const COLLAPSED: &str = "minarbot:sidebar-collapsed";
 const TAB: &str = "minarbot:sidebar-tab";
@@ -234,12 +258,19 @@ pub(crate) fn WorkspaceShell(
         projects_tab.set(projects);
         save_preference(TAB, if projects { "projects" } else { "agents" });
     };
-    let retry = move || {
-        directory.set(None);
-        projects.set(None);
+    let refresh_directory = move || {
         leptos::task::spawn_local(async move {
             directory.try_set(Some(api::read("/api/agents").await));
         });
+    };
+    #[cfg(feature = "conversation")]
+    provide_context(DirectoryRefresh(Callback::new(move |()| {
+        refresh_directory()
+    })));
+    let retry = move || {
+        directory.set(None);
+        projects.set(None);
+        refresh_directory();
         leptos::task::spawn_local(async move {
             projects.try_set(Some(api::read("/api/projects").await));
         });
@@ -267,15 +298,9 @@ pub(crate) fn WorkspaceShell(
     let viewport = RwSignal::new(narrow());
     let resize = window_event_listener(leptos::ev::resize, move |_| viewport.set(narrow()));
     on_cleanup(move || resize.remove());
-    let switcher = NodeRef::<leptos::html::Dialog>::new();
+    let switcher = RwSignal::new(false);
     let help = NodeRef::<leptos::html::Dialog>::new();
-    let query = RwSignal::new(String::new());
-    let show_switcher = move || {
-        query.set(String::new());
-        if let Some(dialog) = switcher.get_untracked() {
-            let _ = dialog.show_modal();
-        }
-    };
+    let pending = attention::subscribe();
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
         let key = event.key();
         if key == "Escape"
@@ -303,7 +328,14 @@ pub(crate) fn WorkspaceShell(
             "b" => toggle_sidebar(),
             "1" => choose_tab(false),
             "2" => choose_tab(true),
-            "k" => show_switcher(),
+            "k" => switcher.set(true),
+            "," if !event.shift_key() => {
+                if let Ok(Some(link)) = document().query_selector(".sidebar-settings") {
+                    if let Ok(link) = link.dyn_into::<web_sys::HtmlElement>() {
+                        link.click();
+                    }
+                }
+            }
             _ => return,
         }
         event.prevent_default();
@@ -339,14 +371,15 @@ pub(crate) fn WorkspaceShell(
             .map(|nav| nav.0.get())
             .unwrap_or_else(|| base_path.get_value())
     };
-    let settings_link = move |section| {
+    let current_url = move || {
         let mut path = route_path();
         let location = window().location();
         if location.pathname().ok().as_deref() == Some(path.as_str()) {
             path.push_str(&location.search().unwrap_or_default());
         }
-        settings::section_url(section, &path)
+        path
     };
+    let settings_link = move |section| settings::section_url(section, &current_url());
     let automation_link = move |path: &'static str, label: &'static str, icon: String| {
         view! {
             <button type="button" class="k-icon-btn" aria-label=label title=label aria-current=move || (route_path() == path).then_some("page")
@@ -386,56 +419,6 @@ pub(crate) fn WorkspaceShell(
         });
     }
     let panel_icon = icons.panel.clone();
-    let switch_matches = Memo::new(move |_| {
-        let query = query.get().to_lowercase();
-        let mut rows = Vec::new();
-        directory.with(|state| {
-            if let Some(Ok(data)) = state {
-                rows.extend(
-                    data.agents
-                        .iter()
-                        .chain(&data.guide)
-                        .filter(|agent| !agent.hidden)
-                        .map(|agent| {
-                            (
-                                agent.name.clone(),
-                                "Agents",
-                                format!("/agents/{}", agent.id),
-                            )
-                        }),
-                );
-            }
-        });
-        projects.with(|state| {
-            if let Some(Ok(data)) = state {
-                for project in data.projects.iter().filter(|project| !project.archived) {
-                    rows.push((
-                        project.name.clone(),
-                        "Projects",
-                        format!("/projects/{}", project.id),
-                    ));
-                    rows.extend(
-                        project
-                            .sections
-                            .iter()
-                            .filter(|section| !section.archived)
-                            .map(|section| {
-                                (
-                                    section.name.clone(),
-                                    "Sections",
-                                    format!("/rooms/{}", section.id),
-                                )
-                            }),
-                    );
-                }
-            }
-        });
-        rows.retain(|(label, group, _)| {
-            let haystack = format!("{label} {group}").to_lowercase();
-            query.split_whitespace().all(|term| haystack.contains(term))
-        });
-        rows
-    });
     let hidden = move || {
         let _ = viewport.get();
         is_collapsed()
@@ -450,6 +433,7 @@ pub(crate) fn WorkspaceShell(
         };
         let query = agent_search.get().trim().to_lowercase();
         let summaries = summaries.get();
+        let pending = pending.get();
         let items = directory.agents.into_iter().chain(directory.guide).filter_map(|agent| {
             let path = format!("/agents/{}", agent.id);
             let current = {
@@ -464,25 +448,36 @@ pub(crate) fn WorkspaceShell(
             if agent.hidden && !current || !format!("{} {}", agent.name, detail).to_lowercase().contains(&query) {
                 return None;
             }
-            if attention.get() && summary.is_none_or(|row| row.needs_you == 0) {
-                return None;
-            }
-            let active = summary.map_or(0, |row| row.needs_you);
+            let mut destinations = std::collections::HashSet::new();
+            let inputs = pending.iter().flatten().filter(|input| input.agent == agent.id).collect::<Vec<_>>();
+            let first = inputs.first().map(|input| (*input).clone());
+            let active = pending.as_ref().map_or_else(|| summary.map_or(0, |row| row.needs_you as usize),
+                |_| inputs.iter().filter(|input| destinations.insert(input.conversation())).count());
+            if attention.get() && active == 0 { return None; }
             let working = summary.is_some_and(|row| row.status == "running");
             let status = if active > 0 { "Needs you" } else if working { "Working" } else { "Idle" };
             let dot = if active > 0 { "is-attention" } else if working { "is-working" } else { "is-idle" };
             let time = summary.filter(|_| active == 0).and_then(|row| row.time.as_deref());
             let avatar = (agent.avatar_revision > 0).then(|| format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision));
             let initial = agent.name.chars().next().map(|initial| initial.to_uppercase().to_string());
+            let href = first.as_ref().map_or_else(|| path, attention::Notice::href);
+            let badge = if active == 1 { "Needs you".into() } else { format!("Needs you in {active} conversations") };
             Some(view! {
-                <a class="bot-row" class:is-selected=current href=path aria-current=current.then_some("page")>
+                <a class="bot-row" class:is-selected=current href=href aria-current=current.then_some("page") on:click=move |event| {
+                    if let Some(input) = &first {
+                        if event.button() == 0 && !event.ctrl_key() && !event.meta_key() && !event.shift_key() && !event.alt_key() {
+                            event.prevent_default();
+                            input.open();
+                        }
+                    }
+                }>
                     <span class="bot-row__avatar" aria-hidden="true"><span class="avatar bs-avatar">
                         {if let Some(src) = avatar { view! { <img src=src alt="" /> }.into_any() } else { initial.into_any() }}
                     </span><span class=format!("status-dot {dot}")></span></span>
                     <span class="sr-only">{status}</span>
                     <span class="bot-row__text"><span class="bot-row__name">{agent.name}</span><span class="bot-row__preview">{detail}</span></span>
                     {time.map(|time| view! { <time class="bot-row__time" datetime=time.to_owned()>{relative_time(time)}</time> })}
-                    {(active > 0).then(|| view! { <span class="needs-you-badge"><span class="k-badge is-warn" aria-label=format!("{active} need you")>{active}</span></span> })}
+                    {(active > 0).then(|| view! { <span class="needs-you-badge"><span class="k-badge is-warn" title=badge.clone()><span aria-hidden="true">{active}</span><span class="sr-only">{badge.clone()}</span></span></span> })}
                 </a>
             })
         }).collect_view();
@@ -646,8 +641,10 @@ pub(crate) fn WorkspaceShell(
     };
     let monitor = icons.monitor.clone();
     let create_menu = NodeRef::<leptos::html::Details>::new();
-    let conversation_creation =
-        move || conversation_navigation && route_path().starts_with("/agents/");
+    let conversation_creation = Signal::derive(move || {
+        conversation_navigation && route_path().strip_prefix("/agents/").and_then(|path| path.split('/').next())
+            .is_some_and(|id| directory.with(|result| matches!(result, Some(Ok(data)) if data.agents.iter().any(|agent| agent.id == id && !agent.hidden))))
+    });
     let plus = icons.plus.clone();
     let tabs = [("Agents", "agents", false), ("Projects", "projects", true)]
         .into_iter()
@@ -665,6 +662,8 @@ pub(crate) fn WorkspaceShell(
             }
         })
         .collect_view();
+    let switcher_icons = icons.clone();
+    let (update_capsule, update_dialog) = crate::system::updates::workspace();
     view! {
         <div class="app bs-root leptos-workspace" class:is-sidebar-collapsed=hidden>
             <button type="button" class="sidebar-reveal k-icon-btn icon-btn--bordered" hidden=move || !hidden()
@@ -683,11 +682,9 @@ pub(crate) fn WorkspaceShell(
                         <details class="sidebar-create" node_ref=create_menu>
                             <summary class="k-icon-btn" aria-label="Create new" title="Create new"><span class="appearance-icon" inner_html=plus></span></summary>
                             <div class="k-pop k-menu">
-                                <button type="button" class="k-menu__item" hidden=move || !conversation_creation() on:click=move |_| {
+                                <button type="button" class="k-menu__item" hidden=move || !conversation_creation.get() on:click=move |_| {
                                     if let Some(menu) = create_menu.get_untracked() { menu.set_open(false); }
-                                    if let Ok(event) = web_sys::Event::new("minarbot:new-conversation") {
-                                        let _ = window().dispatch_event(&event);
-                                    }
+                                    start_conversation();
                                 }>"New conversation"</button>
                                 <a class="k-menu__item" href=move || settings_link("/settings/machines")>"Add a machine"</a>
                             </div>
@@ -736,11 +733,12 @@ pub(crate) fn WorkspaceShell(
                         </div>
                     </div>
                 </div></div>
+                {update_capsule}
                 <div class="sidebar__footer">
                     <div class="sidebar__fade" aria-hidden="true"></div>
                     <a class="provider-status" aria-label=provider_status title=provider_status href=move || settings_link("/settings/providers")><i class:is-on=provider_ready aria-hidden="true"></i></a>
                     <button type="button" class="k-icon-btn" aria-label="Quick switcher (Ctrl/Cmd+K)" title="Quick switcher (Ctrl/Cmd+K)"
-                        aria-keyshortcuts="Control+k Meta+k" on:click=move |_| show_switcher()>
+                        aria-keyshortcuts="Control+k Meta+k" on:click=move |_| switcher.set(true)>
                         <span class="appearance-icon" inner_html=icons.quick_search.clone()></span>
                     </button>
                     <button type="button" class="k-icon-btn" aria-label="Help" title="Help" on:click=move |_| {
@@ -749,45 +747,28 @@ pub(crate) fn WorkspaceShell(
                     <a class="k-icon-btn sidebar-settings" node_ref=settings_focus aria-label="Settings" title="Settings" href=move || settings_link("/settings/general")><span class="appearance-icon" inner_html=icons.settings></span></a>
                 </div>
             </aside>
-            <dialog class="k-dialog k-dialog--md workspace-dialog" node_ref=switcher aria-label="Quick switcher">
-                <div class="quick-switcher">
-                    <form class="quick-switcher__search" on:submit=move |event| {
-                        event.prevent_default();
-                        if let Some(path) = switch_matches.with_untracked(|rows| rows.first().map(|row| row.2.clone())) {
-                            let href = path;
-                            let _ = window().location().assign(&href);
-                        }
-                    }>
-                        <span class="appearance-icon" inner_html=icons.quick_search.clone()></span>
-                        <input class="k-input" aria-label="Jump to" placeholder="Jump to…" autofocus
-                            prop:value=query on:input=move |event| query.set(event_target_value(&event)) />
-                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" aria-label="Close quick switcher" on:click=move |_| {
-                            if let Some(dialog) = switcher.get_untracked() { dialog.close(); }
-                        }><kbd>"Esc"</kbd></button>
-                    </form>
-                    <nav class="quick-switcher__list" aria-label="Destinations">
-                        {move || switch_matches.get().into_iter().map(|(name, group, path)| {
-                            let href = path;
-                            view! { <a class="quick-switcher__item" href=href><span>{name}<small>{group}</small></span></a> }
-                        }).collect_view()}
-                        <p class="quick-switcher__empty" role="status" hidden=move || !switch_matches.with(Vec::is_empty)>"No results"</p>
-                    </nav>
-                </div>
-            </dialog>
-            <dialog class="k-dialog k-dialog--lg workspace-dialog" node_ref=help aria-labelledby="workspace-help-title">
+            {update_dialog}
+            {switcher::render(switcher, switcher::Data {
+                directory, machines, projects, base_path: Signal::derive(current_url),
+                new_conversation: conversation_creation, online, attention,
+            }, switcher_icons)}
+            <dialog class="k-dialog k-dialog--lg workspace-dialog" node_ref=help aria-labelledby="workspace-help-title" closedby="any">
                 <div class="k-dialog__head"><h2 class="k-dialog__title" id="workspace-help-title">"Keyboard shortcuts"</h2>
-                    <form method="dialog"><button type="submit" class="k-btn k-btn--sm k-btn--ghost" autofocus>"Close"</button></form>
+                    <form method="dialog"><button type="submit" class="k-icon-btn k-dialog__close" aria-label="Close" autofocus><span class="appearance-icon" inner_html=icons.close></span></button></form>
                 </div>
-                <div class="k-dialog__body"><div class="k-card">
-                    {[("Ctrl/Cmd + K", "Quick switcher"), ("Ctrl/Cmd + B", "Toggle sidebar"),
-                        ("Ctrl/Cmd + 1", "Agents"), ("Ctrl/Cmd + 2", "Projects"),
-                        ("Ctrl/Cmd + F", "Find in conversation"), ("Ctrl/Cmd + Shift + B", "Toggle conversation panel"),
-                        ("Enter", "Send or queue message"), ("Shift + Enter", "New line"), ("Esc", "Close dialog")]
+                <div class="k-dialog__body legacy"><div class="k-page bs-root help-page"><section class="k-section">
+                    <div class="k-section__head"><h2 class="k-section__title">"Workspace"</h2></div>
+                    <div class="k-card">
+                    {[("Ctrl/Cmd + Shift + O", "New conversation"), ("Ctrl/Cmd + K", "Quick switcher"),
+                        ("Ctrl/Cmd + F", "Find in conversation"), ("Ctrl/Cmd + ,", "Settings"),
+                        ("Ctrl/Cmd + B", "Toggle sidebar"), ("Ctrl/Cmd + Shift + B", "Toggle conversation panel"),
+                        ("Ctrl/Cmd + 1", "Agents"), ("Ctrl/Cmd + 2", "Projects"), ("F6", "Focus message composer"),
+                        ("Enter", "Send or queue message"), ("Shift + Enter", "New line"), ("Esc", "Close search or dialog")]
                         .into_iter().map(|(key, action)| view! {
                             <div class="k-row"><div class="k-row__main"><span class="k-row__text"><span class="k-row__title">{action}</span></span></div>
                                 <span class="k-row__trailing"><kbd>{key}</kbd></span></div>
                         }).collect_view()}
-                </div></div>
+                </div></section></div></div>
             </dialog>
             <div class="leptos-workspace__outlet" inert=move || viewport.get() && narrow_open.get()>
                 {header.map(|header| view! { <header class="leptos-workspace__header">{header()}</header> })}

@@ -75,6 +75,7 @@ pub fn mount_appearance() -> Result<(), JsValue> {
     if let Some(route) = routes::SettingsRoute::from_path(&path) {
         let mount = mount_to(root, move || {
             let colors = StoredValue::new(config.colors.clone());
+            provide_context(config.system_icons.clone());
             view! {
                 <shell::WorkspaceShell base_path=return_to.clone() colors=colors icons=icons.clone()>
                     {settings::shell(config, return_to, route)}
@@ -91,6 +92,7 @@ pub fn mount_appearance() -> Result<(), JsValue> {
     {
         mount_to(root, move || {
             let colors = StoredValue::new(config.colors);
+            provide_context(config.system_icons);
             view! {
                 <shell::WorkspaceShell base_path=path colors=colors icons=icons>
                     {workspace::page(route, error_icon)}
@@ -163,6 +165,7 @@ pub fn mount_conversation() -> Result<(), JsValue> {
         workspace_icons: shell::Icons,
         conversation_icons: conversation::Icons,
         connection_icons: connection_ui::Icons,
+        system_icons: system::kit::Icons,
     }
     let config = document
         .get_element_by_id("appearance-config")
@@ -174,6 +177,7 @@ pub fn mount_conversation() -> Result<(), JsValue> {
         let colors = StoredValue::new(config.colors);
         provide_context(config.conversation_icons);
         provide_context(config.connection_icons);
+        provide_context(config.system_icons);
         let search = window().location().search().unwrap_or_default();
         provide_context(conversation::Navigation(RwSignal::new(format!("{path}{search}"))));
         provide_context(conversation::ProjectConversation(RwSignal::new(false)));

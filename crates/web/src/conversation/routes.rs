@@ -14,6 +14,8 @@ pub struct Agent {
     pub avatar_revision: u64,
     pub model: Option<String>,
     pub runtime: Option<String>,
+    #[serde(rename = "providerAccount", alias = "provider_account")]
+    pub provider_account: Option<String>,
     #[serde(default)]
     pub instructions: String,
     #[serde(default)]
@@ -282,7 +284,6 @@ fn internal(path: &str) -> bool {
         return false;
     };
     !matches!(route, Route::Default)
-        && !matches!(route, Route::Agent(ref id, _) if id == "00000000-0000-4000-8000-000000000005")
         && web_sys::UrlSearchParams::new_with_str(query).is_ok_and(|params| {
             !params.has("result")
                 && !params.has("computer")

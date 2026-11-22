@@ -1,5 +1,6 @@
 @import "../../app/src/ui/source-control.css";
 @import "../../app/src/SpeechPlayback.css";
+@import "../../app/src/guide.css";
 @import "./appearance.css";
 @import "../../app/src/ui/details.css";
 @import "../../app/src/right-panel.css";
@@ -24,7 +25,7 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .conversation-inspect { position: absolute; inset: 0 4px auto auto; opacity: 0; }
 .turn-activity:hover .conversation-inspect, .turn-activity:focus-within .conversation-inspect { opacity: 1; }
 .conversation-layout .turn-activity__details summary { display: flex; width: 100%; list-style: none; }
-.conversation-layout .conversation-panel { flex: 0 1 360px; width: 360px; min-width: 0; }
+.conversation-layout .conversation-panel { flex: 0 1 340px; width: 340px; min-width: 0; }
 .conversation-panel > .k-tabs > .k-tabs__list > .k-tabs__tab[hidden] { display: none; }
 .conversation-panel a.panel-row { text-decoration: none; }
 .conversation-panel .panel-row > .appearance-icon > svg { width: 16px; height: 16px; }
@@ -46,7 +47,7 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 /* Keep panel content mounted across viewport changes. Native modal handles focus and Escape. */
 .conversation-panel-shell {
   position: static; inset: auto; margin: 0; padding: 0; border: 0; color: inherit;
-  background: transparent; max-width: none; max-height: none; height: 100%; flex: 0 1 360px; min-width: 0;
+  background: transparent; max-width: none; max-height: none; height: 100%; flex: 0 1 340px; min-width: 0;
 }
 .conversation-panel-shell > .conversation-panel { width: 100%; }
 .conversation-panel-shell:modal {
@@ -104,3 +105,9 @@ body[data-view="conversation"] .automation-select .k-menu__item:is(:hover, :focu
 .chat-control-dialog .k-check__box svg { width: 12px; height: 12px; stroke-width: 3; }
 .queue-order-row-actions { margin-top: 6px; }
 .event-connection .k-field__hint { margin: 0; }
+
+
+.question-card-body { padding: 12px; }
+.question-card-body :is(h3, p, .k-check__label) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-card-note { margin: 0; overflow-wrap: anywhere; }
+.turn-request { scroll-margin-block-start: 12px; }

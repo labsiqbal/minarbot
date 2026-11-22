@@ -3,12 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, symlink } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { startRustServer } from '../../rust-test-server.ts';
 
 const work = await mkdtemp(join(tmpdir(), 'minarbot-guide-'));
+const output = process.env.MINARBOT_GUIDE_SCREENSHOTS && resolve(process.env.MINARBOT_GUIDE_SCREENSHOTS);
+const client = process.env.MINARBOT_SMOKE_UI ?? 'react';
 const turns = [
   ['Help me set up my workspace.', 'What work do you want to do, and when do you need the output?'],
   ['I need a Researcher that cites sources.', 'Review the Researcher profile and select Apply.', 'create_agent'],
@@ -50,6 +52,7 @@ try {
   await symlink('0.17.0-8523c26b', join(releasesDir, 'current'));
   app = await startRustServer({
     database: join(work, 'state.sqlite'),
+    appearanceClient: client,
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),
     baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
     apiKey: 'fixture-key',
@@ -75,16 +78,37 @@ try {
   await api(`/api/agents/${guide.id}/delete`, { id: randomUUID() }, 409);
   const path = `/api/agents/${guide.id}/turns`;
   browser = await chromium.launch({ executablePath: process.env.CHROME ?? '/usr/bin/google-chrome', args: ['--no-sandbox'] });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
+  const viewport = { width: 1280, height: 820 };
+  const page = await browser.newPage({ viewport, reducedMotion: 'reduce' });
+  await page.addInitScript(() => localStorage.setItem('minarbot:details-open', '0'));
+  const failures = [];
+  page.on('pageerror', error => failures.push(error.message));
+  page.on('console', event => { if (event.type() === 'error') failures.push(event.text()); });
+  async function capture(label, region, mask = []) {
+    if (!output) return;
+    await mkdir(output, { recursive: true });
+    for (const [layout, size] of Object.entries({ desktop: viewport, narrow: { width: 390, height: 844 } })) {
+      await page.setViewportSize(size);
+      for (const theme of ['dark', 'light']) {
+        await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        await region.evaluate(element => element.scrollIntoView({ block: 'center' }));
+        await region.screenshot({ path: join(output, `${client}-${label}-${layout}-${theme}.png`), animations: 'disabled', mask });
+      }
+    }
+    await page.setViewportSize(viewport);
+  }
   await page.goto(app.origin);
   await page.getByRole('button', { name: `Set up with ${guide.name}` }).click();
+  await page.waitForURL(url => url.pathname === `/agents/${guide.id}` && !url.search);
+  assert.equal(await page.locator('#leptos-root').count(), client === 'leptos' ? 1 : 0);
   const composer = page.getByRole('textbox', { name: `Message ${guide.name}` });
   async function send(step) {
     const [prompt, reply] = turns[step];
-    const before = await page.getByText(reply, { exact: true }).count();
+    const replies = page.getByLabel('Agent reply', { exact: true }).getByText(reply, { exact: true });
+    const before = await replies.count();
     await composer.fill(prompt);
     await composer.press('Enter');
-    await page.getByText(reply, { exact: true }).nth(before).waitFor();
+    await replies.nth(before).waitFor();
   }
   await send(0);
   await send(1);
@@ -105,6 +129,7 @@ try {
     await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
     await page.screenshot({ path: join(work, `guide-${theme}.png`), animations: 'disabled' });
   }
+  await capture('guide-agent-proposal', agentChange);
   await agentChange.getByRole('button', { name: 'Apply', exact: true }).press('Enter');
   await agentChange.getByRole('status').filter({ hasText: 'Applied' }).waitFor();
   const agents = (await api('/api/agents')).agents;
@@ -116,6 +141,7 @@ try {
   await send(2);
   const routineChange = page.getByRole('article', { name: 'Create routine' });
   assert.deepEqual(await api(`/api/agents/${agentId}/routines`), []);
+  await capture('guide-routine-proposal', routineChange);
   await routineChange.getByRole('button', { name: 'Cancel', exact: true }).click();
   await routineChange.getByRole('status').filter({ hasText: 'Cancelled' }).waitFor();
   assert.deepEqual(await api(`/api/agents/${agentId}/routines`), []);
@@ -139,6 +165,7 @@ try {
     await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
     await page.screenshot({ path: join(work, 'guide-infra-' + theme + '.png'), animations: 'disabled' });
   }
+  await capture('guide-machine-proposal', machineChange);
   const installReceipt = page.waitForResponse(response => response.url().endsWith('/api/install/tokens') && response.request().method() === 'POST');
   await machineChange.getByRole('button', { name: 'Apply', exact: true }).press('Enter');
   const issued = await installReceipt;
@@ -148,6 +175,8 @@ try {
   const command = await machineChange.getByRole('textbox', { name: 'Run on the new machine' }).inputValue();
   assert(command.includes('--name \'Test machine\'') && /\bbsi_[A-Za-z0-9_-]{43}\b/.test(command), 'Install command invalid');
   assert(!/\bbsi_[A-Za-z0-9_-]{43}\b/.test(JSON.stringify(await api(path))), 'Install credential leaked in transcript');
+  await capture('guide-machine-install', machineChange, [machineChange.getByRole('textbox', { name: 'Run on the new machine' })]);
+  assert.deepEqual(failures, []);
   assert(guidePrompt);
   assert(toolIsolation);
   await api(`/api/agents/${guide.id}/visibility`, { id: randomUUID(), revision: 0, hidden: true });

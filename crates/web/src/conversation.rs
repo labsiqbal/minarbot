@@ -1,5 +1,7 @@
 mod controls;
+mod guide;
 mod history;
+mod input;
 mod message_actions;
 mod minimap;
 mod panels;
@@ -166,6 +168,8 @@ struct Turn {
     components: Vec<Value>,
     #[serde(rename = "agentMessages", default)]
     exchanges: Vec<Value>,
+    #[serde(default)]
+    guide: Option<guide::Actions>,
     #[serde(rename = "receivedAgentReplies", default)]
     received: Vec<Value>,
     room: Option<Value>,
@@ -353,6 +357,7 @@ struct Chat {
     addressed: RwSignal<String>,
     focus: RwSignal<String>,
     refresh: RwSignal<u64>,
+    focus_card: StoredValue<String>,
     query: RwSignal<String>,
     finding: RwSignal<bool>,
     history: RwSignal<Vec<u64>>,
@@ -363,6 +368,8 @@ struct Chat {
     profile: NodeRef<leptos::html::Dialog>,
     run: RwSignal<String>,
     new_thread: RwSignal<bool>,
+    guide_connection: RwSignal<bool>,
+    guide_ready: RwSignal<Option<bool>>,
 }
 
 impl Chat {
@@ -387,6 +394,9 @@ impl Chat {
         .filter(|id| protocol::id(id))
         .unwrap_or_default();
         let _ = remove(&focus_key);
+        let card_key = key("focus-card");
+        let focus_card = saved(&card_key).unwrap_or_default();
+        let _ = remove(&card_key);
         let files = saved(&key("attachments"))
             .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
             .filter(|files| files.len() <= MAX_FILES && files.iter().all(|id| protocol::id(id)))
@@ -410,6 +420,7 @@ impl Chat {
             active: RwSignal::new(Vec::new()),
             addressed: RwSignal::new(String::new()),
             focus: RwSignal::new(focus.clone()),
+            focus_card: StoredValue::new(focus_card),
             refresh: RwSignal::new(0),
             query: RwSignal::new(String::new()),
             finding: RwSignal::new(false),
@@ -421,6 +432,8 @@ impl Chat {
             profile: NodeRef::new(),
             run: RwSignal::new(String::new()),
             new_thread: RwSignal::new(false),
+            guide_connection: RwSignal::new(false),
+            guide_ready: RwSignal::new(None),
             config: StoredValue::new(config),
         }
     }
@@ -452,6 +465,9 @@ impl Chat {
     }
 
     fn can_send(self) -> bool {
+        if let Some(ready) = self.guide_ready.get() {
+            return ready;
+        }
         self.config.with_value(|config| {
             if config.channel {
                 if let Some(target) = self.target() {
@@ -1450,6 +1466,7 @@ fn header(
         .or_else(|| config.room.as_ref().and_then(|room| room.project.clone()))
         .filter(|id| protocol::id(id));
     let section_settings = config.channel && project.is_none();
+    let builtin = config.agent.as_ref().is_some_and(|agent| agent.builtin);
     let toggle_details = move || chat.set_details(!chat.details.get_untracked());
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
         if document()
@@ -1503,6 +1520,12 @@ fn header(
                         if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                         history::begin_find(chat);
                     }><span class="appearance-icon" inner_html=icons.search.clone()></span>"Find messages"</button>
+                    {builtin.then(|| view! {
+                        <button type="button" class="k-menu__item" on:click=move |_| {
+                            if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                            chat.guide_connection.set(true);
+                        }>"AI connection"</button>
+                    })}
                     <button type="button" class="k-menu__item" on:click=move |_| {
                         if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                         controls::dialog_open(search_dialog);
@@ -1530,6 +1553,7 @@ fn header(
 /// Key this component by conversation scope when changing routes.
 pub fn shell(config: ConversationConfig) -> impl IntoView {
     let chat = Chat::new(config.clone());
+    let guide = config.agent.clone().filter(|agent| agent.builtin);
     let snapshots = StoredValue::new(HashMap::new());
     subscribe(chat, snapshots);
     let generation = RwSignal::new(0_u64);
@@ -1542,22 +1566,39 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         polling(chat, snapshots, generation, generation.get_untracked());
     });
     message_actions::playback();
-    let create = window_event_listener(
-        leptos::ev::Custom::<web_sys::Event>::new("minarbot:new-conversation"),
-        move |_| {
-            if chat.config.with_value(|config| {
-                config
-                    .agent
-                    .as_ref()
-                    .is_some_and(|agent| !agent.builtin && !agent.hidden)
-            }) {
-                chat.new_thread.set(true);
-                chat.tab.set("chats");
-                chat.set_details(true);
+    if config
+        .agent
+        .as_ref()
+        .is_some_and(|agent| !agent.builtin && !agent.hidden)
+    {
+        let create = move || {
+            chat.new_thread.set(true);
+            chat.tab.set("chats");
+            chat.set_details(true);
+        };
+        let request = window_event_listener(
+            leptos::ev::Custom::<web_sys::Event>::new("minarbot:new-conversation"),
+            move |_| create(),
+        );
+        let shortcut = window_event_listener(leptos::ev::keydown, move |event| {
+            if (event.ctrl_key() || event.meta_key())
+                && event.shift_key()
+                && event.key().eq_ignore_ascii_case("o")
+                && document()
+                    .query_selector("dialog:modal")
+                    .ok()
+                    .flatten()
+                    .is_none()
+            {
+                event.prevent_default();
+                create();
             }
-        },
-    );
-    on_cleanup(move || create.remove());
+        });
+        on_cleanup(move || {
+            request.remove();
+            shortcut.remove();
+        });
+    }
     let search_dialog = NodeRef::<leptos::html::Dialog>::new();
     let room_settings = config
         .room
@@ -1651,9 +1692,15 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
             let before = chat.history.with_untracked(|pages| pages.last().copied());
             if move_focus && chat.move_focus.get_untracked() {
                 let target = if !focus.is_empty() {
-                    document()
+                    let card = chat.focus_card.get_value();
+                    let target = document()
                         .get_element_by_id(&format!("room-reply-{focus}"))
-                        .or_else(|| document().get_element_by_id(&format!("turn-{focus}")))
+                        .or_else(|| document().get_element_by_id(&format!("turn-{focus}")));
+                    target.and_then(|target| {
+                        document().get_element_by_id(&card)
+                            .filter(|element| target.contains(Some(element)))
+                            .or(Some(target))
+                    })
                         .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
                 } else if before.is_some() {
                     navigation
@@ -1668,7 +1715,9 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                 };
                 if let Some(target) = target {
                     target.scroll_into_view();
-                    let _ = target.focus();
+                    let options = web_sys::FocusOptions::new();
+                    options.set_prevent_scroll(true);
+                    let _ = target.focus_with_options(&options);
                 }
                 chat.move_focus.set(false);
             }
@@ -1684,6 +1733,15 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         });
     });
     let label = format!("Conversation {}", config.name);
+    let subtitle = if guide.is_some() {
+        Some("What work do you want to set up?".into())
+    } else {
+        config
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.role.clone())
+            .filter(|role| !role.is_empty())
+    };
     let empty_name = config
         .agent
         .as_ref()
@@ -1744,7 +1802,7 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                         <div class="empty-chat" hidden=move || chat.before().is_some() || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty())) || chat.config.with_value(|config| config.thread.as_ref().is_some_and(|thread| thread.fork.is_some()))>
                             {avatar(config.agent.clone(), &config.name, config.channel, 64)}
                             <div class="empty-chat__title">{empty_name}</div>
-                            {config.agent.as_ref().and_then(|agent| agent.role.clone()).filter(|role| !role.is_empty()).map(|role| view! { <div class="empty-chat__sub">{role}</div> })}
+                            {subtitle.map(|role| view! { <div class="empty-chat__sub">{role}</div> })}
                         </div>
                         <For each=move || visible.get() key=|id| id.clone()
                             children=move |id| {
@@ -1771,6 +1829,10 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                     let mut latest = chat.latest.get();
                     chat.optimistic.with(|pending| latest.extend(pending.iter().cloned()));
                     latest
+                }))}
+                {guide.map(|agent| guide::connection(agent, chat.guide_connection, move |agent| {
+                    chat.guide_ready.try_set(Some(agent.runnable));
+                    request_animation_frame(move || history::focus_element(".composer__input"));
                 }))}
                 {header(chat, config, search_dialog)}
             </main>

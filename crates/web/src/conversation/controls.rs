@@ -172,6 +172,21 @@ fn recording_control(
 pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
     let input = NodeRef::<leptos::html::Textarea>::new();
     let file_input = NodeRef::<leptos::html::Input>::new();
+    let focus_composer = window_event_listener(leptos::ev::keydown, move |event| {
+        if event.key() == "F6"
+            && document()
+                .query_selector("dialog:modal")
+                .ok()
+                .flatten()
+                .is_none()
+        {
+            if let Some(input) = input.get_untracked() {
+                event.prevent_default();
+                let _ = input.focus();
+            }
+        }
+    });
+    on_cleanup(move || focus_composer.remove());
     let discard = NodeRef::<leptos::html::Dialog>::new();
     let mode_dialog = NodeRef::<leptos::html::Dialog>::new();
     let mode = RwSignal::new("");
@@ -354,7 +369,11 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" on:click=move |_| dialog_open(discard)>"Discard message recovery"</button>
                 </div>
                 <p class="composer__note" hidden=move || !chat.config.with_value(|c| c.archived)>"Archived"</p>
-                <p class="composer__note" hidden=move || chat.config.with_value(|c| c.archived) || chat.can_send()><a class="k-link" href="/settings/providers">"Connect a provider"</a></p>
+                <p class="composer__note composer__note--blocked" hidden=move || chat.config.with_value(|c| c.archived) || chat.can_send()>
+                    {if chat.config.with_value(|config| config.agent.as_ref().is_some_and(|agent| agent.builtin)) {
+                        view! { <button class="k-btn k-btn--sm k-btn--secondary" type="button" on:click=move |_| chat.guide_connection.set(true)>"Choose AI connection"</button> }.into_any()
+                    } else { view! { <a class="k-link" href="/settings/providers">"Connect a provider"</a> }.into_any() }}
+                </p>
                 {goal_chip(chat)}
                 {queue::queued_runs(chat, rows)}
                 <Show when=move || chat.context.with(Option::is_some)>
@@ -390,7 +409,9 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                     <div class="composer__left">
                     <label class="sr-only" for="message">{label.clone()}</label>
                     <textarea node_ref=input class="composer__input" id="message" rows="1" maxlength=MAX_MESSAGE
-                        placeholder=label readonly=move || chat.locked()
+                        placeholder=move || if chat.config.with_value(|config| config.agent.as_ref().is_some_and(|agent| agent.builtin))
+                            && rows.with(Vec::is_empty) { "Describe your work or ask about Minarbot".into() } else { label.clone() }
+                        readonly=move || chat.locked()
                         prop:value=value
                         on:input=move |event| chat.draft(event_target_value(&event))
                         on:paste=move |event: web_sys::ClipboardEvent| {
@@ -763,10 +784,15 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>, skip: bool) -> impl IntoVi
         }
     };
     view! {
-        <div class="turn-extras k-stack" hidden=move || questions.with(Vec::is_empty) && approvals.with(Vec::is_empty) && harness.with(Vec::is_empty)>
-        {move || questions.get().into_iter().map(|q| question(chat, row, scope.get_value(), q)).collect_view()}
-        {move || approvals.get().into_iter().map(|a| approval(chat, scope.get_value(), a, false)).collect_view()}
-        {move || harness.get().into_iter().map(|a| approval(chat, scope.get_value(), a, true)).collect_view()}
+        <div class="turn-extras k-stack" hidden=move || questions.with(Vec::is_empty) && approvals.with(Vec::is_empty) && harness.with(Vec::is_empty)
+            && row.with(|turn| turn.guide.as_ref().is_none_or(guide::Actions::is_empty))>
+        {move || harness.get().into_iter().filter(|card| card["id"].as_str().is_some_and(protocol::id)).map(|card| {
+            if card["kind"] == "form" { form_approval(chat, row, scope.get_value(), card).into_any() }
+            else { input::approval(chat, row, scope.get_value(), card, true).into_any() }
+        }).collect_view()}
+        {move || approvals.get().into_iter().filter(|card| card["id"].as_str().is_some_and(|id| !id.is_empty() && id.len() <= 500)).map(|card| input::approval(chat, row, scope.get_value(), card, false)).collect_view()}
+        {guide::actions(chat, row)}
+        {move || questions.get().into_iter().filter(|card| card["id"].as_str().is_some_and(protocol::id)).map(|card| input::question(chat, row, scope.get_value(), card)).collect_view()}
         </div>
         <div class="turn-controls" role="group" aria-label="Message actions" hidden=move || !finished() && !available() && !retry.get() && error.with(String::is_empty)>
             {(!skip).then(|| queue::editor(chat, row))}
@@ -835,171 +861,28 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>, skip: bool) -> impl IntoVi
     }
 }
 
-fn question(chat: Chat, row: RwSignal<Turn>, path: String, q: Value) -> impl IntoView {
-    let id = q["id"]
-        .as_str()
-        .filter(|id| protocol::id(id))
-        .unwrap_or_default();
-    let id = id.to_owned();
-    let label = q["prompt"].as_str().unwrap_or("Question").to_owned();
-    let choices = q["choices"].as_array().cloned().unwrap_or_default();
-    let answer = q["answer"].as_str().map(str::to_owned);
-    let busy = RwSignal::new(false);
-    let message = RwSignal::new(String::new());
-    let form = NodeRef::<leptos::html::Form>::new();
-    let acknowledged = RwSignal::new(false);
-    let interrupted = move || row.with(|turn| turn.status == "interrupted");
-    let unavailable = move || {
-        chat.config.with_value(|c| c.archived)
-            || row.with(|turn| !matches!(turn.status.as_str(), "queued" | "interrupted"))
-    };
-    let answer_key = StoredValue::new(format!("minarbot:answer:{id}:draft"));
-    let draft = RwSignal::new(saved(&answer_key.get_value()).unwrap_or_default());
-    let endpoint = format!("{path}/questions/{id}/answer");
-    if answer.is_some() {
-        let _ = remove(&answer_key.get_value());
-    }
-    view! {
-        <section class="k-card conversation-card" aria-label="Agent question">
-            <h3>{label}</h3>
-            {answer.map(|answer| view! { <p>{format!("Answer: {answer}")}</p> }).map(IntoAny::into_any).unwrap_or_else(move || view! {
-                <form class="k-stack" node_ref=form on:submit=move |event| {
-                    event.prevent_default();
-                    if let Some(form) = form.get_untracked() {
-                        if !unavailable() && (!interrupted() || acknowledged.get_untracked()) {
-                            mutate(endpoint.clone(), json!({"text": field(&form, "answer").trim(), "acknowledgeUncertain": acknowledged.get_untracked()}), busy, message);
-                        }
-                    }
-                }>
-                    {if choices.is_empty() {
-                        view! { <label class="k-field"><span>"Answer"</span><textarea name="answer" class="k-input" maxlength="4000" required
-                            prop:value=draft on:input=move |event| {
-                                let text = event_target_value(&event);
-                                let _ = save(&answer_key.get_value(), &text);
-                                draft.set(text);
-                            }></textarea></label> }.into_any()
-                    } else {
-                        view! { <fieldset class="k-fieldset"><legend>"Answer"</legend>
-                            {choices.into_iter().filter_map(|choice| choice.as_str().map(str::to_owned)).map(|choice| view! {
-                                <label class="k-check"><input type="radio" name="answer" value=choice.clone() required />{choice}</label>
-                            }).collect_view()}
-                        </fieldset> }.into_any()
-                    }}
-                    <label class="k-check" hidden=move || !interrupted()><input type="checkbox" prop:checked=acknowledged
-                        on:change=move |event| acknowledged.set(event_target_checked(&event)) />
-                        "I have checked the effects of the task before continuing"
-                    </label>
-                    <button type="submit" class="k-btn k-btn--sm k-btn--primary" disabled=move || busy.get() || unavailable() || interrupted() && !acknowledged.get()>"Answer"</button>
-                </form>
-            }.into_any())}
-            <p class="message-error" role="alert" hidden=move || message.with(String::is_empty)>{message}</p>
-        </section>
-    }
-}
-
-fn approval(chat: Chat, path: String, a: Value, harness: bool) -> impl IntoView {
-    let id = a["id"]
-        .as_str()
-        .filter(|id| protocol::id(id))
-        .unwrap_or_default();
-    let resource = if harness {
-        "harness-approvals"
-    } else {
-        "app-approvals"
-    };
-    let path = format!("{path}/{resource}/{id}");
+fn form_approval(chat: Chat, row: RwSignal<Turn>, path: String, a: Value) -> impl IntoView {
+    let id = a["id"].as_str().unwrap_or_default();
+    let card_id = row.with_untracked(|turn| format!("harness:{}:{id}", turn.id));
+    let path = format!("{path}/harness-approvals/{id}");
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let open = a["state"] == "approval";
-    let title = a["tool"]
-        .as_str()
-        .or_else(|| a["description"].as_str())
-        .unwrap_or("Approval")
-        .to_owned();
-    let details = a
-        .get(if harness { "input" } else { "arguments" })
-        .and_then(|value| serde_json::to_string_pretty(value).ok());
     let revision = a["revision"].as_u64().unwrap_or_default();
-    let form = a["kind"] == "form";
-    let form_result = if a["state"] == "expired" {
+    let result = if a["state"] == "expired" {
         "Form expired"
     } else if a["decision"] == "deny" {
         "Form skipped"
     } else {
         "Form submitted"
-    }
-    .to_owned();
-    if form {
-        return view! {
-            <div class="k-card component-reply"><section class="component-node">
-                {panels::form_reply(chat, a["input"].clone(), path, revision, open, form_result, busy, error)}
-            </section></div>
-        }.into_any();
-    }
-    let allow_always = !harness || a["prefix"].is_string();
-    let icons = use_context::<Icons>().unwrap_or_default();
-    let command = a["command"].as_str().map(str::to_owned);
-    let outcome = if open {
-        "Approval needed"
-    } else if a["state"] == "expired" {
-        "Expired; ask again"
-    } else if a["decision"] == "deny" {
-        "Not allowed"
-    } else if a["kind"] == "email" {
-        "Draft saved"
-    } else if a["decision"] == "always" {
-        "Always allowed for this command prefix"
-    } else {
-        "Allowed once"
-    };
-    let label = if harness {
-        match a["kind"].as_str() {
-            Some("email") => "Email draft",
-            Some("craft") => "Craft Anything permission",
-            _ => "Coding harness permission",
-        }
-    } else {
-        "Approval"
-    };
-    let region = if label == "Coding harness permission" {
-        "Coding harness approval"
-    } else {
-        label
     };
     view! {
-        <section class="bs-root k-stack" aria-label=region>
-            <div class="k-card"><div class="approval-card-body k-stack">
-                <div class="k-row">
-                    <div class="k-row__main">
-                        <span class="k-row__leading" inner_html=icons.shield></span>
-                        <span class="k-row__text"><span class="k-row__title"><h3 class="k-section__title">{label}</h3></span></span>
-                    </div>
-                    <span class="k-row__trailing"><span class="k-badge" class:is-warn=open role="status">{outcome}</span></span>
-                </div>
-                <p class="message-plain">{title}</p>
-                {command.map(|command| view! {
-                    <pre class="k-code" tabindex="0" role="region" aria-label="Shell command">{command}</pre>
-                })}
-                <details class="k-collapsible conversation-disclosure">
-                    <summary class="k-collapsible__trigger">"Request details"<span class="appearance-icon k-collapsible__chev" inner_html=icons.chevron></span></summary>
-                    <div class="k-collapsible__content">
-                        <pre class="k-code" tabindex="0" role="region" aria-label="Request arguments">{details}</pre>
-                    </div>
-                </details>
-                <div class="k-row-actions" hidden=!open>
-                    {[("deny", "Don't allow"), ("always", if harness { "Always allow for this agent + command prefix" } else { "Always allow" }),
-                        ("allow", if a["kind"] == "email" { "Approve draft" } else { "Allow once" })].into_iter()
-                        .filter(|(decision, _)| *decision != "always" || allow_always).map(|(decision, title)| {
-                            let path = path.clone();
-                            view! { <button type="button" class=if decision == "allow" { "k-btn k-btn--sm k-btn--primary" } else { "k-btn k-btn--sm k-btn--secondary" }
-                                disabled=move || busy.get() || chat.config.with_value(|c| c.archived)
-                                on:click=move |_| mutate(path.clone(), json!({"revision": revision, "decision": decision}), busy, error)>{title}</button> }
-                        }).collect_view()}
-                </div>
-                <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
-            </div></div>
-        </section>
-    }.into_any()
+        <div class="turn-request" id=card_id tabindex="-1">
+            <div class="k-card component-reply"><section class="component-node">
+                {panels::form_reply(chat, a["input"].clone(), path, revision, open, result.to_owned(), busy, error)}
+            </section></div>
+        </div>
+    }
 }
 
 pub(super) fn edit_dialog(
