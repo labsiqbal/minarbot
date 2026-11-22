@@ -1,0 +1,410 @@
+use crate::{api, appearance, settings};
+use leptos::prelude::*;
+use serde::Deserialize;
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct Directory {
+    pub agents: Vec<Agent>,
+    pub guide: Option<Agent>,
+    #[serde(default, rename = "hubAvailable")]
+    pub hub_available: bool,
+}
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct Agent {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+#[derive(Clone, Deserialize)]
+struct Project {
+    id: String,
+    name: String,
+    description: String,
+    archived: bool,
+    sections: Vec<ProjectSection>,
+}
+
+#[derive(Clone, Deserialize)]
+struct ProjectSection {
+    id: String,
+    name: String,
+    archived: bool,
+}
+
+#[derive(Deserialize)]
+struct Projects {
+    projects: Vec<Project>,
+}
+
+#[derive(Clone, Deserialize)]
+struct Summary {
+    agent: String,
+    #[serde(default)]
+    needs_you: u32,
+    #[serde(default)]
+    preview: String,
+}
+
+#[derive(Deserialize)]
+struct Summaries {
+    summaries: Vec<Summary>,
+}
+
+#[derive(Deserialize)]
+struct Machines {
+    machines: Vec<Machine>,
+}
+
+#[derive(Deserialize)]
+struct Machine {
+    id: String,
+    name: String,
+    status: String,
+    agents: Vec<Agent>,
+}
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct Icons {
+    panel: String,
+    filter: String,
+    settings: String,
+    routines: String,
+    workflows: String,
+    calendar: String,
+    search: String,
+    pub info: String,
+    pub voice: String,
+}
+
+const COLLAPSED: &str = "minarbot:sidebar-collapsed";
+const TAB: &str = "minarbot:sidebar-tab";
+
+fn preference(key: &str) -> Option<String> {
+    window()
+        .local_storage()
+        .ok()
+        .flatten()?
+        .get_item(key)
+        .ok()?
+}
+
+fn save_preference(key: &str, value: &str) {
+    if let Ok(Some(storage)) = window().local_storage() {
+        let _ = storage.set_item(key, value);
+    }
+}
+
+#[component]
+pub(crate) fn WorkspaceShell(
+    base_path: String,
+    colors: StoredValue<Vec<appearance::ColorTheme>>,
+    icons: Icons,
+    #[prop(optional)] header: Option<Children>,
+    children: Children,
+) -> impl IntoView {
+    appearance::initialize(colors);
+    let directory = RwSignal::new(None::<Result<Directory, String>>);
+    provide_context(directory.read_only());
+    let projects = RwSignal::new(None::<Result<Projects, String>>);
+    let summaries = RwSignal::new(Vec::<Summary>::new());
+    let machines = RwSignal::new(None::<Result<Machines, String>>);
+    let projects_tab = RwSignal::new(preference(TAB).as_deref() == Some("projects"));
+    let collapsed = RwSignal::new(preference(COLLAPSED).as_deref() == Some("1"));
+    let narrow = || {
+        window()
+            .match_media("(max-width: 767px)")
+            .ok()
+            .flatten()
+            .is_some_and(|query| query.matches())
+    };
+    let narrow_open = RwSignal::new(false);
+    let sidebar = NodeRef::<leptos::html::Aside>::new();
+    let reveal = NodeRef::<leptos::html::Button>::new();
+    let close_sidebar = move || {
+        narrow_open.set(false);
+        request_animation_frame(move || {
+            if let Some(button) = reveal.get_untracked() {
+                let _ = button.focus();
+            }
+        });
+    };
+    let is_collapsed = move || {
+        if narrow() {
+            !narrow_open.get()
+        } else {
+            collapsed.get()
+        }
+    };
+    let toggle_sidebar = move || {
+        if narrow() {
+            if narrow_open.get_untracked() {
+                close_sidebar();
+            } else {
+                narrow_open.set(true);
+                request_animation_frame(move || {
+                    if let Some(sidebar) = sidebar.get_untracked() {
+                        let _ = sidebar.focus();
+                    }
+                });
+            }
+        } else {
+            collapsed.update(|value| *value = !*value);
+            save_preference(COLLAPSED, if collapsed.get_untracked() { "1" } else { "0" });
+        }
+    };
+    let choose_tab = move |projects| {
+        projects_tab.set(projects);
+        save_preference(TAB, if projects { "projects" } else { "agents" });
+    };
+    let retry = move || {
+        directory.set(None);
+        projects.set(None);
+        leptos::task::spawn_local(async move {
+            directory.try_set(Some(api::read("/api/agents").await));
+        });
+        leptos::task::spawn_local(async move {
+            projects.try_set(Some(api::read("/api/projects").await));
+        });
+        leptos::task::spawn_local(async move {
+            if let Ok(data) = api::read::<Summaries>("/api/sidebar/summary").await {
+                summaries.try_set(data.summaries);
+            }
+        });
+        leptos::task::spawn_local(async move {
+            machines.try_set(Some(api::read("/api/machines").await));
+        });
+    };
+    retry();
+    let agent_search = RwSignal::new(String::new());
+    let project_search = RwSignal::new(String::new());
+    let search = move || {
+        if projects_tab.get() {
+            project_search
+        } else {
+            agent_search
+        }
+    };
+    let online = RwSignal::new(false);
+    let attention = RwSignal::new(false);
+    let viewport = RwSignal::new(narrow());
+    let resize = window_event_listener(leptos::ev::resize, move |_| viewport.set(narrow()));
+    on_cleanup(move || resize.remove());
+    let keys = window_event_listener(leptos::ev::keydown, move |event| {
+        let key = event.key();
+        if key == "Escape"
+            && narrow_open.get_untracked()
+            && document()
+                .query_selector("dialog[open]")
+                .ok()
+                .flatten()
+                .is_none()
+        {
+            close_sidebar();
+            event.prevent_default();
+            return;
+        }
+        if !(event.ctrl_key() || event.meta_key())
+            || document()
+                .query_selector("dialog[open]")
+                .ok()
+                .flatten()
+                .is_some()
+        {
+            return;
+        }
+        match key.as_str() {
+            "b" => toggle_sidebar(),
+            "1" => choose_tab(false),
+            "2" => choose_tab(true),
+            _ => return,
+        }
+        event.prevent_default();
+    });
+    on_cleanup(move || keys.remove());
+    let base_path = StoredValue::new(base_path);
+    let settings_url =
+        base_path.with_value(|path| settings::section_url("/settings/general", path));
+    provide_context(icons.clone());
+    let panel_icon = icons.panel.clone();
+    let hidden = move || {
+        let _ = viewport.get();
+        is_collapsed()
+    };
+    let agent_rows = move || {
+        let Some(result) = directory.get() else {
+            return view! { <p class="machine-group__note" role="status">"Loading agents…"</p> }
+                .into_any();
+        };
+        let Ok(directory) = result else {
+            return view! { <p class="machine-group__note" role="alert">"Agents could not be loaded."</p><button class="k-btn k-btn--sm" on:click=move |_| retry()>"Retry"</button> }.into_any();
+        };
+        let query = agent_search.get().trim().to_lowercase();
+        let summaries = summaries.get();
+        let items = directory.agents.into_iter().chain(directory.guide).filter_map(|agent| {
+            let path = format!("/agents/{}", agent.id);
+            let current = base_path.with_value(|base| base == &path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/')));
+            let summary = summaries.iter().find(|row| row.agent == agent.id);
+            let detail = summary.filter(|row| !row.preview.is_empty()).map(|row| row.preview.as_str()).unwrap_or(&agent.role);
+            if agent.hidden && !current || !format!("{} {}", agent.name, detail).to_lowercase().contains(&query) {
+                return None;
+            }
+            if attention.get() && summary.is_none_or(|row| row.needs_you == 0) {
+                return None;
+            }
+            let active = summary.map_or(0, |row| row.needs_you);
+            Some(view! {
+                <a class="bot-row" class:is-selected=current href=path aria-current=current.then_some("page")>
+                    <span class="bot-row__text"><span class="bot-row__name">{agent.name}</span><span class="bot-row__preview">{detail.to_owned()}</span></span>
+                    {(active > 0).then(|| view! { <span class="needs-you-badge" aria-label=format!("{active} need you")>{active}</span> })}
+                </a>
+            })
+        }).collect_view();
+        if items.is_empty() {
+            view! { <p class="machine-group__note" role="status">{if attention.get() && query.is_empty() { "No agents need you." } else if query.is_empty() && !online.get() { "No agents yet." } else { "No matching agents." }}</p> }.into_any()
+        } else {
+            items.into_any()
+        }
+    };
+    let remote_rows = move || {
+        let query = agent_search.get().trim().to_lowercase();
+        let online = online.get();
+        let hidden = attention.get();
+        machines.with(|result| match result {
+            Some(Ok(result)) if !hidden => result.machines.iter()
+                .filter(|machine| !online || machine.status == "online")
+                .filter_map(|machine| {
+                    let links = machine.agents.iter().filter_map(|agent| {
+                        if !format!("{} {}", agent.name, agent.role).to_lowercase().contains(&query) { return None; }
+                        let path = format!("/machines/{}/agents/{}", machine.id, agent.id);
+                        let current = base_path.with_value(|base| base == &path);
+                        Some(view! {
+                            <a class="bot-row" class:is-selected=current href=path aria-current=current.then_some("page")
+                                aria-label=format!("{} on {}", agent.name, machine.name)>
+                                <span class="bot-row__text"><span class="bot-row__name">{agent.name.clone()}</span><span class="bot-row__preview">{agent.role.clone()}</span></span>
+                            </a>
+                        })
+                    }).collect_view();
+                    if links.is_empty() && !query.is_empty() { return None; }
+                    Some(view! {
+                        <details class="machine-group" open>
+                            <summary class="machine-group__header"><span class="machine-group__name">{machine.name.clone()}</span></summary>
+                            <nav class="bot-list" aria-label=format!("Agents on {}", machine.name)>
+                                {if links.is_empty() { view! { <p class="machine-group__note">"No agents cached yet."</p> }.into_any() } else { links.into_any() }}
+                            </nav>
+                        </details>
+                    })
+                }).collect_view().into_any(),
+            Some(Err(_)) if !hidden => view! { <p class="machine-group__note" role="status">"Machines could not be refreshed."</p> }.into_any(),
+            _ => ().into_any(),
+        })
+    };
+    let project_rows = move || {
+        let query = project_search.get().trim().to_lowercase();
+        projects.with(|projects| match projects {
+            None => view! { <p class="machine-group__note" role="status">"Loading projects…"</p> }.into_any(),
+            Some(Err(_)) => view! { <p class="machine-group__note" role="alert">"Projects could not be loaded."</p><button class="k-btn k-btn--sm" on:click=move |_| retry()>"Retry"</button> }.into_any(),
+            Some(Ok(projects)) => {
+                let rows = projects.projects.iter().filter(|project| !project.archived).filter_map(|project| {
+                    let name_matches = format!("{} {}", project.name, project.description).to_lowercase().contains(&query);
+                    let sections = project.sections.iter().filter(|section| !section.archived && (name_matches || section.name.to_lowercase().contains(&query))).map(|section| {
+                        let path = format!("/rooms/{}", section.id);
+                        let current = base_path.with_value(|base| base == &path);
+                        view! { <a class="project-navigation__room" href=path aria-current=current.then_some("page")>{section.name.clone()}</a> }
+                    }).collect_view();
+                    if !name_matches && sections.is_empty() { return None; }
+                    let path = format!("/projects/{}", project.id);
+                    let current = base_path.with_value(|base| base == &path);
+                    Some(view! {
+                        <div class="project-navigation__project">
+                            <a class="project-navigation__name" href=path aria-current=current.then_some("page")>{project.name.clone()}</a>
+                            {sections}
+                        </div>
+                    })
+                }).collect_view();
+                if rows.is_empty() {
+                    view! { <p class="machine-group__note" role="status">{if query.is_empty() { "No projects yet" } else { "No matching projects or sections." }}</p> }.into_any()
+                } else {
+                    rows.into_any()
+                }
+            }
+        })
+    };
+    let tabs = [("Agents", "agents", false), ("Projects", "projects", true)]
+        .into_iter()
+        .map(|(label, id, project)| {
+            let selected = move || projects_tab.get() == project;
+            view! {
+                <button type="button" role="tab" class="k-tabs__tab"
+                    id=format!("workspace-tab-{id}") aria-controls=format!("workspace-panel-{id}")
+                    tabindex=move || if selected() { 0 } else { -1 }
+                    aria-selected=move || if selected() { "true" } else { "false" }
+                    data-state=move || if selected() { "active" } else { "inactive" }
+                    on:click=move |_| choose_tab(project)>{label}</button>
+            }
+        })
+        .collect_view();
+    view! {
+        <div class="app bs-root leptos-workspace" class:is-sidebar-collapsed=hidden>
+            <button type="button" class="sidebar-reveal k-icon-btn icon-btn--bordered" hidden=move || !hidden()
+                node_ref=reveal aria-label="Expand sidebar" aria-keyshortcuts="Control+b Meta+b" on:click=move |_| toggle_sidebar()>
+                <span class="appearance-icon" inner_html=panel_icon></span>
+            </button>
+            <button type="button" class="sidebar-backdrop" hidden=move || !viewport.get() || !narrow_open.get()
+                tabindex="-1" aria-label="Close workspace navigation" on:click=move |_| close_sidebar()></button>
+            <aside class="sidebar bs-root" node_ref=sidebar tabindex="-1" aria-label="Workspace navigation" hidden=hidden>
+                <div class="sidebar__titlebar">
+                    <span class="sidebar__bots-label">"Minarbot"</span>
+                    <nav class="sidebar__controls" aria-label="Automation">
+                        <a class="k-icon-btn" href="/routines" aria-label="Routines" title="Routines"><span class="appearance-icon" inner_html=icons.routines></span></a>
+                        <a class="k-icon-btn" href="/workflows" aria-label="Workflows" title="Workflows"><span class="appearance-icon" inner_html=icons.workflows></span></a>
+                        <a class="k-icon-btn" href="/calendar" aria-label="Automation calendar" title="Automation calendar"><span class="appearance-icon" inner_html=icons.calendar></span></a>
+                        <button type="button" class="k-icon-btn" aria-label="Collapse sidebar" on:click=move |_| toggle_sidebar()><span class="appearance-icon" inner_html=icons.panel></span></button>
+                    </nav>
+                </div>
+                <div class="sidebar__tabs"><div class="k-tabs">
+                    <div class="k-tabs__list" role="tablist" aria-label="Sidebar"
+                        on:keydown=move |event| settings::move_focus(&event, "[role=tablist]", true)>{tabs}</div>
+                    <div class="sidebar__search">
+                        <span class="appearance-icon" inner_html=icons.search></span>
+                        <input class="k-input" type="search"
+                            aria-label=move || if projects_tab.get() { "Search projects" } else { "Search agents" }
+                            placeholder=move || if projects_tab.get() { "Search projects" } else { "Search agents" }
+                            prop:value=move || search().get()
+                            on:input=move |event| search().set(event_target_value(&event)) />
+                        <button type="button" class="k-icon-btn" aria-label="Filter sidebar" popovertarget="workspace-filters"
+                            aria-pressed=move || if online.get() || attention.get() { "true" } else { "false" }
+                            hidden=move || projects_tab.get()><span class="appearance-icon" inner_html=icons.filter></span></button>
+                        <div id="workspace-filters" popover="auto" class="k-pop k-menu">
+                            <label class="k-menu__item"><input type="checkbox" prop:checked=online on:change=move |event| online.set(event_target_checked(&event)) />"Only online"</label>
+                            <label class="k-menu__item"><input type="checkbox" prop:checked=attention on:change=move |event| attention.set(event_target_checked(&event)) />"Needs you"</label>
+                        </div>
+                    </div>
+                    <div class="sidebar__scroll">
+                        <div id="workspace-panel-agents" role="tabpanel" aria-labelledby="workspace-tab-agents" hidden=projects_tab>
+                            <nav class="machine-groups" aria-label="Machines">
+                                <details class="machine-group" open>
+                                    <summary class="machine-group__header"><span class="machine-group__name">"This device"</span></summary>
+                                    <nav class="bot-list" aria-label="Choose agent">{agent_rows}</nav>
+                                </details>
+                                {remote_rows}
+                            </nav>
+                        </div>
+                        <div id="workspace-panel-projects" role="tabpanel" aria-labelledby="workspace-tab-projects" hidden=move || !projects_tab.get()>
+                            <nav class="project-navigation" aria-label="Projects">{project_rows}</nav>
+                        </div>
+                    </div>
+                </div></div>
+                <div class="sidebar__footer"><a class="k-icon-btn sidebar-settings" aria-label="Settings" title="Settings" href=settings_url><span class="appearance-icon" inner_html=icons.settings></span></a></div>
+            </aside>
+            <div class="leptos-workspace__outlet" inert=move || viewport.get() && narrow_open.get()>
+                {header.map(|header| view! { <header class="leptos-workspace__header">{header()}</header> })}
+                {children()}
+            </div>
+        </div>
+    }
+}

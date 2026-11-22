@@ -1,7 +1,12 @@
 #![forbid(unsafe_code)]
 
+mod api;
 mod appearance;
+mod general;
+mod routes;
 mod settings;
+mod shell;
+mod voice;
 
 use leptos::{mount::mount_to, prelude::*};
 use wasm_bindgen::{prelude::*, JsCast};
@@ -19,19 +24,27 @@ pub fn mount_appearance() -> Result<(), JsValue> {
     let return_to = root
         .get_attribute("data-return-to")
         .unwrap_or_else(|| "/".into());
-    let config = serde_json::from_str(
+    let config: settings::Config = serde_json::from_str(
         &element("appearance-config")?
             .text_content()
             .unwrap_or_default(),
     )
     .map_err(|_| JsValue::from_str("Appearance configuration is invalid"))?;
-    let mount = mount_to(root, move || settings::shell(config, return_to));
+    let path = window().location().pathname().unwrap_or_default();
+    let route = routes::SettingsRoute::from_path(&path)
+        .ok_or_else(|| JsValue::from_str("Unknown settings route"))?;
+    let mount = mount_to(root, move || {
+        let colors = StoredValue::new(config.colors.clone());
+        view! {
+            <shell::WorkspaceShell base_path=return_to.clone() colors=colors icons=config.workspace_icons.clone()>
+                {settings::shell(config, return_to, route)}
+            </shell::WorkspaceShell>
+        }
+    });
     element("appearance-dialog")?
         .dyn_into::<HtmlDialogElement>()?
         .show_modal()?;
-    element("appearance-title")?
-        .dyn_into::<HtmlElement>()?
-        .focus()?;
+    settings::focus_heading();
     mount.forget();
     Ok(())
 }

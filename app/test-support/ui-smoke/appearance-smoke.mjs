@@ -15,6 +15,7 @@ const binary = resolve(process.env.MINARBOT_RUST_BINARY ?? join(root, 'target/de
 const screenshots = process.env.MINARBOT_APPEARANCE_SCREENSHOTS;
 const samples = Number(process.env.MINARBOT_APPEARANCE_BENCH ?? 0);
 const route = '/settings/appearance';
+const general = '/settings/general';
 const key = 'minarbot-presentation-v1';
 assert(Number.isSafeInteger(samples) && samples >= 0);
 const wasmName = (await readdir(join(dist, '_leptos/assets'))).find(name => name.endsWith('.wasm'));
@@ -163,12 +164,15 @@ async function exercise(page, origin, client) {
 async function rollout(page, origin) {
   await page.goto(origin + '/settings/general?from=%2Froutines');
   const url = origin + route + '?from=%2Froutines';
+  const documentStart = await page.evaluate(() => performance.timeOrigin);
   await button(page, 'Appearance').click();
   await page.waitForURL(url);
   await ready(page, 'leptos');
   assert.equal(await page.locator('#root').count(), 0);
+  assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
   await page.goBack({ waitUntil: 'commit' });
   await panel(page).getByRole('heading', { name: 'General' }).waitFor();
+  assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
   await page.goForward({ waitUntil: 'commit' });
   await ready(page, 'leptos');
   await page.keyboard.press('Escape');
@@ -189,6 +193,14 @@ async function rollout(page, origin) {
   await page.waitForURL(origin + '/workflows');
   await page.getByRole('heading', { name: 'Workflows', exact: true }).waitFor();
   await page.waitForFunction(() => document.activeElement?.classList.contains('sidebar-settings'));
+  await open(page, origin, 'leptos', url.slice(origin.length));
+  await page.goto(origin + general + '?ui=react');
+  await panel(page).getByRole('heading', { name: 'General' }).waitFor();
+  await button(page, 'Appearance').click();
+  await ready(page, 'react');
+  assert.equal(new URL(page.url()).searchParams.get('ui'), 'react');
+  await page.reload({ waitUntil: 'commit' });
+  await ready(page, 'react');
   await open(page, origin, 'leptos', url.slice(origin.length));
   const [response] = await Promise.all([
     page.waitForResponse(response => response.url().startsWith(origin + '/settings/vault')),
@@ -259,10 +271,112 @@ async function headers(origin) {
     assert.equal(blocked.status, 404);
     assert.equal(blocked.headers.get('content-security-policy').includes('wasm-unsafe-eval'), false);
   }
-  const other = await fetch(origin + '/settings/general');
-  assert.equal(other.headers.get('content-security-policy').includes('wasm-unsafe-eval'), false);
+  const generalResponse = await fetch(origin + general);
+  assert.equal(generalResponse.headers.get('content-security-policy').includes('wasm-unsafe-eval'), true);
+  assert.match(await generalResponse.text(), /Open standard General/);
+  for (const path of ['/settings/general?ui=react', '/settings/vault']) {
+    const other = await fetch(origin + path);
+    assert.equal(other.headers.get('content-security-policy').includes('wasm-unsafe-eval'), false);
+  }
   const outside = await fetch(origin + route + '?from=' + encodeURIComponent('//example.invalid'));
   assert.match(await outside.text(), /data-return-to="\/"/);
+}
+
+async function generalParity(context, origin, client) {
+  const page = await context.newPage();
+  const errors = [], consoleErrors = [], calls = [];
+  const focus = () => page.waitForFunction(() => document.activeElement?.textContent === 'General');
+  const archive = () => panel(page).getByRole('switch', { name: 'Auto-archive agent deliveries' });
+  const search = () => panel(page).getByRole('textbox', { name: 'SearXNG URL' });
+  const waitArchive = value => page.waitForFunction(value => {
+    const control = document.querySelector('[role="switch"][aria-label="Auto-archive agent deliveries"]');
+    return control && !control.disabled && control.getAttribute('aria-checked') === value;
+  }, value);
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', msg => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/conversations/settings' || path.startsWith('/api/settings/web-search')) calls.push([request.method(), path]);
+  });
+  // Hold the initial read so the disabled state can be checked in both clients.
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const chats = '**/api/conversations/settings';
+  const initial = async route => {
+    await pending;
+    if (!page.isClosed()) await route.continue();
+  };
+  await page.route(chats, initial);
+  try {
+    const response = await page.goto(origin + general, { waitUntil: 'commit' });
+    assert.equal(response.status(), 200);
+    assert.equal((await response.headerValue('content-security-policy')).includes("'wasm-unsafe-eval'"), client === 'leptos');
+    await focus();
+    assert.equal(await archive().isDisabled(), true);
+    release();
+    await waitArchive('true');
+    await page.unroute(chats, initial);
+    await archive().press('Space');
+    await waitArchive('false');
+    await search().waitFor();
+    assert.equal(await button(page, 'Save').isDisabled(), true);
+    assert.equal(await button(page, 'Test').isDisabled(), true);
+    await search().fill('https://example.invalid/search');
+    await search().press('/');
+    assert.equal(await search().evaluate(element => element === document.activeElement), true);
+    await search().fill('https://example.invalid/search');
+    // Fixture response keeps this test offline while checking the original test endpoint and payload.
+    await page.route('**/api/settings/web-search/test', route => {
+      const data = route.request().postDataJSON();
+      assert.equal(data.url, 'https://example.invalid/search');
+      assert.match(data.id, /^[a-f0-9-]{36}$/i);
+      return route.fulfill({ json: { count: 2 } });
+    });
+    await button(page, 'Test').press('Enter');
+    await panel(page).getByRole('status').filter({ hasText: '2 results' }).waitFor();
+    const saved = panel(page).getByRole('status').filter({ hasText: 'Web search settings saved.' });
+    await button(page, 'Save').press('Enter');
+    await saved.waitFor();
+    await page.evaluate(key => localStorage.setItem(key, JSON.stringify({ version: 1, theme: 'light', textSize: 'standard' })), key);
+    await page.reload({ waitUntil: 'commit' });
+    await focus();
+    await waitArchive('false');
+    await archive().press('Space');
+    await waitArchive('true');
+    await search().waitFor();
+    assert.equal(await search().inputValue(), 'https://example.invalid/search');
+    await search().fill('');
+    await button(page, 'Save').press('Enter');
+    await saved.waitFor();
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'light');
+    assert.equal(await page.locator('html').getAttribute('data-color-theme'), 'minarbot');
+    if (screenshots) {
+      for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['narrow', { width: 430, height: 850 }]]) {
+        await page.setViewportSize(viewport);
+        for (const mode of ['Dark', 'Light']) {
+          await button(page, 'Appearance').click();
+          await ready(page, client);
+          await radio(page, mode).click();
+          await button(page, 'General').click();
+          await focus();
+          await search().waitFor();
+          await waitArchive('true');
+          await page.evaluate(() => document.fonts.ready);
+          await page.screenshot({ path: join(screenshots, `general-${client}-${label}-${mode.toLowerCase()}.png`) });
+        }
+      }
+    }
+    assert.deepEqual(consoleErrors, []);
+    await page.route(chats, route => route.fulfill({ status: 503, json: { error: 'Fixture load failure' } }));
+    await page.reload({ waitUntil: 'commit' });
+    await panel(page).getByRole('alert').filter({ hasText: 'Conversation settings could not be loaded' }).waitFor();
+    assert.equal(await archive().isDisabled(), true);
+    assert.deepEqual(errors, []);
+    assert(consoleErrors.every(message => !/content security policy|unreachable|webassembly/i.test(message)));
+    return [...new Set(calls.map(row => row.join(' ')))].sort();
+  } finally { await page.close(); release(); }
 }
 
 function stats(list) {
@@ -325,10 +439,13 @@ try {
   page.setDefaultTimeout(12000);
   let origin = await startup();
   const port = Number(new URL(origin).port);
+  const reactCalls = await generalParity(context, origin, 'react');
   const reactTokens = await exercise(page, origin, 'react');
   const react = samples && await benchmark(origin, 'react');
   await stop();
   origin = await startup('leptos', port);
+  const leptosCalls = await generalParity(context, origin, 'leptos');
+  assert.deepEqual(leptosCalls, reactCalls);
   const leptosTokens = await exercise(page, origin, 'leptos');
   assert.deepEqual(leptosTokens, reactTokens);
   await headers(origin);
@@ -342,8 +459,11 @@ try {
   const value = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
   assert.deepEqual(value, { version: 1, colorTheme: 'github', theme: 'light', textSize: 'large' });
   await context.close();
-  if (samples) console.log(JSON.stringify({ chromium: browser.version(), samples, unit: 'ms', react, leptos }, null, 2));
-  console.log('Appearance parity passed (React and Leptos, focus, tokens, gzip/CSP, failed WASM, and selector rollback).');
+  if (samples) {
+    console.log(JSON.stringify({ chromium: browser.version(), samples, unit: 'ms', react, leptos }, null, 2));
+    if (samples >= 20) assert(leptos.warmNavigation.tti.p95 <= react.warmNavigation.tti.p95 * 1.1, 'Leptos warm settings navigation exceeds React p95 by over 10%');
+  }
+  console.log('Preferences parity passed (React and Leptos, API, focus, tokens, browser history, gzip/CSP, failed WASM, and selector rollback).');
 } finally {
   await browser?.close();
   await stop();

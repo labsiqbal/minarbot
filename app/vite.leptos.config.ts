@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { CircleAlert, Search, X, type LucideIcon } from 'lucide-react';
+import { CalendarClock, CalendarDays, CircleAlert, Filter, Info, PanelLeft, Search, Settings, Volume2, Workflow, X, type LucideIcon } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -25,6 +25,11 @@ const appearanceConfig: Plugin = {
         searchIcon: svg(Search, 14),
         closeIcon: svg(X),
         errorIcon: svg(CircleAlert),
+        workspaceIcons: {
+          panel: svg(PanelLeft), filter: svg(Filter, 15), settings: svg(Settings),
+          routines: svg(CalendarClock), workflows: svg(Workflow), calendar: svg(CalendarDays),
+          search: svg(Search, 15), info: svg(Info, 14), voice: svg(Volume2),
+        },
       }),
     });
   },
