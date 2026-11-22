@@ -77,6 +77,8 @@ async function listen(server) {
 }
 
 function fakeProvider(req, res) {
+  // Long waits between checks can overlap the fixture's idle socket close.
+  res.setHeader('Connection', 'close');
   void (async () => {
     const chunks = [];
     for await (const chunk of req) {
@@ -236,7 +238,7 @@ async function settingsDataSmoke() {
         await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.colorTheme = palette; document.documentElement.dataset.theme = theme; }, { palette, theme });
         await scope.evaluate(el => { if (el.matches('.k-dialog')) el.querySelector('.k-dialog__body').scrollTop=0; if (el.matches('.set4-page')) el.closest('.app-settings__main').scrollTop=0; });
         if(label==='transcribe')await scope.scrollIntoViewIfNeeded();
-        if(label==='install-minarbot'){await page.keyboard.press('Tab');await scope.getByText('Linux · Requirements',{exact:true}).focus();const tooltip=page.getByRole('tooltip').filter({hasText:'Requires Node.js'});await visible(tooltip);assert(await tooltip.evaluate(el=>el.getBoundingClientRect().width<=340),'Tooltip exceeds readable width');}
+        if(label==='install-minarbot'){await page.keyboard.press('Tab');await scope.getByText('Linux and macOS requirements',{exact:true}).focus();const tooltip=page.getByRole('tooltip').filter({hasText:'Requires curl, Python 3, and OpenSSL 3.'});await visible(tooltip);assert(await tooltip.evaluate(el=>el.getBoundingClientRect().width<=340),'Tooltip exceeds readable width');}
         await contain(scope); await screenshot(`set4-${label}-${palette}-${theme}-${viewport.width}`);
       }
     }
@@ -303,7 +305,7 @@ async function settingsDataSmoke() {
     try{const panel=await settings('Machines');await panel.getByRole('button',{name:'Resources',exact:true}).click();const detail=page.getByRole('dialog',{name:'This device',exact:true});await visible(detail.getByRole('alert'));await screenshot('set4-metrics-error');fail=false;await detail.getByRole('button',{name:'Reload metrics',exact:true}).click();await visible(detail.getByText('Host CPU',{exact:true}));await hidden(detail.getByRole('alert'));await close(detail);}finally{await page.unroute('**/api/host-metrics');}
   });
   await check('SET4 Backup download consent, restore CLI dialog and themes',async()=>{
-    const panel=await settings('Backup & restore');await matrix('backup',panel.locator('.set4-page'));await panel.getByRole('button',{name:'Open',exact:true}).click();const restore=page.getByRole('dialog',{name:'Restore backup',exact:true});await visible(restore.getByRole('region',{name:'Backup restore command',exact:true}));assert.equal(await restore.getByRole('region',{name:'Backup restore command',exact:true}).innerText(),'node --experimental-strip-types backup.ts restore BACKUP.sqlite /new-directory/minarbot.sqlite');await matrix('restore',restore);await close(restore);
+    const panel=await settings('Backup & restore');await matrix('backup',panel.locator('.set4-page'));await panel.getByRole('button',{name:'Open',exact:true}).click();const restore=page.getByRole('dialog',{name:'Restore backup',exact:true});await visible(restore.getByRole('region',{name:'Backup restore command',exact:true}));assert.equal(await restore.getByRole('region',{name:'Backup restore command',exact:true}).innerText(),'./bin/minarbot-server restore workspace BACKUP.sqlite --db /new-directory/minarbot.sqlite');await matrix('restore',restore);await close(restore);
     await panel.getByRole('button',{name:'Download',exact:true}).click();const consent=page.getByRole('alertdialog',{name:'Download workspace backup?',exact:true});await visible(consent.getByText(/webhook secrets.*not encrypted/));await consent.getByRole('button',{name:'Cancel',exact:true}).click();await panel.getByRole('button',{name:'Download',exact:true}).click();const download=page.waitForEvent('download'),request=page.waitForRequest(req=>new URL(req.url()).pathname==='/api/backup');await page.getByRole('alertdialog').getByRole('button',{name:'Download backup',exact:true}).click();const req=await request;assert.equal(req.method(),'POST');assert.equal(req.postDataJSON().confirmed,true);assert.deepEqual(Object.keys(req.postDataJSON()).sort(),['confirmed','id']);assert.equal((await download).suggestedFilename(),'minarbot-workspace.sqlite');await visible(panel.getByText('Download started. Check the saved file.',{exact:true}));
   });
   await check('SET4 Backup error and retry recover without closing Settings',async()=>{
@@ -311,17 +313,123 @@ async function settingsDataSmoke() {
     try{await probe.goto(origin);await probe.getByRole('button',{name:'Settings',exact:true}).click();const panel=probe.getByRole('dialog',{name:'Settings',exact:true});await panel.getByRole('button',{name:'Backup & restore',exact:true}).click();await probe.route('**/api/backup',r=>r.fulfill({status:409,json:{error:'Synthetic backup failure. Try downloading again.'}}));await panel.getByRole('button',{name:'Download',exact:true}).click();await probe.getByRole('alertdialog').getByRole('button',{name:'Download backup',exact:true}).click();await visible(panel.getByText('Synthetic backup failure. Try downloading again.',{exact:true}));await screenshot('set4-backup-error',probe);await probe.unroute('**/api/backup');await panel.getByRole('button',{name:'Download',exact:true}).click();const download=probe.waitForEvent('download');await probe.getByRole('alertdialog').getByRole('button',{name:'Download backup',exact:true}).click();await download;await hidden(panel.getByRole('alert'));assert.deepEqual(errors,[]);}
     finally{await probe.close();}
   });
-  await check('SET4 Updates apply exact retry, reconnect, completion and rollback',async()=>{
-    const available={id:'0.2.0-12345678',version:'0.2.0',commit:'12345678'.repeat(5),created:'2026-11-15T00:00:00Z',notes:'Synthetic release. Automatic rollback available.'};const state={current:{...available,version:'0.1.0'},feed:available,available,launcherAvailable:true,runningTurns:2};let offline=false,applyFail=true;const commands=[];
-    await page.route('**/api/updates',r=>offline?broken(r):json(r,state));await page.route('**/api/updates/apply',r=>{commands.push(r.request().postDataJSON());return applyFail?broken(r):json(r,{accepted:true});});
-    try {const panel=await settings('Updates');await visible(panel.getByText('Minarbot 0.2.0',{exact:true}));await matrix('updates',panel.locator('.set4-page'));await panel.getByRole('button',{name:'Update now',exact:true}).click();let confirm=page.getByRole('alertdialog',{name:'Update to 0.2.0?',exact:true});await visible(confirm.getByText(/2 running turns will be interrupted/));await confirm.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(commands.length,0);await panel.getByRole('button',{name:'Update now',exact:true}).click();await page.getByRole('alertdialog').getByRole('button',{name:'Update now',exact:true}).click();await visible(panel.getByRole('button',{name:'Retry update',exact:true}));assert.deepEqual(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('minarbot:update'))),commands[0]);applyFail=false;await panel.getByRole('button',{name:'Retry update',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-busy="true"]')===null);assert.deepEqual(commands[0],commands[1]);offline=true;await visible(panel.getByText('Waiting for server restart',{exact:true}));await screenshot('set4-update-reconnect');offline=false;state.lastAttempt={...commands[0],status:'done',target:available.id,started:'2026-11-15T00:00:00Z'};await visible(panel.getByText('Update complete',{exact:true}).first());await page.waitForFunction(()=>sessionStorage.getItem('minarbot:update')===null);state.lastAttempt.status='rolled-back';state.lastAttempt.reason='Synthetic health check failure';await visible(panel.getByText('Rolled back',{exact:true}));await screenshot('set4-update-rollback');await workspace();}
-    finally{await page.unroute('**/api/updates');await page.unroute('**/api/updates/apply');await page.evaluate(()=>sessionStorage.removeItem('minarbot:update'));}
+  await check('SET4 Updates apply exact retry, reconnect, completion and rollback', async () => {
+    const available = { id: '0.2.0-12345678', version: '0.2.0', commit: '12345678'.repeat(5), created: '2026-11-15T00:00:00Z', notes: 'Synthetic release. Automatic rollback available.' };
+    const current = { ...available, id: '0.1.0-87654321', version: '0.1.0' };
+    const state = { current, feed: available, available, launcherAvailable: true, runningTurns: 2 };
+    const commands = [];
+    let offline = false;
+    await page.route('**/api/updates', route => offline ? route.abort('aborted') : json(route, state));
+    await page.route('**/api/updates/apply', route => {
+      const command = route.request().postDataJSON();
+      commands.push(command);
+      return commands.length === 1 ? route.abort('aborted') : json(route, { id: command.id });
+    });
+    try {
+      const panel = await settings('Updates');
+      await visible(panel.getByText('Minarbot 0.2.0', { exact: true }));
+      await matrix('updates', panel.locator('.set4-page'));
+      const offer = panel.getByRole('button', { name: 'Update now', exact: true });
+      const confirm = page.getByRole('dialog', { name: 'Update 1 machine?', exact: true });
+      await offer.click();
+      await visible(confirm.getByText('2 running turns will be interrupted and can resume after the restart.', { exact: true }));
+      await confirm.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await hidden(confirm);
+      assert.deepEqual(commands, []);
+      await offer.click();
+      await confirm.getByRole('button', { name: 'Update', exact: true }).click();
+      const progress = page.getByRole('dialog', { name: 'Updating 1 machine', exact: true });
+      await visible(progress.getByText('Preparing update', { exact: true }));
+      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('minarbot:update-everything')).commands[0].submitted);
+      assert.equal(commands.length, 2);
+      assert.deepEqual(commands[1], commands[0]);
+      assert.deepEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem('minarbot:update'))), commands[0]);
+      offline = true;
+      await visible(progress.locator('p.k-field__hint').getByText('Reconnecting…', { exact: true }));
+      await screenshot('set4-update-reconnect');
+      offline = false;
+      state.current = available;
+      delete state.available;
+      state.lastAttempt = { ...commands[0], status: 'done', target: available.id, started: available.created };
+      const complete = page.getByRole('dialog', { name: 'Update complete', exact: true });
+      await visible(complete.getByText('Updated', { exact: true }));
+      await close(complete);
+      assert.equal(await page.evaluate(() => sessionStorage.getItem('minarbot:update')), null);
+
+      const next = { ...available, id: '0.3.0-23456789', version: '0.3.0' };
+      state.feed = state.available = next;
+      await visible(panel.getByText('Minarbot 0.3.0', { exact: true }));
+      await offer.click();
+      await confirm.getByRole('button', { name: 'Update', exact: true }).click();
+      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('minarbot:update-everything')).commands[0].submitted);
+      assert.equal(commands.length, 3);
+      assert.notEqual(commands[2].id, commands[0].id);
+      assert.equal(commands[2].version, next.version);
+      state.lastAttempt = { ...commands[2], status: 'rolled-back', target: next.id, started: next.created, reason: 'Synthetic health check failure' };
+      const result = page.getByRole('dialog', { name: 'Update results', exact: true });
+      await visible(result.getByText('Rolled back', { exact: true }));
+      await visible(result.getByText(state.lastAttempt.reason, { exact: true }));
+      await screenshot('set4-update-rollback');
+      await close(result);
+    } finally {
+      await page.unroute('**/api/updates');
+      await page.unroute('**/api/updates/apply');
+      await page.evaluate(() => { sessionStorage.removeItem('minarbot:update'); sessionStorage.removeItem('minarbot:update-everything'); });
+      await workspace();
+    }
   });
-  await check('SET4 Updates fan-out review, exact retry and disabled reasons',async()=>{
-    const list=await fetch(origin+'/api/machines').then(r=>r.json()),machine={...list.machines[0],allowUpdates:true,status:'online'},disabled={...machine,id:randomUUID(),name:'Offline fixture',status:'offline'};const release={id:'0.2.0-12345678',version:'0.2.0',commit:'12345678'.repeat(5),created:'2026-11-15T00:00:00Z',notes:'Fixture'};const commands=[];let fail=true,peerReady=true;
-    await page.route('**/api/updates',r=>json(r,{current:release,feed:release,launcherAvailable:true,runningTurns:0}));await page.route('**/api/machines',r=>json(r,{machines:[machine,disabled]}));await page.route('**/api/updates/machines',r=>json(r,{machines:[{machine:machine.id,available:peerReady,launcherAvailable:true,runningTurns:3,current:{version:'0.1.0'}}]}));await page.route('**/api/updates/fan-out',r=>{commands.push(r.request().postDataJSON());return fail?broken(r):json(r,{machines:[{machine:machine.id,status:'accepted',id:commands[0].id}]});});
-    try {const panel=await settings('Updates');await visible(panel.getByRole('switch',{name:`Also update ${machine.name}`,exact:true}));assert.equal(await panel.getByRole('switch',{name:'Also update Offline fixture',exact:true}).count(),0);await visible(panel.getByText('Machine offline',{exact:false}));assert.equal(await panel.getByRole('button',{name:/Update selected/}).count(),0);await panel.getByRole('switch',{name:`Also update ${machine.name}`,exact:true}).check();await panel.getByRole('button',{name:'Update selected (1)',exact:true}).click();const review=page.getByRole('dialog',{name:'Update 1 machine?',exact:true});await visible(review.getByText(/3 running turns will be interrupted/));await matrix('update-selected',review);await review.getByRole('button',{name:'Update 1 machine',exact:true}).click();await visible(review.getByRole('alert'));peerReady=false;await page.waitForFunction(()=>!document.querySelector('.updates-page button[role="switch"]'));assert(await review.getByRole('button',{name:'Update 1 machine',exact:true}).isEnabled());fail=false;await review.getByRole('button',{name:'Update 1 machine',exact:true}).click();await visible(review.getByText('Accepted',{exact:true}));assert.deepEqual(commands[0],commands[1]);assert.deepEqual(Object.keys(commands[0]).sort(),['id','machines','version']);assert.deepEqual(commands[0].machines,[machine.id]);await close(review);}
-    finally{for(const route of ['**/api/updates','**/api/machines','**/api/updates/machines','**/api/updates/fan-out'])await page.unroute(route);await workspace();}
+  await check('SET4 Updates fan-out review, exact retry and disabled reasons', async () => {
+    const list = await fetch(origin + '/api/machines').then(response => response.json());
+    const machine = { ...list.machines[0], allowUpdates: true, status: 'online' };
+    const offline = { ...machine, id: randomUUID(), name: 'Offline fixture', status: 'offline' };
+    const disabled = { ...machine, id: randomUUID(), name: 'Updates off fixture', allowUpdates: false };
+    const release = { id: '0.2.0-12345678', version: '0.2.0', commit: '12345678'.repeat(5), created: '2026-11-15T00:00:00Z', notes: 'Fixture' };
+    const commands = [];
+    const peer = { machine: machine.id, available: true, launcherAvailable: true, runningTurns: 3, current: { version: '0.1.0' } };
+    await page.route('**/api/updates', route => json(route, { current: release, feed: release, launcherAvailable: true, runningTurns: 0 }));
+    await page.route('**/api/machines', route => json(route, { machines: [machine, offline, disabled] }));
+    await page.route('**/api/updates/machines', route => json(route, { machines: [peer] }));
+    await page.route('**/api/updates/fan-out', route => {
+      const command = route.request().postDataJSON();
+      commands.push(command);
+      if (commands.length === 1) {
+        peer.available = false;
+        return route.abort('aborted');
+      }
+      return json(route, { machines: [{ machine: machine.id, status: 'accepted', id: command.id }] });
+    });
+    try {
+      const panel = await settings('Updates');
+      const toggle = panel.getByRole('switch', { name: `Also update ${machine.name}`, exact: true });
+      await visible(toggle);
+      for (const [row, reason] of [[offline, 'Offline'], [disabled, 'Remote updates off']]) {
+        await visible(panel.locator('.k-row').filter({ hasText: row.name }).locator('.k-row__meta').getByText(reason, { exact: false }));
+        assert.equal(await panel.getByRole('switch', { name: `Also update ${row.name}`, exact: true }).count(), 0);
+      }
+      const selected = panel.getByRole('button', { name: 'Update selected (1)', exact: true });
+      assert.equal(await selected.count(), 0);
+      await toggle.check();
+      await selected.click();
+      const review = page.getByRole('dialog', { name: 'Update 1 machine?', exact: true });
+      await visible(review.getByText('3 running turns will be interrupted and can resume after the restart.', { exact: true }));
+      await matrix('update-selected', review);
+      await review.getByRole('button', { name: 'Update', exact: true }).click();
+      const progress = page.getByRole('dialog', { name: 'Updating 1 machine', exact: true });
+      await visible(progress.getByText('Preparing update', { exact: true }));
+      await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('minarbot:update-everything')).commands[0].submitted);
+      assert.equal(commands.length, 2);
+      assert.deepEqual(commands[0], commands[1]);
+      assert.deepEqual(Object.keys(commands[0]).sort(), ['id', 'machines', 'version']);
+      assert.deepEqual(commands[0].machines, [machine.id]);
+      peer.current.version = release.version;
+      const complete = page.getByRole('dialog', { name: 'Update complete', exact: true });
+      await visible(complete.getByText('Updated', { exact: true }));
+      await close(complete);
+    } finally {
+      for (const route of ['**/api/updates', '**/api/machines', '**/api/updates/machines', '**/api/updates/fan-out']) await page.unroute(route);
+      await page.evaluate(() => sessionStorage.removeItem('minarbot:update-everything'));
+      await workspace();
+    }
   });
   await check('SET4 File transcription consent, whole video, retry charge and recovery',async()=>{
     await agentChat();const agents=await fetch(origin+'/api/agents').then(r=>r.json()),agent=agents.agents.find(row=>row.name===lead),id=randomUUID(),path=`/api/agents/${agent.id}/files/${id}`;const filesRoute=`**/api/agents/${agent.id}/panel/files`;await page.route(filesRoute,r=>json(r,[{id,name:'set4-video.mp4',size:22}]));
@@ -497,7 +605,7 @@ async function settingsConnectionsSmoke(mcpPort) {
   await check('SET3 Connected apps setup, list, detail and grants', async () => {
     let dialog = await settings('Connected apps'); await visible(dialog.getByText('Connect apps', { exact: true })); await matrix('apps-empty');
     await dialog.getByRole('button', { name: 'Set up', exact: true }).click(); const setup = page.getByRole('dialog', { name: 'Set up Composio', exact: true }); await visible(setup); await matrix('apps-setup'); await page.keyboard.press('Escape'); await hidden(setup);
-    const pattern = /\/api\/(?:connected-apps(?:[/?]|$)|agents\/[^/]+\/connected-app)/;
+    const pattern = /\/api\/(?:connected-apps(?:\?|\/(?:key|accounts)$)|agents\/[^/]+\/connected-app)/;
     let enabled = false, keySaves = 0; const commands = [];
     await page.route(pattern, async route => {
       const req = route.request(), url = new URL(req.url());
@@ -506,7 +614,9 @@ async function settingsConnectionsSmoke(mcpPort) {
       await route.fulfill({ json: value });
     });
     try {
-      await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await visible(dialog.getByRole('button', { name: /^GitHub set3-account/ })); await matrix('apps-list');
+      await settings('Skills');
+      dialog = await settings('Connected apps');
+      await visible(dialog.getByRole('button', { name: /^GitHub set3-account/ })); await matrix('apps-list');
       await dialog.getByRole('button', { name: /^GitHub set3-account/ }).click(); await visible(dialog.getByRole('heading', { name: 'GitHub', exact: true })); await matrix('apps-detail');
       await dialog.getByRole('switch').click(); await page.waitForFunction(() => document.querySelector('.app-settings [role=switch]')?.getAttribute('aria-checked') === 'true');
       assert.match(commands[0].path, /\/api\/agents\/[^/]+\/connected-apps\/github$/); assert.deepEqual(Object.keys(commands[0].body).sort(), ['enabled', 'id', 'revision']);
@@ -614,12 +724,19 @@ async function settingsConnectionsSmoke(mcpPort) {
     const dialog = await settings('Skills'); await dialog.getByRole('button', { name: 'Create skill', exact: true }).click(); const editor = page.getByRole('dialog', { name: 'New skill', exact: true });
     await editor.getByLabel('Name', { exact: true }).fill('set3-retry'); await editor.getByLabel('When to use', { exact: true }).fill('Fixture recovery'); await editor.getByLabel(/^Instructions/, { exact: false }).fill('Retry fixture.');
     const commands = [], pattern = origin + '/api/skills';
-    await page.route(pattern, async route => { if (route.request().method() !== 'POST') return route.continue(); commands.push(route.request().postDataJSON()); const response = await route.fetch(); await route.fulfill(commands.length === 1 ? { status: 200, contentType: 'application/json', body: '{lost acknowledgement' } : { response }); });
+    await page.route(pattern, async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      commands.push(route.request().postDataJSON());
+      if (commands.length > 1) return route.continue();
+      const response = await route.fetch();
+      assert(response.ok(), 'Fixture skill save failed');
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{lost acknowledgement' });
+    });
     try {
       await editor.getByRole('button', { name: 'Save version', exact: true }).click(); await visible(editor.getByRole('alert'));
       // Exact retry remains on the page after closing the failed editor.
       await editor.getByRole('button', { name: 'Close', exact: true }).last().click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Discard changes', exact: true }).click(); await hidden(editor);
-      await dialog.getByRole('button', { name: 'Try again', exact: true }).click(); await visible(dialog.getByRole('button', { name: /^set3-retry/ })); assert.equal(commands.length, 2); assert.deepEqual(commands[1], commands[0]);
+      await dialog.getByRole('button', { name: 'Try again', exact: true }).click(); await visible(dialog.getByRole('button', { name: /^set3-retry/ })); await page.waitForFunction(() => sessionStorage.getItem('minarbot:skill-command') === null); assert.equal(commands.length, 2); assert.deepEqual(commands[1], commands[0]);
     } finally { await page.unroute(pattern); }
   });
 }
@@ -1506,7 +1623,18 @@ try {
     await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
     await panel.getByRole('button', { name: 'Close settings', exact: true }).click();
   });
-  await check('Create second agent', () => createAgent(helper));
+  await check('Create second agent', async () => {
+    const path = '**/api/agents';
+    const setHelperId = route => {
+      const request = route.request();
+      if (request.method() !== 'POST') return route.fallback();
+      // Keep the delegation recipient past the first roster page.
+      return route.fallback({ postData: { ...request.postDataJSON(), id: 'ffffffff-ffff-4fff-bfff-ffffffffffff' } });
+    };
+    await page.route(path, setHelperId);
+    try { await createAgent(helper); }
+    finally { await page.unroute(path, setHelperId); }
+  });
   await check('Create quiet reviewer', () => createAgent(quiet));
   await check('Migrated chatroom appears as project with original history', async () => {
     const agents=await fetch(origin+'/api/agents').then(r=>r.json());
@@ -1673,8 +1801,8 @@ try {
       assert.equal(await content.locator('.k-page-head p').count(), 0);
       assert.equal(await content.locator('p, .k-row__meta, .k-field__hint').filter({ hasText: /.{100}/ }).count(), 0);
       if (name === 'General') {
-        assert.deepEqual(await content.getByRole('heading', { level: 2 }).allTextContents(), ['Notifications', 'Voice', 'Conversations']);
-        for (const label of ['Workflow results', 'Read aloud', 'Auto-archive agent deliveries']) await visible(content.getByRole('switch', { name: label, exact: true }));
+        assert.deepEqual(await content.getByRole('heading', { level: 2 }).allTextContents(), ['Notifications', 'Voice', 'Conversations', 'Web search']);
+        for (const label of ['Agent and workflow notifications', 'Read aloud', 'Auto-archive agent deliveries']) await visible(content.getByRole('switch', { name: label, exact: true }));
         const archive = content.getByRole('switch', { name: 'Auto-archive agent deliveries', exact: true });
         const previous = await archive.getAttribute('aria-checked') === 'true';
         for (const expected of [!previous, previous]) {
@@ -1898,9 +2026,11 @@ try {
         await visible(settingsDialog.getByText('2 running turns', { exact: true }));
         await screenshot(`settings-updates-${theme}`);
         await settingsDialog.getByRole('button', { name: 'Update now', exact: true }).click();
-        const confirmation = page.getByRole('alertdialog', { name: 'Update to 0.2.0?', exact: true }); await visible(confirmation);
-        await visible(confirmation.getByText(/previous version and database return automatically/));
-        await visible(confirmation.getByText(/2 running turns will be interrupted and can resume after restart/));
+        const confirmation = page.getByRole('dialog', { name: 'Update 1 machine?', exact: true }); await visible(confirmation);
+        await visible(confirmation.getByRole('row').filter({ hasText: 'Connected server' }).getByRole('cell', { name: '2', exact: true }));
+        await visible(confirmation.getByText('2 running turns will be interrupted and can resume after the restart.', { exact: true }));
+        await confirmation.getByRole('button', { name: 'Release notes', exact: true }).click();
+        await visible(confirmation.getByText(/Automatic rollback keeps the previous release ready/));
         await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click(); await hidden(confirmation);
         await settingsDialog.getByRole('switch', { name: `Also update ${machine.name}`, exact: true }).check();
         const open = settingsDialog.getByRole('button', { name: 'Update selected (1)', exact: true }); await open.click();
@@ -2052,12 +2182,15 @@ try {
   });
   await check('Sidebar: machine groups, preview times, search, filters and persisted collapse', async () => {
     await workspace();
+    await page.context().grantPermissions(['notifications'], { origin });
     const appearance = await settings('General');
-    const notifications = appearance.getByRole('switch', { name: 'Workflow results', exact: true });
+    const notifications = appearance.getByRole('switch', { name: 'Agent and workflow notifications', exact: true });
+    assert(await notifications.isChecked());
     await notifications.click(); assert.equal(await notifications.getAttribute('aria-checked'), 'false');
     await workspace(); await settings('General');
     assert.equal(await notifications.getAttribute('aria-checked'), 'false');
-    await notifications.click(); await workspace(); await sidebarTab('Agents');
+    await notifications.click(); assert(await notifications.isChecked());
+    await workspace(); await sidebarTab('Agents');
     const agents = await fetch(origin + '/api/agents').then(response => response.json());
     const owner = agents.agents.find(agent => agent.name === lead);
     const layout = await fetch(origin + '/api/sidebar').then(response => response.json());
@@ -2521,24 +2654,25 @@ try {
     await (await chooser).setFiles([]);
     await details.getByRole('tab', { name: 'Files', exact: true }).click();
     await visible(details.getByRole('tabpanel', { name: 'Files', exact: true }));
-    await visible(details.getByText('No files yet', { exact: true }));
-    await workspace();
-    await sidebarTab('Projects');
-    await page.getByRole('button', { name: new RegExp(`^# general in ${projectName}`) }).click();
-    assert.equal(await details.getByRole('button', { name: 'Mark as read', exact: true }).count(), 0);
-    await page.waitForFunction(async name => { const channels=await (await fetch('/api/channels')).json(); const projects=await (await fetch('/api/projects')).json(); const project=projects.projects.find(item=>item.name===name); const room=channels.find(item=>item.id===project.channel); return room.activity === room.read_position; }, projectName);
-    await details.getByRole('tab', { name: 'Members', exact: true }).click();
-    await hidden(details.getByRole('button', { name: /^Queue / }));
-    await hidden(details.getByRole('region', { name: 'Upcoming routines', exact: true }));
-    await hidden(details.getByRole('button', { name: 'Automation', exact: true }));
-    await page.locator('.chat__pill').click();
-    await visible(page.getByRole('menuitem', { name: 'Section memory', exact: true }));
-    await hidden(page.getByRole('menuitem', { name: 'Agent memory', exact: true }));
-    await page.getByRole('menuitem', { name: 'Section memory', exact: true }).click();
-    await visible(page.getByRole('heading', { name: 'Memory for this section', exact: true }));
-    await page.getByRole('button', { name: 'Back', exact: true }).click();
-    await page.waitForFunction(() => document.activeElement?.classList.contains('chat__pill'));
-    await agentChat();
+    await visible(details.getByText('Directory is empty on this page.', { exact: true }));
+    try {
+      await workspace();
+      await sidebarTab('Projects');
+      await page.getByRole('button', { name: new RegExp(`^# general in ${projectName}`) }).click();
+      assert.equal(await details.getByRole('button', { name: 'Mark as read', exact: true }).count(), 0);
+      await page.waitForFunction(async name => { const channels=await (await fetch('/api/channels')).json(); const projects=await (await fetch('/api/projects')).json(); const project=projects.projects.find(item=>item.name===name); const room=channels.find(item=>item.id===project.channel); return room.activity === room.read_position; }, projectName);
+      await details.getByRole('tab', { name: 'Members', exact: true }).click();
+      await hidden(details.getByRole('button', { name: /^Queue / }));
+      await hidden(details.getByRole('region', { name: 'Upcoming routines', exact: true }));
+      await hidden(details.getByRole('button', { name: 'Automation', exact: true }));
+      await page.locator('.chat__pill').click();
+      await visible(page.getByRole('menuitem', { name: 'Section memory', exact: true }));
+      await hidden(page.getByRole('menuitem', { name: 'Agent memory', exact: true }));
+      await page.getByRole('menuitem', { name: 'Section memory', exact: true }).click();
+      await visible(page.getByRole('heading', { name: 'Memory for this section', exact: true }));
+      await page.getByRole('button', { name: 'Back', exact: true }).click();
+      await page.waitForFunction(() => document.activeElement?.classList.contains('chat__pill'));
+    } finally { await agentChat(); }
   });
   await desktopViewSmoke({ check, context, page, lead, agentChat, visible, hidden, screenshot, captureComputerThemes, viewport: receipt.viewport });
   await computerViewerSmoke();

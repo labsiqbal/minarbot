@@ -78,7 +78,7 @@ export async function polishSmoke({ check, page, origin, root, agentChat, provid
       const link = page.locator('.agent-message .markdown p').getByRole('link', { name: 'notes.txt', exact: true }); await link.waitFor();
       assert.equal(await page.locator('.agent-message .attachment').count(), 0);
       await page.getByRole('button', { name: /^Worked/ }).last().click();
-      await page.getByText('Created notes.txt', { exact: true }).first().waitFor();
+      await page.getByRole('list', { name: 'Turn activity', exact: true }).getByRole('button', { name: 'Created notes.txt Completed', exact: true }).waitFor();
       assert.equal(await page.getByText(/Result recorded|create_text_file/).count(), 0);
       assert.equal(await page.locator('.activity-timing').count(), 0);
       const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1XkAAAAASUVORK5CYII=', 'base64');

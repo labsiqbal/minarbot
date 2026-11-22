@@ -31,15 +31,18 @@ export async function selfVerifySmoke({ page, origin, root, check, gitAgent, git
     const turn = page.locator('.turn-block').filter({ has: page.getByText('SV1 run checks and deliver report', { exact: true }) });
     const answer = turn.getByLabel('Agent reply', { exact: true }), link = answer.locator('.markdown p a', { hasText: 'Build report' }); await link.waitFor();
     assert.equal(await answer.locator('[class*="chip"], .attachment, .k-badge').count(), 0);
-    assert.equal(await answer.getByText('test-summary.md', { exact: true }).count(), 0);
+    assert.equal(await answer.getByText('Run shell', { exact: true }).count(), 0);
     await link.click(); await details.getByRole('heading', { name: 'Build report', exact: true }).waitFor();
     await page.reload(); await details.getByRole('heading', { name: 'Build report', exact: true }).waitFor();
     const restored = page.locator('.turn-block').filter({ has: page.getByText('SV1 run checks and deliver report', { exact: true }) });
     const trigger = restored.locator('.turn-activity .k-collapsible__trigger'); assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+    const run = restored.getByRole('button', { name: 'Run shell Completed', exact: true });
+    assert.equal(await run.count(), 0);
     await trigger.click();
-    await restored.getByRole('link', { name: 'test-summary.md', exact: true }).click();
-    await details.getByRole('heading', { name: 'Check report', exact: true }).waitFor();
-    await details.getByText('Exit code: 0', { exact: true }).waitFor();
+    await run.click();
+    const result = details.getByRole('list', { name: 'Steps', exact: true }).getByRole('listitem').filter({ hasText: 'Run shell' });
+    await result.locator('details[open]').waitFor();
+    assert.match(await result.locator('pre').last().textContent(), /"exitCode":\s*0\b/);
     await page.screenshot({ path: join(output, 'checked-report.png'), fullPage: true, animations: 'disabled' });
   });
   await check('SV1 Computer prose link navigates URL immediately and after reload', async () => {

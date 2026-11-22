@@ -87,7 +87,7 @@ export async function r5PanelSmoke({ check, page, origin, root, agentChat, setti
     const turns = await page.request.get(origin + `/api/agents/${agent.id}/turns`).then(response => response.json());
     assert.equal(turns.length, 0);
     const summary = await page.request.get(origin + '/api/sidebar/summary').then(response => response.json());
-    assert.deepEqual(summary.summaries.find(item => item.agent === agent.id), { agent: agent.id, preview: '', time: null, status: 'idle' });
+    assert.deepEqual(summary.summaries.find(item => item.agent === agent.id), { agent: agent.id, preview: '', time: null, status: 'idle', needs_you: 0 });
     await page.getByRole('navigation', { name: 'Choose agent', exact: true }).getByRole('button', { name: new RegExp(`^${reviewer} `) }).click();
     await page.getByRole('main', { name: `Conversation ${reviewer}`, exact: true }).waitFor();
     await shot('sidebar-preview'); await agentChat();

@@ -47,7 +47,7 @@ export async function sidebarSpacingSmoke({ page, check, sidebarTab, screenshot,
         assert(layout.length > 0); assert(layout.every(row => row.scroll <= row.width + 1), JSON.stringify(layout));
         assert(await sidebar.locator('.sidebar__scroll').evaluate(el => el.scrollWidth <= el.clientWidth + 1), 'Sidebar overflow');
         const controls = sidebar.locator('.sidebar__titlebar button');
-        assert.equal(await controls.count(), 4);
+        assert.deepEqual(await controls.evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label'))), ['Routines', 'Workflows', 'Automation calendar', 'Create new', 'Collapse sidebar']);
         assert(await controls.evaluateAll(buttons => buttons.every((button, i) => button.getBoundingClientRect().width >= 40 && (!i || button.getBoundingClientRect().left >= buttons[i - 1].getBoundingClientRect().right))), 'Header controls overlap');
         if (!baseline) {
           const density = { default: 1, compact: .875, large: 1.125, larger: 1.25 }[size];
