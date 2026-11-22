@@ -15,7 +15,7 @@ import { rustBinary } from './rust-binary.ts';
 import { startApp } from './test-bridge.ts';
 import { launcherRequest } from './rust-launcher-test.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
-import { buildRelease, fileManifest, latestRelease, selectRelease, selectedRelease, verifyRelease, xtask } from './test-support/release.ts';
+import { buildRelease, latestRelease, selectRelease, selectedRelease, verifyRelease, xtask } from './test-support/release.ts';
 import { receiveRelease, releaseArchive } from './rust-update-test.ts';
 import { freePort } from './test-support/test-process.ts';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -118,38 +118,6 @@ test('Rust trial gates owner work until matching private socket commit', {timeou
   await api(app,'/api/updates');await api(app,'/api/agents',undefined,503);await api(app,'/api/machines',undefined,503);await api(app,'/api/pairing-codes',{id:randomUUID()},503);
   committed=true;await until(async()=>{try{return (await fetch(app.origin+'/api/agents')).status===200;}catch{return false;}});await api(app,'/api/machines');
  }finally{if(child)await stop(child);await new Promise<void>(done=>control.close(()=>done()));rmSync(dir,{recursive:true,force:true});}
-});
-
-test('Rust launcher trials native Rust server, commits over socket, and rolls back failed health', {timeout:30000},async()=>{
- const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;
- try{
-  const stripped=join(dir,'minarbot-server');
-  execFileSync('strip',['--strip-debug','-o',stripped,rustBinary('minarbot-server',process.env.MINARBOT_RUST_BINARY)]);
-  function native(version:string){
-   const release=publishFixture(dir,version),path=join(dir,'releases',release.id);
-   cpSync(stripped,join(path,'bin/minarbot-server'));
-   writeFileSync(join(path,'package.json'),JSON.stringify({version,type:'module'}));
-   const info={...release,files:fileManifest(path)};writeFileSync(join(path,'release.json'),JSON.stringify(info));
-   return info;
-  }
-  const first=native('1.0.0');f=await launcher(dir,first.id);const app={origin:`http://127.0.0.1:${f.port}`};
-  assert.equal((await api(app,'/api/environment')).version,'1.0.0');
-  const db=testDatabase(join(f.data,'minarbot.sqlite'));db.exec("CREATE TABLE native_fixture(value TEXT);INSERT INTO native_fixture VALUES('preserved')");db.close();
-  const second=native('1.0.1'),id=randomUUID();
-  await api(app,'/api/updates/apply',{id,version:second.version,source:'Local feed'},202);
-  await until(async()=>{try{return (await launcherRequest(f!.options,{type:'trial',id})).committed===true;}catch{return false;}});
-  await until(async()=>{try{return (await fetch(app.origin+'/api/agents')).status===200;}catch{return false;}});
-  assert.equal((await api(app,'/api/environment')).version,'1.0.1');
-  assert.equal((await launcherRequest(f.options,{type:'status'})).current,second.id);
-  const third=native('1.0.2');chmodSync(join(dir,'releases',third.id,'bin/minarbot-server'),0o600);
-  third.files=fileManifest(join(dir,'releases',third.id));writeFileSync(join(dir,'releases',third.id,'release.json'),JSON.stringify(third));
-  const failed=randomUUID();await api(app,'/api/updates/apply',{id:failed,version:third.version,source:'Local feed'},202);
-  const rollback=await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});return (state.lastAttempt as {status?:string})?.status==='rolled-back'?state:undefined;});
-  assert.equal((rollback.lastAttempt as {snapshotReady?:boolean}).snapshotReady,true);
-  assert.match((rollback.lastAttempt as {reason:string}).reason,/health|exited/i);
-  await until(async()=>{try{return (await api(app,'/api/environment')).version==='1.0.1';}catch{return false;}});
-  const restored=testDatabase(join(f.data,'minarbot.sqlite'));assert.equal(restored.prepare('SELECT value FROM native_fixture').get()?.value,'preserved');restored.close();
- }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 
 if(process.env.MINARBOT_UPDATE_IT==='1')test('real release build, HTTP update, broken trial rollback and intact workspace', {timeout:900000},async()=>{

@@ -6,6 +6,10 @@ resolver = "2"
 edition = "2021"
 license = "Apache-2.0"
 
+[workspace.dependencies]
+# Bundled SQLite must check FTS5 indexes in read-only update snapshots.
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+
 [workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
