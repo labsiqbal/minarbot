@@ -336,13 +336,21 @@ pub(crate) fn extract(
         )
     } else {
         let result = stack::run_guarded(|| match file.language {
-            "go" => crate::go::extract(&file.path, &text),
-            "rust" => crate::rustlang::extract(&file.path, &text),
-            "python" => crate::python::extract(&file.path, &text),
+            "go" => crate::go::extract(&file.path, &text).map(|graph| (graph, false)),
+            "rust" => crate::rustlang::extract(&file.path, &text).map(|graph| (graph, false)),
+            "python" => crate::python::extract(&file.path, &text).map(|graph| (graph, false)),
             language => crate::tsjs::extract(&file.path, &text, language),
         });
         match result {
-            Ok(graph) => (graph, None),
+            Ok((graph, recovered)) => (
+                graph,
+                recovered.then(|| {
+                    (
+                        "parse_recovered",
+                        "Partial extraction after parser recovery".to_owned(),
+                    )
+                }),
+            ),
             Err(error) => (Tables::default(), Some(("parse_error", error))),
         }
     };

@@ -18,6 +18,7 @@ mod go;
 mod ids;
 mod langs;
 mod python;
+mod query;
 mod resolution;
 mod rustlang;
 mod scan;
@@ -27,7 +28,7 @@ mod textutil;
 mod tsjs;
 
 use rayon::prelude::*;
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
 use std::path::{Path, PathBuf};
 
 const SCHEMA: &str = include_str!("../schema.sql");
@@ -60,6 +61,8 @@ pub struct Index {
     root: PathBuf,
     db: Connection,
 }
+
+pub use query::{mcp_tools, ExploreSession, QueryError, QueryIndex};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct SyncStats {
@@ -104,6 +107,24 @@ impl Index {
             transaction.execute_batch(SCHEMA)?;
         }
         transaction.commit()?;
+        Ok(Self { root, db })
+    }
+
+    /// Open an existing Minarbot or CodeGraph v1.6.2 database for queries only.
+    pub fn open_read_only(root: impl AsRef<Path>, database: impl AsRef<Path>) -> Result<Self> {
+        let root = root
+            .as_ref()
+            .canonicalize()
+            .map_err(|source| Error::Source {
+                path: root.as_ref().to_owned(),
+                source,
+            })?;
+        let db = Connection::open_with_flags(
+            database,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        db.busy_timeout(std::time::Duration::from_secs(5))?;
+        db.pragma_update(None, "trusted_schema", false)?;
         Ok(Self { root, db })
     }
 
@@ -155,7 +176,17 @@ impl Index {
             store::delete_file(&transaction, path)?;
         }
         resolution::resolve(&transaction, &self.root, &changes)?;
+        transaction.execute(
+            "INSERT INTO project_metadata (key,value,updated_at) VALUES ('minarbot_last_sync',?1,?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+            params![serde_json::json!({"added":stats.added,"modified":stats.updated,"removed":stats.deleted}).to_string(), now],
+        )?;
         transaction.commit()?;
         Ok(stats)
+    }
+
+    /// Read-only query view over this index.
+    pub fn query(&self) -> QueryIndex<'_> {
+        QueryIndex::new(&self.root, &self.db)
     }
 }

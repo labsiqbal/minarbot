@@ -149,6 +149,20 @@ async function attempt(runtime, task, count, server, signal) {
                 });
                 scope = `/api/channels/${project.sections[0].id}`;
             }
+            if (server.projectCodegraph && ['bug-fix', 'feature'].includes(task.category)) {
+                const project = await app.api('/api/projects', {
+                    id: randomUUID(), name: 'Benchmark project', folders: [{ mode: 'existing', path: workspace }],
+                    members: [{ agent: lead, write: true }], confirmWrite: true,
+                });
+                const revision = project.codegraphEnabled ? project.revision : (await app.api(
+                    `/api/projects/${project.id}/edit`,
+                    { id: randomUUID(), revision: project.revision, codegraphEnabled: true },
+                )).revision;
+                const thread = await app.api(`/api/projects/${project.id}/thread`, {
+                    id: randomUUID(), revision, agent: lead, folder: workspace, name: 'Benchmark',
+                });
+                scope = `/api/threads/${thread.threads[0].id}`;
+            }
             if (site) {
                 const path = `${scope}/computer`, current = await app.api(path);
                 await app.api(path, { id: randomUUID(), revision: current.revision, enabled: true });
@@ -265,7 +279,7 @@ export async function save(dir, receipt) {
 
 async function main() {
     const { values } = parseArgs({ options: {
-        'dry-run': { type: 'boolean' }, tasks: { type: 'string' }, runtime: { type: 'string' },
+        'dry-run': { type: 'boolean' }, 'project-codegraph': { type: 'boolean' }, tasks: { type: 'string' }, runtime: { type: 'string' },
         repeat: { type: 'string', default: '1' }, binary: { type: 'string', default: join(root, 'target/release/minarbot-server') },
         results: { type: 'string', default: join(here, 'results') },
     } });
@@ -282,7 +296,7 @@ async function main() {
         return;
     }
 
-    const server = { binary: resolve(values.binary), dist: join(root, 'app/dist'), provider: providerConfig() };
+    const server = { binary: resolve(values.binary), dist: join(root, 'app/dist'), provider: providerConfig(), projectCodegraph: values['project-codegraph'] };
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(server.binary)) hash.update(chunk);
     const binarySHA256 = hash.digest('hex');
@@ -320,7 +334,7 @@ async function main() {
     process.on('SIGINT', stop).on('SIGTERM', stop);
     try {
         for (const runtime of inventory.filter(runtime => requested.includes(runtime.name))) {
-            const receipt = { version, binarySHA256, checkoutCommit, suiteSHA256, startedAt, runtime, repeat, complete: false, results: [] };
+            const receipt = { version, binarySHA256, checkoutCommit, suiteSHA256, startedAt, runtime, repeat, projectCodegraph: !!server.projectCodegraph, complete: false, results: [] };
             for (let count = 1; count <= repeat && !controller.signal.aborted; count++) {
                 for (const task of selected) {
                     if (controller.signal.aborted) break;

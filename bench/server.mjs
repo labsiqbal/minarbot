@@ -8,10 +8,10 @@ const names = {
     codex: ['codex'], claude: ['claude'], hermes: ['hermes-acp', 'hermes'], antigravity: ['agy', 'antigravity'],
     grok: ['grok'], pi: ['pi'], opencode: ['opencode'], gemini: ['gemini'], kiro: ['kiro-cli'],
 };
-async function findExecutables(path) {
+async function findExecutables(path, projectCodegraph) {
     const dirs = [...new Set(path.split(':').filter(isAbsolute))];
     const executables = {};
-    for (const [runtime, candidates] of Object.entries(names)) {
+    for (const [runtime, candidates] of Object.entries(projectCodegraph ? { ...names, codegraph: ['codegraph'] } : names)) {
         const candidatePaths = candidates.flatMap(name => dirs.map(dir => join(dir, name)));
         for (const candidate of candidatePaths) {
             if (!(await stat(candidate).catch(() => null))?.isFile()) continue;
@@ -23,7 +23,7 @@ async function findExecutables(path) {
     return executables;
 }
 
-export async function startServer({ binary, scratch, fixture, provider, dist }) {
+export async function startServer({ binary, scratch, fixture, provider, dist, projectCodegraph }) {
     const home = join(scratch, 'home'), tmp = join(scratch, 'tmp'), data = join(scratch, 'data');
     await Promise.all([home, tmp, data].map(path => mkdir(path, { recursive: true, mode: 0o700 })));
     const database = join(data, 'minarbot.sqlite');
@@ -52,7 +52,7 @@ export async function startServer({ binary, scratch, fixture, provider, dist }) 
         database, port: 0, dist,
         desktop: { enabled: !!fixture, max: 1, leaseDir: join(scratch, 'desktop-leases'),
             ...(fixture && { testOnlyProxyTarget: { hostname: 'job-bench.test', port: fixture.port } }) },
-        harness: { executables: await findExecutables(env.PATH) },
+        harness: { executables: await findExecutables(env.PATH, projectCodegraph) },
         ...(provider && { accounts: [provider] }),
     };
     const child = spawn('/usr/bin/bwrap', [...args, '--chdir', scratch, binary, '--test-config'], {

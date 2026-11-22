@@ -726,3 +726,213 @@ async fn queued_dispatch_replays_its_receipt_and_steers_once_at_the_safe_point()
     assert_eq!(calls.read()?.len(), observed.len());
     Ok(())
 }
+
+#[tokio::test]
+async fn seeded_sse_frames_wake_after_visibility_and_file_lane_commits() -> Result<()> {
+    use rusqlite::{params, Connection};
+
+    let root = TestRoot::new()?;
+    let app = root.start(json!({})).await?;
+    assert!(app.terminate(Signal::TERM).await?.success());
+    let agent = id();
+    let other = id();
+    let turn = id();
+    let call = {
+        let db = Connection::open(root.database())?;
+        for (agent, name) in [(&agent, "Fixture"), (&other, "Other")] {
+            db.execute(
+                "INSERT INTO agents(id,name,model,instructions) VALUES(?,?,'fixture','Help')",
+                params![agent, name],
+            )?;
+        }
+        let created = "2026-01-02T03:04:05.000Z";
+        db.execute(
+            "INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,'Fixture','interrupted',?)",
+            params![turn, agent, created],
+        )?;
+        db.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,status,created) VALUES(?,?,'fixture','test','completion','received',?)", params![turn, agent, created])?;
+        let call = db.last_insert_rowid();
+        db.execute(
+            "INSERT INTO provider_streams VALUES(?,'Saved answer')",
+            [call],
+        )?;
+        db.execute("INSERT INTO provider_stream_segments VALUES(?,0,'text-0','text','Saved answer','',1,3)", [call])?;
+        call
+    };
+    let app = root.start(json!({})).await?;
+    let db = Connection::open(root.database())?;
+    db.execute("UPDATE turns SET status='running' WHERE id=?", [&turn])?;
+    let path = format!("/api/agents/{agent}/turns");
+    let stream_path = format!("{path}/stream");
+    for (request, status) in [
+        (app.get(&format!("{stream_path}?q=x")), 400),
+        (
+            app.get(&stream_path)
+                .header(header::ORIGIN, "https://foreign.example"),
+            403,
+        ),
+        (app.get(&stream_path).bearer_auth("fixture"), 403),
+        (app.get(&format!("/api/agents/{}/turns/stream", id())), 404),
+    ] {
+        assert_eq!(request.send().await?.status(), status);
+    }
+    let mut stream = TurnStream::connect(&app, &path).await?;
+    let expected = json!({"id":turn,"partial":{"seq":call,"text":"Saved answer","model":"fixture","status":"received","segment":"text-0","revision":3,"final":true}});
+    let expected = format!("data: {expected}\n\n");
+    let mut frame = Vec::new();
+    while frame.len() < expected.len() {
+        frame.extend_from_slice(
+            &stream
+                .response
+                .chunk()
+                .await?
+                .ok_or("missing initial SSE frame")?,
+        );
+    }
+    assert_eq!(frame, expected.as_bytes());
+    let mut isolated = TurnStream::connect(&app, &format!("/api/agents/{other}/turns")).await?;
+    let quiet = Duration::from_millis(80);
+    assert!(timeout(quiet, isolated.next()).await.is_err());
+    let update = |text: &str, revision| -> Result<()> {
+        db.execute(
+            "UPDATE provider_streams SET text=? WHERE call=?",
+            params![text, call],
+        )?;
+        db.execute(
+            "UPDATE provider_stream_segments SET text=?,revision=? WHERE call=?",
+            params![text, revision, call],
+        )?;
+        Ok(())
+    };
+    update("Latest answer", 4)?;
+    post_json(
+        &app,
+        &format!("/api/agents/{agent}/visibility"),
+        &json!({"id":id(),"revision":0,"hidden":false}),
+        200,
+    )
+    .await?;
+    assert_eq!(stream.snapshot().await?["partial"]["text"], "Latest answer");
+    let writes = [
+        app.post(&format!("/api/agents/{agent}/files/{}", id())).header(header::CONTENT_TYPE, "application/octet-stream").header("X-File-Name", "fixture.txt").body("file change"),
+        app.post(&format!("/api/agents/{agent}/sites")).json(&json!({"id":id(),"name":"Fixture","source":"<p>Fixture</p>"})),
+        app.post("/api/skills").json(&json!({"id":id(),"revision":0,"name":"Fixture","description":"Fixture","content":"Fixture"})),
+    ];
+    for (index, request) in writes.into_iter().enumerate() {
+        let revision = index + 5;
+        let text = format!("File lane commit {revision}");
+        update(&text, revision)?;
+        assert!(timeout(quiet, stream.next()).await.is_err());
+        assert_eq!(request.send().await?.status(), 200);
+        assert_eq!(stream.snapshot().await?["partial"]["text"], text);
+    }
+    let mut repaired = TurnStream::connect(&app, &path).await?;
+    assert_eq!(repaired.snapshot().await?["partial"]["revision"], 7);
+    assert!(app.terminate(Signal::TERM).await?.success());
+    assert!(stream.next().await?.is_none());
+    assert!(isolated.next().await?.is_none());
+    assert!(repaired.next().await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn automatic_routing_and_execution_share_four_workers() -> Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Semaphore;
+
+    let root = TestRoot::new()?;
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let started = Arc::new(AtomicUsize::new(0));
+    let permits = Arc::new(Semaphore::new(0));
+    let provider = Loopback::start(Router::new().route(
+        "/v1/chat/completions",
+        post({
+            let active = active.clone();
+            let peak = peak.clone();
+            let started = started.clone();
+            let permits = permits.clone();
+            move |Json(request): Json<Value>| {
+                let active = active.clone();
+                let peak = peak.clone();
+                let started = started.clone();
+                let permits = permits.clone();
+                async move {
+                    let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(current, Ordering::SeqCst);
+                    started.fetch_add(1, Ordering::SeqCst);
+                    permits
+                        .acquire()
+                        .await
+                        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+                        .forget();
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    let messages = messages(&request);
+                    let routing = messages
+                        .first()
+                        .and_then(|message| message["content"].as_str())
+                        .is_some_and(|text| text.starts_with("Choose exactly one channel member"));
+                    let content = if routing {
+                        let input = messages
+                            .last()
+                            .and_then(|message| message["content"].as_str())
+                            .ok_or(StatusCode::BAD_REQUEST)?;
+                        let input: Value =
+                            serde_json::from_str(input).map_err(|_| StatusCode::BAD_REQUEST)?;
+                        let worker = input["members"]
+                            .as_array()
+                            .and_then(|members| {
+                                members.iter().find(|member| member["name"] == "Worker")
+                            })
+                            .ok_or(StatusCode::BAD_REQUEST)?;
+                        json!({"action":"assign","recipient":worker["id"]}).to_string()
+                    } else {
+                        "finished".to_owned()
+                    };
+                    Ok::<_, StatusCode>(completion(json!({"content":content}), "stop"))
+                }
+            }
+        }),
+    ))
+    .await?;
+    let app = root.start(json!({"baseURL":provider.base_url()})).await?;
+    let worker = agent(&app, "Worker", "fixture").await?;
+    let mut turns = Vec::new();
+    for index in 0..5 {
+        let lead = agent(&app, &format!("Lead {index}"), "fixture").await?;
+        let room = channel(&app, &[&lead, &worker], Some(&lead)).await?;
+        let path = format!("/api/channels/{room}/turns");
+        let turn = id();
+        post_json(
+            &app,
+            &path,
+            &json!({"id":turn,"text":format!("Work {index}"),"automatic":true}),
+            202,
+        )
+        .await?;
+        turns.push((path, turn));
+    }
+
+    let wait_for_calls = async |count| -> Result<()> {
+        timeout(WAIT, async {
+            while started.load(Ordering::SeqCst) < count {
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await?;
+        assert_eq!(active.load(Ordering::SeqCst), 4);
+        Ok(())
+    };
+    wait_for_calls(4).await?;
+    let queued = get_json(&app, &turns[4].0).await?;
+    assert_eq!(queued[0]["status"], "queued");
+    permits.add_permits(1);
+    wait_for_calls(5).await?;
+    permits.add_permits(10);
+    for (path, turn) in turns {
+        let done = wait_status(&app, &path, &turn, "done").await?;
+        assert_eq!(done["agent"], worker);
+    }
+    assert_eq!(peak.load(Ordering::SeqCst), 4);
+    Ok(())
+}

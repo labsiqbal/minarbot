@@ -2380,6 +2380,7 @@ dependencies = [
  "jsonwebtoken",
  "keyring",
  "mail-parser",
+ "minarbot-codegraph",
  "minarbot-launcher",
  "minarbot-memory",
  "moxcms",
