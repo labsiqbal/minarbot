@@ -63,7 +63,7 @@ export async function widePanelsSmoke({ check, page, agentChat, visible, hidden,
     assert(await nav.getByRole('button').evaluateAll(buttons => buttons.every(button => button.firstElementChild?.tagName.toLowerCase() === 'svg' && button.firstElementChild.getAttribute('aria-hidden') === 'true')));
     const selected = nav.getByRole('button', { name: 'Appearance', exact: true });
     assert.equal(await selected.getAttribute('aria-current'), 'page');
-    assert(await selected.evaluate(el => getComputedStyle(el).backgroundColor !== 'rgba(0, 0, 0, 0)' && parseFloat(getComputedStyle(el).borderRadius) > 0));
+    await page.waitForFunction(() => { const el = document.querySelector('.app-settings__nav button[aria-current=page]'); return !!el && getComputedStyle(el).backgroundColor !== 'rgba(0, 0, 0, 0)' && parseFloat(getComputedStyle(el).borderRadius) > 0; });
     await selected.focus(); await page.keyboard.press('/');
     const search = dialog.getByRole('searchbox', { name: 'Search settings', exact: true });
     assert(await search.evaluate(el => el === document.activeElement));
