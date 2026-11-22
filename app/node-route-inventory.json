@@ -1054,6 +1054,18 @@
       "endpoint": true
     },
     {
+      "kind": "regex-exact",
+      "pattern": "^\\/api\\/settings\\/craft-anything(?:\\/(?:install|remove|grant|deep))?$",
+      "flags": "",
+      "endpoint": true
+    },
+    {
+      "kind": "regex-exact",
+      "pattern": "^\\/api\\/(?:agents|channels|threads)\\/[a-f0-9-]+\\/mcp-apps\\/[a-f0-9-]+(?:\\/[^/]+)?$",
+      "flags": "",
+      "endpoint": true
+    },
+    {
       "kind": "exact",
       "pattern": "/api/environment/remove",
       "endpoint": true
