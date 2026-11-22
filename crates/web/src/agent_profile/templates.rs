@@ -149,11 +149,13 @@ fn preview_field(
     required: bool,
 ) -> impl IntoView {
     let id = format!("agent-template-{field}");
+    let role_hint = (field == "role").then_some("agent-template-role-hint");
     view! {
         <label class="k-field" for=id.clone()><span class="k-field__label">{label}
             {(!required).then(|| view! { <span class="k-field__optional">"Optional"</span> })}</span>
-            <input class="k-input" id=id.clone() required=required maxlength=limit prop:value=template_field(draft, field)
+            <input class="k-input" id=id.clone() required=required maxlength=limit aria-describedby=role_hint prop:value=template_field(draft, field)
               on:input=move |event| edit_field(draft, field, json!(event_target_value(&event))) />
+            {role_hint.map(|id| view! { <span id=id class="k-field__hint">"Shown under the agent's name, e.g. Orchestration agent"</span> })}
         </label>
     }
 }

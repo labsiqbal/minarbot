@@ -16,6 +16,7 @@
 .leptos-workspace .system-dialog .k-tabs__panel[hidden] { display: none; }
 .leptos-workspace .system-dialog .agent-profile__resources .panel-row__title { min-width: 0; }
 .leptos-workspace .agent-avatar-current, .leptos-workspace .agent-template-avatar { border-radius: 8px; object-fit: cover; }
+.leptos-workspace .agent-template-avatar { border-radius: 12px; }
 .leptos-workspace .agent-avatar-filename { align-self: center; overflow-wrap: anywhere; }
 .leptos-workspace .agent-template-fields { padding: 12px; }
 .leptos-workspace .agent-model-field { gap: 4px; }
