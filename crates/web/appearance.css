@@ -1,10 +1,12 @@
 @import "../../app/src/ui/tokens.css";
 @import "../../app/src/ui/base.css";
+@import "../../app/src/ui/shell.css";
 @import "../../app/src/ui/config.css";
 @import "../../app/src/ui/legacy.css";
 @import "../../app/src/ui/minarbot.css";
 @import "../../app/src/ui/kit.css";
 @import "../../app/src/ui/density.css";
+@import "../../app/src/ui/web-search-settings.css";
 @import "../../app/node_modules/@fontsource-variable/inter/index.css";
 
 #appearance-dialog {
@@ -22,6 +24,20 @@
   display: none;
 }
 #appearance-dialog .appearance-icon { display: contents; }
+#appearance-dialog .k-alert > .appearance-icon > svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
 #appearance-dialog .app-settings__search .appearance-icon svg { width: 14px; height: 14px; }
 #appearance-fallback { min-height: 100%; }
 #appearance-fallback .k-btn { text-decoration: none; }
+
+.leptos-workspace [hidden] { display: none; }
+.leptos-workspace .appearance-icon { display: contents; }
+.leptos-workspace :is(.bot-row, .project-navigation__name, .project-navigation__room, .k-icon-btn) { text-decoration: none; }
+.leptos-workspace .sidebar { flex: 0 0 280px; max-width: 100vw; }
+.leptos-workspace #workspace-filters { margin: auto; }
+.leptos-workspace__outlet { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; height: 100%; }
+.leptos-workspace__header { display: flex; align-items: center; min-height: 60px; padding-inline: 16px; }
+.leptos-workspace.is-sidebar-collapsed .leptos-workspace__header { padding-left: 56px; }
+
+@media (max-width: 767px) {
+  .leptos-workspace .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 81; max-width: 100vw; }
+}
