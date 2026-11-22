@@ -1,6 +1,6 @@
 export type SettingsSection = 'general' | 'appearance' | 'providers' | 'engines' | 'skills' | 'connected-apps' | 'hub' | 'mcp' | 'machines' | 'devices' | 'computer' | 'craft-anything' | 'updates' | 'usage' | 'data' | 'backup' | 'mcp-server' | 'email' | 'vault';
 export type ResultTarget = { view: 'file' | 'url' | 'computer'; path: string; name: string; agent?: string };
-export type AppRoute = { result?: ResultTarget; notFound?: boolean; agent?: string; inbox?: boolean; thread?: string; room?: string; project?: string; machine?: string; remoteAgent?: string; view?: 'routines' | 'workflows' | 'calendar'; settings?: SettingsSection };
+export type AppRoute = { result?: ResultTarget; notFound?: boolean; agent?: string; inbox?: boolean; routineAgent?: string; thread?: string; room?: string; project?: string; machine?: string; remoteAgent?: string; view?: 'routines' | 'workflows' | 'calendar'; settings?: SettingsSection };
 const settings = new Set(['general', 'appearance', 'providers', 'engines', 'skills', 'connected-apps', 'hub', 'mcp', 'machines', 'devices', 'computer', 'updates', 'usage', 'data', 'backup', 'mcp-server', 'email', 'vault', 'craft-anything']);
 const id = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
 
@@ -17,7 +17,11 @@ function parseBaseRoute(location: string): AppRoute {
   if ((match = new RegExp(`^/rooms/(${id})$`, 'i').exec(path))) return { room: match[1].toLowerCase() };
   if ((match = new RegExp(`^/projects/(${id})$`, 'i').exec(path))) return { project: match[1].toLowerCase() };
   if ((match = new RegExp(`^/machines/(${id})/agents/(${id})$`, 'i').exec(path))) return { machine: match[1].toLowerCase(), remoteAgent: match[2].toLowerCase() };
-  if (path === '/routines' || path === '/workflows' || path === '/calendar') return { view: path.slice(1) as 'routines' | 'workflows' | 'calendar' };
+  if (path === '/routines') {
+    const agent = new URLSearchParams(query).get('agent');
+    return { view: 'routines', ...(agent && new RegExp(`^${id}$`, 'i').test(agent) ? { routineAgent: agent.toLowerCase() } : {}) };
+  }
+  if (path === '/workflows' || path === '/calendar') return { view: path.slice(1) as 'routines' | 'workflows' | 'calendar' };
   return { notFound: true };
 }
 
@@ -26,6 +30,7 @@ function baseRoutePath(route: AppRoute): string {
     const from = routePath({ ...route, settings: undefined });
     return `/settings/${route.settings}${from === '/' ? '' : `?${new URLSearchParams({ from })}`}`;
   }
+  if (route.view === 'routines' && route.routineAgent) return `/routines?${new URLSearchParams({ agent: route.routineAgent })}`;
   if (route.view) return `/${route.view}`;
   if (route.machine && route.remoteAgent) return `/machines/${route.machine}/agents/${route.remoteAgent}`;
   if (route.project) return `/projects/${route.project}`;
@@ -54,5 +59,5 @@ export function parseRoute(location: string): AppRoute {
 export function routePath(route: AppRoute): string {
   const path = baseRoutePath(route);
   if (!route.result || route.settings) return path;
-  return `${path}?${new URLSearchParams({ result: JSON.stringify(route.result) })}`;
+  return `${path}${path.includes('?') ? '&' : '?'}${new URLSearchParams({ result: JSON.stringify(route.result) })}`;
 }

@@ -2,6 +2,7 @@
 
 mod api;
 mod appearance;
+mod automation;
 mod connected_apps;
 mod connection_ui;
 mod craft_anything;
@@ -78,11 +79,23 @@ pub fn mount_appearance() -> Result<(), JsValue> {
         mount.forget();
     } else if let Some(route) = workspace_route::WorkspaceRoute::from_path(&path) {
         mount_to(root, move || {
+            provide_context(config.connection_icons);
+            provide_context(config.system_icons);
             let colors = StoredValue::new(config.colors);
-            view! {
-                <shell::WorkspaceShell base_path=path colors=colors icons=icons>
-                    {workspace::page(route, error_icon)}
-                </shell::WorkspaceShell>
+            if matches!(
+                route,
+                workspace_route::WorkspaceRoute::Routines
+                    | workspace_route::WorkspaceRoute::Workflows
+                    | workspace_route::WorkspaceRoute::Calendar
+            ) {
+                automation::mount(path, colors, icons).into_any()
+            } else {
+                view! {
+                    <shell::WorkspaceShell base_path=path colors=colors icons=icons>
+                        {workspace::page(route, error_icon)}
+                    </shell::WorkspaceShell>
+                }
+                .into_any()
             }
         })
         .forget();

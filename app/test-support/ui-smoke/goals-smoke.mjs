@@ -45,7 +45,7 @@ await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 let app, browser;
 try {
   app = await startApp({
-    database: join(scratch, 'test.sqlite'), dist: resolve('dist'), baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
+    database: join(scratch, 'test.sqlite'), dist: resolve('dist'), appearanceClient: process.env.MINARBOT_SMOKE_UI ?? 'react', baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
     defaultModel: 'fixture', stream: false,
   });
   async function api(path, body) {

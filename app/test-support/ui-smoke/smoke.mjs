@@ -19,6 +19,7 @@ import { widePanelsSmoke } from './rs1-smoke.mjs';
 import { desktopImage, installVncFixture } from './computer-smoke.mjs';
 import { desktopViewSmoke } from './desktop-view-smoke.mjs';
 import { issue1Smoke } from './issue1-smoke.mjs';
+import { graphLayout } from './workflow-graph-smoke.mjs';
 import { roomControlsSmoke } from './room-controls-smoke.mjs';
 import { runControlsSmoke } from './run-controls-smoke.mjs';
 import { streamActionsSmoke } from './stream-actions-smoke.mjs';
@@ -756,44 +757,6 @@ async function focusContained(dialog) {
 async function focusRestored(trigger) {
   // Closing visibility changes before Radix's deferred focus restoration runs.
   await page.waitForFunction(element => element === document.activeElement, await trigger.elementHandle(), { timeout: 1000 });
-}
-
-async function graphLayout(label) {
-  const graph = page.getByRole('region', { name: 'Workflow graph, scroll to see all steps', exact: true });
-  await visible(graph);
-  await graph.scrollIntoViewIfNeeded();
-  const layout = await graph.evaluate(element => {
-    const content = element.querySelector('.workflow-graph-content');
-    const box = content.getBoundingClientRect();
-    return {
-      content: { width: box.width, height: box.height, position: getComputedStyle(content).position },
-      background: getComputedStyle(element).backgroundColor,
-      nodes: [...element.querySelectorAll('.workflow-graph-node')].map(node => {
-        const rect = node.getBoundingClientRect(), style = getComputedStyle(node);
-        return { id: node.title, x: rect.x - box.x, y: rect.y - box.y, width: rect.width, height: rect.height,
-          position: style.position, border: parseFloat(style.borderTopWidth), borderStyle: style.borderTopStyle,
-          left: parseFloat(node.style.left), top: parseFloat(node.style.top) };
-      }),
-      edges: [...element.querySelectorAll('svg g text')].map(text => ({ text: text.textContent, fill: getComputedStyle(text).fill, color: getComputedStyle(text).color })),
-    };
-  });
-  receipt.graphLayouts.push({ label, ...layout });
-  assert.equal(layout.content.position, 'relative', 'Graph must anchor positioned cards');
-  assert.equal(layout.nodes.length, 2, 'Connected fixture must render both steps');
-  for (const node of layout.nodes) {
-    assert.equal(node.position, 'absolute', `${node.id}: graph stylesheet missing`);
-    assert(node.width > 100 && node.height > 40 && node.border > 0 && node.borderStyle !== 'none', `${node.id}: not a sized card`);
-    assert(Math.abs(node.x - node.left) < 1 && Math.abs(node.y - node.top) < 1, `${node.id}: card ignores saved position`);
-    assert(node.y >= 0 && node.y + node.height < layout.content.height, `${node.id}: card stacked below graph`);
-  }
-  const [first, second] = layout.nodes;
-  assert(first.x + first.width <= second.x || second.x + second.width <= first.x || first.y + first.height <= second.y || second.y + second.height <= first.y, 'Graph cards overlap');
-  assert.equal(layout.edges.length, 1, 'Fixture edge label missing');
-  for (const edge of layout.edges) {
-    assert(edge.fill !== layout.background && !['none', 'transparent', 'rgba(0, 0, 0, 0)'].includes(edge.fill), 'Edge label paint matches graph background');
-    assert.notEqual(edge.color, layout.background, 'Edge label color matches graph background');
-  }
-  assert.deepEqual(receipt.cspViolations, [], 'Graph emitted CSP violations');
 }
 
 async function computerViewerSmoke() {
@@ -2935,7 +2898,7 @@ try {
     for (const viewport of [{ width: 1280, height: 800 }, receipt.viewport]) for (const theme of ['dark', 'light']) {
       await page.setViewportSize(viewport);
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-      await graphLayout(`editor-${theme}-${viewport.width}`);
+      await graphLayout(page, receipt, `editor-${theme}-${viewport.width}`);
       await screenshot(`editor-graph-${theme}-${viewport.width}`);
     }
     await cleanPage();
@@ -2965,7 +2928,7 @@ try {
     for (const viewport of [{ width: 1280, height: 800 }, receipt.viewport]) for (const theme of ['dark', 'light']) {
       await page.setViewportSize(viewport);
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-      await graphLayout(`completed-run-${theme}-${viewport.width}`);
+      await graphLayout(page, receipt, `completed-run-${theme}-${viewport.width}`);
       await screenshot(`completed-run-graph-${theme}-${viewport.width}`);
     }
     await cleanPage();

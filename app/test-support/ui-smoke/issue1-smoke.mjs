@@ -81,7 +81,7 @@ export async function issue1Smoke({ page, check, agentChat, screenshot }) {
     await page.getByLabel('Signing secret', { exact: true }).fill(randomUUID());
     await page.getByRole('button', { name: 'Enable webhook', exact: true }).click();
     await page.getByRole('button', { name: 'Save webhook', exact: true }).waitFor();
-    assert.equal(await page.getByLabel('Signing secret', { exact: true }).inputValue(), '');
+    assert(await page.getByLabel('Signing secret', { exact: true }).inputValue() === '', 'Signing secret field was not cleared');
     await capture('github-webhook');
   });
 }

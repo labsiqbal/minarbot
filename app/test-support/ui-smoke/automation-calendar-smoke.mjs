@@ -11,6 +11,8 @@ import { addDays, dateLabel, wallTime } from '../../src/automation-calendar.ts';
 const output = process.argv[2] ? resolve(process.argv[2]) : mkdtempSync(join(tmpdir(), 'minarbot-calendar-screenshots-'));
 mkdirSync(output, { recursive: true });
 const directory = mkdtempSync(join(tmpdir(), 'minarbot-calendar-smoke-'));
+const client = process.env.MINARBOT_SMOKE_UI ?? 'react';
+assert(['react', 'leptos'].includes(client));
 const zone = 'Asia/Jakarta';
 process.env.TZ = zone;
 const today = wallTime(Date.now(), zone).date;
@@ -27,11 +29,12 @@ const provider = createServer(async (request, response) => {
   let raw = '';
   for await (const chunk of request) raw += chunk;
   if (raw.includes('Wait for the calendar check.')) await blocked;
-  response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Fixture report complete.' } }] }));
+  response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Fixture report complete.' } }],
+    usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 } }));
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 try {
-  app = await startApp({ database: join(directory, 'state.sqlite'), port: 0, dist: resolve('dist'), baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
+  app = await startApp({ database: join(directory, 'state.sqlite'), port: 0, dist: resolve('dist'), appearanceClient: client, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
   const { origin } = app;
   async function api(path, body) {
     const response = await fetch(origin + path, body === undefined ? {} : { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -40,6 +43,7 @@ try {
     return value;
   }
   const agent = await api('/api/agents', { id: randomUUID(), runtime: 'api', name: 'Calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
+  const other = await api('/api/agents', { id: randomUUID(), runtime: 'api', name: 'Other calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
   const project = await api('/api/projects', { id: randomUUID(), name: 'Field Operations', members: [{ agent: agent.id, write: false }] });
   const scope = { project: project.id, zone, trigger: 'schedule', enabled: true };
   const once = (date, time) => ({ kind: 'once', date, time });
@@ -51,8 +55,18 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'America/Los_Angeles' });
   const page = await context.newPage();
-  const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
+  const errors = [], consoleErrors = [];
+  function inspect(target) {
+    target.on('pageerror', error => errors.push(error.message));
+    target.on('console', message => {
+      if (message.type() === 'error' && !message.text().includes('409 (Conflict)')) consoleErrors.push(message.text());
+    });
+  }
+  await context.addInitScript(() => {
+    window.calendarCspViolations = [];
+    document.addEventListener('securitypolicyviolation', event => window.calendarCspViolations.push(event.effectiveDirective));
+  });
+  inspect(page);
   const show = locator => locator.waitFor({ state: 'visible', timeout: 10_000 });
   const button = (name, root = page) => root.getByRole('button', { name, exact: typeof name === 'string' });
   const dialog = () => page.getByRole('dialog');
@@ -64,11 +78,36 @@ try {
   };
   async function openProject() {
     await page.goto(origin + '/projects/' + project.id);
-    await page.getByRole('tab', { name: 'Calendar', exact: true }).click();
+    const overview = page.getByRole('tab', { name: 'Overview', exact: true });
+    const calendarTab = page.getByRole('tab', { name: 'Calendar', exact: true });
+    await overview.press('ArrowRight');
+    await show(calendarTab.and(page.locator('[aria-selected=true]')));
+    if (client === 'leptos') {
+      await page.waitForURL('**?projectTab=calendar');
+      const settings = await page.getByRole('link', { name: 'Settings', exact: true }).getAttribute('href');
+      assert(new URL(settings, origin).searchParams.get('from').endsWith('?projectTab=calendar'));
+      await page.goBack();
+      await show(overview.and(page.locator('[aria-selected=true]')));
+      await page.goForward();
+      await show(calendarTab.and(page.locator('[aria-selected=true]')));
+    }
+    assert.equal(await page.locator('#leptos-root .automation-calendar').count(), client === 'leptos' ? 1 : 0);
+    const ics = page.getByRole('link', { name: 'Download routines' });
+    const calendar = await page.request.get(new URL(await ics.getAttribute('href'), origin).href);
+    assert.equal(calendar.status(), 200);
+    assert.match(await calendar.text(), /BEGIN:VCALENDAR/);
   }
   await openProject();
   await show(event('Morning digest', 'Scheduled'));
   await show(event('Inventory recap', 'Done'));
+  for (const [viewport, size] of Object.entries({ desktop: { width: 1440, height: 1000 }, narrow: { width: 390, height: 844 } })) {
+    await page.setViewportSize(size);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+      await shot(`project-${viewport}-${theme}`);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await button('Add automation on ' + dateLabel(future), cell(future)).click();
   await dialog().getByLabel('Name', { exact: true }).fill('Calendar maintenance');
   await dialog().getByLabel('Prompt', { exact: true }).fill('Check the calendar.');
@@ -124,8 +163,15 @@ try {
   await button('Automation calendar').click();
   await stream;
   await show(event('Morning digest', 'Scheduled'));
+  await page.getByRole('combobox', { name: 'Filter by agent' }).click();
+  await page.getByRole('option', { name: other.name, exact: true }).click();
+  await button('Add automation').click();
+  assert.equal((await dialog().getByRole('combobox', { name: 'Agent', exact: true }).textContent()).trim(), other.name);
+  await button('Cancel', dialog()).click();
+  await page.getByRole('combobox', { name: 'Filter by agent' }).click();
+  await page.getByRole('option', { name: 'All agents', exact: true }).click();
   const projectPage = await context.newPage();
-  projectPage.on('pageerror', error => errors.push(error.message));
+  inspect(projectPage);
   await projectPage.goto(origin + '/projects/' + project.id);
   await projectPage.getByRole('tab', { name: 'Calendar', exact: true }).click();
   await show(projectPage.getByRole('button', { name: /^Morning digest, Routine, Scheduled/ }));
@@ -147,18 +193,27 @@ try {
 
   await page.bringToFront();
   await shot('overall-month-running-dark');
+  await event('Morning digest', 'Running').click();
+  await show(dialog().getByText('Running', { exact: true }));
   release();
-  await show(event('Morning digest', 'Done'));
+  await show(dialog().getByText('Done', { exact: true }));
   assert.equal(navigations, 0, 'Run finished after page navigation');
-  await event('Morning digest', 'Done').click();
   await button('Open Run inspector', dialog()).click();
   await show(dialog().getByRole('heading', { name: 'Run inspector' }));
+  const providers = dialog().getByRole('region', { name: 'Provider calls' });
+  await providers.locator('summary').filter({ hasText: 'fixture' }).first().click();
+  await show(providers.getByText('Total tokens', { exact: true }).first());
+  assert.equal(await providers.getByText('30', { exact: true }).first().textContent(), '30');
+  await shot('routine-run-usage-dark');
   await button('Close', dialog()).click();
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   await shot('overall-month-light');
 
   await button('View ' + dateLabel(tomorrow), cell(tomorrow)).click();
   await show(page.getByRole('list', { name: 'Hourly calendar' }));
+  await button('Add automation on ' + dateLabel(tomorrow) + ' at 13:00').press('Enter');
+  assert.equal(await dialog().getByLabel('Time', { exact: true }).inputValue(), '13:00');
+  await button('Cancel', dialog()).click();
   await button('Week').click();
   await show(event('Edited maintenance', 'Scheduled'));
   await shot('overall-week-light');
@@ -167,15 +222,19 @@ try {
 
   await page.setViewportSize({ width: 390, height: 844 });
   await show(event('Edited maintenance', 'Scheduled'));
+  await show(event('Edited maintenance', 'Scheduled').getByText(/Field Operations/));
   assert.equal(await page.locator('.calendar-grid').isVisible(), false);
   await shot('overall-agenda-dark');
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   await shot('overall-agenda-light');
   await projectPage.getByRole('button', { name: /^Inventory recap, Routine, Done/ }).click();
-  await projectPage.getByRole('button', { name: 'Open report', exact: true }).click();
+  await projectPage.getByRole(client === 'leptos' ? 'link' : 'button', { name: 'Open report', exact: true }).click();
   await projectPage.waitForURL(origin + '/rooms/' + project.channel);
   await show(projectPage.getByText('Fixture report complete.', { exact: false }).first());
   assert.deepEqual(errors, []);
+  assert.deepEqual(consoleErrors, []);
+  assert.deepEqual(await page.evaluate(() => window.calendarCspViolations), []);
+  assert.deepEqual(await projectPage.evaluate(() => window.calendarCspViolations), []);
   console.log('PASS: project + overall calendar, create/edit/conflict/drag/pause/enable, workflow scheduling, live Running to Done, month/week/day and narrow agenda.');
   console.log('Screenshots: ' + output);
 } finally {

@@ -179,7 +179,7 @@ async function rollout(page, origin) {
   await ready(page, 'leptos');
   await page.keyboard.press('Escape');
   await page.waitForURL(origin + '/routines');
-  const trigger = page.getByRole('button', { name: 'Settings', exact: true });
+  const trigger = page.getByRole('link', { name: 'Settings', exact: true });
   await trigger.waitFor();
   await page.getByRole('heading', { name: 'Routines', exact: true }).waitFor();
   await page.waitForFunction(() => document.activeElement?.classList.contains('sidebar-settings'));
@@ -214,7 +214,7 @@ async function rollout(page, origin) {
     button(page, 'Close settings').click(),
   ]);
   assert.equal(response.status(), 200);
-  assert.equal(response.headers()['content-security-policy'].includes('wasm-unsafe-eval'), false);
+  assert.equal(response.headers()['content-security-policy'].includes('wasm-unsafe-eval'), true);
 }
 
 async function faults(context, origin) {
@@ -282,9 +282,14 @@ async function headers(origin) {
   const generalResponse = await fetch(origin + general);
   assert.equal(generalResponse.headers.get('content-security-policy').includes('wasm-unsafe-eval'), true);
   assert.match(await generalResponse.text(), /Open standard General/);
-  for (const path of ['/settings/general?ui=react', '/calendar']) {
+  for (const path of ['/settings/general?ui=react', '/calendar?ui=react']) {
     const other = await fetch(origin + path);
     assert.equal(other.headers.get('content-security-policy').includes('wasm-unsafe-eval'), false);
+  }
+  for (const path of ['/routines', '/workflows', '/calendar']) {
+    const owned = await fetch(origin + path);
+    assert.equal(owned.headers.get('content-security-policy').includes('wasm-unsafe-eval'), true);
+    assert.match(await owned.text(), /id="leptos-root"/);
   }
   const outside = await fetch(origin + route + '?from=' + encodeURIComponent('//example.invalid'));
   assert.match(await outside.text(), /data-return-to="\/"/);

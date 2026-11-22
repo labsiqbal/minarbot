@@ -102,6 +102,9 @@ pub(crate) struct Icons {
 const COLLAPSED: &str = "minarbot:sidebar-collapsed";
 const TAB: &str = "minarbot:sidebar-tab";
 
+#[derive(Clone, Copy)]
+pub(crate) struct WorkspaceSearch(pub RwSignal<String>);
+
 fn preference(key: &str) -> Option<String> {
     window()
         .local_storage()
@@ -247,9 +250,74 @@ pub(crate) fn WorkspaceShell(
     });
     on_cleanup(move || keys.remove());
     let base_path = StoredValue::new(base_path);
-    let settings_url =
-        base_path.with_value(|path| settings::section_url("/settings/general", path));
+    let search_params = RwSignal::new(window().location().search().unwrap_or_default());
+    provide_context(WorkspaceSearch(search_params));
+    let automation = use_context::<crate::automation::Navigation>();
+    let settings_url = move || {
+        let path = automation
+            .map(|automation| automation.0.get())
+            .unwrap_or_else(|| base_path.get_value());
+        let location = window().location();
+        let search = if location.pathname().ok().as_deref() == Some(path.as_str()) {
+            if automation.is_some() {
+                location.search().unwrap_or_default()
+            } else {
+                search_params.get()
+            }
+        } else {
+            String::new()
+        };
+        settings::section_url("/settings/general", &format!("{path}{search}"))
+    };
+    let automation_link = move |path: &'static str, label: &'static str, icon: String| {
+        let current = move || {
+            automation
+                .map(|navigation| navigation.0.get())
+                .unwrap_or_else(|| base_path.get_value())
+                == path
+        };
+        let open = move || {
+            if narrow_open.get_untracked() {
+                narrow_open.set(false);
+            }
+            if let Some(automation) = automation {
+                automation.open(path);
+            } else {
+                let _ = window().location().assign(path);
+            }
+        };
+        view! {
+            <button type="button" class="k-icon-btn" aria-label=label title=label aria-current=move || current().then_some("page")
+                on:click=move |_| open()><span class="appearance-icon" inner_html=icon></span></button>
+        }
+    };
     provide_context(icons.clone());
+    let settings_focus = NodeRef::<leptos::html::A>::new();
+    let returned = window()
+        .session_storage()
+        .ok()
+        .flatten()
+        .is_some_and(|storage| {
+            let mut path = window().location().pathname().unwrap_or_default();
+            path.push_str(&window().location().search().unwrap_or_default());
+            let key = settings::RETURN_FOCUS_KEY;
+            if storage.get_item(key).ok().flatten().as_deref() != Some(&path) {
+                return false;
+            }
+            let _ = storage.remove_item(key);
+            true
+        });
+    if returned {
+        request_animation_frame(move || {
+            if is_collapsed() {
+                if let Some(button) = reveal.get_untracked() {
+                    let _ = button.focus();
+                }
+            } else if let Some(link) = settings_focus.get_untracked() {
+                let _ = link.focus();
+            }
+        });
+    }
     let panel_icon = icons.panel.clone();
     let hidden = move || {
         let _ = viewport.get();
@@ -475,9 +543,9 @@ pub(crate) fn WorkspaceShell(
                 <div class="sidebar__titlebar">
                     <span class="sidebar__bots-label">"Minarbot"</span>
                     <nav class="sidebar__controls" aria-label="Automation">
-                        <a class="k-icon-btn" href="/routines" aria-label="Routines" title="Routines"><span class="appearance-icon" inner_html=icons.routines></span></a>
-                        <a class="k-icon-btn" href="/workflows" aria-label="Workflows" title="Workflows"><span class="appearance-icon" inner_html=icons.workflows></span></a>
-                        <a class="k-icon-btn" href="/calendar" aria-label="Automation calendar" title="Automation calendar"><span class="appearance-icon" inner_html=icons.calendar></span></a>
+                        {automation_link("/routines", "Routines", icons.routines)}
+                        {automation_link("/workflows", "Workflows", icons.workflows)}
+                        {automation_link("/calendar", "Automation calendar", icons.calendar)}
                         <button type="button" class="k-icon-btn" aria-label="Collapse sidebar" on:click=move |_| toggle_sidebar()><span class="appearance-icon" inner_html=icons.panel></span></button>
                     </nav>
                 </div>
@@ -520,7 +588,7 @@ pub(crate) fn WorkspaceShell(
                 </div></div>
                 <div class="sidebar__footer">
                     <a class="provider-status" aria-label=provider_status title=provider_status href=provider_settings><i class:is-on=provider_ready aria-hidden="true"></i></a>
-                    <a class="k-icon-btn sidebar-settings" aria-label="Settings" title="Settings" href=settings_url><span class="appearance-icon" inner_html=icons.settings></span></a>
+                    <a class="k-icon-btn sidebar-settings" node_ref=settings_focus aria-label="Settings" title="Settings" href=settings_url><span class="appearance-icon" inner_html=icons.settings></span></a>
                 </div>
             </aside>
             <div class="leptos-workspace__outlet" inert=move || viewport.get() && narrow_open.get()>

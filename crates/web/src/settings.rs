@@ -5,7 +5,7 @@ use serde::Deserialize;
 use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement, KeyboardEvent, UrlSearchParams};
 
-const RETURN_FOCUS_KEY: &str = "minarbot:appearance-return-focus";
+pub(crate) const RETURN_FOCUS_KEY: &str = "minarbot:appearance-return-focus";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,9 +17,9 @@ pub struct Config {
     close_icon: String,
     pub(crate) error_icon: String,
     #[serde(default)]
-    connection_icons: crate::connection_ui::Icons,
+    pub(crate) connection_icons: crate::connection_ui::Icons,
     #[serde(default)]
-    system_icons: crate::system::kit::Icons,
+    pub(crate) system_icons: crate::system::kit::Icons,
     #[serde(default)]
     mcp_scopes: Vec<crate::system::external::Scope>,
 }

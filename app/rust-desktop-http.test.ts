@@ -4,7 +4,7 @@ import fs, { mkdtempSync, rmSync, readFileSync, symlinkSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { testDatabase } from './test-support/database.ts';
 import sharp from 'sharp';
@@ -263,6 +263,10 @@ test('HTTP VNC relay enforces owner Host/Origin, tickets, viewer cap, live contr
     socket.on('data', data => { if (state === 0) { state++; socket.write(Buffer.from([1, 1])); } else if (state === 1) { state++; socket.write(Buffer.alloc(4)); } else if (state === 2) { state++; const init = Buffer.alloc(24); init.writeUInt16BE(1280); init.writeUInt16BE(800, 2); socket.write(init); } else received.push(Buffer.from(data)); });
   });
   const clients: Awaited<ReturnType<typeof connectVnc>>[] = [];
+  async function waitForClose(client: (typeof clients)[number]) {
+    if (!client.closed) await once(client.socket, 'close', { signal: AbortSignal.timeout(5000) });
+    assert(client.closed);
+  }
   let socketDirectory: number | undefined;
   async function raw(suffix: string, body: unknown, headers = {}) { return fetch(app.origin + suffix, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) }); }
   async function post(suffix: string, body: unknown) { const res = await raw(suffix, body); assert(res.ok, await res.clone().text()); return res.json(); }
@@ -287,11 +291,11 @@ test('HTTP VNC relay enforces owner Host/Origin, tickets, viewer cap, live contr
     for (let i = 0; i < 2; i++) { const next = await connectVnc(url((await mint()).ticket), app.origin); clients.push(next); await next.handshake(); }
     assert.equal((await raw(path + '/vnc-ticket', { mode: 'watch', revision: 0 })).status, 429);
     one.key(97, true); one.pointer(4, 8, 1); await new Promise(resolve => setTimeout(resolve, 30)); assert(!Buffer.concat(received).includes(Buffer.from([4, 1, 0, 0, 0, 0, 0, 97])));
-    await post(path + '/control', { id: randomUUID(), revision: 0, operation: 'take' }); await new Promise(resolve => setTimeout(resolve, 30)); assert(clients.every(client => client.closed));
+    await post(path + '/control', { id: randomUUID(), revision: 0, operation: 'take' }); await Promise.all(clients.map(waitForClose));
     const control = await connectVnc(url((await mint('control', 1)).ticket), app.origin); clients.push(control); await control.handshake(); control.key(97, true); control.pointer(10, 20, 1);
     await new Promise(resolve => setTimeout(resolve, 30)); assert(Buffer.concat(received).includes(Buffer.from([4, 1, 0, 0, 0, 0, 0, 97])));
-    await post(path + '/control', { id: randomUUID(), revision: 1, operation: 'hand-back' }); await new Promise(resolve => setTimeout(resolve, 30)); assert(control.closed); assert(Buffer.concat(received).includes(Buffer.from([4, 0, 0, 0, 0, 0, 0, 97])));
-    const last = await connectVnc(url((await mint('watch', 2)).ticket), app.origin); clients.push(last); await last.handshake(); await post(path + '/stop', {}); await new Promise(resolve => setTimeout(resolve, 30)); assert(last.closed);
+    await post(path + '/control', { id: randomUUID(), revision: 1, operation: 'hand-back' }); await waitForClose(control); assert(Buffer.concat(received).includes(Buffer.from([4, 0, 0, 0, 0, 0, 0, 97])));
+    const last = await connectVnc(url((await mint('watch', 2)).ticket), app.origin); clients.push(last); await last.handshake(); await post(path + '/stop', {}); await waitForClose(last);
   } finally { for (const client of clients) client.close(); await app.close(); await new Promise<void>(resolve => backend.close(() => resolve())); if (socketDirectory !== undefined) fs.closeSync(socketDirectory); f.cleanup(); }
 });
 

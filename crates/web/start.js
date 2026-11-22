@@ -1,5 +1,8 @@
 import init, { mount_appearance } from './appearance.js';
 
+globalThis.minarbotWorkflowMarkdown = (text, scope) => import('minarbot-workflow-markdown')
+  .then(({ renderWorkflowMarkdown }) => renderWorkflowMarkdown(text, scope));
+
 const status = document.getElementById('appearance-startup');
 const title = document.querySelector('#appearance-fallback h1').textContent;
 let ready = false;

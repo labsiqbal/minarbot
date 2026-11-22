@@ -39,13 +39,31 @@ route ownership.
 General, Appearance, Providers, Engines, Skills, minarbot.com, Connected apps,
 Email, MCP connections, Vault, Craft Anything, Machines, Devices, Computer,
 Updates, Usage, Shared data, Backup & restore, and External access use Leptos
-when `MINARBOT_APPEARANCE_CLIENT=leptos`. First-run setup, project overview, and
-the Rust-rendered `/pair` form also use Leptos. Agent conversations and project
-tabs transfer to React. The separate canonical hub uses its own session and client.
+when `MINARBOT_APPEARANCE_CLIENT=leptos`. First-run setup, project overview,
+the Rust-rendered `/pair` form, `/routines`, `/workflows`, `/calendar`, and the
+project Calendar tab also use Leptos. The automation routes share a mounted
+workspace shell. Settings return links and browser history retain the selected
+route. React remains the default for the staged rollout in #67.
 
-Conversation and agent/room deep links stay with #63. Routines, workflows and
-calendar stay with #64. Port Memory (#48), Guide infrastructure cards (#54) and
-Docs (#69) after their changes land on main.
+## React inventory for #67
+
+These surfaces still use React on the #64 branch, based on `b9980df`, with the
+Leptos selector enabled. #63 on main provides a separate `?ui=leptos` pilot for
+agent, side conversation, and room URLs. Recheck the inventory on the merged
+branch before the default switch.
+
+| Surface | React screens and panels |
+| --- | --- |
+| Conversations | Root after setup, agent chat and email inbox, named conversations, project and channel conversations, and remote machine agent detail. Composer, attachments and voice recording, history search and summary, branch/fork and checkpoint dialogs, queue, approvals, signed event connection, Goal/Loop cards and Needs you flows. Rich Markdown, HTML replies, component replies, MCP Apps and their submit or approval dialogs. Chats/Members, Upcoming routines, Files, Changes, Preview, Computer and run inspector panels, including the standalone Computer window and result deep links. |
+| Agent management | New agent and Draft with AI, Profile, Model and Advanced tabs, avatar/look editor, visibility and deletion, folder/Computer/email settings, agent and section Memory (Notes, Learned, Standing questions), compaction, Sites, agent template import/export, agent workspace files, and embedded workflow library, editor, and runs. |
+| Navigation and Guide | Global quick switcher and cross-scope search, hidden agent management, create menu, keyboard shortcuts/help, Guide chat and connection dialog, Guide actions and infrastructure cards, and standalone update prompts. |
+| Projects | Project creation, Connected apps, Environment and MCP tabs, project source control, and project or section dialogs entered from React conversations. |
+| Canonical hub | Account sign-in and handoff, project directory and creation, invitation acceptance, agent join, machine enrollment, project members and roles, shared agents and policies, sections and room chat. |
+| Rollback and errors | Primary workspace, Settings, automation and project views with the React selector or explicit `?ui=react`. Unknown local routes and result URLs still use the React fallback. |
+
+Workflow step conversations open the existing conversation route. Browser Back
+restores the run and focuses the step link. The embedded step conversation in
+React's workflow panel remains listed under Agent management.
 
 ## Verify
 
@@ -67,6 +85,19 @@ with React for updates, table deletion, and access token recovery.
 
 The system settings use `js-sys` (MIT OR Apache-2.0), already pinned through
 wasm-bindgen, directly for browser date and URI formatting.
+
+Run automation parity from `app/` after packaging Leptos. Set
+`MINARBOT_RUST_BINARY` to the freshly built server. The smokes use disposable
+loopback fixtures. Workflow Markdown loads the existing `marked` and link
+validator in a separate asset when the run inspector needs it.
+
+```sh
+node --experimental-strip-types test-support/ui-smoke/automation-parity-smoke.mjs /tmp/minarbot-automation-parity
+MINARBOT_SMOKE_UI=leptos node --experimental-strip-types test-support/ui-smoke/automation-calendar-smoke.mjs /tmp/minarbot-calendar-leptos
+```
+
+The parity receipt records 40 warmed switches per route and client, measured
+from clicking an automation control to layout of the visible route heading.
 
 ## Warm navigation in #62
 

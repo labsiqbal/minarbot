@@ -26,13 +26,23 @@ pub async fn command<T: DeserializeOwned>(path: &str, mut body: Value) -> Result
 }
 
 pub async fn post<T: DeserializeOwned>(path: &str, body: &impl Serialize) -> Result<T, String> {
+    post_status(path, body)
+        .await
+        .map_err(|(_, message)| message)
+}
+
+pub async fn post_status<T: DeserializeOwned>(
+    path: &str,
+    body: &impl Serialize,
+) -> Result<T, (u16, String)> {
     let response = Request::post(path)
         .json(body)
-        .map_err(|error| error.to_string())?
+        .map_err(|error| (0, error.to_string()))?
         .send()
         .await
-        .map_err(|_| "Minarbot connection lost. Try again.")?;
-    decode(response).await
+        .map_err(|_| (0, "Minarbot connection lost. Try again.".into()))?;
+    let status = if response.ok() { 0 } else { response.status() };
+    decode(response).await.map_err(|message| (status, message))
 }
 
 pub async fn response_error(response: gloo_net::http::Response, fallback: &str) -> String {

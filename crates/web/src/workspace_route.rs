@@ -1,7 +1,10 @@
-// Conversation, workflow and settings ownership are handled by their own route groups.
+// Shared workspace route ownership for Axum and Leptos.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceRoute {
     Setup,
+    Routines,
+    Workflows,
+    Calendar,
     Project(String),
 }
 
@@ -10,6 +13,12 @@ impl WorkspaceRoute {
         if path == "/" {
             return Some(Self::Setup);
         }
+        match path {
+            "/routines" => return Some(Self::Routines),
+            "/workflows" => return Some(Self::Workflows),
+            "/calendar" => return Some(Self::Calendar),
+            _ => {}
+        }
         let id = path.strip_prefix("/projects/")?;
         valid_id(id).then(|| Self::Project(id.to_ascii_lowercase()))
     }
@@ -17,6 +26,9 @@ impl WorkspaceRoute {
     pub fn title(&self) -> &'static str {
         match self {
             Self::Setup => "Set up Minarbot",
+            Self::Routines => "Routines",
+            Self::Workflows => "Workflows",
+            Self::Calendar => "Automation calendar",
             Self::Project(_) => "Project",
         }
     }

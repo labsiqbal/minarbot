@@ -5,6 +5,7 @@ mod routes;
 pub use routes::SettingsRoute;
 #[path = "../../web/src/workspace_route.rs"]
 mod workspace_route;
+use workspace_route::valid_id;
 pub use workspace_route::WorkspaceRoute;
 
 pub const NAMESPACE: &str = "/_leptos/";
@@ -52,6 +53,13 @@ pub fn route_title(state: &crate::AppState, path: &str, query: &str) -> Option<&
     {
         return None;
     }
+    if path.starts_with("/projects/")
+        && form_urlencoded::parse(query.as_bytes()).any(|(key, value)| {
+            key == "projectTab" && matches!(value.as_ref(), "apps" | "environment" | "mcp")
+        })
+    {
+        return None;
+    }
     match WorkspaceRoute::from_path(path)? {
         WorkspaceRoute::Setup => {
             let db = state.database.lock().ok()?;
@@ -62,7 +70,7 @@ pub fn route_title(state: &crate::AppState, path: &str, query: &str) -> Option<&
                 .any(|agent| agent["runnable"] == true && agent["hidden"] != true);
             (!ready).then(|| WorkspaceRoute::Setup.title())
         }
-        project => Some(project.title()),
+        route => Some(route.title()),
     }
 }
 
@@ -81,6 +89,14 @@ pub fn document(html: &str, route: &str, title: &str, query: &str) -> String {
     params.append_pair("ui", "react");
     if let Some(from) = &from {
         params.append_pair("from", from);
+    }
+    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+        if (route.starts_with("/projects/") && key == "projectTab" && value == "calendar")
+            || (route == "/routines" && key == "agent" && valid_id(&value))
+        {
+            params.append_pair(&key, &value);
+            break;
+        }
     }
     let react = format!("{route}?{}", params.finish());
     let escape = |value: &str| {
