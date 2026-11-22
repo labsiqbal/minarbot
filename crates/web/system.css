@@ -11,9 +11,14 @@
 #appearance-dialog .system-menu:not(:popover-open) { display: none; }
 #appearance-dialog .system-menu button:focus-visible { background: var(--color-bg-hover); }
 #appearance-dialog .system-menu .k-menu__item { width: 100%; }
-#appearance-dialog details.k-collapsible > summary { list-style: none; }
+#appearance-dialog details.k-collapsible > summary { display: inline-flex; list-style: none; }
+#appearance-dialog details.k-collapsible > summary::before { content: none; }
 #appearance-dialog details.k-collapsible > summary::-webkit-details-marker { display: none; }
 #appearance-dialog details[open] .k-collapsible__chev { transform: rotate(180deg); }
+#appearance-dialog .k-collapsible__chev svg { width: 15px; height: 15px; }
+#appearance-dialog .machines-page .k-btn--ghost svg { width: 14px; height: 14px; }
+#appearance-dialog .devices-page .k-row__meta:has(> span:only-child[hidden]) { display: none; }
+#appearance-dialog .updates-page .k-row__leading svg { width: 17px; height: 17px; }
 #appearance-dialog .bs-set3-external .k-row__title,
 #appearance-dialog .bs-set3-external .k-row__meta { white-space: normal; overflow-wrap: anywhere; }
 #appearance-dialog .system-code { max-height: 280px; }

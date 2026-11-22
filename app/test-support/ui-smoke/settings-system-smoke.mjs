@@ -220,16 +220,16 @@ async function exercise(page, client, route, panel, state, commands) {
       assert.deepEqual(attempts[0], attempts[1]);
       assert.equal(attempts[0].version, release.version);
       uuid(attempts[0].id);
+      // React opens its update modal above the workspace. Reloading with both Radix portals open hides both from assistive technology.
+      if (client === 'react') await page.goto(origin + '/routines');
       await page.reload();
-      const recovered = modal(page, 'Updating 1 machine');
-      if (!(await recovered.isVisible())) {
-        await button(panel, 'Update progress').click();
-      }
-      await visible(recovered);
+      await visible(modal(page, 'Updating 1 machine'));
       state.update.lastAttempt.status = 'done';
       const completed = modal(page, 'Update complete');
       await visible(completed);
       await button(completed, 'Close').last().click();
+      assert.deepEqual(posts('/api/updates/apply'), attempts);
+      if (client === 'react') await open(page, client, route);
       await panel.getByRole('switch', { name: 'Also update Studio workstation' }).press('Space');
       await button(panel, 'Update selected (1)').click();
       await button(plan, 'Update').click();

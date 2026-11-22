@@ -165,7 +165,7 @@ pub fn panel() -> impl IntoView {
                 let formatted = String::from(seen.to_locale_string("default", &JsValue::from(options)));
                 let label = format!("Revoke {}", device.name);
                 view! { <Row title=text(device.name.clone()) leading=icons().smartphone
-                  meta=content(move || view! { <span>{if current { "This browser · Last seen " } else { "Last seen " }}<time datetime=iso>{formatted}</time></span> })
+                  meta=content(move || view! { {if current { "This browser · Last seen" } else { "Last seen" }}<time datetime=iso>{formatted}</time> })
                   trailing=content(move || view! { <Button label=text("Revoke") name=label size="sm" disabled=busy on_click=move || revoke(device.clone(), current) /> }) /> }
             }).collect_view()}</Card> }.into_any(),
           }}
