@@ -8,9 +8,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { startApp } from './test-bridge.ts';
 
-test('Craft Anything needs a grant and maps its approvals to allow-once cards', { skip: process.platform !== 'linux' }, async () => {
+const linux = process.platform === 'linux';
+test('Craft Anything needs a grant and maps its approvals to allow-once cards', { skip: !linux }, async () => verifyCraft(false));
+test('Craft Anything installs its signed release and captures a public page in Computer', {
+  skip: !linux || process.env.MINARBOT_CRAFT_LIVE !== '1',
+}, async () => verifyCraft(true));
+
+async function verifyCraft(downloadRelease: boolean) {
   const directory = await mkdtemp(join(tmpdir(), 'minarbot-craft-'));
-  const live = process.env.MINARBOT_CRAFT_LIVE === '1';
   let finish: () => void = () => {};
   const held = new Promise<void>(resolve => { finish = resolve; });
   const provider = createServer(async (req, res) => {
@@ -47,7 +52,7 @@ test('Craft Anything needs a grant and maps its approvals to allow-once cards', 
   try {
     const initial = await request(settings);
     assert.equal(initial.installed, false);
-    if (live) {
+    if (downloadRelease) {
       assert.equal((await request(settings + '/install', {})).installed, true);
       assert((await request('/api/skills')).skills.some((row: { name: string }) => row.name === 'Craft Anything'));
     } else {
@@ -94,7 +99,7 @@ test('Craft Anything needs a grant and maps its approvals to allow-once cards', 
       assert.equal(result.behavior, decision);
       if (decision === 'allow') assert.deepEqual(result.updatedInput, input);
     }
-    if (live) {
+    if (downloadRelease) {
       assert.equal((await list({ name: 'core_target_open' })).structuredContent.tool, null);
       assert.equal((await list({ name: 'web_site_open' })).structuredContent.tool.name, 'web_site_open');
       const pending = call('web_site_open', { url: 'https://example.com/', settle_ms: 300 });
@@ -118,4 +123,4 @@ test('Craft Anything needs a grant and maps its approvals to allow-once cards', 
     await new Promise<void>(resolve => provider.close(() => resolve()));
     await rm(directory, { recursive: true });
   }
-});
+}

@@ -141,7 +141,11 @@ pub struct Mcp {
 }
 
 impl Mcp {
-    pub(super) async fn open(state: &AppState, access: &Access, fal_key: Option<&str>) -> Result<Self> {
+    pub(super) async fn open(
+        state: &AppState,
+        access: &Access,
+        fal_key: Option<&str>,
+    ) -> Result<Self> {
         let proxy = state.computer.craft_proxy()?;
         let browser =
             super::super::runtime::program(&["google-chrome", "google-chrome-stable", "chromium"])
