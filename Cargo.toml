@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/minarbot-server", "crates/minarbot-launcher"]
+members = ["crates/minarbot-server", "crates/minarbot-launcher", "crates/minarbot-codegraph", "crates/minarbot-memory", "crates/xtask"]
 resolver = "2"
 
 [workspace.package]
@@ -11,4 +11,7 @@ unwrap_used = "deny"
 expect_used = "deny"
 
 [profile.dev.package.image]
+opt-level = 2
+
+[profile.dev.package.sha2]
 opt-level = 2

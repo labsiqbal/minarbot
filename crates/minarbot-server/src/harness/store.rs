@@ -521,9 +521,12 @@ async fn execute(
             "Coding runtime requires an installed executable on PATH.",
         )
     })?;
+    let judging = phase == turns::goals::JUDGE;
     let workspace = &binding.directory;
     let mcp_url = crate::mcp::url(state);
-    let native_model = if ["codex", "claude"].contains(&runtime) {
+    let native_model = if ["codex", "claude"].contains(&runtime)
+        || judging && !model.is_empty() && model != string(profile, "model")
+    {
         model.to_owned()
     } else {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
@@ -535,7 +538,9 @@ async fn execute(
         .map(|v| string(&v, "model").to_owned())
         .unwrap_or_default()
     };
-    let instructions = {
+    let instructions = if judging {
+        "Evaluate supplied evidence and return the requested JSON. Use no tools.".into()
+    } else {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let instructions =
             turns::harness::instructions(state, &guard.connection, turn, runtime, &native_model)?;
@@ -578,14 +583,16 @@ async fn execute(
         .collect::<Vec<_>>()
         .join("\n\n");
     prompt = redact(&prompt, &secrets, false);
-    prompt = format!(
-        "{}\n\n{prompt}",
-        if saved.is_some() {
-            "Continuing the saved harness conversation. The Minarbot transcript below is reference context; follow its latest user request."
-        } else {
-            "Minarbot owns tasks and approvals. Use the minarbot MCP server for agent communication and delegation."
-        }
-    );
+    if !judging {
+        prompt = format!(
+            "{}\n\n{prompt}",
+            if saved.is_some() {
+                "Continuing the saved harness conversation. The Minarbot transcript below is reference context; follow its latest user request."
+            } else {
+                "Minarbot owns tasks and approvals. Use the minarbot MCP server for agent communication and delegation."
+            }
+        );
+    }
     if messages
         .iter()
         .any(|v| v["role"] == "system" && string(v, "content").contains("Interrupted task context"))
@@ -630,9 +637,17 @@ async fn execute(
         ]
         .map(str::to_owned)
         .to_vec();
+        if judging {
+            mcp = json!({"mcpServers":{}});
+            args.extend([
+                "--tools".into(),
+                String::new(),
+                "--no-session-persistence".into(),
+            ]);
+        }
         args.extend([
             "--append-system-prompt".into(),
-            format!("{instructions}\n{shell} Native host Bash requires explicit approval. Discover tools needed for the task together; reuse loaded tools and their receipts."),
+            if judging {instructions.clone()} else {format!("{instructions}\n{shell} Native host Bash requires explicit approval. Discover tools needed for the task together; reuse loaded tools and their receipts.")},
             "--mcp-config".into(),
             mcp.to_string(),
         ]);
@@ -654,7 +669,7 @@ async fn execute(
     } else {
         acp_args(runtime, executable)
     };
-    let extension_home = if runtime == "pi" {
+    let extension_home = if runtime == "pi" && !judging {
         Some(process::ProbeHome::new().map_err(|_| Failure::storage())?)
     } else {
         None
@@ -673,22 +688,23 @@ async fn execute(
             "--no-approve".into(),
             "--no-session".into(),
         ];
-        let extension = extension_home
-            .as_ref()
-            .ok_or_else(Failure::storage)?
-            .0
-            .join("minarbot-pi.mjs");
-        std::fs::write(
-            &extension,
-            include_str!("../../../../app/t3/pi-harness-extension.mjs"),
-        )
-        .map_err(|_| Failure::storage())?;
-        args.extend([
-            "--extension".into(),
-            extension.to_string_lossy().into_owned(),
-            "--append-system-prompt".into(),
-            instructions.clone(),
-        ]);
+        if judging {
+            args.push("--no-tools".into());
+        }
+        if let Some(extension_home) = extension_home.as_ref() {
+            let extension = extension_home.0.join("minarbot-pi.mjs");
+            std::fs::write(
+                &extension,
+                include_str!("../../../../app/t3/pi-harness-extension.mjs"),
+            )
+            .map_err(|_| Failure::storage())?;
+            args.extend([
+                "--extension".into(),
+                extension.to_string_lossy().into_owned(),
+                "--append-system-prompt".into(),
+                instructions.clone(),
+            ]);
+        }
     }
     let turn_id = string(turn, "id");
     let mut child = TurnProcess {
@@ -704,13 +720,17 @@ async fn execute(
         turn: turn_id,
     };
     let process = child.process.as_mut().ok_or_else(Failure::storage)?;
-    process.record_stderr(state, call, &secrets);
+    if !judging {
+        process.record_stderr(state, call, &secrets);
+    }
     process.clock = clock;
     let mut seq = 0;
     if runtime == "codex" {
         rpc(process,&mut seq,"initialize",json!({"clientInfo":{"name":"minarbot","title":"Minarbot","version":"0.1.0"},"capabilities":{"experimentalApi":true}})).await?;
         process.send(json!({"method":"initialized"})).await?;
-        let environment = {
+        let environment = if judging {
+            HashMap::new()
+        } else {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
             data::environment::values(
                 state,
@@ -719,8 +739,15 @@ async fn execute(
                 string(turn, "agent"),
             )?
         };
-        let mut params = json!({"cwd":workspace,"approvalPolicy":"on-request","sandbox":if binding.write{"workspace-write"}else{"read-only"},"config":{"mcp_servers":{"minarbot":{"url":mcp_url,"bearer_token_env_var":"MINARBOT_MCP_TOKEN"}},"approvals_reviewer":"user","shell_environment_policy.inherit":"none","shell_environment_policy.set":{"PATH":super::path(state),"LANG":"C.UTF-8","HOME":workspace},"shell_environment_policy.exclude":["MINARBOT_PROVIDER_KEY","MINARBOT_MCP_TOKEN","ANTHROPIC_API_KEY"]}});
+        let mut params = json!({"cwd":workspace,"approvalPolicy":"on-request","sandbox":if binding.write{"workspace-write"}else{"read-only"},"config":{"mcp_servers":{"minarbot":{"url":mcp_url,"bearer_token_env_var":"MINARBOT_MCP_TOKEN","tool_timeout_sec":crate::files::components::FORM_WAIT_SECONDS+10}},"approvals_reviewer":"user","shell_environment_policy.inherit":"none","shell_environment_policy.set":{"PATH":super::path(state),"LANG":"C.UTF-8","HOME":workspace},"shell_environment_policy.exclude":["MINARBOT_PROVIDER_KEY","MINARBOT_MCP_TOKEN","ANTHROPIC_API_KEY"]}});
         codegraph::Server::configure(codegraph.as_ref(), runtime, &mut params);
+        if judging {
+            params["approvalPolicy"] = json!("never");
+            params["config"]["mcp_servers"] = json!({});
+            params["config"]["features.shell_tool"] = json!(false);
+            params["config"]["web_search"] = json!("disabled");
+            params["ephemeral"] = json!(true);
+        }
         for (name, value) in environment {
             params["config"]["shell_environment_policy.set"][name] = json!(value);
         }
@@ -782,7 +809,7 @@ async fn execute(
             }
         }
     } else {
-        let init=rpc(process,&mut seq,"initialize",json!({"protocolVersion":1,"clientInfo":{"name":"minarbot","version":"0.1.0"},"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":false}})).await?;
+        let init=rpc(process,&mut seq,"initialize",json!({"protocolVersion":1,"clientInfo":{"name":"minarbot","version":"0.1.0"},"clientCapabilities":{"fs":{"readTextFile":!judging,"writeTextFile":!judging},"terminal":false}})).await?;
         if init["protocolVersion"] != 1 {
             return Err(error(
                 502,
@@ -804,6 +831,9 @@ async fn execute(
         }
         let mut params = json!({"cwd":workspace,"mcpServers":[{"type":"http","name":"minarbot","url":mcp_url,"headers":[{"name":"Authorization","value":format!("Bearer {token}")}]}]});
         codegraph::Server::configure(codegraph.as_ref(), runtime, &mut params);
+        if judging {
+            params["mcpServers"] = json!([]);
+        }
         if let Some(id) = &saved {
             params["sessionId"] = json!(id);
         }
@@ -867,7 +897,7 @@ async fn execute(
         .as_str()
         .or(turn["thread"].as_str())
         .unwrap_or("direct");
-    if runtime != "pi" {
+    if runtime != "pi" && !judging {
         save_session(
             state,
             string(turn, "agent"),
@@ -878,8 +908,9 @@ async fn execute(
         )?;
     }
     let native_secrets = secrets.clone();
-    let mut snapshot = Snapshot::new(state, call, string(turn, "id"), secrets);
+    let mut snapshot = Snapshot::new(state, call, string(turn, "id"), secrets).private(judging);
     let mut usage = [None, None];
+    let estimated_input = (prompt.len() as i64 + 3) / 4;
     let mut acp_segment = 0;
     let mut claude_message = String::new();
     let mut claude_tools = HashMap::<String, (String, Option<String>)>::new();
@@ -887,7 +918,7 @@ async fn execute(
         let prompt_id;
         if runtime == "codex" {
             let context = additional_context(&instructions);
-            let result=rpc(process,&mut seq,"turn/start",json!({"threadId":session,"additionalContext":context,"input":[{"type":"text","text":prompt}],"cwd":workspace,"approvalPolicy":"on-request","sandboxPolicy":if binding.write{json!({"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})}else{json!({"type":"readOnly"})}})).await?;
+            let result=rpc(process,&mut seq,"turn/start",json!({"threadId":session,"additionalContext":context,"input":[{"type":"text","text":prompt}],"cwd":workspace,"approvalPolicy":if judging{"never"}else{"on-request"},"sandboxPolicy":if binding.write{json!({"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})}else{json!({"type":"readOnly"})}})).await?;
             if !result["turn"]["id"].is_string() {
                 return Err(process::stopped());
             }
@@ -915,6 +946,9 @@ async fn execute(
                 let method = string(&value, "method");
                 let p = &value["params"];
                 if value.get("id").is_some() && value.get("method").is_some() {
+                    if judging {
+                        return Err(error(502, "Goal judge attempted to use a tool."));
+                    }
                     if ![
                         "mcpServer/elicitation/request",
                         "item/commandExecution/requestApproval",
@@ -1093,22 +1127,23 @@ async fn execute(
                                 binding.write,
                                 crate::platform::LINUX_SANDBOX,
                             );
-                            let allow = match policy {
-                                ClaudeTool::Allow => true,
-                                ClaudeTool::UseWorkspaceShell => false,
-                                ClaudeTool::Approve(kind) => {
-                                    approve(
-                                        state,
-                                        string(turn, "id"),
-                                        kind,
-                                        args["command"].as_str(),
-                                        &format!("Claude Code: {name}"),
-                                        &args,
-                                        token,
-                                    )
-                                    .await?
-                                }
-                            };
+                            let allow = !judging
+                                && match policy {
+                                    ClaudeTool::Allow => true,
+                                    ClaudeTool::UseWorkspaceShell => false,
+                                    ClaudeTool::Approve(kind) => {
+                                        approve(
+                                            state,
+                                            string(turn, "id"),
+                                            kind,
+                                            args["command"].as_str(),
+                                            &format!("Claude Code: {name}"),
+                                            &args,
+                                            token,
+                                        )
+                                        .await?
+                                    }
+                                };
                             let reason = match policy {
                                 ClaudeTool::UseWorkspaceShell => CLAUDE_WORKSPACE_SHELL,
                                 _ if allow => "Allowed by Minarbot.",
@@ -1309,6 +1344,9 @@ async fn execute(
                 }
                 let p = &value["params"];
                 if value.get("id").is_some() {
+                    if judging {
+                        return Err(error(502, "Goal judge attempted to use a tool."));
+                    }
                     if p["sessionId"] != session {
                         process.send(json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32602,"message":"Request unavailable in this Minarbot session."}})).await?;
                         continue;
@@ -1416,7 +1454,15 @@ async fn execute(
     child.notification = None;
     let reply = snapshot.finish()?;
     let db = state.database.lock().map_err(|_| Failure::storage())?;
-    db.connection.execute("UPDATE provider_calls SET status='received',finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=?",rusqlite::params![data::iso(&db.connection,state.config.now())?,usage[0],usage[1],usage[0].zip(usage[1]).map(|(a,b)|a+b),call])?;
+    db.connection.execute("UPDATE provider_calls SET status='received',finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=? AND status='pending'",rusqlite::params![data::iso(&db.connection,state.config.now())?,usage[0],usage[1],usage[0].zip(usage[1]).map(|(a,b)|a+b),call])?;
+    if state.auth.is_none() {
+        turns::goals::account_unmetered(
+            &db.connection,
+            string(turn, "id"),
+            call,
+            estimated_input + (reply.len() as i64 + 3) / 4,
+        )?;
+    }
     Ok(reply)
 }
 pub fn inside(workspace: &Path, path: &str) -> bool {
@@ -1453,6 +1499,11 @@ pub async fn run(
     messages: &[Value],
     phase: &str,
 ) -> Result<String> {
+    let judging = phase == turns::goals::JUDGE;
+    let judge_home = judging
+        .then(process::ProbeHome::new)
+        .transpose()
+        .map_err(|_| Failure::storage())?;
     let (turn, profile, binding, account, login, device) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
@@ -1463,8 +1514,17 @@ pub async fn run(
         )?
         .ok_or_else(|| error(409, "Task has stopped."))?;
         let profile = agents::read(db, string(&turn, "agent"))?;
-        let binding = turns::harness::workspace(state, db, &turn)?
-            .ok_or_else(|| error(403, "Coding harness requires a host workspace folder."))?;
+        let binding = if let Some(home) = &judge_home {
+            crate::config::WorkspaceConfig {
+                agent: string(&turn, "agent").into(),
+                directory: home.0.clone(),
+                write: false,
+                managed: false,
+            }
+        } else {
+            turns::harness::workspace(state, db, &turn)?
+                .ok_or_else(|| error(403, "Coding harness requires a host workspace folder."))?
+        };
         let provider = string(&profile, "provider_account");
         let (account, login, device) = if provider == data::logins::DEVICE {
             let runtime = string(&profile, "runtime");
@@ -1521,7 +1581,13 @@ pub async fn run(
         .as_str()
         .or(turn["thread"].as_str())
         .unwrap_or("direct");
-    let key = json!([turn["agent"], conversation, runtime, binding.directory]).to_string();
+    let key = json!([
+        turn["agent"],
+        if judging { "goal-judge" } else { conversation },
+        runtime,
+        (!judging).then_some(&binding.directory)
+    ])
+    .to_string();
     let fingerprint = if let Some(account) = &account {
         json!([
             account.id,
@@ -1545,12 +1611,16 @@ pub async fn run(
         return Err(Failure::storage());
     }
     .to_string();
-    let project_environment = {
-        let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        data::environment::values(state, &guard.connection, turn_id, string(&turn, "agent"))?
-    };
     let mut env = state.config.harness.environment.clone();
-    env.extend(project_environment.clone());
+    if !judging {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        env.extend(data::environment::values(
+            state,
+            &guard.connection,
+            turn_id,
+            string(&turn, "agent"),
+        )?);
+    }
     if device_claude {
         env.extend(
             data::logins::device_environment(runtime)
@@ -1621,11 +1691,13 @@ pub async fn run(
     }
     let saved = {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
-        if exists(
-            &db.connection,
-            "SELECT 1 FROM dispatch_links WHERE target_turn=? AND mode='restart'",
-            [turn_id],
-        )? {
+        if judging
+            || exists(
+                &db.connection,
+                "SELECT 1 FROM dispatch_links WHERE target_turn=? AND mode='restart'",
+                [turn_id],
+            )?
+        {
             None
         } else if !isolated_home || same_home {
             one(&db.connection,"SELECT session FROM harness_sessions WHERE agent=? AND conversation=? AND runtime=? AND workspace=?",rusqlite::params![turn["agent"].as_str(),conversation,runtime,binding.directory.to_str()])?.map(|v|string(&v,"session").to_owned())
@@ -1635,12 +1707,14 @@ pub async fn run(
     };
     let call = {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
-        db.connection.execute("UPDATE turns SET status='running',started_at=coalesce(started_at,?) WHERE id=? AND status IN('queued','running') AND paused=0",rusqlite::params![data::iso(&db.connection,state.config.now())?,turn_id])?;
+        if db.connection.execute("UPDATE turns SET status='running',started_at=coalesce(started_at,?) WHERE id=? AND status IN('queued','running') AND paused=0",rusqlite::params![data::iso(&db.connection,state.config.now())?,turn_id])? == 0 {
+            return Err(process::stopped());
+        }
         db.connection.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES(?,?,?,'local-harness',?,? ,?,'','pending',?)",rusqlite::params![turn_id,turn["agent"].as_str(),if model.is_empty(){label(runtime)}else{model},if phase=="routing"{"routing"}else{"completion"},phase,runtime,data::iso(&db.connection,state.config.now())?])?;
         state.events.turn(&db.connection, turn_id)?;
         db.connection.last_insert_rowid()
     };
-    let external = if state.config.harness.test_harness_bridge.is_some() {
+    let external = if !judging && state.config.harness.test_harness_bridge.is_some() {
         bridge(
             state,
             "mint",
@@ -1650,7 +1724,9 @@ pub async fn run(
     } else {
         Value::Null
     };
-    let (id, token) = if external.is_null() {
+    let (id, token) = if judging {
+        (String::new(), String::new())
+    } else if external.is_null() {
         crate::mcp::mint_session(state, string(&turn, "agent"), turn_id)?
     } else {
         (
@@ -1658,19 +1734,27 @@ pub async fn run(
             string(&external, "token").to_owned(),
         )
     };
-    if id.is_empty() || token.is_empty() || token.len() > 4096 {
+    if !judging && (id.is_empty() || token.is_empty() || token.len() > 4096) {
         return Err(error(
             502,
             "Minarbot MCP issuer returned an invalid session.",
         ));
     }
-    let mut lease = Lease {
+    let mut lease = (!judging).then(|| Lease {
         state: state.clone(),
         id,
         external: !external.is_null(),
-    };
-    env.insert("MINARBOT_MCP_TOKEN".into(), token.clone());
-    env.insert("MINARBOT_MCP_URL".into(), crate::mcp::url(state));
+    });
+    if !judging {
+        if runtime == "claude" {
+            env.insert(
+                "MCP_TOOL_TIMEOUT".into(),
+                ((crate::files::components::FORM_WAIT_SECONDS + 10) * 1000).to_string(),
+            );
+        }
+        env.insert("MINARBOT_MCP_TOKEN".into(), token.clone());
+        env.insert("MINARBOT_MCP_URL".into(), crate::mcp::url(state));
+    }
     if runtime == "hermes" {
         env.extend(process::HERMES_ENV.map(|(key, value)| (key.into(), value.into())));
     }
@@ -1735,7 +1819,7 @@ pub async fn run(
             result = operation(Some(active.clock.clone())) => result,
         }
     };
-    if lease.external {
+    if let Some(lease) = lease.as_mut().filter(|lease| lease.external) {
         bridge(state, "revoke", json!({"id":lease.id})).await?;
         lease.external = false;
     }

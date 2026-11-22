@@ -19,6 +19,8 @@ pub async fn call(
     tools: &[Value],
     phase: &str,
 ) -> Result<Answer> {
+    let judging = phase == goals::JUDGE;
+    let allowance = goals::allowance(state, turn, messages)?;
     let hub_turn = crate::computer::hub::check(state, turn)?.is_some();
     let native = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -55,7 +57,7 @@ pub async fn call(
         .filter(|r| (r["status"] == "running" || r["status"] == "queued") && r["paused"] == 0)
         .ok_or_else(|| error(409, "Task has stopped."))?;
         let account = admission::account(state, db, string(&row, "agent"))?;
-        if !["compaction", "routing"].contains(&phase)
+        if !["compaction", "routing", goals::JUDGE].contains(&phase)
             && !super::profile::setup(db, &json!({"id":turn,"agent":row["agent"]}))?
             && super::messaging::allowed(db, turn)?
         {
@@ -89,7 +91,9 @@ pub async fn call(
         (account, seq, vault_secrets)
     };
     let streamed = account.stream;
-    let max_tokens = account.max_tokens;
+    let max_tokens = allowance.map_or(account.max_tokens, |(_, limit)| {
+        account.max_tokens.min(limit as u64)
+    });
     let endpoint = match account.family.as_str() {
         "anthropic" => format!("{}/messages", account.base.trim_end_matches('/')),
         "gemini" => {
@@ -202,7 +206,7 @@ pub async fn call(
                     {
                         return Err(error(502, MALFORMED));
                     }
-                    if phase == "compaction" {
+                    if phase == "compaction" || judging {
                         Ok(())
                     } else {
                         let text = crate::mcp::secrets::redact(text, &vault_secrets, true);
@@ -275,7 +279,7 @@ pub async fn call(
             return Err(error(502, INCOMPLETE));
         }
         let text = crate::mcp::secrets::redact(text, &vault_secrets, false);
-        if phase != "compaction" {
+        if phase != "compaction" && !judging {
             stream::text(state, seq, &text, true)?;
         }
         Ok(Answer::Text(text))
@@ -305,6 +309,14 @@ pub async fn call(
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
     db.execute("UPDATE provider_calls SET status=?,finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=? AND status='pending'",params![if result.is_ok(){"received"}else{"failed"},iso(db,state.config.now())?,tokens[0],tokens[1],tokens[2],seq])?;
+    if let Some((estimated_input, _)) = allowance {
+        let output = match &result {
+            Ok(Answer::Text(text)) => text.len(),
+            Ok(Answer::Tool(call)) => call.to_string().len(),
+            Err(_) => 0,
+        };
+        goals::account_unmetered(db, turn, seq, estimated_input + (output as i64 + 3) / 4)?;
+    }
     result
 }
 pub(super) async fn wait_for_stream_data<T>(

@@ -261,6 +261,33 @@ async fn body(mut response: Response) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+// Only the rich reply module's fixed CDN URLs reach this path.
+pub(crate) async fn pinned_script(raw: &str) -> Result<Vec<u8>> {
+    let url = http_url(raw)?;
+    let addresses = vetted_addresses(&url, &FetchPolicy::default()).await?;
+    let response = successful(
+        client()
+            .dns_resolver(Arc::new(VettedAddresses(addresses)))
+            .build()
+            .map_err(request_error)?
+            .get(url)
+            .header(ACCEPT_ENCODING, "identity")
+            .send()
+            .await
+            .map_err(request_error)?,
+    )?;
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(request_error)? {
+        if bytes.len() + chunk.len() > LIMIT {
+            return Err(error(413, "Pinned HTML preview script exceeds 4 MiB."));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 async fn web_fetch(raw: &str, policy: FetchPolicy) -> Result<Value> {
     let mut url = http_url(raw)?;
     for hop in 0..=MAX_REDIRECTS {

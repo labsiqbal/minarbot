@@ -10,7 +10,7 @@ mod server;
 mod stdio;
 pub use stdio::run as stdio;
 mod template;
-mod validate;
+pub(crate) mod validate;
 use crate::{
     data::{self, all, closed, error, field, one, string, transaction, uuid},
     web::Failure,

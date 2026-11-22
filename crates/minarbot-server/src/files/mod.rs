@@ -1,8 +1,10 @@
 pub(crate) mod attachments;
 mod backup;
+pub(crate) mod components;
 pub(crate) mod git;
 mod panel;
 pub(crate) mod preview;
+pub(crate) mod rich_html;
 pub(crate) mod shared;
 pub(crate) mod sites;
 pub(crate) mod skills;
@@ -190,6 +192,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/channels/{id}/files/{file}", any(entry))
         .route("/api/threads/{id}/files", any(entry))
         .route("/api/threads/{id}/files/{file}", any(entry))
+        .route("/api/{kind}/{id}/html-replies/{reply}", any(entry))
         .route("/api/agents/{id}/sites", any(entry))
         .route("/api/agents/{id}/sites/{site}", any(entry))
         .route("/api/skills", any(entry))
@@ -274,6 +277,9 @@ pub(crate) async fn entry(State(state): State<AppState>, req: Request) -> Respon
         let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
         if parts.get(3) == Some(&"panel") {
             return panel::handle(&state, req, &parts).await;
+        }
+        if let ["api", kind, owner, "html-replies", id] = parts.as_slice() {
+            return rich_html::serve(&state, &req, kind, owner, id);
         }
         if path == "/api/backup" {
             return backup::handle(&state, req).await;

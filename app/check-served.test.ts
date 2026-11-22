@@ -1,7 +1,23 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-const script = new URL('../scripts/check-served.mjs', import.meta.url);
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { xtask } from './test-support/release.ts';
+
+const run = promisify(execFile);
+async function checkServed(origin: string, options: { present?: string[]; absent?: string[]; expectVersion?: string } = {}) {
+  const args = ['check-served', origin, ...Object.entries(options).flatMap(([key, values]) =>
+    [values].flat().flatMap(value => [key === 'expectVersion' ? '--expect-version' : '--' + key, value]))];
+  try {
+    const { stdout } = await run(xtask(), args);
+    return { ok: true, report: stdout.trim().split('\n') };
+  } catch (error) {
+    const { stdout } = error as { stdout: string };
+    if (!stdout.includes('Served check FAILED.')) throw error;
+    return { ok: false, report: stdout.trim().split('\n') };
+  }
+}
 
 async function fixture(t: TestContext) {
   const requests: string[] = [];
@@ -31,7 +47,6 @@ async function fixture(t: TestContext) {
 
 test('served check fetches index, JS, CSS and local version with GET owner headers', async t => {
   const f = await fixture(t);
-  const { checkServed } = await import(script.href);
   const report = await checkServed(f.origin, { present: ['feature shipped', 'shipped-style'], absent: ['old feature'], expectVersion: '1.2.3' });
   assert.equal(report.ok, true);
   assert.deepEqual(f.requests, ['/', '/assets/index-123.js', '/assets/index-123.css', '/api/updates']);
@@ -39,7 +54,6 @@ test('served check fetches index, JS, CSS and local version with GET owner heade
 
 test('served check reports every marker and version mismatch across HTML, JS and CSS', async t => {
   const f = await fixture(t);
-  const { checkServed } = await import(script.href);
   const result = await checkServed(f.origin, { present: ['missing one', 'missing two'], absent: ['feature shipped', 'shipped-style', 'type="module"'], expectVersion: '9.9.9' });
   assert.equal(result.ok, false);
   assert.equal(result.report.filter((line: string) => line.startsWith('FAIL')).length, 6);
@@ -52,7 +66,6 @@ test('served check accepts relative, absolute and preload refs with mixed attrib
   f.routes.set('/', ['text/html', `<!-- <script src="/missing.js"></script> --><LINK href='${f.origin}/assets/index-123.css?v=1&amp;x=2' rel='stylesheet'><script defer src=assets/index-123.js></script><link href="/assets/preload.js" rel="modulepreload">`]);
   f.routes.set('/assets/index-123.css?v=1&x=2', ['text/css', 'versioned css']);
   f.routes.set('/assets/preload.js', ['application/javascript', 'preload feature']);
-  const { checkServed } = await import(script.href);
   assert.equal((await checkServed(f.origin, { present: ['versioned css', 'preload feature'] })).ok, true);
   assert.equal(f.requests.filter(path => path === '/api/updates').length, 0);
 });
@@ -65,7 +78,6 @@ for (const kind of ['http', 'content-type', 'no-assets', 'external', 'bad-versio
   if (kind === 'external') f.routes.set('/', ['text/html', '<script src="https://example.invalid/assets/index.js"></script><link href="/assets/index-123.css" rel="stylesheet">']);
   if (kind === 'bad-version-json') f.routes.set('/api/updates', ['application/json', 'not json']);
   if (kind === 'missing-version') f.routes.set('/api/updates', ['application/json', '{"machines":[]}']);
-  const { checkServed } = await import(script.href);
   if (kind === 'missing-version') {
     const result = await checkServed(f.origin, { expectVersion: '1.2.3' });
     assert.equal(result.ok, false);
@@ -80,27 +92,23 @@ for (const kind of ['http', 'content-type', 'no-assets', 'external', 'bad-versio
 });
 
 test('served CLI repeats markers and exits nonzero on mismatch or invalid input', async t => {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const run = promisify(execFile);
   const f = await fixture(t);
-  const { stdout } = await run(process.execPath, [script.pathname, f.origin, '--present', 'feature shipped', '--present', 'shipped-style', '--absent', 'removed', '--absent', 'retired', '--expect-version', '1.2.3']);
+  const { stdout } = await run(xtask(), ['check-served', f.origin, '--present', 'feature shipped', '--present', 'shipped-style', '--absent', 'removed', '--absent', 'retired', '--expect-version', '1.2.3']);
   assert.match(stdout, /Served check passed/);
-  await assert.rejects(run(process.execPath, [script.pathname, f.origin, '--present', 'missing', '--absent', 'shipped-style', '--expect-version', '9.9.9']), (error: any) => {
+  await assert.rejects(run(xtask(), ['check-served', f.origin, '--present', 'missing', '--absent', 'shipped-style', '--expect-version', '9.9.9']), (error: any) => {
     assert.equal(error.code, 1);
     assert.match(error.stdout, /FAIL present "missing"/);
     assert.match(error.stdout, /FAIL absent "shipped-style"/);
     assert.match(error.stdout, /FAIL version/);
     return true;
   });
-  for (const args of [[], [f.origin, '--present'], [f.origin, '--present', ''], [f.origin + '/path'], ['file:///tmp/index.html'], [f.origin, '--unknown']]) await assert.rejects(run(process.execPath, [script.pathname, ...args]), (error: any) => error.code === 1 && /Served check FAILED/.test(error.stderr));
+  for (const args of [[], [f.origin, '--present'], [f.origin, '--present', ''], [f.origin + '/path'], ['file:///tmp/index.html'], [f.origin, '--unknown']]) await assert.rejects(run(xtask(), ['check-served', ...args]), (error: any) => error.code === 1 && /Served check FAILED/.test(error.stderr));
 });
 
 
 test('served check rejects redirects without requesting their target', async t => {
   const f = await fixture(t);
   f.routes.set('/assets/index-123.js', ['redirect', '/login']);
-  const { checkServed } = await import(script.href);
   await assert.rejects(checkServed(f.origin), /GET .*index-123.js failed/);
   assert.deepEqual(f.requests, ['/', '/assets/index-123.js']);
 });
