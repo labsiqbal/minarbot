@@ -68,7 +68,8 @@ try {
     assert(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
     await page.screenshot({ path: join(output, `memory-${theme}-narrow.png`), animations: 'disabled' });
     await dialog.getByRole('tab', { name: 'Standing questions', exact: true }).press('Enter');
-    await dialog.getByText('Labels and inventory sheets are in the north cabinet.', { exact: true }).waitFor();
+    const answer = theme === 'dark' ? 'Labels and inventory sheets are in the north cabinet.' : 'Awaiting refresh';
+    await dialog.getByText(answer, { exact: true }).waitFor();
     await dialog.getByRole('tab', { name: 'Learned', exact: true }).press('Enter');
     await observation.getByRole('button', { name: 'Memory actions' }).click();
     await page.getByRole('menuitem', { name: 'Pin to context', exact: true }).press('Enter');
