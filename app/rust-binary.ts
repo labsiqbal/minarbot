@@ -7,10 +7,11 @@ const built = new Set<string>();
 const buildEnvironment = { ...process.env };
 
 // Builds the binary through Cargo before a parity test starts it.
-export function rustBinary(name: 'minarbot-server' | 'minarbot-launcher', override?: string): string {
+export function rustBinary(name: 'minarbot-server' | 'minarbot-launcher' | 'xtask', override?: string): string {
   if (override) return override;
   if (!built.has(name)) {
-    execFileSync('cargo', ['build', '--quiet', '--package', name, '--bin', name], {
+    const args = ['build', '--quiet', '--package', name, '--bin', name];
+    execFileSync('cargo', args, {
       cwd: root,
       env: buildEnvironment,
       stdio: ['ignore', 'ignore', 'inherit'],

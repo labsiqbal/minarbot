@@ -6,8 +6,10 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
-import { parseRelease } from '../scripts/release-lib.mjs';
-const { buildRelease, assertNativeDependencies, githubRepository } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
+import { buildRelease, parseRelease, runFixture, xtask } from './test-support/release.ts';
+
+const githubRepository = 'labsiqbal/minarbot';
+const assertNativeDependencies = (binary: string) => execFileSync(xtask(), ['native-dependencies', binary]);
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'release-gates-'));
@@ -73,12 +75,13 @@ test('repeated same-branch claims pass; every issue is checked; invalid issues f
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
-test('release without issues warns loudly', t => {
+test('release without issues warns loudly', () => {
   const f = fixture();
-  const warn = t.mock.method(console, 'warn', () => {});
   try {
-    assert.deepEqual(buildRelease(f.options).issues, []);
-    assert.match(warn.mock.calls[0].arguments[0], /WARNING: RELEASE ANCESTRY GATE SKIPPED.*--issues/);
+    const result = runFixture({ args: ['build'], build: f.options });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(join(f.options.releases, 'feed/latest.json'), 'utf8')).issues, []);
+    assert.match(result.stderr, /WARNING: RELEASE ANCESTRY GATE SKIPPED.*--issues/);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
@@ -104,8 +107,8 @@ const mode = ${JSON.stringify(join(f.dir, 'dependency-mode'))};
 const value = existsSync(mode) ? readFileSync(mode, 'utf8') : 'system';
 console.log(value === 'missing' ? 'libvips.so => not found' : value === 'external' ? 'libvips.so => /tmp/node_modules/libvips.so (0x1)' : 'libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x1)\\n/lib64/ld-linux-x86-64.so.2 (0x2)');
 `, { mode: 0o700 });
-    writeFileSync(join(f.dir, 'scripts/resource-gate.mjs'), "import { existsSync } from 'node:fs';\nif (existsSync('gate-fails')) throw new Error('Rust resource budget exceeded');\n");
-    writeFileSync(join(f.dir, 'scripts/production-env-gate.mjs'), "import { existsSync } from 'node:fs';\nif (existsSync('production-fails')) throw new Error('Production env startup failed');\n");
+    writeFileSync(join(f.dir, 'scripts/resource-gate-fixture'), '#!/bin/sh\ntest ! -e gate-fails\n', { mode: 0o700 });
+    writeFileSync(join(f.dir, 'scripts/production-env-gate-fixture'), '#!/bin/sh\ntest ! -e production-fails\n', { mode: 0o700 });
     writeFileSync(join(f.dir, 'scripts/budgets.json'), '{}');
     writeFileSync(join(f.dir, 'gate-fails'), 'fail');
     process.env.PATH = `${bin}:${previousPath}`;
@@ -138,7 +141,7 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     assert.equal(readFileSync(join(stage, 'machine/install-machine.sh'), 'utf8'), readFileSync(new URL('../scripts/install-machine.sh', import.meta.url), 'utf8'));
     const checks = readFileSync(join(f.dir, 'cargo-checks'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.equal(checks.length, 20);
-    assert(checks.some(args => args.join(' ') === 'build --release --locked'));
+    assert(checks.some(args => args.join(' ') === 'build --workspace --release --locked'));
     assert.deepEqual([...new Set(readFileSync(join(f.dir, 'cargo-targets'), 'utf8').trim().split('\n'))], [join(f.dir, 'target')]);
   } finally {
     process.env.PATH = previousPath;
@@ -150,8 +153,7 @@ test('release CLI demonstrates passing and failing --issues using a fixture gh r
   const f = fixture(), bin = mkdtempSync(join(tmpdir(), 'release-gh-'));
   try {
     mkdirSync(join(f.dir, 'scripts'), { recursive: true });
-    for (const name of ['release.mjs', 'release-lib.mjs', 'install-machine.sh', 'uninstall-machine.sh']) cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
-    cpSync(new URL('../scripts/release-lib.mjs', import.meta.url), join(f.dir, 'scripts/release-lib.mjs'));
+    for (const name of ['install-machine.sh', 'uninstall-machine.sh']) cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
     const pkg = { name: 'release-gate-fixture', version: '1.0.0', type: 'module', scripts: { lint: 'node -e "0"', test: 'node -e "0"', build: 'node -e "0"' } };
     writeFileSync(join(f.dir, 'app/package.json'), JSON.stringify(pkg));
     writeFileSync(join(f.dir, 'app/package-lock.json'), JSON.stringify({ name: pkg.name, version: pkg.version, lockfileVersion: 3, packages: { '': pkg } }));
@@ -169,7 +171,7 @@ assert.deepEqual(args, ['issue', 'view', args[2], '-R', ${JSON.stringify(githubR
 assert(['30', '31'].includes(args[2]));
 console.log(JSON.stringify({comments: [{body: 'Claimed by Fixture, branch ' + (args[2] === '30' ? 't3/shipped' : 't3/unmerged')}]}));
 `, { mode: 0o700 });
-    const run = (issues: string) => spawnSync(process.execPath, [join(f.dir, 'scripts/release.mjs'), '--no-github', '--issues', issues, '--releases', f.options.releases], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, npm_config_update_notifier: 'false' } });
+    const run = (issues: string) => spawnSync(xtask(), ['release', '--no-github', '--issues', issues, '--releases', f.options.releases], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, npm_config_update_notifier: 'false' } });
     const failed = run('30,31');
     assert.equal(failed.status, 1);
     assert.match(failed.stderr, /#31.*t3\/unmerged.*Merge the branch tip/);
@@ -193,12 +195,10 @@ function githubFixture(t: TestContext, withImage = false) {
   const key = join(sandbox, 'signing.pem');
   writeFileSync(key, pem, { mode: 0o600 });
   mkdirSync(join(f.dir, 'scripts'), { recursive: true });
-  for (const name of ['release-lib.mjs', 'install-machine.sh', 'uninstall-machine.sh']) {
+  for (const name of ['install-machine.sh', 'uninstall-machine.sh']) {
     cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
   }
-  const script = readFileSync(new URL('../scripts/release.mjs', import.meta.url), 'utf8');
   const rawPublicKey = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
-  writeFileSync(join(f.dir, 'scripts/release.mjs'), script.replace('kSIv+agT4RsABust/LmvPVjfWDxZxM0YKL03gts/UEM=', rawPublicKey));
   writeFileSync(join(f.dir, 'app/package.json'), JSON.stringify({ version: '1.0.0', scripts: {
     lint: 'node -e "process.exit(Number(process.env.FIXTURE_GATE_FAIL ?? 0))"', test: 'node -e "0"', build: 'node -e "0"',
   } }));
@@ -318,9 +318,10 @@ if (action === 'create' || action === 'upload') {
   writeFileSync(state, JSON.stringify({ ...release, isDraft: false }));
 }
 `, { mode: 0o700 });
-  const run = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [
-    join(f.dir, 'scripts/release.mjs'), ...(args.some(arg => arg.endsWith('-ci')) ? [] : ['--releases', f.options.releases]), ...args,
-  ], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${sandbox}:${process.env.PATH}`, HOME: sandbox, MINARBOT_RELEASE_SIGNING_KEY: key, MINARBOT_GHCR_USER: '', MINARBOT_GHCR_TOKEN: '', ...env } });
+  const run = (args: string[], env: NodeJS.ProcessEnv = {}) => runFixture({
+    args: ['release', ...(args.some(arg => arg.endsWith('-ci')) ? [] : ['--releases', f.options.releases]), ...args],
+    publicKey: rawPublicKey,
+  }, { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${sandbox}:${process.env.PATH}`, HOME: sandbox, MINARBOT_RELEASE_SIGNING_KEY: key, MINARBOT_GHCR_USER: '', MINARBOT_GHCR_TOKEN: '', ...env } });
   const calls = () => existsSync(join(output, 'calls')) ? readFileSync(join(output, 'calls'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]) : [];
   return { ...f, run, calls, output, key, publicKey, commit, id: `1.0.0-${commit.slice(0, 8)}` };
 }

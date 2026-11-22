@@ -8,12 +8,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fileManifest, selectRelease, selectedRelease } from '../scripts/release-lib.mjs';
+import { fileManifest, selectRelease, selectedRelease } from './test-support/release.ts';
 import { rustBinary } from './rust-binary.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
 import { startApp } from './test-bridge.ts';
 import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
-import { freePort } from '../scripts/test-port.mjs';
+import { freePort } from './test-support/test-process.ts';
 
 const base = '/labsiqbal/minarbot/releases';
 const created = '2026-11-19T09:00:00.000Z';

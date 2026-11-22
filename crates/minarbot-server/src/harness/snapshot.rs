@@ -14,6 +14,7 @@ pub struct Snapshot {
     last: Instant,
     secrets: Vec<String>,
     closed: bool,
+    private: bool,
 }
 impl Snapshot {
     pub fn new(state: &AppState, call: i64, turn: &str, secrets: Vec<String>) -> Self {
@@ -27,7 +28,12 @@ impl Snapshot {
             last: Instant::now() - Duration::from_secs(1),
             secrets,
             closed: false,
+            private: false,
         }
+    }
+    pub fn private(mut self, private: bool) -> Self {
+        self.private = private;
+        self
     }
     pub fn current(&self) -> &str {
         self.segments
@@ -91,6 +97,9 @@ impl Snapshot {
         arguments: &Value,
         result: &Value,
     ) -> Result<()> {
+        if self.private {
+            return Err(error(502, "Goal judge attempted to use a tool."));
+        }
         if id.is_empty() || id.len() > 300 || name.len() > 2000 || state.len() > 100 {
             return Err(error(502, "Invalid harness tool identity."));
         }
@@ -178,7 +187,7 @@ impl Snapshot {
         self.flush()
     }
     pub fn flush(&mut self) -> Result<()> {
-        if self.dirty.is_empty() {
+        if self.private || self.dirty.is_empty() {
             return Ok(());
         }
         self.revision += 1;

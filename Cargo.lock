@@ -2305,6 +2305,7 @@ dependencies = [
 name = "minarbot-codegraph"
 version = "0.1.0"
 dependencies = [
+ "globset",
  "ignore",
  "libc",
  "rayon",
@@ -2314,6 +2315,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
+ "toml_edit",
  "tree-sitter",
  "tree-sitter-go",
  "tree-sitter-javascript",
@@ -4343,6 +4345,7 @@ checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 
@@ -4879,6 +4882,26 @@ checksum = "ec1cdab258fb55c0da61328dc52c8764709b249011b2cad0454c72f0bf10a1f6"
 dependencies = [
  "libc",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "minarbot-launcher",
+ "nix 0.31.4",
+ "regex",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

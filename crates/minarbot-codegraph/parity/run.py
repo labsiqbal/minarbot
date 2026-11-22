@@ -22,6 +22,7 @@ REPOS = [
     ("excalidraw", "excalidraw/excalidraw", "v0.18.0", "817d8c553c3389650f8b4503984a6d4a5d2f0c11"),
 ]
 LANGUAGES = {"rust", "typescript", "tsx", "javascript", "jsx", "python", "go"}
+RESOLVED_KINDS = {"calls", "imports", "extends", "implements", "references", "instantiates"}
 NATURAL = ("file_path", "kind", "qualified_name", "start_line", "start_column")
 NODE_COLUMNS = (
     *NATURAL, "name", "language", "end_line", "end_column", "docstring", "signature",
@@ -86,7 +87,11 @@ def open_db(db):
     return connection
 
 
-def snapshot(connection, blocked, *, upstream=False):
+def stable_json(source):
+    return json.dumps(json.loads(source), sort_keys=True) if source is not None else None
+
+
+def snapshot(connection, blocked):
     files = {
         row["path"]: (row["language"], row["generated"]) for row in connection.execute(
             "SELECT path, language, generated FROM files"
@@ -97,11 +102,13 @@ def snapshot(connection, blocked, *, upstream=False):
     for row in connection.execute("SELECT id, " + ", ".join(NODE_COLUMNS) + " FROM nodes"):
         if row["file_path"] not in files:
             continue
-        if upstream and row["kind"] == "route":
+        if row["kind"] == "route":
             downstream_nodes.add(row["id"])
         else:
             nodes[row["id"]] = tuple(row[key] for key in NODE_COLUMNS)
     edges = []
+    resolved = []
+    unresolved = []
     downstream_edges = 0
     in_scope = nodes.keys() | downstream_nodes
     for row in connection.execute("SELECT source, target, kind, line, col, metadata, provenance FROM edges"):
@@ -117,15 +124,26 @@ def snapshot(connection, blocked, *, upstream=False):
             and ((row["kind"] == "contains" and not metadata)
                  or (row["kind"] == "references" and metadata == {"valueRef": True}))
         )
-        if upstream and not extraction_edge:
-            downstream_edges += 1
-            continue
-        edges.append((
+        record = (
             source[:len(NATURAL)], target[:len(NATURAL)], row["kind"],
-            row["line"], row["col"], row["metadata"], row["provenance"],
-        ))
+            row["line"], row["col"], stable_json(row["metadata"]), row["provenance"],
+        )
+        if extraction_edge:
+            edges.append(record)
+        elif row["kind"] in RESOLVED_KINDS:
+            resolved.append(record)
+        else:
+            downstream_edges += 1
+    for row in connection.execute(
+        "SELECT from_node_id, reference_name, reference_kind, line, col, candidates, "
+        "file_path, language, status, name_tail FROM unresolved_refs"
+    ):
+        if row["from_node_id"] in nodes and row["file_path"] in files:
+            unresolved.append((nodes[row["from_node_id"]][:len(NATURAL)], *tuple(row)[1:5],
+                               stable_json(row["candidates"]), *tuple(row)[6:]))
     return (
-        {"files": Counter(files.items()), "nodes": Counter(nodes.values()), "edges": Counter(edges)},
+        {"files": Counter(files.items()), "nodes": Counter(nodes.values()),
+         "extraction": Counter(edges), "resolved": Counter(resolved), "unresolved": Counter(unresolved)},
         len(downstream_nodes), downstream_edges,
     )
 
@@ -145,11 +163,40 @@ def dump(path, snapshot):
                 print(line, file=out)
 
 
+def reference_key(row, metadata):
+    if "refName" in metadata:
+        return row[0], metadata["refName"], metadata.get("refKind", row[2]), row[3], row[4]
+    return None
+
+
+def edge_differences(left, right):
+    """Account for each divergent edge and ref using its original call site."""
+    edges = {row[:5] for row in right["resolved"]}
+    resolved_sites = {reference_key(row, json.loads(row[5] or "{}")) for row in right["resolved"]}
+    failed_sites = {row[:5] for row in right["unresolved"]}
+    reasons = Counter()
+    for row, count in (left["resolved"] - right["resolved"]).items():
+        metadata = json.loads(row[5] or "{}")
+        site = reference_key(row, metadata)
+        if row[:5] in edges:
+            reason = "edge metadata"
+        elif "synthesizedBy" in metadata:
+            reason = f"synthesis {metadata['synthesizedBy']}"
+        elif site in resolved_sites and site is not None:
+            reason = "other target or kind"
+        elif site in failed_sites and site is not None:
+            reason = "other side kept failed ref"
+        else:
+            reason = "edge without counterpart site"
+        reasons[reason] += count
+    return reasons
+
+
 def compare(name, node_db, rust_db, artifacts):
     with open_db(node_db) as node, open_db(rust_db) as rust:
         node_errors, rust_errors = errors(node), errors(rust)
         blocked = node_errors.keys() | rust_errors.keys()
-        left, downstream_nodes, downstream_edges = snapshot(node, blocked, upstream=True)
+        left, downstream_nodes, downstream_edges = snapshot(node, blocked)
         right, _, _ = snapshot(rust, blocked)
     if artifacts:
         dump(artifacts / f"{name}-node.jsonl", left)
@@ -167,9 +214,21 @@ def compare(name, node_db, rust_db, artifacts):
         for label, records in [("Node only", missing), ("Rust only", extra)]:
             if records:
                 details.append(f"  {label} {kind} sample {next(iter(records))!r}")
+        if artifacts:
+            with (artifacts / f"{name}-diff.jsonl").open("a" if kind != "files" else "w", encoding="utf-8") as out:
+                for side, records in [("node", missing), ("rust", extra)]:
+                    for line in sorted(json.dumps((side, kind, row), ensure_ascii=True) for row in records.elements()):
+                        print(line, file=out)
     row = "| " + " | ".join([
         name, *counts, f"{len(node_errors)}/{len(rust_errors)}", *differences,
     ]) + " |"
+    if left["resolved"] != right["resolved"]:
+        for side, one, other in [("Node", left, right), ("Rust", right, left)]:
+            reasons = edge_differences(one, other)
+            if reasons:
+                details.append(f"  {side} edge differences " + ", ".join(
+                    f"{reason}={count}" for reason, count in sorted(reasons.items())
+                ))
     return row, details, blocked, downstream_nodes, downstream_edges
 
 
@@ -195,8 +254,8 @@ def main():
             row, details, blocked, downstream_nodes, downstream_edges = compare(name, node_db, rust_db, artifacts)
             rows.append(row)
             notes.append((name, details, sorted(blocked), downstream_nodes, downstream_edges))
-    print("| Repository | Files | Nodes | Extraction edges | Files with errors | File diff | Node diff | Edge diff |")
-    print("|---|---:|---:|---:|---:|---:|---:|---:|")
+    print("| Repository | Files | Nodes | Extraction edges | Resolved edges | Unresolved refs | Files with errors | File diff | Node diff | Extraction diff | Resolved diff | Unresolved diff |")
+    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     print("\n".join(rows))
     for name, details, blocked, downstream_nodes, downstream_edges in notes:
         print(f"\n{name}: {downstream_nodes} nodes, {downstream_edges} edges in Node downstream output")

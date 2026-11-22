@@ -21,7 +21,7 @@ import { AgentTemplateExport, AvatarPicker as LookPicker, MemoryPanel, SitesPane
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
-export type Agent = { builtin?: boolean; workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
+export type Agent = { builtin?: boolean; workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; goal_judge_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 
 export type FirstAgentDefaults = { runtime: Runtime; account: string; model: string };
 export type FirstRunConnection = { value: string; label: string; runtime: Runtime; defaults: FirstAgentDefaults };
@@ -125,13 +125,14 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
   const [advancedOpen, setAdvancedOpen] = useState(!!recovery.command?.backupModel);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
+  const [judgeModel, setJudgeModel] = useState(profile?.goal_judge_model ?? '');
   const [webAccess, setWebAccess] = useState(profile?.web_access !== 0);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
     const followEngineDefault = quick && model === 'default' && usesEngineSignIn(account) && !modelEdited.current;
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision, webAccess } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: followEngineDefault ? 'default' : String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision, webAccess, ...(judgeModel !== (profile.goal_judge_model ?? '') ? { goalJudgeModel: judgeModel.trim() } : {}) } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: followEngineDefault ? 'default' : String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
     if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
       Object.assign(data, { runtime, confirmRuntime: true });
     }
@@ -205,7 +206,7 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
   const modelFields = <>
     {profile?.runtime === 'api' && <Button type="button" onClick={event => { flushSync(() => setRuntime('codex')); event.currentTarget.form?.requestSubmit(); }} disabled={locked || busy || !runtimeChoices.some(choice => choice.runtime === 'codex' && choice.available && choice.enabled)}>Use Codex</Button>}
     <Field label="Run with" error={runtimeError}>
-      <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime) ? harnessLabels[runtime] : undefined} value={runtime} onChange={value => { runtimeChosen.current = true; setRuntime(value as Runtime); setHarnessModel(null); if (value !== runtime && (isLoginBinding(account) || account === DEVICE_BINDING && value !== 'codex' && value !== 'claude')) setAccount(''); }} disabled={locked || busy} options={[
+      <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime) ? harnessLabels[runtime] : undefined} value={runtime} onChange={value => { runtimeChosen.current = true; setRuntime(value as Runtime); setHarnessModel(null); if (value !== runtime) setJudgeModel(''); if (value !== runtime && (isLoginBinding(account) || account === DEVICE_BINDING && value !== 'codex' && value !== 'claude')) setAccount(''); }} disabled={locked || busy} options={[
         { value: 'api', label: runtimeLabel('api', 'API model') },
         ...runtimeChoices.map(choice => {
           const disabled = !choice.available || !choice.enabled;
@@ -228,6 +229,11 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
     </Field>
     {profile && <Collapsible title="Fallback model" defaultOpen={!!profile.backup_model}>
       <Field label="Fallback model" optional><Tooltip content="Tried once for quota or availability failure"><span><Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" /></span></Tooltip></Field>
+    </Collapsible>}
+    {profile && <Collapsible title="Goal judge model" defaultOpen={!!profile.goal_judge_model}>
+      <Field label="Goal judge model" optional><Combobox name="goalJudgeModel" value={judgeModel} onChange={setJudgeModel}
+        suggestions={discoversModels ? models : (runtimeChoices.find(choice => choice.runtime === runtime)?.models ?? []).map(model => ({ value: model.id, label: model.label }))}
+        maxLength={160} readOnly={locked} placeholder="Use agent model" /></Field>
     </Collapsible>}
   </>;
   const advancedFields = <>

@@ -196,6 +196,13 @@ pub fn read(
         if let Some(object) = turn.as_object_mut() {
             object.remove("profile_setup");
         }
+        if exists(
+            db,
+            "SELECT 1 FROM goal_turns WHERE turn=? AND number>1",
+            [string(turn, "id")],
+        )? {
+            turn["goalContinuation"] = json!(true);
+        }
         decorate(state, db, turn, kind == "channels")?;
     }
     Ok(json!(turns))
