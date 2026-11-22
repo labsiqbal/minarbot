@@ -140,7 +140,7 @@ pub(super) fn augment(
         for hit in evidence(db, &bank, turn_id, text, 6, Search::Automatic)? {
             let line =
                 serde_json::to_string(clip(&hit.text, 280)).map_err(|_| Failure::storage())?;
-            if context.len() + line.len() + 1 <= AUTO_RECALL_TOKENS {
+            if context.len() + line.len() < AUTO_RECALL_TOKENS {
                 context.push_str(&line);
                 context.push('\n');
                 units += 1;
