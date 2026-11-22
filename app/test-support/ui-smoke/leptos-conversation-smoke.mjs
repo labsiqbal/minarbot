@@ -218,10 +218,10 @@ try {
 
   const samples = Number(process.env.MINARBOT_CONVERSATION_BENCH ?? 0);
   const statistics = {};
-  const role = page.getByRole('textbox', { name: 'Message Conversation fixture' });
   for (const client of ['react', 'leptos']) {
     const timings = [];
     await page.goto(origin + path + '?ui=' + client);
+    const role = page.getByRole('textbox', { name: 'Message Conversation fixture' });
     await role.waitFor();
     for (let i = 0; i < samples; i++) {
       const started = performance.now();
