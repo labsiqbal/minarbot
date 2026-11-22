@@ -296,6 +296,12 @@ async function generalParity(context, origin, client) {
   const focus = () => page.waitForFunction(() => document.activeElement?.textContent === 'General');
   const archive = () => panel(page).getByRole('switch', { name: 'Auto-archive agent deliveries' });
   const search = () => panel(page).getByRole('textbox', { name: 'SearXNG URL' });
+  const docs = panel(page).getByRole('region', { name: 'Library docs', exact: true });
+  let docsStatus = { reachable: true, keySet: false };
+  await page.route('**/api/settings/library-docs', route => {
+    assert.equal(route.request().method(), 'GET');
+    return route.fulfill({ json: docsStatus });
+  });
   const waitArchive = value => page.waitForFunction(value => {
     const control = document.querySelector('[role="switch"][aria-label="Auto-archive agent deliveries"]');
     return control && !control.disabled && control.getAttribute('aria-checked') === value;
@@ -328,6 +334,13 @@ async function generalParity(context, origin, client) {
     await page.unroute(chats, initial);
     await archive().press('Space');
     await waitArchive('false');
+    await docs.getByRole('status').filter({ hasText: 'Reachable' }).waitFor();
+    await docs.getByText('Optional', { exact: true }).waitFor();
+    docsStatus = { reachable: false, keySet: true };
+    await docs.getByRole('button', { name: 'Check status' }).press('Enter');
+    await docs.getByRole('status').filter({ hasText: 'Unavailable' }).waitFor();
+    await docs.getByText('Set in Vault', { exact: true }).waitFor();
+    docsStatus.keySet = false;
     await search().waitFor();
     assert.equal(await button(page, 'Save').isDisabled(), true);
     assert.equal(await button(page, 'Test').isDisabled(), true);
@@ -371,8 +384,10 @@ async function generalParity(context, origin, client) {
           await focus();
           await search().waitFor();
           await waitArchive('true');
+          await docs.getByText('Optional', { exact: true }).waitFor();
+          await docs.getByRole('button', { name: 'Check status', disabled: false }).waitFor();
           await page.evaluate(() => document.fonts.ready);
-          await page.screenshot({ path: join(screenshots, `general-${client}-${label}-${mode.toLowerCase()}.png`) });
+          await page.screenshot({ path: join(screenshots, `general-${client}-${label}-${mode.toLowerCase()}.png`), animations: 'disabled' });
         }
       }
     }
