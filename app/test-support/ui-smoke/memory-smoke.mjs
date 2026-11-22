@@ -80,6 +80,7 @@ try {
     await observation.getByText('Pinned', { exact: true }).waitFor();
     await observation.getByRole('button', { name: 'Memory actions' }).click();
     await page.getByRole('menuitem', { name: 'Unpin', exact: true }).press('Enter');
+    await page.getByRole('menu', { includeHidden: true }).waitFor({ state: 'detached' });
     await observation.getByText('Pinned', { exact: true }).waitFor({ state: 'hidden' });
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });

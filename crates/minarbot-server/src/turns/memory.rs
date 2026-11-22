@@ -246,7 +246,10 @@ pub(super) async fn reflect(
     minarbot_memory::reflect(
         query,
         |query| {
-            let guard = state.database.lock().map_err(|_| "Memory database unavailable")?;
+            let guard = state
+                .database
+                .lock()
+                .map_err(|_| "Memory database unavailable")?;
             evidence(&guard.connection, bank, turn, query, budget, Search::Recall)
                 .map_err(|error| error.message.into())
         },
