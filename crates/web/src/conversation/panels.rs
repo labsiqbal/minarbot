@@ -153,7 +153,7 @@ fn component(chat: Chat, value: Value) -> impl IntoView {
                 let data = reply.data.get(&node.data).cloned().unwrap_or_default();
                 view! {
                     <section class="component-node">
-                        <h3 class="k-section__title">{title}</h3>
+                        {(!matches!(node.kind.as_str(), "form" | "table")).then(|| view! { <h3 class="k-section__title">{title.clone()}</h3> })}
                         {if node.kind == "mermaid" {
                             reply.frame.clone().map(|frame| rich_frame(chat, frame, false)).into_any()
                         } else { component_data(node.kind, node.title, data) }}
@@ -243,11 +243,7 @@ pub fn exchanges(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
 #[derive(Clone, Deserialize)]
 struct Context {
     computer: Option<String>,
-    workspace: Option<Workspace>,
-}
-#[derive(Clone, Deserialize)]
-struct Workspace {
-    name: String,
+    workspace: Option<Value>,
 }
 
 fn files_panel(chat: Chat, context: RwSignal<Option<Context>>) -> impl IntoView {
@@ -255,6 +251,7 @@ fn files_panel(chat: Chat, context: RwSignal<Option<Context>>) -> impl IntoView 
     let selected = RwSignal::new(None::<FileRef>);
     let error = RwSignal::new(String::new());
     let path = format!("{}/panel/files", chat.base());
+    let has_workspace = move || context.with(|value| value.as_ref().is_some_and(|value| value.workspace.is_some()));
     leptos::task::spawn_local(async move {
         match get::<Vec<FileRef>>(&path).await {
             Ok(value) => {
@@ -266,7 +263,7 @@ fn files_panel(chat: Chat, context: RwSignal<Option<Context>>) -> impl IntoView 
         }
     });
     view! {
-        <section aria-label="Conversation files" class="k-stack">
+        <section aria-label="Conversation files" class="k-section" hidden=move || has_workspace() && files.with(|rows| rows.as_ref().is_some_and(Vec::is_empty))>
             <h2 class="k-section__title">"Conversation files"</h2>
             <p role="status" hidden=move || files.with(Option::is_some) || !error.with(String::is_empty)>"Loading files…"</p>
             <p role="status" hidden=move || files.with(|files| files.as_ref().is_none_or(|files| !files.is_empty()))>"No files yet"</p>
@@ -300,16 +297,95 @@ fn files_panel(chat: Chat, context: RwSignal<Option<Context>>) -> impl IntoView 
                     } else { text_preview(path, file.name).into_any() }}
                 }
             })}
-            {move || context.with(|value| value.as_ref().and_then(|value| value.workspace.as_ref()).map(|workspace| view! { <p class="k-field__hint">{workspace.name.clone()}</p> }))}
         </section>
+        <Show when=has_workspace>{workspace_panel(chat.base())}</Show>
+    }
+}
+
+fn workspace_panel(base: String) -> impl IntoView {
+    let base = StoredValue::new(format!("{base}/panel/workspace"));
+    let directory = RwSignal::new(String::new());
+    let after = RwSignal::new(None::<String>);
+    let file = RwSignal::new(None::<String>);
+    let page = RwSignal::new(None::<Result<Value, String>>);
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let folder = StoredValue::new(icons.folder);
+    Effect::new(move |_| {
+        let path = directory.get();
+        let cursor = after.get();
+        let Ok(params) = web_sys::UrlSearchParams::new() else { return };
+        params.set("path", &path);
+        if let Some(cursor) = cursor.as_deref() { params.set("after", cursor); }
+        let url = format!("{}/entries?{}", base.get_value(), params.to_string().as_string().unwrap_or_default());
+        page.set(None);
+        leptos::task::spawn_local(async move {
+            let result = get::<Value>(&url).await.map_err(|reason| reason.message);
+            if !directory.is_disposed() && directory.get_untracked() == path && after.get_untracked() == cursor {
+                page.set(Some(result));
+            }
+        });
+    });
+    view! {
+        <div class="k-stack bs-root">
+            <nav class="k-row-actions" aria-label="Workspace path">
+                <button type="button" class="k-btn k-btn--ghost" on:click=move |_| {
+                    file.set(None); after.set(None); directory.set(String::new());
+                }><span class="appearance-icon" inner_html=folder.get_value()></span>"Workspace"</button>
+                {move || directory.with(|path| (!path.is_empty()).then(|| view! { <span class="right-panel__path">{path.clone()}</span> }))}
+            </nav>
+            {move || {
+                if let Some(path) = file.get() {
+                    let encoded = js_sys::encode_uri_component(&path).as_string().unwrap_or_default();
+                    let endpoint = base.get_value();
+                    let name = path.rsplit('/').next().unwrap_or_default().to_owned();
+                    return view! {
+                        <div class="k-row-actions">
+                            <button type="button" class="k-btn k-btn--sm k-btn--secondary" on:click=move |_| file.set(None)>"Close file"</button>
+                            <a class="k-link" href=format!("{endpoint}/download?path={encoded}") download=name>"Download original"</a>
+                        </div>
+                        {preview_text(format!("{endpoint}/file?path={encoded}"), path)}
+                    }.into_any();
+                }
+                page.with(|page| match page {
+                    Some(Ok(page)) => {
+                        let rows = page["entries"].as_array().into_iter().flatten().filter_map(|entry| {
+                            let name = entry["name"].as_str()?.to_owned();
+                            if name == ".git" { return None; }
+                            let is_file = entry["kind"] == "file";
+                            let supported = (is_file || entry["kind"] == "directory") && !name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\'));
+                            let path = directory.with_untracked(|dir| if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") });
+                            Some(view! { <div class="k-row is-clickable"><button type="button" class="k-row__main" disabled=!supported on:click=move |_| {
+                                if is_file { file.set(Some(path.clone())); } else { after.set(None); directory.set(path.clone()); }
+                            }><span class="k-row__text"><span class="k-row__title">{name}</span></span></button></div> })
+                        }).collect::<Vec<_>>();
+                        let next = page["next_after"].as_str().map(str::to_owned);
+                        view! {
+                            <section class="k-section">
+                                {if rows.is_empty() { view! { <div class="k-empty"><span class="k-empty__icon" inner_html=folder.get_value()></span>
+                                    <div class="k-empty__title">"Directory is empty on this page."</div></div> }.into_any()
+                                } else { view! { <div class="k-card">{rows}</div> }.into_any() }}
+                                {next.map(|next| view! { <button type="button" class="k-btn k-btn--sm k-btn--secondary"
+                                    on:click=move |_| after.set(Some(next.clone()))>"Next entries"</button> })}
+                            </section>
+                        }.into_any()
+                    }
+                    Some(Err(message)) => view! { <p role="alert" class="message-error">{message.clone()}</p> }.into_any(),
+                    None => view! { <span class="sr-only" role="status">"Loading workspace..."</span> }.into_any(),
+                })
+            }}
+        </div>
     }
 }
 
 fn text_preview(path: String, name: String) -> impl IntoView {
+    preview_text(format!("{path}?preview=text"), name)
+}
+
+fn preview_text(path: String, name: String) -> impl IntoView {
     let content = RwSignal::new(None::<String>);
     let error = RwSignal::new(String::new());
     leptos::task::spawn_local(async move {
-        match get::<Value>(&format!("{path}?preview=text")).await {
+        match get::<Value>(&path).await {
             Ok(value) => {
                 content.try_set(value["text"].as_str().map(str::to_owned));
             }
@@ -328,6 +404,7 @@ fn text_preview(path: String, name: String) -> impl IntoView {
 fn run_panel(chat: Chat) -> impl IntoView {
     let data = RwSignal::new(None::<Value>);
     let error = RwSignal::new(String::new());
+    let chevron = use_context::<Icons>().unwrap_or_default().next;
     fn refresh(chat: Chat, data: RwSignal<Option<Value>>, error: RwSignal<String>, id: String) {
         if data.is_disposed() || chat.run.get_untracked() != id {
             return;
@@ -361,7 +438,6 @@ fn run_panel(chat: Chat) -> impl IntoView {
     });
     view! {
         <section class="run-inspector" aria-label="Run inspector">
-            <h2 class="k-section__title">"Run inspector"</h2>
             <p role="status" hidden=move || data.with(Option::is_some) || !error.with(String::is_empty)>"Loading run…"</p>
             <p role="alert" class="message-error" hidden=move || error.with(String::is_empty)>{error}</p>
             {move || data.with(|data| data.as_ref().map(|run| {
@@ -369,7 +445,7 @@ fn run_panel(chat: Chat) -> impl IntoView {
                 let error = run["error"].as_str().map(str::to_owned);
                 view! {
                     {error.map(|error| view! {
-                        <div class="run-inspector__value"><strong>{if stopped { "Run stopped" } else { "Run error" }}</strong><pre>{error}</pre></div>
+                        <div class="run-inspector__value"><div class="run-inspector__value-head"><strong>{if stopped { "Run stopped" } else { "Run error" }}</strong></div><pre><code>{error}</code></pre></div>
                     })}
                     {["judgments", "tools", "harness", "providers"].into_iter().filter_map(|key| {
                         let list = run[key].as_array()?;
@@ -387,7 +463,13 @@ fn run_panel(chat: Chat) -> impl IntoView {
                                     "failed" => "Failed", "interrupted" if stopped => "Stopped", "interrupted" => "Interrupted", _ => "Waiting",
                                 }
                             };
-                            view! { <li><details><summary><span>{header}</span><span class="run-inspector__state">{status}</span></summary>
+                            let duration = step["duration_ms"].as_u64().map(|ms| if ms < 1000 {
+                                format!("{ms} ms")
+                            } else {
+                                format!("{:.2} s", ms as f64 / 1000.)
+                            });
+                            let state = duration.map_or_else(|| status.to_owned(), |duration| format!("{status} · {duration}"));
+                            view! { <li><details><summary><span class="appearance-icon" inner_html=chevron.clone()></span><span>{header}</span><span class="run-inspector__state" data-state=(key != "providers").then_some(status)>{state}</span></summary>
                                 <div class="run-inspector__details">
                                     {["arguments", "result", "reason", "created", "finished"].into_iter().filter_map(|key| step[key].as_str().map(|text|
                                         view! { <pre>{text.to_owned()}</pre> })).collect_view()}
@@ -505,6 +587,7 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
                 .is_some_and(|s| matches!(s.state.as_str(), "running" | "idle"))
         })
     };
+    let popout = format!("/?computer={agent}");
     dom_mount(screen, move |node| {
         reconnect.track();
         clipboard.set(String::new());
@@ -629,14 +712,53 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
             }
         });
     };
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let title = chat.config.with_value(|config| format!("{}'s computer", config.name));
+    let title_attr = title.clone();
+    let menu = NodeRef::<leptos::html::Details>::new();
+    let close_menu = move || {
+        if let Some(menu) = menu.get_untracked() {
+            menu.set_open(false);
+        }
+    };
     view! {
-        <section class="computer-viewer" aria-label="Computer">
-            <h2 class="computer-viewer__title">{chat.config.with_value(|config| format!("{}’s computer", config.name))}</h2>
-            <p role="status">{move || status.with(|status| status.as_ref().map(|s| {
-                if !s.available { "Unavailable".into() } else if !s.enabled { "No computer assigned.".into() } else { s.state.clone() }
-            }).unwrap_or_else(|| "Loading computer status…".into()))}</p>
+        <section class="computer-viewer bs-root" aria-label="Computer">
+            <header class="computer-viewer__toolbar" hidden=move || !running()>
+                <div class="computer-viewer__identity">
+                    <div class="computer-viewer__heading">
+                        <h2 class="computer-viewer__title" title=title_attr>{title}</h2>
+                        <span class="k-badge is-success"><span class="computer-viewer__status-dot is-live" aria-hidden="true"></span>"Live"</span>
+                    </div>
+                    <div class="computer-viewer__meta"><span class="computer-viewer__owner">
+                        {move || if user() { "You're in control" } else { "Agent in control" }}
+                    </span></div>
+                </div>
+                <div class="computer-viewer__actions">
+                    <button type="button" class="k-icon-btn" aria-label="Pop out" title="Pop out" on:click=move |_| {
+                        let _ = window().open_with_url_and_target_and_features(&popout, "_blank", "popup,width=1280,height=960,noopener");
+                    }><span class="appearance-icon" inner_html=icons.external></span></button>
+                    <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked hidden=move || !user() on:click=move |_| paste()>"Paste clipboard"</button>
+                    <button type="button" class="k-btn k-btn--sm k-btn--secondary" hidden=move || !user() || clipboard.with(String::is_empty)
+                        on:click=move |_| {
+                            let text = clipboard.get_untracked();
+                            leptos::task::spawn_local(async move { if write_clipboard(&text).await.is_err() { error.try_set("Clipboard could not be written.".into()); } });
+                        }>"Copy clipboard"</button>
+                    <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=locked hidden=user
+                        on:click=move |_| { if let Some(dialog) = dialog.get_untracked() { let _ = dialog.show_modal(); } }>"Take control"</button>
+                    <button type="button" class="k-btn k-btn--sm k-btn--primary" node_ref=hand_back disabled=locked hidden=move || !user()
+                        on:click=move |_| control(Some("hand-back"))>"Hand back to agent"</button>
+                    <details node_ref=menu class="chat-pilot-menu computer-actions" on:keydown=move |event| { if event.key() == "Escape" { close_menu(); event.stop_propagation(); } }>
+                        <summary class="k-icon-btn" aria-label="More computer actions" title="More computer actions"><span class="appearance-icon" inner_html=icons.more></span></summary>
+                        <div class="k-pop k-menu task-actions">
+                            <button type="button" class="k-menu__item" disabled=locked on:click=move |_| { close_menu(); reconnect.update(|count| *count = count.wrapping_add(1)); }>"Reconnect"</button>
+                            <button type="button" class="k-menu__item is-danger" disabled=locked
+                                on:click=move |_| { close_menu(); if let Some(dialog) = stop_dialog.get_untracked() { let _ = dialog.show_modal(); } }>"Stop computer"</button>
+                        </div>
+                    </details>
+                </div>
+            </header>
             <div class="computer-viewer__screen" role="application" aria-label="Agent computer. Shift+Escape returns to controls."
-                hidden=move || !running() on:keydown:capture=move |event| {
+                class:is-controlled=user on:keydown:capture=move |event| {
                 if user() && event.shift_key() && event.key() == "Escape" {
                     event.prevent_default(); event.stop_propagation();
                     if let Some(button) = hand_back.get_untracked() { let _ = button.focus(); }
@@ -644,27 +766,19 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
                 if user() && (event.ctrl_key() || event.meta_key()) && event.key().eq_ignore_ascii_case("v") {
                     event.prevent_default(); event.stop_propagation(); paste();
                 }
-            }><div class="computer-viewer__canvas" node_ref=screen aria-label="Agent computer screen"></div></div>
-            <p role="status" hidden=move || !running()>{connection}</p>
-            <div class="k-row-actions">
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked
-                    hidden=move || running() || status.with(|status| status.as_ref().is_none_or(|s| !s.enabled || !s.available || s.state == "starting"))
-                    on:click=move |_| command("start")>"Start computer"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked hidden=move || !running()
-                    on:click=move |_| { if let Some(dialog) = stop_dialog.get_untracked() { let _ = dialog.show_modal(); } }>"Stop computer"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked hidden=move || !running()
-                    on:click=move |_| reconnect.update(|count| *count = count.wrapping_add(1))>"Reconnect"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=locked hidden=move || !running() || user()
-                    on:click=move |_| { if let Some(dialog) = dialog.get_untracked() { let _ = dialog.show_modal(); } }>"Take control"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--primary" node_ref=hand_back disabled=locked hidden=move || !user()
-                    on:click=move |_| control(Some("hand-back"))>"Hand back to agent"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked hidden=move || !user() on:click=move |_| paste()>"Paste clipboard"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" hidden=move || !user() || clipboard.with(String::is_empty)
-                    on:click=move |_| {
-                        let text = clipboard.get_untracked();
-                        leptos::task::spawn_local(async move { if write_clipboard(&text).await.is_err() { error.try_set("Clipboard could not be written.".into()); } });
-                    }>"Copy clipboard"</button>
+            }><div class="computer-viewer__canvas" node_ref=screen aria-label="Agent computer screen" hidden=move || !running()></div>
+                <div class="computer-viewer__empty" role="status" hidden=running>
+                    <span class="appearance-icon" inner_html=icons.computer></span>
+                    <p>{move || status.with(|status| status.as_ref().map(|s| {
+                        if !s.available { "Computer is disabled on this server." } else if !s.enabled { "No computer assigned." } else if s.state == "starting" { "Starting computer..." } else { "Computer is off." }
+                    }).unwrap_or("Loading computer status..."))}</p>
+                    <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=locked
+                        hidden=move || status.with(|status| status.as_ref().is_none_or(|s| !s.enabled || !s.available || s.state == "starting"))
+                        on:click=move |_| command("start")>"Start computer"</button>
+                </div>
             </div>
+            <p class="sr-only" role="status" hidden=move || !running()>{connection}</p>
+
             <div class="k-row-actions" hidden=move || pending.with(Option::is_none)>
                 <p role="status">"Control change not confirmed"</p>
                 <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=busy
@@ -754,8 +868,36 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
         ("computer", "Computer", icons.computer),
         ("run", "Run", icons.inspect.clone()),
     ];
+    let drawer = NodeRef::<leptos::html::Dialog>::new();
+    let narrow = RwSignal::new(details_overlay());
+    let resize = window_event_listener(leptos::ev::resize, move |_| narrow.set(details_overlay()));
+    on_cleanup(move || resize.remove());
+    Effect::new(move |previous: Option<bool>| {
+        let overlay = narrow.get();
+        let open = chat.details.get();
+        if let Some(drawer) = drawer.get() {
+            if drawer.open() && (!open || previous.is_some_and(|was_overlay| was_overlay != overlay)) {
+                drawer.close();
+            }
+            if open && !drawer.open() {
+                if overlay {
+                    let _ = drawer.show_modal();
+                    if let Ok(Some(tab)) = drawer.query_selector("[role=tab][aria-selected=true]") {
+                        if let Ok(tab) = tab.dyn_into::<web_sys::HtmlElement>() {
+                            let _ = tab.focus();
+                        }
+                    }
+                } else {
+                    let _ = drawer.show();
+                }
+            }
+        }
+        overlay
+    });
     view! {
-        <aside class="details right-panel conversation-panel bs-root" aria-label="Conversation details" hidden=move || !chat.details.get()>
+        <dialog class="conversation-panel-shell" node_ref=drawer aria-label="Conversation panel"
+            on:cancel=move |event: web_sys::Event| { event.prevent_default(); chat.set_details(false); }>
+        <aside class="details right-panel conversation-panel bs-root" aria-label="Conversation details">
             <div class="right-panel__header"><div>
                 <button type="button" class="k-icon-btn" aria-label="Close details" title="Close details" on:click=move |_| chat.set_details(false)>
                     <span class="appearance-icon" inner_html=icons.close></span>
@@ -788,7 +930,12 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
                 </div>
             </div>
         </aside>
+        </dialog>
     }
+}
+
+fn details_overlay() -> bool {
+    window().match_media("(max-width: 767px)").ok().flatten().is_some_and(|query| query.matches())
 }
 
 pub fn rich_replies(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
@@ -845,9 +992,9 @@ pub fn form_reply(
     let submit_fields = fields.clone();
     let form = NodeRef::<leptos::html::Form>::new();
     view! {
-        <h3>{node.title.clone()}</h3>
-        <p role="status" hidden=open>{state}</p>
-        <form class="component-form k-stack" node_ref=form aria-label=node.title.clone() hidden=!open
+        <h3 class="k-section__title">{node.title.clone()}</h3>
+        <p class="component-detail" role="status" hidden=open>{state}</p>
+        <form class="component-form k-stack" node_ref=form aria-label=node.title.clone() autocomplete="off" hidden=!open
             on:submit=move |event| {
                 event.prevent_default();
                 let Some(data) = form.get_untracked().and_then(|form| web_sys::FormData::new_with_form(&form).ok()) else { return };
@@ -866,7 +1013,7 @@ pub fn form_reply(
                 controls::mutate(path.clone(), json!({"decision": "allow", "revision": revision, "values": values}), busy, error);
             }>
             <fieldset class="k-stack component-fields" disabled=move || busy.get() || chat.config.with_value(|c| c.archived)>
-                <legend class="sr-only">"Form fields"</legend>
+                <legend class="component-sr-only">{node.title.clone()}</legend>
                 {fields.into_iter().map(|field| match field.kind {
                     FieldKind::Select => view! { <label class="k-field"><span>{field.label}</span>
                         <select class="k-input" name=field.name required=field.required>
@@ -876,18 +1023,19 @@ pub fn form_reply(
                                 view! { <option value=value>{option}</option> }
                             }).collect_view()}
                         </select></label> }.into_any(),
-                    FieldKind::Boolean => view! { <label class="k-check"><input type="checkbox" name=field.name required=field.required />{field.label}</label> }.into_any(),
+                    FieldKind::Boolean => view! { <label class="k-check component-checkbox"><input type="checkbox" name=field.name required=field.required />{field.label}{field.required.then(|| view! { <span class="component-detail" aria-hidden="true">"Required"</span> })}</label> }.into_any(),
                     kind => view! { <label class="k-field"><span>{field.label}</span>
                         <input type=if matches!(kind, FieldKind::Number) { "number" } else { "text" } class="k-input" name=field.name
                             required=field.required maxlength="1000" step="any" min="-1000000000000000" max="1000000000000000" />
                     </label> }.into_any(),
                 }).collect_view()}
-                <div class="k-row-actions">
-                    <button type="button" class="k-btn k-btn--sm k-btn--secondary"
-                        on:click=move |_| controls::mutate(skip.clone(), json!({"decision": "deny", "revision": revision}), busy, error)>"Skip form"</button>
-                    <button type="submit" class="k-btn k-btn--sm k-btn--primary">{label}</button>
-                </div>
             </fieldset>
+            <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
+            <div class="k-row-actions">
+                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=move || busy.get() || chat.config.with_value(|c| c.archived)
+                    on:click=move |_| controls::mutate(skip.clone(), json!({"decision": "deny", "revision": revision}), busy, error)>"Skip form"</button>
+                <button type="submit" class="k-btn k-btn--sm k-btn--primary" disabled=move || busy.get() || chat.config.with_value(|c| c.archived)>{label}</button>
+            </div>
         </form>
     }.into_any()
 }
@@ -901,7 +1049,11 @@ struct Point {
 fn chart(kind: &str, title: String, points: Vec<Point>) -> impl IntoView {
     let low = points.iter().map(|p| p.value).fold(0., f64::min);
     let high = points.iter().map(|p| p.value).fold(0., f64::max);
-    let range = if low < high { high - low } else { 1. };
+    let high = if low == high { 1. } else { high };
+    let range = high - low;
+    let mut ticks = [low, (low + high) / 2., high, 0.].to_vec();
+    ticks.sort_by(f64::total_cmp);
+    ticks.dedup();
     let step = 364. / points.len().max(1) as f64;
     let x = |index| 54. + (index as f64 + 0.5) * step;
     let y = |value| 126. - (value - low) / range * 116.;
@@ -921,7 +1073,9 @@ fn chart(kind: &str, title: String, points: Vec<Point>) -> impl IntoView {
     } else {
         let width = (step * 0.58).min(34.);
         view! { <div class="component-cartesian" aria-hidden="true"><svg viewBox="0 0 426 152">
-            <line class="component-baseline" x1="54" x2="418" y1=y(0.).to_string() y2=y(0.).to_string()></line>
+            {ticks.iter().map(|tick| view! {
+                <line class=if *tick == 0. { "component-baseline" } else { "component-gridline" } x1="54" x2="418" y1=y(*tick).to_string() y2=y(*tick).to_string()></line>
+            }).collect_view()}
             {if kind == "bar" {
                 points.iter().enumerate().map(|(i, point)| view! {
                     <rect class="component-plot-fill" x=(x(i) - width / 2.).to_string() y=y(point.value).min(y(0.)).to_string()
@@ -936,11 +1090,15 @@ fn chart(kind: &str, title: String, points: Vec<Point>) -> impl IntoView {
                 }.into_any()
             }}
         </svg>
-            {[low, high].into_iter().map(|value| view! {
+            {ticks.into_iter().filter(|tick| *tick == 0. || (y(*tick) - y(0.)).abs() > 13.).map(|value| view! {
                 <span class="component-axis-value" style:top=format!("{}%", y(value) / 152. * 100.)>{value.to_string()}</span>
             }).collect_view()}
-            {points.iter().enumerate().take(5).map(|(index, point)| view! {
+            {(0..points.len().min(5)).map(|tick| {
+                let index = (tick as f64 * (points.len() - 1) as f64 / (points.len().min(5) - 1).max(1) as f64).round() as usize;
+                let point = &points[index];
+                view! {
                 <span class="component-axis-label" style:left=format!("{}%", x(index) / 426. * 100.)>{point.label.clone()}</span>
+                }
             }).collect_view()}
         </div> }.into_any()
     };

@@ -329,6 +329,8 @@ pub fn chats(chat: Chat) -> impl IntoView {
         .map(|runtime| format!("{runtime} runtime"))
         .or_else(|| agent.model.clone());
     let name = agent.name.clone();
+    let more = StoredValue::new(icons.more.clone());
+    let chat_icon = StoredValue::new(icons.chats.clone());
     view! {
         <div class="details__scroll">
         <div class="details__identity">
@@ -365,6 +367,7 @@ pub fn chats(chat: Chat) -> impl IntoView {
             {move || threads.get().into_iter().filter(|thread| thread.archived == 0 || show_archived.get()).map(|thread| {
                 let selected = current.as_deref() == Some(thread.id.as_str());
                 let label = format!("Menu conversation {}", thread.name);
+                let attention = thread.needs_you;
                 let archived = thread.archived != 0;
                 let name = thread.name.clone();
                 let href = link(&format!("{base}/conversations/{}", thread.id));
@@ -372,12 +375,16 @@ pub fn chats(chat: Chat) -> impl IntoView {
                 let archive = thread.clone();
                 view! {
                     <div class="conversation-row">
-                        <a class="panel-row panel-row--link" class:is-current=selected aria-current=selected.then_some("page") href=href>
-                            <span class="panel-row__title">{name}</span>
-                            {(thread.needs_you != 0).then(|| view! { <span class="k-badge is-warn">"Needs you"</span> })}
+                        <a class="panel-row panel-row--link" class:is-current=selected aria-current=selected.then_some("true") href=href>
+                            <span class="appearance-icon" inner_html=chat_icon.get_value()></span>
+                            <span class="panel-row__text"><span class="panel-row__title">{name}</span>
+                                {archived.then(|| view! { <span class="panel-row__meta">"Archived"</span> })}
+                            </span>
+                            {(attention != 0).then(|| view! { <span class="needs-you-badge"><span class="k-badge is-warn" aria-label="Needs you">{attention}</span></span> })}
                         </a>
-                        <details><summary aria-label=label>"Actions"</summary>
-                            <div class="k-row-actions">
+                        <details class="chat-pilot-menu chat-list-menu"><summary class="k-icon-btn" aria-label=label title="More actions">
+                            <span class="appearance-icon" inner_html=more.get_value()></span></summary>
+                            <div class="k-pop k-menu">
                                 <button class="k-btn k-btn--sm k-btn--ghost" type="button" disabled=move || busy.get() || pending.with(Option::is_some) on:click=move |_| open(rename.clone(), "rename")>"Rename"</button>
                                 <button class="k-btn k-btn--sm k-btn--ghost" type="button" disabled=move || busy.get() || pending.with(Option::is_some)
                                     on:click=move |_| open(archive.clone(), if archived { "restore" } else { "archive" })>{if archived { "Restore" } else { "Archive" }}</button>

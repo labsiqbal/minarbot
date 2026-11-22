@@ -120,7 +120,7 @@ try {
   await page.getByRole('region', { name: 'Run inspector' }).waitFor();
   await page.getByRole('tab', { name: 'Chats' }).focus();
   await page.getByRole('tab', { name: 'Chats' }).press('ArrowRight');
-  await page.getByRole('tabpanel', { name: 'files' }).getByRole('heading', { name: 'Conversation files' }).waitFor();
+  await page.getByRole('tabpanel', { name: 'files' }).getByRole('navigation', { name: 'Workspace path' }).waitFor();
   await page.getByRole('button', { name: 'Close details' }).click();
 
   if (output) {

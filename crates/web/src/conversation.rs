@@ -34,6 +34,12 @@ pub(crate) struct Icons {
     pub members: String,
     pub filter: String,
     pub close: String,
+    pub shield: String,
+    pub more: String,
+    pub external: String,
+    pub folder: String,
+    pub next: String,
+    pub alert: String,
 }
 
 #[derive(Clone, Debug)]
@@ -161,6 +167,30 @@ impl Turn {
                     .iter()
                     .chain(&self.harness_approvals)
                     .any(|a| a["state"] == "approval"))
+    }
+
+    fn waiting_for_answer(&self) -> bool {
+        self.questions.iter().any(|question| question["answer"].is_null())
+    }
+
+    fn live_activity(&self) -> bool {
+        self.active() && self.paused == 0 && !self.waiting_for_answer()
+    }
+
+    fn approval_subject(&self) -> Option<&'static str> {
+        if self.approvals.iter().any(|approval| approval["state"] == "approval") {
+            return Some("connected app action");
+        }
+        self.harness_approvals.iter().find(|approval| approval["state"] == "approval").map(|approval| {
+            match approval["kind"].as_str() {
+                Some("command") => "shell command",
+                Some("file") => "file change",
+                Some("network") => "network access request",
+                Some("email") => "email draft",
+                Some("form") => "form",
+                _ => "tool request",
+            }
+        })
     }
 
     fn streaming(&self) -> bool {
@@ -772,13 +802,7 @@ fn body(text: String, base: String) -> impl IntoView {
 }
 
 fn activity_label(turn: &Turn, now: f64) -> String {
-    let live = turn.active() && turn.paused == 0 && !turn.needs_you();
-    if turn.active()
-        && turn
-            .questions
-            .iter()
-            .any(|question| question["answer"].is_null())
-    {
+    if turn.active() && turn.waiting_for_answer() {
         return "Waiting for your answer".into();
     }
     if turn.active() && turn.paused != 0 {
@@ -793,7 +817,7 @@ fn activity_label(turn: &Turn, now: f64) -> String {
         .or((turn.status != "cancelled").then_some(turn.created.as_str()));
     let end = if turn.status == "cancelled" {
         turn.activity.stopped_at.as_deref().map(js_sys::Date::parse)
-    } else if live {
+    } else if turn.live_activity() {
         Some(now)
     } else {
         calls
@@ -851,7 +875,7 @@ fn copy_action(text: impl Fn() -> String + 'static, label: &'static str) -> impl
     }
 }
 
-fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
+pub(super) fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let icons = use_context::<Icons>().unwrap_or_default();
     let turn_id = row.with_untracked(|turn| turn.id.clone());
     let endpoint = format!("{}/turns/{turn_id}/fork", chat.base());
@@ -868,7 +892,7 @@ fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     view! {
-        <div class="turn-controls answer-actions" role="group" aria-label="Reply actions"
+        <div class="answer-actions" role="group" aria-label="Reply actions"
             hidden=move || !row.with(|turn| matches!(turn.status.as_str(), "done" | "cancelled" | "failed" | "interrupted"))>
             {copy_action(move || row.with(|turn| turn.reply.clone().or_else(|| turn.partial.as_ref().map(|partial| partial.text.clone())).or_else(|| turn.error.clone()).unwrap_or_default()), "Copy reply")}
             <button type="button" class="k-icon-btn" aria-label="Fork from here" title="Fork from here" disabled=busy on:click=move |_| {
@@ -901,7 +925,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
     let icons = use_context::<Icons>().unwrap_or_default();
     let now = RwSignal::new(js_sys::Date::now());
     Effect::new(move |_| {
-        if row.with(|turn| turn.active() && turn.paused == 0 && !turn.needs_you()) {
+        if row.with(Turn::live_activity) {
             let interval = set_interval_with_handle(
                 move || now.set(js_sys::Date::now()),
                 Duration::from_secs(1),
@@ -924,6 +948,11 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
             "Agent reply"
         }
     };
+    let working = move || row.with(|turn| turn.status == "running" && turn.live_activity());
+    let failed = move || row.with(|turn| matches!(turn.status.as_str(), "failed" | "interrupted"));
+    let inspect = move |_| chat.inspect(inspect_id.clone());
+    let inspect_icon = StoredValue::new(icons.inspect.clone());
+    let inspect = Callback::new(inspect);
     let answer = Memo::new(move |_| {
         row.with(|turn| {
             turn.reply
@@ -1020,17 +1049,23 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                                 view! {
                                     <div class="turn-activity__header">
                                         <span class="activity-label">
-                                            <span class="activity-working" aria-hidden="true" hidden=move || !row.with(|turn| turn.status == "running" && turn.paused == 0 && !turn.needs_you())></span>
+                                            <span class="activity-working" aria-hidden="true" hidden=move || !working()></span>
                                             {move || row.with(|turn| activity_label(turn, now.get()))}
                                         </span>
+                                        <button type="button" class="link-btn link-btn--small turn-activity__inspect" aria-label="Inspect run" hidden=move || !failed() on:click=move |event| inspect.run(event)>"Inspect"</button>
                                     </div>
                                 }.into_any()
                             } else {
                                 view! {
                                     <details class="turn-activity__details">
-                                        <summary class="turn-activity__header k-collapsible__trigger">
-                                            <span class="activity-label">{move || row.with(|turn| activity_label(turn, now.get()))}</span>
+                                        <summary class="turn-activity__header">
+                                            <span class="k-collapsible__trigger">
+                                            <span class="activity-label">
+                                                <span class="activity-working" aria-hidden="true" hidden=move || !working()></span>
+                                                {move || row.with(|turn| activity_label(turn, now.get()))}
+                                            </span>
                                             <span class="appearance-icon k-collapsible__chev" inner_html=icons.chevron.clone()></span>
+                                            </span>
                                         </summary>
                                         <ol class="activity-list" aria-label="Turn activity">
                                             {move || activity.get().into_iter().map(|(prose, text)| {
@@ -1045,19 +1080,35 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                                 }.into_any()
                             }
                         }}
-                        <button type="button" class="link-btn link-btn--small conversation-inspect" aria-label="Inspect run" title="Inspect run" on:click=move |_| chat.inspect(inspect_id.clone())>
-                            <span class="appearance-icon" inner_html=icons.inspect></span>
+                        <button type="button" class="link-btn link-btn--small conversation-inspect" aria-label="Inspect run" title="Inspect run"
+                            hidden=move || failed() && activity.with(Vec::is_empty) on:click=move |event| inspect.run(event)>
+                            <span class="appearance-icon" inner_html=inspect_icon.get_value()></span>
                         </button>
                     </div>
-                    <div class="message-body" aria-label=label hidden=move || answer.with(String::is_empty)>
-                        <div class="legacy stream-markdown">
-                            <For each=move || blocks.get() key=|(index, block): &(usize, String)| (*index, block.clone())
-                                children=move |(_, block)| body(block, text_base.clone()) />
+                    <div class="message-body" hidden=move || answer.with(String::is_empty) && row.with(|turn| turn.html.is_empty() && turn.apps.is_empty() && turn.components.is_empty() && turn.error.is_none() && turn.dispatch_label.is_none() && turn.approval_subject().is_none())>
+                        {panels::rich_replies(chat, row)}
+                        {move || row.with(|turn| turn.dispatch_label.clone()).map(|text| view! { <p class="dispatch-receipt">{text}</p> })}
+                        <div aria-label=label hidden=move || answer.with(String::is_empty)>
+                            <div class="legacy stream-markdown">
+                                <For each=move || blocks.get() key=|(index, block): &(usize, String)| (*index, block.clone())
+                                    children=move |(_, block)| body(block, text_base.clone()) />
+                            </div>
                         </div>
+                        {move || row.with(|turn| {
+                            if let Some(error) = turn.error.clone() {
+                                view! { <p class="message-error"><span class="appearance-icon" inner_html=icons.alert.clone()></span>{error}</p> }.into_any()
+                            } else {
+                                turn.approval_subject().filter(|subject| *subject != "form").map(|subject| view! {
+                                    <p class="message-muted">{format!("Review the {subject} to continue.")}</p>
+                                }).into_any()
+                            }
+                        })}
                     </div>
                     {move || row.with(|turn| {
-                        let label = if turn.active() && turn.harness_approvals.iter().any(|approval| approval["kind"] == "form" && approval["state"] == "approval") { "Waiting for your input" }
-                            else if turn.needs_you() { "Waiting for approval" }
+                        let subject = turn.approval_subject();
+                        let label = if turn.active() && subject == Some("form") { "Waiting for your input" }
+                            else if turn.active() && subject.is_some() { "Waiting for approval" }
+                            else if turn.active() && turn.waiting_for_answer() { "Waiting for your answer" }
                             else if turn.active() && turn.paused != 0 { "Paused" } else { "" };
                         let text = match (label, turn.activity.fallback_model.is_some()) {
                             ("", true) => "Fallback model used".into(),
@@ -1065,15 +1116,12 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                             (_, false) => label.into(),
                         };
                         (!label.is_empty() || turn.activity.fallback_model.is_some()).then(|| view! {
-                            <div class="turn-meta agent-meta"><span class="turn-status is-attention"><i aria-hidden="true"></i>{text}</span></div>
+                            <div class="turn-meta agent-meta"><span class="turn-status" class:is-attention=subject == Some("form") || turn.waiting_for_answer() || turn.paused != 0
+                                class:is-working=subject.is_some_and(|value| value != "form")><i aria-hidden="true"></i>{text}</span></div>
                         })
                     })}
-                    {move || row.with(|turn| turn.dispatch_label.clone()).map(|text| view! { <p class="dispatch-receipt">{text}</p> })}
-                    <p class="message-error" hidden=move || row.with(|turn| turn.error.is_none())>{move || row.with(|turn| turn.error.clone())}</p>
                     {move || outputs.get().into_iter().filter(|file| !file.deleted).map(|file| attachment(file, rich_base.clone())).collect_view()}
-                    {panels::rich_replies(chat, row)}
                     {panels::exchanges(chat, row)}
-                    {answer_actions(chat, row)}
                     {controls::turn_controls(chat, row)}
                     {queue::editor(chat, row)}
                 </div>
@@ -1107,7 +1155,7 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
         if !(event.ctrl_key() || event.meta_key())
             || document()
-                .query_selector("dialog[open]")
+                .query_selector("dialog:modal")
                 .ok()
                 .flatten()
                 .is_some()

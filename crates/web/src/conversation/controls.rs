@@ -434,9 +434,6 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                                 view! { <option value=run.id>{name}</option> }
                             }).collect_view()}
                         </select>
-                        <button type="button" class="k-btn k-btn--sm k-btn--ghost"
-                            hidden=move || !chat.target().is_some_and(|run| run.capabilities.steer) || chat.context.with(Option::is_some)
-                            disabled=move || chat.locked() || uploading.get() on:click=move |_| submit(true)>"Steer"</button>
                         <div class="composer__right">
                             <span class="composer__retry" hidden=move || chat.busy.get() || chat.pending.with(Option::is_none)>"Retry send"</span>
                             {recording_control(chat, recording, uploading)}
@@ -697,7 +694,8 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let harness = Memo::new(move |_| row.with(|turn| turn.harness_approvals.clone()));
     let icons = use_context::<Icons>().unwrap_or_default();
     let menu = NodeRef::<leptos::html::Details>::new();
-    let active = move || row.with(|turn| turn.active() && !turn.needs_you() && turn.paused == 0);
+    let active = move || row.with(|turn| turn.active() && !turn.waiting_for_answer() && turn.paused == 0
+        && !turn.approvals.iter().any(|approval| matches!(approval["state"].as_str(), Some("approval" | "ready"))));
     let resumable = move || {
         row.with(|turn| {
             !turn.needs_you()
@@ -706,21 +704,37 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     };
     let available =
         move || !chat.config.with_value(|config| config.archived) && (active() || resumable());
+    let finished = move || row.with(|turn| matches!(turn.status.as_str(), "done" | "cancelled" | "failed" | "interrupted"));
     let close = move || {
         if let Some(menu) = menu.get_untracked() {
             menu.set_open(false);
         }
     };
     view! {
-        <div class="turn-controls" role="group" aria-label="Message actions" hidden=move || !available() && error.with(String::is_empty)>
+        <div class="turn-extras k-stack" hidden=move || questions.with(Vec::is_empty) && approvals.with(Vec::is_empty) && harness.with(Vec::is_empty)>
+        {move || questions.get().into_iter().map(|q| question(chat, row, scope.get_value(), q)).collect_view()}
+        {move || approvals.get().into_iter().map(|a| approval(chat, scope.get_value(), a, false)).collect_view()}
+        {move || harness.get().into_iter().map(|a| approval(chat, scope.get_value(), a, true)).collect_view()}
+        </div>
+        <div class="turn-controls" role="group" aria-label="Message actions" hidden=move || !finished() && !available() && error.with(String::is_empty)>
+            {answer_actions(chat, row)}
+            <button type="button" class="k-btn k-btn--sm k-btn--ghost" hidden=move || !available() || !resumable() disabled=busy
+                on:click=move |_| { action.set("resume"); dialog_open(confirm); }>
+                {move || if row.with(|turn| turn.status == "failed") { "Retry" } else { "Resume" }}
+            </button>
             <details class="chat-pilot-menu turn-task-controls" node_ref=menu hidden=move || !available()
                 on:keydown=move |event| { if event.key() == "Escape" { close(); } }>
-                <summary class="k-btn k-btn--sm k-btn--ghost">"Task actions"
-                    <span class="appearance-icon" inner_html=icons.chevron></span>
+                <summary class=move || if resumable() { "k-icon-btn" } else { "k-btn k-btn--sm k-btn--ghost" }
+                    aria-label=move || if resumable() { "Recovery actions" } else { "Task actions" }>
+                    <span hidden=resumable>"Task actions"</span>
+                    <span class="appearance-icon" hidden=resumable inner_html=icons.chevron></span>
+                    <span class="appearance-icon" hidden=move || !resumable() inner_html=icons.more></span>
                 </summary>
                 <div class="k-pop task-actions">
-                    <button type="button" class="k-menu__item" disabled=busy hidden=move || !active()
-                        on:click=move |_| { close(); action.set("cancel"); dialog_open(confirm); }>"Stop"</button>
+                    <button type="button" class="k-menu__item" disabled=busy hidden=move || !available()
+                        on:click=move |_| { close(); action.set("cancel"); dialog_open(confirm); }>
+                        {move || if resumable() { "Dismiss" } else { "Stop" }}
+                    </button>
                     <button type="button" class="k-menu__item" disabled=busy hidden=move || !active()
                         on:click=move |_| {
                             close();
@@ -745,9 +759,6 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
                 </form>
             </dialog>
         </div>
-        {move || questions.get().into_iter().map(|q| question(chat, row, scope.get_value(), q)).collect_view()}
-        {move || approvals.get().into_iter().map(|a| approval(chat, scope.get_value(), a, false)).collect_view()}
-        {move || harness.get().into_iter().map(|a| approval(chat, scope.get_value(), a, true)).collect_view()}
     }
 }
 
@@ -845,25 +856,70 @@ fn approval(chat: Chat, path: String, a: Value, harness: bool) -> impl IntoView 
         "Form submitted"
     }
     .to_owned();
-    let allow_always = !form && (!harness || a["prefix"].is_string());
+    if form {
+        return view! {
+            <div class="k-card component-reply"><section class="component-node">
+                {panels::form_reply(chat, a["input"].clone(), path, revision, open, form_result, busy, error)}
+            </section></div>
+        }.into_any();
+    }
+    let allow_always = !harness || a["prefix"].is_string();
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let command = a["command"].as_str().map(str::to_owned);
+    let outcome = if open {
+        "Approval needed"
+    } else if a["state"] == "expired" {
+        "Expired; ask again"
+    } else if a["decision"] == "deny" {
+        "Not allowed"
+    } else if a["kind"] == "email" {
+        "Draft saved"
+    } else if a["decision"] == "always" {
+        "Always allowed for this command prefix"
+    } else {
+        "Allowed once"
+    };
+    let label = if harness {
+        match a["kind"].as_str() {
+            Some("email") => "Email draft",
+            Some("craft") => "Craft Anything permission",
+            _ => "Coding harness permission",
+        }
+    } else {
+        "Approval"
+    };
     view! {
-        <section class="k-card conversation-card" aria-label="Approval">
-            <h3>{title}</h3>
-            <p role="status">{if open { "Approval needed" } else { a["state"].as_str().unwrap_or_default() }.to_owned()}</p>
-            {form.then(|| panels::form_reply(chat, a["input"].clone(), path.clone(), revision, open, form_result, busy, error))}
-            {(!form).then(|| view! {
-                <details><summary>"Request details"</summary><pre>{details}</pre></details>
+        <section class="bs-root k-stack" aria-label=label>
+            <div class="k-card"><div class="approval-card-body k-stack">
+                <div class="k-row">
+                    <div class="k-row__main">
+                        <span class="k-row__leading" inner_html=icons.shield></span>
+                        <span class="k-row__text"><span class="k-row__title"><h3 class="k-section__title">{label}</h3></span></span>
+                    </div>
+                    <span class="k-row__trailing"><span class="k-badge" class:is-warn=open role="status">{outcome}</span></span>
+                </div>
+                <p class="message-plain">{title}</p>
+                {command.map(|command| view! {
+                    <pre class="k-code" tabindex="0" role="region" aria-label="Shell command">{command}</pre>
+                })}
+                <details class="k-collapsible conversation-disclosure">
+                    <summary class="k-collapsible__trigger">"Request details"<span class="appearance-icon k-collapsible__chev" inner_html=icons.chevron></span></summary>
+                    <div class="k-collapsible__content">
+                        <pre class="k-code" tabindex="0" role="region" aria-label="Request arguments">{details}</pre>
+                    </div>
+                </details>
                 <div class="k-row-actions" hidden=!open>
-                    {[("deny", "Don't allow"), ("allow", "Allow once"), ("always", "Always allow")].into_iter()
+                    {[("deny", "Don't allow"), ("always", if harness { "Always allow for this agent + command prefix" } else { "Always allow" }),
+                        ("allow", if a["kind"] == "email" { "Approve draft" } else { "Allow once" })].into_iter()
                         .filter(|(decision, _)| *decision != "always" || allow_always).map(|(decision, title)| {
                             let path = path.clone();
-                            view! { <button type="button" class="k-btn k-btn--sm k-btn--secondary"
+                            view! { <button type="button" class=if decision == "allow" { "k-btn k-btn--sm k-btn--primary" } else { "k-btn k-btn--sm k-btn--secondary" }
                                 disabled=move || busy.get() || chat.config.with_value(|c| c.archived)
                                 on:click=move |_| mutate(path.clone(), json!({"revision": revision, "decision": decision}), busy, error)>{title}</button> }
                         }).collect_view()}
                 </div>
-            })}
-            <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
+                <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
+            </div></div>
         </section>
-    }
+    }.into_any()
 }
