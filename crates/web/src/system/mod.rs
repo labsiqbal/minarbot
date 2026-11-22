@@ -13,7 +13,7 @@ use leptos::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::time::Duration;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 
 pub fn panel(route: SettingsRoute) -> AnyView {
     match route {
@@ -181,14 +181,50 @@ fn valid_uuid(id: &str) -> bool {
         })
 }
 
+// Same native fallback as app/src/ui/clipboard.ts (T3 MIT provenance in app/t3/provenance.json).
 async fn copy(text: &str) -> Result<(), String> {
-    window()
-        .navigator()
-        .clipboard()
-        .write_text(text)
-        .await
-        .map(|_| ())
-        .map_err(|_| "Could not copy. Select the text and copy it manually.".into())
+    let window = window();
+    if window.top().ok().flatten().is_none_or(|top| top != window) {
+        return Err("Copy is unavailable in embedded views. Open Minarbot directly.".into());
+    }
+    if let Ok(clipboard) = js_sys::Reflect::get(&window.navigator(), &"clipboard".into()) {
+        if let Ok(clipboard) = clipboard.dyn_into::<web_sys::Clipboard>() {
+            if clipboard.write_text(text).await.is_ok() {
+                return Ok(());
+            }
+        }
+    }
+    copy_from_field(text)
+        .ok_or_else(|| "Could not copy. Select the text and copy it manually.".into())
+}
+
+fn copy_from_field(text: &str) -> Option<()> {
+    let document = document().dyn_into::<web_sys::HtmlDocument>().ok()?;
+    let active = document
+        .active_element()?
+        .dyn_into::<web_sys::HtmlElement>()
+        .ok()?;
+    let parent = active
+        .closest("dialog")
+        .ok()
+        .flatten()
+        .or_else(|| document.body().map(Into::into))?;
+    let area = document
+        .create_element("textarea")
+        .ok()?
+        .dyn_into::<web_sys::HtmlTextAreaElement>()
+        .ok()?;
+    area.set_class_name("sr-only");
+    area.set_tab_index(-1);
+    area.set_read_only(true);
+    area.set_value(text);
+    parent.append_child(&area).ok()?;
+    let _ = area.focus();
+    area.select();
+    let copied = document.exec_command("copy").unwrap_or(false);
+    area.remove();
+    let _ = active.focus();
+    copied.then_some(())
 }
 
 fn https_url(value: &str) -> Option<String> {
