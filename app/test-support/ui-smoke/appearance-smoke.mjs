@@ -285,7 +285,7 @@ async function headers(origin) {
 async function generalParity(context, origin, client) {
   const page = await context.newPage();
   const errors = [], consoleErrors = [], calls = [];
-  const focus = async () => { const heading = panel(page).getByRole('heading', { name: 'General', exact: true }); await heading.waitFor(); await heading.focus(); assert.equal(await heading.evaluate(element => element === document.activeElement), true); };
+  const focus = () => page.waitForFunction(() => document.activeElement?.textContent === 'General');
   const archive = () => panel(page).getByRole('switch', { name: 'Auto-archive agent deliveries' });
   const search = () => panel(page).getByRole('textbox', { name: 'SearXNG URL' });
   const waitArchive = value => page.waitForFunction(value => {
