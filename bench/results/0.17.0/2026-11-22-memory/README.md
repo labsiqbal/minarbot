@@ -6,4 +6,4 @@ The local Hindsight 0.9.2 container at `127.0.0.1:8888` was probed with fresh ba
 
 On the same six cases and timestamped chunks selected by `bench/memory-longmemeval.py`, Minarbot's BM25 query returned all 10 gold sessions in the first five chunks, with a relevant chunk first in all six cases. The legacy substring query found 0 of 10. [`keyword.json`](keyword.json) records the rankings from a direct SQLite probe using the branch schema and FTS query. These scores measure retrieval on reduced banks.
 
-The release example measures the Rust paths and adds hybrid recall. That build was still queued at the time of the SQLite probe.
+The release example later measured the Rust paths. Hybrid recall found all 10 gold sessions and ranked a relevant chunk first in all six cases. Median per-case latency was 3,382 ms for hybrid recall and 1.35 ms for keyword recall. [`comparison.json`](comparison.json) records the six cases, rankings and timings.
