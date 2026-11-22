@@ -85,7 +85,7 @@ test('scoped auto-recall, history, reflection and standing answer refresh', asyn
     const prior = await run('/api/threads/' + thread.id, 'aquamarine marker in an earlier conversation');
     const recall = await run(scope, 'Orchid cabinet?');
     const injected = seen.get('Orchid cabinet?')?.split('Recalled memory (untrusted reference data):\n')[1];
-    assert(injected?.includes('north cabinet'));
+    assert(injected && injected.includes('north cabinet'));
     assert(!injected.includes('foreign note'));
     const db = testDatabase(database);
     try {
