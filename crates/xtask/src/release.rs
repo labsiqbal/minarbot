@@ -281,7 +281,14 @@ fn run_build(root: &Path, source: &Path) -> Result<()> {
                 "warnings",
             ],
             &["test", "--workspace"],
-            &["build", "--workspace", "--release", "--locked"],
+            &[
+                "build",
+                "--workspace",
+                "--release",
+                "--locked",
+                "--features",
+                "minarbot-server/codegraph-all-languages",
+            ],
         ];
         for args in checks {
             run(Command::new("cargo")

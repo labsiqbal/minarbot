@@ -53,7 +53,7 @@ jobs:
           npm --prefix app ci
           npm --prefix app run build
           cargo xtask leptos
-          cargo build --workspace --release --locked
+          cargo build --workspace --release --locked --features minarbot-server/codegraph-all-languages
           cargo xtask release --pack-ci target/release --output artifacts --notes "$RELEASE_NOTES"
           test -n "$(find artifacts -name "*-${{ matrix.platform }}.tar.gz")"
       - name: Install and exercise the macOS service
