@@ -162,7 +162,7 @@ for (const directory of [root, resolve(root, 'test-support'), resolve(root, '../
     if (/\bfunction\s+freePort\b|\bfreePort\s*=\s*(?:async\s*)?\(/.test(readFileSync(resolve(directory, name), 'utf8'))) portHelpers.push(name);
   }
 }
-assert.deepEqual(portHelpers, ['test-port.mjs'], 'Reserve test ports with freePort from scripts/test-port.mjs.');
+assert.deepEqual(portHelpers, ['test-process.ts'], 'Reserve test ports with freePort from app/test-support/test-process.ts.');
 
 // Repository scripts sit outside the app ESLint project, so an unbound name there only fails
 // when the release runs them.
@@ -174,7 +174,7 @@ const scriptLint = new ESLint({
     { files: ['desktop/src/*-renderer.mjs'], languageOptions: { globals: globals.browser } },
   ],
 });
-const scriptProblems = (await scriptLint.lintFiles(['scripts/*.mjs', 'desktop/scripts/*.mjs', 'desktop/src/*.mjs', 'app/scripts/*.mjs', 'app/t3/*.mjs']))
+const scriptProblems = (await scriptLint.lintFiles(['desktop/scripts/*.mjs', 'desktop/src/*.mjs', 'app/scripts/*.mjs', 'app/t3/*.mjs']))
   .flatMap(result => result.messages.map(message => `${result.filePath}:${message.line} ${message.message}`));
 assert.deepEqual(scriptProblems, [], 'Repository scripts must not reference undefined names.');
 

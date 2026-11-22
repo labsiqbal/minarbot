@@ -20,7 +20,12 @@ pub async fn call(
     phase: &str,
 ) -> Result<Answer> {
     let memory = phase.starts_with("memory_");
-    let private = memory || phase == "compaction";
+    let private = memory || phase == "compaction" || phase == goals::JUDGE;
+    let allowance = if memory {
+        None
+    } else {
+        goals::allowance(state, turn, messages)?
+    };
     let hub_turn = crate::computer::hub::check(state, turn)?.is_some();
     if memory && (hub_turn || pending(state)) {
         return Err(error(409, "Memory provider is unavailable."));
@@ -115,7 +120,9 @@ pub async fn call(
     let max_tokens = if memory {
         account.max_tokens.min(4096)
     } else {
-        account.max_tokens
+        allowance.map_or(account.max_tokens, |(_, limit)| {
+            account.max_tokens.min(limit as u64)
+        })
     };
     let endpoint = match account.family.as_str() {
         "anthropic" => format!("{}/messages", account.base.trim_end_matches('/')),
@@ -345,6 +352,14 @@ pub async fn call(
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
     db.execute("UPDATE provider_calls SET status=?,finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=? AND status='pending'",params![if result.is_ok(){"received"}else{"failed"},iso(db,state.config.now())?,tokens[0],tokens[1],tokens[2],seq])?;
+    if let Some((estimated_input, _)) = allowance {
+        let output = match &result {
+            Ok(Answer::Text(text)) => text.len(),
+            Ok(Answer::Tool(call)) => call.to_string().len(),
+            Err(_) => 0,
+        };
+        goals::account_unmetered(db, turn, seq, estimated_input + (output as i64 + 3) / 4)?;
+    }
     result
 }
 pub(super) async fn wait_for_stream_data<T>(

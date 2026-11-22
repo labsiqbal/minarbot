@@ -1,5 +1,5 @@
 mod browser;
-pub(super) mod cdp;
+pub(crate) mod cdp;
 
 use super::browser_actions;
 use base64::{engine::general_purpose::STANDARD, Engine};

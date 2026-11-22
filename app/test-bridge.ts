@@ -31,7 +31,7 @@ export const retainedToolNames = [
 ].sort();
 
 import { canonicalTestBridge, type CanonicalFixtures } from './rust-canonical-test-bridge.ts';
-import { freePort } from '../scripts/test-port.mjs';
+import { freePort } from './test-support/test-process.ts';
 
 type RustServerOptions = Parameters<typeof startRustServer>[0];
 type CanonicalOptions = RustServerOptions & CanonicalFixtures & { syncKey?: () => Uint8Array };

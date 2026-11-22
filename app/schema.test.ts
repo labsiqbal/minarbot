@@ -73,6 +73,7 @@ for (const mode of ['canonical', 'local'] as const) {
       expected.exec(fixture(mode));
       const frozen = snapshot(expected);
       const frozenLedger = mode === 'canonical' ? expected.prepare(ledger).all() : [];
+      if (mode === 'local') expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8'));
       addMemorySchema(expected, mode);
       const current = snapshot(expected);
       await startAndClose(fresh, mode);

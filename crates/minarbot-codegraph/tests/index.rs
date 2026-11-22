@@ -58,7 +58,7 @@ fn sync_tracks_hashes_and_replaces_graph_atomically() -> Test {
         [],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
-    assert_eq!(result, (true, "missing".to_owned(), "pending".to_owned()));
+    assert_eq!(result, (true, "missing".to_owned(), "failed".to_owned()));
     let vocabulary: String = db.query_row(
         "SELECT group_concat(segment, ' ') FROM
          (SELECT segment FROM name_segment_vocab WHERE name = 'FindValue' ORDER BY segment)",
@@ -192,5 +192,168 @@ fn indexes_every_enabled_dialect_and_generated_headers() -> Test {
         |row| row.get(0),
     )?;
     assert!(generated);
+    Ok(())
+}
+
+#[cfg(feature = "typescript")]
+#[test]
+fn sync_resolves_aliases_and_retries_each_call_site() -> Test {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("source");
+    fs::create_dir_all(root.join("src/lib"))?;
+    fs::write(root.join("tsconfig.json"), r#"{"extends": "./paths"}"#)?;
+    fs::write(
+        root.join("paths.json"),
+        r#"{
+            // Ignore comment markers inside strings and accept trailing commas.
+            "compilerOptions": {"paths": {"@helpers/*": ["src/lib/*",],},},
+        }"#,
+    )?;
+    fs::write(
+        root.join("src/main.ts"),
+        "import { Work, run } from '@helpers/tools';\n\
+         export class Runner extends Work { test() { this.work(); run(); run(); } }\n",
+    )?;
+    let database = scratch.path().join("graph.db");
+    let mut index = Index::open(&root, &database)?;
+    index.sync()?;
+    let db = Connection::open(database)?;
+    let unresolved = || -> rusqlite::Result<(i64, i64)> {
+        db.query_row(
+            "SELECT count(*), count(CASE WHEN status = 'failed' AND name_tail = 'run' THEN 1 END)
+             FROM unresolved_refs WHERE reference_name = 'run' AND reference_kind = 'calls'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    };
+    assert_eq!(unresolved()?, (2, 2));
+
+    let tools = root.join("src/lib/tools.ts");
+    let source = "export class Work { work() {} }\nexport function run() {}\n";
+    fs::write(&tools, source)?;
+    index.sync()?;
+    assert_eq!(unresolved()?, (0, 0));
+    let calls = || -> rusqlite::Result<i64> {
+        db.query_row(
+            "SELECT count(*) FROM edges e JOIN nodes n ON e.target = n.id
+             WHERE e.kind = 'calls' AND n.file_path = 'src/lib/tools.ts'",
+            [],
+            |row| row.get(0),
+        )
+    };
+    assert_eq!(calls()?, 3);
+    index.sync()?;
+    assert_eq!(calls()?, 3);
+    fs::remove_file(&tools)?;
+    index.sync()?;
+    assert_eq!(calls()?, 0);
+    assert_eq!(unresolved()?, (2, 2));
+    fs::write(tools, source)?;
+    index.sync()?;
+    assert_eq!(calls()?, 3);
+    assert_eq!(unresolved()?, (0, 0));
+    Ok(())
+}
+
+#[cfg(feature = "go")]
+#[test]
+fn go_module_members_and_cross_file_method_dispatch() -> Test {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("source");
+    fs::create_dir_all(root.join("lib"))?;
+    fs::write(
+        root.join("go.mod"),
+        "// project\nmodule example.test/project\n",
+    )?;
+    fs::write(
+        root.join("main.go"),
+        "package main\nimport dep \"example.test/project/lib\"\nfunc main() { dep.Run() }\n",
+    )?;
+    fs::write(
+        root.join("lib/types.go"),
+        "package lib\ntype Doer interface { Do() }\ntype Job struct{}\n",
+    )?;
+    fs::write(
+        root.join("lib/work.go"),
+        "package lib\nfunc (j Job) Do() {}\nfunc Run() { Job{}.Do() }\n",
+    )?;
+    let database = scratch.path().join("graph.db");
+    Index::open(&root, &database)?.sync()?;
+    let db = Connection::open(database)?;
+    let count: u32 = db.query_row(
+        "SELECT count(*) FROM edges e JOIN nodes n ON n.id = e.target
+         WHERE (e.kind = 'calls' AND n.name = 'Run' AND n.file_path = 'lib/work.go')
+            OR json_extract(e.metadata, '$.synthesizedBy') IN
+                ('go-method-contains', 'go-implements', 'interface-impl')",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(count, 4);
+    Ok(())
+}
+
+#[cfg(feature = "python")]
+#[test]
+fn python_fixture_uses_nearest_conftest() -> Test {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("source");
+    fs::create_dir_all(root.join("tests"))?;
+    fs::write(
+        root.join("conftest.py"),
+        "class Outer:\n    def run(self): pass\ndef app():\n    return Outer()\n",
+    )?;
+    fs::write(
+        root.join("tests/conftest.py"),
+        "class Inner:\n    def run(self): pass\ndef app():\n    value = Inner()\n    yield value\n",
+    )?;
+    fs::write(
+        root.join("tests/test_app.py"),
+        "def test_app(app):\n    app.run()\n",
+    )?;
+    let database = scratch.path().join("graph.db");
+    Index::open(&root, &database)?.sync()?;
+    let db = Connection::open(database)?;
+    let target: String = db.query_row(
+        "SELECT n.qualified_name FROM edges e JOIN nodes n ON e.target = n.id
+         WHERE e.kind = 'calls' AND json_extract(e.metadata, '$.refName') = 'app.run'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(target, "Inner::run");
+    Ok(())
+}
+
+#[test]
+fn rust_workspace_glob_maps_normalized_crate_imports() -> Test {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("source");
+    fs::create_dir_all(root.join("crates/support/src"))?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/*\"]\n[package]\nname = \"app\"\n",
+    )?;
+    fs::write(
+        root.join("crates/support/Cargo.toml"),
+        "[package]\nname = \"support-lib\"\n",
+    )?;
+    fs::write(
+        root.join("crates/support/src/lib.rs"),
+        "pub struct Support;\n",
+    )?;
+    fs::write(
+        root.join("src/lib.rs"),
+        "use support_lib::Support;\npub fn make() -> Support { Support }\n",
+    )?;
+    let database = scratch.path().join("graph.db");
+    Index::open(&root, &database)?.sync()?;
+    let db = Connection::open(database)?;
+    let target: String = db.query_row(
+        "SELECT n.file_path FROM edges e JOIN nodes n ON n.id = e.target
+         WHERE e.kind = 'imports' AND json_extract(e.metadata, '$.refName') = 'support_lib'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(target, "crates/support/src/lib.rs");
     Ok(())
 }

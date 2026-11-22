@@ -76,7 +76,7 @@ impl Events {
 }
 
 #[derive(Debug)]
-pub(in crate::computer) enum Error {
+pub(crate) enum Error {
     Transport,
     Command,
     Rejected(&'static str),
@@ -90,9 +90,9 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-pub(in crate::computer) type Result<T> = std::result::Result<T, Error>;
+pub(crate) type Result<T> = std::result::Result<T, Error>;
 
-pub(in crate::computer) struct Connection {
+pub(crate) struct Connection {
     send: OwnedWriteHalf,
     responses: mpsc::Receiver<Value>,
     events: Arc<Mutex<HashMap<String, Events>>>,
@@ -188,7 +188,11 @@ impl Connection {
             .map_err(|_| Error::Transport)?;
         self.broken = false;
         // Late responses are retired by ID. A response timeout never repeats the command.
-        let deadline = if method == "Page.navigate" { 8 } else { 2 };
+        let deadline = match method {
+            "Page.navigate" => 8,
+            "Target.getTargets" | "Page.setDocumentContent" => 5,
+            _ => 2,
+        };
         timeout(Duration::from_secs(deadline), async {
             loop {
                 let reply = self.responses.recv().await.ok_or(Error::Transport)?;

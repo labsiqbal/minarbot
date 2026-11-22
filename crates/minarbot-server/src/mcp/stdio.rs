@@ -1,3 +1,4 @@
+use crate::files::rich_html::{MCP_INPUT_LIMIT, MCP_PREVIEW_LIMIT};
 use serde_json::Value;
 use std::io::{BufRead, Read, Write};
 pub async fn run() -> crate::db::Result<()> {
@@ -25,23 +26,34 @@ pub async fn run() -> crate::db::Result<()> {
     let mut input = stdin.lock();
     loop {
         let mut line = Vec::new();
-        if (&mut input).take(65537).read_until(b'\n', &mut line)? == 0 {
+        if (&mut input)
+            .take(MCP_INPUT_LIMIT as u64 + 1)
+            .read_until(b'\n', &mut line)?
+            == 0
+        {
             break;
         }
-        if line.len() > 65536 {
-            return Err("MCP input exceeds 64 KiB".into());
+        if line.len() > MCP_INPUT_LIMIT {
+            return Err("MCP input exceeds the size limit".into());
         }
         let message: Value = serde_json::from_slice(&line)?;
-        let mut response = client
-            .post(url.clone())
-            .bearer_auth(&token)
-            .json(&message)
-            .send()
-            .await?;
+        let mut request = client.post(url.clone()).bearer_auth(&token).json(&message);
+        if message["method"] == "tools/call" && message["params"]["name"] == "render_component" {
+            request = request.timeout(std::time::Duration::from_secs(
+                crate::files::components::FORM_WAIT_SECONDS + 10,
+            ));
+        }
+        let mut response = request.send().await?;
+        let limit =
+            if message["method"] == "tools/call" && message["params"]["name"] == "html_preview" {
+                MCP_PREVIEW_LIMIT
+            } else {
+                256 * 1024
+            };
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await? {
-            if bytes.len() + chunk.len() > 256 * 1024 {
-                return Err("MCP response exceeds 256 KiB".into());
+            if bytes.len() + chunk.len() > limit {
+                return Err("MCP response exceeds the size limit".into());
             }
             bytes.extend_from_slice(&chunk);
         }

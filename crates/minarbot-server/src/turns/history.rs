@@ -329,6 +329,7 @@ pub fn inspect(
             "tools": tools,
             "harness": harness,
             "providers": providers,
+            "judgments": if state.auth.is_none() {super::goals::verdicts(db,id)?} else {vec![]},
             "engineStderr": stderr.and_then(|row| super::diagnostics::display(&row["tail"], &secrets)),
         }),
     ))

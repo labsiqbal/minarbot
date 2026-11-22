@@ -109,7 +109,7 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
             .insert("retry-after", axum::http::HeaderValue::from_static("60"));
         return Ok(response);
     }
-    let _caller = match registry::verify(state, &bearer) {
+    let caller = match registry::verify(state, &bearer) {
         Ok(v) => v,
         Err(e) => {
             let mut map = failures.lock().map_err(|_| Failure::storage())?;
@@ -137,12 +137,26 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
     let _permit = REQUESTS
         .try_acquire()
         .map_err(|_| error(429, "MCP request limit reached. Try again later."))?;
-    let bytes = axum::body::to_bytes(request.into_body(), 64000)
+    let limit = if caller["kind"] == "session" {
+        crate::files::rich_html::MCP_INPUT_LIMIT
+    } else {
+        64_000
+    };
+    let bytes = axum::body::to_bytes(request.into_body(), limit)
         .await
-        .map_err(|_| error(413, "MCP request exceeds 64 KB."))?;
+        .map_err(|_| error(413, "MCP request exceeds the size limit."))?;
     let caller = registry::verify(state, &bearer)?;
     let body: Value =
         serde_json::from_slice(&bytes).map_err(|_| error(400, "Invalid MCP request."))?;
+    if bytes.len() > 64_000
+        && (body["method"] != "tools/call"
+            || !matches!(
+                body["params"]["name"].as_str(),
+                Some("html_preview" | "html_render")
+            ))
+    {
+        return Err(error(413, "MCP request exceeds 64 KB."));
+    }
     if body["jsonrpc"] != "2.0" || !body["method"].is_string() {
         return Err(error(400, "Invalid MCP request."));
     }
@@ -213,6 +227,10 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
     }
     if !valid(&decl["inputSchema"], &args) {
         return Err(error(400, "Invalid MCP tool call."));
+    }
+    if name == "render_component" && super::secrets::reflected(args.to_string().as_bytes(), &bearer)
+    {
+        return Err(error(400, "Component replies cannot include credentials."));
     }
     if decl["native"] == true {
         let result = harness::tool(

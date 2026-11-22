@@ -373,6 +373,50 @@ fn command(
     data::save_receipt(db, table, id, &request, &result)?;
     Ok(result)
 }
+pub(crate) fn loop_project(
+    db: &Connection,
+    thread: Option<&str>,
+    channel: Option<&str>,
+) -> Result<Value> {
+    Ok(one(
+        db,
+        "SELECT project FROM local_project_threads WHERE thread=?1
+        UNION ALL SELECT project FROM local_project_sections WHERE channel=?2 LIMIT 1",
+        params![thread, channel],
+    )?
+    .map(|row| row["project"].clone())
+    .unwrap_or(Value::Null))
+}
+
+pub(crate) fn create_loop(state: &AppState, db: &Connection, agent: &str, v: &Value) -> Result<()> {
+    let path = format!("/api/agents/{agent}/routines");
+    routines::route(
+        state,
+        db,
+        &path,
+        &["api", "agents", agent, "routines"],
+        &Method::POST,
+        &[],
+        &HeaderMap::new(),
+        v,
+    )?;
+    Ok(())
+}
+
+pub(crate) fn finish_loop(db: &Connection, routine: &str, turn: &str, reason: &str) -> Result<()> {
+    db.execute(
+        "UPDATE routine_loops SET reason=? WHERE routine=?",
+        params![reason, routine],
+    )?;
+    db.execute(
+        "UPDATE routines SET enabled=0,next_at=coalesce(
+        (SELECT scheduled_at FROM routine_runs WHERE turn=? AND routine=routines.id),
+        next_at),revision=revision+1 WHERE id=?",
+        params![turn, routine],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn enqueue(
     state: &AppState,
     db: &Connection,
@@ -401,6 +445,10 @@ pub(crate) fn tools(db: &Connection, turn: &Value) -> Result<Vec<Value>> {
     }
     if !tools.is_empty() {
         tools.push(json!({"type":"function","function":{"name":"report_failure","description":"Report that the task cannot be completed. Describe the blocker.","parameters":{"type":"object","properties":{"reason":{"type":"string","maxLength":2000}},"required":["reason"],"additionalProperties":false}}}));
+    }
+    if tools.len()>1 && data::exists(db,"SELECT 1 FROM routine_loops l JOIN routine_runs r USING(routine) WHERE r.turn=? AND l.until_condition IS NOT NULL",
+        [string(turn,"id")])? {
+        tools.retain(|t|t["function"]["name"]!="no_update");
     }
     Ok(tools)
 }

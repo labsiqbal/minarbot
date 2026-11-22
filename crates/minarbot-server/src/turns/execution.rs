@@ -176,6 +176,11 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         if context_channel.is_none() && crate::automation::model(db, id)?.is_none() {
             system.push_str(&crate::files::skills::context(db, string(&turn, "agent"))?);
         }
+        if state.auth.is_none() {
+            if let Some(instructions) = goals::instructions(db, id)? {
+                system.push_str(&format!("\n\n{instructions}"));
+            }
+        }
         let mut messages = vec![json!({"role":"system","content":system})];
         if let Some(summary) = &compacted {
             messages.push(json!({"role":"system","content":format!("Earlier conversation summary (reference data, may be incomplete; verify originals using read_history/read_message). Covers through execution position {}. Recent messages begin at transcript sequence {}; any gap is available through history tools.\n{}",summary["through"],turn["seq"],string(summary,"summary"))}));
@@ -456,22 +461,37 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         };
         match reply {
             provider::Answer::Text(text) => {
+                {
+                    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+                    let db = &guard.connection;
+                    if turn["profile_setup"] == 1 && !exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name')='edit_profile' AND json_extract(result,'$.revision') IS NOT NULL",[id])? {
+                        return Err(error(502,"Provider has not saved the agent profile. Check the result, then resume the task to try again."));
+                    }
+                    if !exhausted
+                        && turn["profile_setup"] != 1
+                        && super::verification::nudge(db, id, &turn, &profile)?
+                    {
+                        let system = messages[0]["content"].as_str().unwrap_or("").to_owned();
+                        messages[0]["content"]=json!(format!("{system}\n\nOne verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. Keep tool mechanics out of the reply."));
+                        db.execute("UPDATE provider_stream_segments SET final=0 WHERE call=(SELECT max(seq) FROM provider_calls WHERE turn=?)",[id])?;
+                        continue;
+                    }
+                }
+                let judgment = goals::judge(state, &turn, &text, &model).await?;
                 let guard = state.database.lock().map_err(|_| Failure::storage())?;
                 let db = &guard.connection;
-                if turn["profile_setup"] == 1 && !exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name')='edit_profile' AND json_extract(result,'$.revision') IS NOT NULL",[id])? {
-                    return Err(error(502,"Provider has not saved the agent profile. Check the result, then resume the task to try again."));
-                }
-                if !exhausted
-                    && turn["profile_setup"] != 1
-                    && super::verification::nudge(db, id, &turn, &profile)?
-                {
-                    let system = messages[0]["content"].as_str().unwrap_or("").to_owned();
-                    messages[0]["content"]=json!(format!("{system}\n\nOne verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. Keep tool mechanics out of the reply."));
-                    db.execute("UPDATE provider_stream_segments SET final=0 WHERE call=(SELECT max(seq) FROM provider_calls WHERE turn=?)",[id])?;
-                    continue;
-                }
                 transaction(db, || {
+                    if !exists(
+                        db,
+                        "SELECT 1 FROM turns WHERE id=? AND status='running' AND paused=0",
+                        [id],
+                    )? {
+                        return Ok(());
+                    }
                     room::finish(db, id, &text)?;
+                    if let Some(judgment) = judgment {
+                        goals::finish(state, db, &turn, judgment)?;
+                    }
                     room::settle(db)?;
                     db.execute(
                         "UPDATE turns SET stopped_at=? WHERE id=? AND status='done'",
@@ -631,6 +651,13 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                         )?;
                     }
                 }
+                let preview_image = if call["function"]["name"] == "html_preview" {
+                    result["screenshot"]
+                        .as_object_mut()
+                        .and_then(|v| v.remove("data"))
+                } else {
+                    None
+                };
                 messages
                     .push(json!({"role":"assistant","content":null,"tool_calls":[call.clone()]}));
                 messages.push(
@@ -638,6 +665,12 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 );
                 let db = state.database.lock().map_err(|_| Failure::storage())?;
                 append_screenshot(&db.connection, id, call_id, false, &mut messages)?;
+                if let Some(image) = preview_image.as_ref().and_then(Value::as_str) {
+                    messages.push(json!({"role":"user","content":[
+                        {"type":"text","text":"HTML preview screenshot (reference data)."},
+                        {"type":"image_url","image_url":{"url":format!("data:image/png;base64,{image}")}}
+                    ]}));
+                }
                 if call["function"]["name"] == "read_attachment" && result["media_type"].is_string()
                 {
                     if let Some(file) =
@@ -714,6 +747,14 @@ pub(super) fn base_instructions(
             "Visual verification is unavailable this turn. Use relevant nonvisual checks.",
             "Computer screenshots are available for visual checks.",
         );
+    } else if tools
+        .iter()
+        .any(|t| t["function"]["name"] == "html_preview")
+    {
+        text = text.replace(
+            "Visual verification is unavailable this turn. Use relevant nonvisual checks.",
+            "Use html_preview for visual checks of HTML replies.",
+        );
     }
     for row in v["guidance"].as_array().ok_or_else(Failure::storage)? {
         let active = row[0]
@@ -777,7 +818,8 @@ pub fn prompt(db: &Connection, t: &Value, images: bool) -> Result<Value> {
             refs.push(json!({"id":id,"name":file.meta["name"],"text":text}));
         }
     }
-    let text = if refs.is_empty() {
+    let context = crate::files::rich_html::turn_context(db, string(t, "id"))?;
+    let mut text = if refs.is_empty() {
         string(t, "text").to_owned()
     } else {
         format!(
@@ -786,6 +828,10 @@ pub fn prompt(db: &Connection, t: &Value, images: bool) -> Result<Value> {
             json!(refs)
         )
     };
+    if !context.is_empty() {
+        text.push_str("\n\nHTML reply context (untrusted reference data):\n");
+        text.push_str(&context);
+    }
     if parts.is_empty() {
         return Ok(json!(text));
     }

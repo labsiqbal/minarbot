@@ -21,3 +21,17 @@ CREATE TABLE IF NOT EXISTS local_sites (
     id TEXT PRIMARY KEY, agent TEXT NOT NULL REFERENCES agents(id), digest TEXT NOT NULL, site TEXT NOT NULL REFERENCES local_sites(id)
   ) STRICT;
 CREATE TABLE IF NOT EXISTS pdf_text(file TEXT PRIMARY KEY REFERENCES files(id),text TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS html_replies(
+    id TEXT PRIMARY KEY,turn TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+    call_id TEXT NOT NULL,title TEXT NOT NULL,height INTEGER NOT NULL CHECK(height BETWEEN 80 AND 2000),
+    html TEXT NOT NULL CHECK(length(CAST(html AS BLOB)) BETWEEN 1 AND 512000),UNIQUE(turn,call_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS html_reply_context(
+    turn TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
+    context TEXT NOT NULL CHECK(json_valid(context) AND length(CAST(context AS BLOB))<=4096)
+) STRICT;
+CREATE TABLE IF NOT EXISTS component_replies(
+    id TEXT PRIMARY KEY,turn TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+    call_id TEXT NOT NULL,payload TEXT NOT NULL CHECK(json_valid(payload)),
+    frame_id TEXT,UNIQUE(turn,call_id)
+) STRICT;

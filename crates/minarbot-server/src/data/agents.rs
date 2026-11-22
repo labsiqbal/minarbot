@@ -170,7 +170,12 @@ fn runtime_blocked_reason(
 }
 pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
     let accounts = providers::accounts(state)?;
-    let mut rows = all(db, "SELECT * FROM agents ORDER BY rowid", [])?;
+    let mut rows = all(
+        db,
+        "SELECT a.*,j.model AS goal_judge_model FROM agents a
+        LEFT JOIN goal_judge_models j ON j.agent=a.id AND j.runtime=a.runtime ORDER BY a.rowid",
+        [],
+    )?;
     for a in &mut rows {
         let id = string(a, "id").to_owned();
         let runtime = string(a, "runtime").to_owned();
@@ -508,6 +513,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         "backupModel",
         "providerAccount",
         "webAccess",
+        "goalJudgeModel",
     ] {
         if let Some(value) = v.get(key) {
             request[key] = value.clone();
@@ -605,7 +611,13 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     {
         db.execute("DELETE FROM model_fallbacks WHERE agent=?", [id])?;
     }
-    let updated = read(db, id)?;
+    if let Some(model) = v.get("goalJudgeModel") {
+        crate::turns::goals::save_model(db, id, selected_runtime, model)?;
+    }
+    let mut updated = read(db, id)?;
+    if state.auth.is_none() && v.get("goalJudgeModel").is_some() {
+        updated["goal_judge_model"] = crate::turns::goals::model(db, id)?["model"].clone();
+    }
     db.execute(
         "INSERT INTO agent_edits VALUES(?,?,?,?)",
         rusqlite::params![

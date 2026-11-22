@@ -1,0 +1,8 @@
+.goal-chip { gap: 10px; }
+.goal-chip > svg { flex: none; }
+.goal-chip__main { min-width: 0; flex: 1; }
+.goal-chip__target { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-chip__limits { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.goal-chip__reason { overflow-wrap: anywhere; }
+.goal-mode__limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; }
+.goal-continuation { margin: 0; font-size: 12px; }

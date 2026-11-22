@@ -95,6 +95,11 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
             "run_shell",
         ]
         .contains(&string(&t["function"], "name"))
+            || (crate::files::rich_html::available(state, turn)
+                && matches!(
+                    string(&t["function"], "name"),
+                    "html_render" | "html_preview"
+                ))
     });
     for spec in &mut specs {
         if spec["function"]["name"] == "run_shell" {
@@ -106,6 +111,12 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
         }
     }
     specs.extend(crate::mcp::execution::specs()?);
+    if crate::files::rich_html::available(state, turn) {
+        specs.push(crate::files::components::spec());
+    }
+    if super::goals::offer_tools(state, db, turn)? {
+        specs.extend(super::goals::specs());
+    }
     if crate::connectors::mailbox::available(state, db, turn)? {
         specs.extend(crate::connectors::mailbox::specs()?);
     }
@@ -148,6 +159,16 @@ pub async fn tool(
     let result = tools::run(state, &row, &call).await;
     drop(clock);
     let mut result = result?;
+    if name == "html_preview" && result["screenshot"].is_object() {
+        let image = result["screenshot"]
+            .as_object_mut()
+            .and_then(|v| v.remove("data"))
+            .ok_or_else(Failure::storage)?;
+        return Ok(json!({"content":[
+            {"type":"text","text":result.to_string()},
+            {"type":"image","mimeType":"image/png","data":image}
+        ]}));
+    }
     let vault_secrets = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         crate::computer::vault::redactions(state, &guard.connection)?

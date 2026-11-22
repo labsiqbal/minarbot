@@ -196,6 +196,13 @@ pub fn read(
         if let Some(object) = turn.as_object_mut() {
             object.remove("profile_setup");
         }
+        if exists(
+            db,
+            "SELECT 1 FROM goal_turns WHERE turn=? AND number>1",
+            [string(turn, "id")],
+        )? {
+            turn["goalContinuation"] = json!(true);
+        }
         decorate(state, db, turn, kind == "channels")?;
     }
     Ok(json!(turns))
@@ -226,6 +233,22 @@ fn decorate(state: &AppState, db: &Connection, turn: &mut Value, channel: bool) 
     }
     turn["files"] = json!(files);
     turn["generatedFiles"] = generated(db, &id)?;
+    let mut components = if state.auth.is_none() && table(db, "component_replies")? {
+        crate::files::components::references(db, &id)?
+    } else {
+        Vec::new()
+    };
+    if table(db, "html_replies")? {
+        let mut replies = crate::files::rich_html::references(db, &id)?;
+        replies.retain(|html| {
+            !components
+                .iter()
+                .any(|component| component["frame_id"] == html["id"])
+        });
+        if !replies.is_empty() {
+            turn["htmlReplies"] = json!(replies);
+        }
+    }
     turn["events"]=json!(rows(db,"turn_waits","SELECT w.id,w.event,w.deadline,CASE WHEN w.status='waiting' AND t.status NOT IN('queued','running') THEN 'closed' ELSE w.status END AS status FROM turn_waits w JOIN turns t ON t.id=w.turn WHERE w.turn=? ORDER BY w.rowid",[&id])?);
     let mut approvals = rows(db,"composio_calls","SELECT call_id,tool,state,decision,revision FROM composio_calls WHERE turn=? AND decision IS NOT NULL ORDER BY rowid",[&id])?;
     for approval in &mut approvals {
@@ -252,13 +275,27 @@ fn decorate(state: &AppState, db: &Connection, turn: &mut Value, channel: bool) 
     turn["approvals"] = json!(approvals);
     let mut harness = rows(db,"harness_approvals","SELECT id,kind,description,command,prefix,input,state,decision,revision FROM harness_approvals WHERE turn=? ORDER BY rowid",[&id])?;
     for approval in &mut harness {
-        approval["input"] = if approval["kind"] == "email" {
+        approval["input"] = if approval["kind"] == "form" {
+            match components
+                .iter()
+                .position(|row| row["id"] == approval["id"])
+            {
+                Some(index) => json(&components.remove(index)["payload"])?,
+                None => Value::Null,
+            }
+        } else if approval["kind"] == "email" {
             crate::connectors::mailbox::draft_preview(state, string(turn, "agent"), approval)?
         } else {
             json(&approval["input"])?
         };
     }
     turn["harnessApprovals"] = json!(harness);
+    if !components.is_empty() {
+        turn["componentReplies"] = json!(components
+            .iter()
+            .map(|row| json(&row["payload"]))
+            .collect::<Result<Vec<_>>>()?);
+    }
     let mut questions = rows(
         db,
         "questions",
