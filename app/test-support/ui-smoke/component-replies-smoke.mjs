@@ -12,6 +12,9 @@ import { chromium } from 'playwright-core';
 import { startRustServer } from '../../rust-test-server.ts';
 import { rustBinary } from '../../rust-binary.ts';
 
+const client = process.env.MINARBOT_SMOKE_CLIENT === 'leptos' ? 'leptos' : 'react';
+const selector = client === 'leptos' ? '?ui=leptos' : '';
+
 const work = await mkdtemp(join(tmpdir(), 'minarbot-components-'));
 const model = 'component-fixture';
 const prompt = 'Show the October report and ask what to compare.';
@@ -85,7 +88,7 @@ const provider = createServer(async (req, res) => {
 let app, browser, stdio;
 try {
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startRustServer({ database: join(work, 'state.sqlite'), apiKey: 'fixture-key', defaultModel: model, stream: false,
+  app = await startRustServer({ appearanceClient: client, database: join(work, 'state.sqlite'), apiKey: 'fixture-key', defaultModel: model, stream: false,
     dist: fileURLToPath(new URL('../../dist', import.meta.url)), baseURL: `http://127.0.0.1:${provider.address().port}/v1` });
   async function api(path, data, status = 200) {
     const response = await fetch(app.origin + path, { method: data ? 'POST' : 'GET', headers: {
@@ -136,7 +139,7 @@ try {
   await page.route(scriptURL, route => route.fulfill({
     contentType: 'text/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body: library,
   }));
-  await page.goto(app.origin + conversation);
+  await page.goto(app.origin + conversation + selector);
   const chart = page.getByRole('heading', { name: 'Weekly signups' });
   const disclosure = page.getByText('View data', { exact: false }).first();
   const chartTable = page.getByRole('table', { name: 'Weekly signups data' });

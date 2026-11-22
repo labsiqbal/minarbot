@@ -9,6 +9,9 @@ import { chromium } from 'playwright-core';
 import { startRustServer } from '../../rust-test-server.ts';
 import { readHtmlReplyMessage } from '../../src/html-reply.ts';
 
+const client = process.env.MINARBOT_SMOKE_CLIENT === 'leptos' ? 'leptos' : 'react';
+const selector = client === 'leptos' ? '?ui=leptos' : '';
+
 const work = await mkdtemp(join(tmpdir(), 'minarbot-html-replies-'));
 const name = 'Metrics';
 const title = 'Weekly signups';
@@ -103,7 +106,7 @@ probe.src = '${base}/private-check';
 let app, browser;
 try {
   app = await startRustServer({
-    database: join(work, 'state.sqlite'),
+    appearanceClient: client, database: join(work, 'state.sqlite'),
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),
     baseURL: base + '/v1', apiKey: 'fixture-key', defaultModel: model, concurrency: 2,
   });
@@ -127,7 +130,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome' });
   const page = await browser.newPage({ viewport: { width: 1200, height: 860 }, colorScheme: 'dark' });
   await page.context().route('https://example.com/metrics', route => route.fulfill({ body: 'Metric definition' }));
-  await page.goto(app.origin + history);
+  await page.goto(app.origin + history + selector);
   const iframe = page.locator(`iframe[title="${title}"]`);
   const inner = iframe.contentFrame();
   await inner.locator('body[data-drawn="true"]').waitFor({ timeout: 45_000 });
@@ -197,7 +200,7 @@ try {
   await popup.waitForURL('https://example.com/metrics');
   assert.equal(await popup.evaluate(() => window.opener), null);
   await popup.close();
-  assert.equal(page.url(), app.origin + history);
+  assert.equal(page.url(), app.origin + history + selector);
 
   const renderId = frameRoute.split('/').at(-1);
   const channel = new URLSearchParams(src.split('#')[1]).get('bridge');

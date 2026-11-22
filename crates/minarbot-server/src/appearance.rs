@@ -3,6 +3,25 @@ use url::form_urlencoded;
 pub const ROUTE: &str = "/settings/appearance";
 pub const NAMESPACE: &str = "/_leptos/";
 pub const DOCUMENT: &str = "_leptos/appearance.html";
+pub const CONVERSATION_DOCUMENT: &str = "_leptos/conversation.html";
+
+pub fn conversation_route(path: &str, query: &str) -> bool {
+    crate::navigation(path)
+        && (path.starts_with("/rooms/")
+            || path.starts_with("/agents/") && !path.ends_with("/inbox"))
+        && form_urlencoded::parse(query.as_bytes())
+            .any(|(key, value)| key == "ui" && value == "leptos")
+}
+
+pub fn conversation_document(html: &str, path: &str, query: &str) -> String {
+    let mut params = form_urlencoded::Serializer::new(String::new());
+    params.append_pair("ui", "react");
+    params.extend_pairs(form_urlencoded::parse(query.as_bytes()).filter(|(key, _)| key != "ui"));
+    html.replace(
+        "__REACT_CONVERSATION__",
+        &format!("{path}?{}", params.finish()).replace('&', "&amp;"),
+    )
+}
 
 pub fn asset(path: &str) -> bool {
     let Some((name, hash, extension)) = path

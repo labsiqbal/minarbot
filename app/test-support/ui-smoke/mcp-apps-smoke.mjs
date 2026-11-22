@@ -9,6 +9,9 @@ import { chromium } from 'playwright-core';
 import { startRustServer } from '../../rust-test-server.ts';
 import { appContext, appLink, appTool, readMcpAppMessage } from '../../src/mcp-app-host.ts';
 
+const client = process.env.MINARBOT_SMOKE_CLIENT === 'leptos' ? 'leptos' : 'react';
+const selector = client === 'leptos' ? '?ui=leptos' : '';
+
 const work = await mkdtemp(join(tmpdir(), 'minarbot-mcp-apps-'));
 const html = await readFile(new URL('./mcp-app-fixture.html', import.meta.url), 'utf8');
 const model = 'mcp-app-fixture';
@@ -92,7 +95,7 @@ const base = `http://127.0.0.1:${fixture.address().port}`;
 let browser;
 try {
   app = await startRustServer({
-    database: join(work, 'state.sqlite'),
+    appearanceClient: client, database: join(work, 'state.sqlite'),
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),
     baseURL: base + '/v1', apiKey: 'fixture-key', defaultModel: model,
   });
@@ -128,7 +131,7 @@ try {
   }));
   await page.context().route('https://guide.example.test/inventory', route => route.fulfill({ body: 'Inventory guide' }));
   const history = `/agents/${agent.id}/conversations/${thread.id}`;
-  await page.goto(app.origin + history);
+  await page.goto(app.origin + history + selector);
   const outer = page.locator(`iframe[title="${title}"]`);
   const inner = outer.contentFrame().locator('iframe').contentFrame();
   await inner.locator('body[data-input="North"][data-total="139"][data-protocol="2026-01-26"][data-pre-init="-32000"]').waitFor({ timeout: 45_000 });
@@ -254,7 +257,7 @@ try {
   await popup.waitForURL('https://guide.example.test/inventory');
   assert.equal(await popup.evaluate(() => window.opener), null);
   await popup.close();
-  assert.equal(page.url(), app.origin + history);
+  assert.equal(page.url(), app.origin + history + selector);
 
   await page.reload();
   await inner.locator('body[data-total="139"]').waitFor();

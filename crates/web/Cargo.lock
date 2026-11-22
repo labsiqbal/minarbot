@@ -856,10 +856,12 @@ name = "minarbot-web"
 version = "0.1.0"
 dependencies = [
  "gloo-net",
+ "js-sys",
  "leptos",
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 

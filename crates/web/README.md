@@ -35,3 +35,9 @@ NUC, Chromium 156.0.8078.4, optimized Axum build, loopback, no throttling. Twent
 The warm-navigation p95 exceeded the 10% regression budget. The route stays opt-in.
 
 Packaged WASM plus startup glue measured 349,332 bytes raw and 129,079 bytes gzip. Release build wall time was 1,365.09 s for native Cargo, 38.83 s for the React build, 87.57 s for the incremental WASM build and 15.49 s for asset packaging. Build slot wait and network setup are outside those measurements.
+
+## Conversation pilot
+
+With the Leptos selector enabled, append `?ui=leptos` to an agent, side conversation, or room URL. The same route with `?ui=react` opens standard Minarbot. The standalone document resolves the existing API scope and mounts `conversation::shell(ConversationConfig)`. A shell can mount that component keyed by scope and own the surrounding navigation.
+
+Use the node slot script for `app/test-support/ui-smoke/leptos-conversation-smoke.mjs`. Set `MINARBOT_CONVERSATION_SCREENSHOTS` for four theme and viewport captures, and `MINARBOT_CONVERSATION_BENCH` for warm composer samples. The goal, HTML reply, component reply and MCP Apps smokes accept `MINARBOT_SMOKE_CLIENT=leptos` and retain the same assertions.

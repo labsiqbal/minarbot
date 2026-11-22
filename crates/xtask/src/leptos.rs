@@ -144,7 +144,7 @@ pub fn build(root: &Path) -> Result<()> {
     let themes = hash_asset(&bundle.join("themes.css"), &assets, "themes", "css")?;
     let icon = hash_asset(&app.join("src/favicon.svg"), &assets, "minarbot", "svg")?;
     let mut sizes = BTreeMap::new();
-    let (mut styles, mut start) = (None, None);
+    let (mut styles, mut conversation_styles, mut start) = (None, None, None);
     let entries = fs::read_dir(&assets)?.collect::<std::io::Result<Vec<_>>>()?;
     for entry in entries {
         let name = entry
@@ -154,6 +154,9 @@ pub fn build(root: &Path) -> Result<()> {
         let url = || format!("{NAMESPACE}assets/{name}");
         if name.starts_with("appearance.") && name.ends_with(".css") {
             styles = Some(url());
+        }
+        if name.starts_with("conversation.") && name.ends_with(".css") {
+            conversation_styles = Some(url());
         }
         if name.starts_with("start.") && name.ends_with(".js") {
             start = Some(url());
@@ -170,19 +173,19 @@ pub fn build(root: &Path) -> Result<()> {
         sizes.insert(format!("assets/{name}"), size);
     }
     let config = fs::read_to_string(bundle.join("appearance-config.json"))?.replace('<', "\\u003c");
-    let html = fs::read_to_string(web.join("appearance.html"))?
-        .replace("__ICON_URL__", &icon)
-        .replace(
-            "__STYLES_URL__",
-            &styles.ok_or("Appearance CSS is missing.")?,
-        )
-        .replace("__THEMES_URL__", &themes)
-        .replace(
-            "__START_URL__",
-            &start.ok_or("Appearance bootstrap is missing.")?,
-        )
-        .replace("__CONFIG__", &config);
-    fs::write(stage.path().join("appearance.html"), html)?;
+    let start = start.ok_or("Leptos bootstrap is missing.")?;
+    for (name, styles) in [
+        ("appearance.html", styles),
+        ("conversation.html", conversation_styles),
+    ] {
+        let html = fs::read_to_string(web.join(name))?
+            .replace("__ICON_URL__", &icon)
+            .replace("__STYLES_URL__", &styles.ok_or("Leptos CSS is missing.")?)
+            .replace("__THEMES_URL__", &themes)
+            .replace("__START_URL__", &start)
+            .replace("__CONFIG__", &config);
+        fs::write(stage.path().join(name), html)?;
+    }
     for name in ["NOTICE", "NOTICE.hermes", "NOTICE.t3", "provenance.json"] {
         copy(
             &app.join("src/ui").join(name),

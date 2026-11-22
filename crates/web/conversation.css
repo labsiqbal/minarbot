@@ -1,0 +1,61 @@
+@import "../../app/src/ui/tokens.css";
+@import "../../app/src/ui/base.css";
+@import "../../app/src/ui/chat.css";
+@import "../../app/src/ui/details.css";
+@import "../../app/src/ui/kit.css";
+@import "../../app/src/ui/density.css";
+@import "../../app/src/ui/legacy.css";
+@import "../../app/src/ui/minarbot.css";
+@import "../../app/src/right-panel.css";
+@import "../../app/src/html-reply.css";
+@import "../../app/src/component-reply.css";
+@import "../../app/src/computer-viewer.css";
+@import "../../app/src/goal-mode.css";
+@import "../../app/node_modules/@fontsource-variable/inter/index.css";
+
+body[data-view="conversation"] { margin: 0; }
+.conversation-layout { display: flex; height: 100dvh; min-width: 0; }
+.conversation-layout [hidden], .conversation-startup[hidden] { display: none; }
+.conversation-startup { padding: 24px; }
+.conversation-layout .conversation-chat { min-width: 0; }
+.conversation-header {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 16px; border-bottom: 1px solid var(--color-border-secondary);
+}
+.conversation-header h1 { font-size: var(--text-md); margin: 0; overflow-wrap: anywhere; }
+.conversation-find { padding: 8px 16px; }
+.conversation-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; }
+.conversation-scroll .turn-block { width: 100%; }
+.conversation-composer { padding: 8px 16px 16px; }
+.conversation-composer .composer { position: static; width: 100%; padding: 0; }
+.conversation-composer .composer__inner { width: 100%; margin: auto; }
+.conversation-composer .composer__input {
+  display: block; width: 100%; min-height: 64px; resize: vertical; padding: 10px 12px;
+  border: 1px solid var(--color-border-secondary); border-radius: var(--radius-md);
+  background: var(--color-bg-pane); color: var(--color-text-primary);
+}
+.conversation-composer .composer__bar { padding: 8px 0 0; }
+.conversation-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; }
+.conversation-tabs [aria-selected="true"] { background: var(--color-bg-active); }
+.conversation-layout .conversation-panel { flex: 0 1 360px; width: 360px; min-width: 0; }
+.conversation-layout .conversation-panel .right-panel__body { overflow: auto; min-height: 0; }
+.conversation-card { padding: 12px; margin: 8px 0; }
+.conversation-card pre, .conversation-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.conversation-dialog {
+  max-width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto;
+  color: var(--color-text-primary); background: var(--color-bg-pane);
+  border: 1px solid var(--color-border-primary); border-radius: var(--radius-lg); padding: 18px;
+}
+.conversation-dialog::backdrop { background: rgb(0 0 0 / 50%); }
+.conversation-dialog:not([open]) { display: none; }
+.conversation-panel .computer-viewer__screen canvas { max-width: 100%; }
+
+@media (max-width: 700px) {
+  .conversation-layout .conversation-panel {
+    position: fixed; inset: auto 0 0; z-index: 8; width: 100%; height: min(65dvh, 520px);
+    border-top: 1px solid var(--color-border-primary); box-shadow: var(--shadow-lg);
+  }
+  .conversation-header { padding: 8px 12px; }
+  .conversation-scroll { padding: 12px; }
+  .conversation-composer { padding-inline: 12px; }
+}

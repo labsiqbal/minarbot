@@ -278,9 +278,17 @@ async fn static_ui(
             .await
             .unwrap_or(false);
     let leptos_page = pilot && path == appearance::ROUTE && !appearance::react_override(query);
+    let conversation_page = state.config.appearance_client == config::AppearanceClient::Leptos
+        && !appearance::react_override(query)
+        && appearance::conversation_route(path, query)
+        && tokio::fs::try_exists(state.config.dist.join(appearance::CONVERSATION_DOCUMENT))
+            .await
+            .unwrap_or(false);
     let file = state.config.dist.join(if spa {
         if leptos_page {
             appearance::DOCUMENT
+        } else if conversation_page {
+            appearance::CONVERSATION_DOCUMENT
         } else {
             "index.html"
         }
@@ -312,6 +320,10 @@ async fn static_ui(
     let mut policy = None;
     if leptos_page {
         bytes = appearance::document(&String::from_utf8_lossy(&bytes), query).into_bytes();
+        policy = Some(POLICY.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'"));
+    } else if conversation_page {
+        bytes = appearance::conversation_document(&String::from_utf8_lossy(&bytes), path, query)
+            .into_bytes();
         policy = Some(POLICY.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'"));
     } else if spa {
         let html = String::from_utf8_lossy(&bytes);

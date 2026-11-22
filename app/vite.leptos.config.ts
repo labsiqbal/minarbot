@@ -9,6 +9,7 @@ import app from './vite.config';
 
 const start = process.env.MINARBOT_LEPTOS_START;
 if (!start) throw new Error('Run cargo xtask leptos to build Appearance.');
+const conversation = fileURLToPath(new URL('./src/leptos-conversation.ts', import.meta.url));
 
 const svg = (icon: LucideIcon, size = 16) => renderToStaticMarkup(createElement(icon, { size, 'aria-hidden': true }));
 
@@ -33,11 +34,16 @@ const appearanceConfig: Plugin = {
 export default defineConfig(mergeConfig(app, {
   base: '/_leptos/',
   publicDir: false,
+  resolve: { alias: { 'minarbot-conversation-adapter': conversation } },
   plugins: [appearanceConfig],
   build: {
     reportCompressedSize: false,
     rollupOptions: {
-      input: { start, appearance: fileURLToPath(new URL('../crates/web/appearance.css', import.meta.url)) },
+      input: {
+        start,
+        appearance: fileURLToPath(new URL('../crates/web/appearance.css', import.meta.url)),
+        conversation: fileURLToPath(new URL('../crates/web/conversation.css', import.meta.url)),
+      },
       output: {
         hashCharacters: 'hex',
         entryFileNames: 'assets/[name].[hash:16].js',
