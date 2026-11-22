@@ -168,7 +168,7 @@ pub fn Disclosure(
 ) -> impl IntoView {
     let chevron = icons().down;
     let expanded = RwSignal::new(open);
-    view! { <details class="k-collapsible" open=open on:toggle:undelegated=move |event| {
+    view! { <details class="k-collapsible" open=open on:toggle=move |event| {
       expanded.set(event.target().and_then(|node| node.dyn_into::<web_sys::Element>().ok()).is_some_and(|node| node.has_attribute("open")));
     }><summary class="k-collapsible__trigger" role="button" aria-expanded=move || expanded.get().to_string()>
       <span class="k-collapsible__title">{title}</span>
@@ -290,7 +290,7 @@ pub fn confirmation() -> (Confirm, impl IntoView) {
     let request: Confirm = RwSignal::new(None);
     let cancel = move || request.set(None);
     let view = view! {
-        <Dialog id="system-confirm" title=Signal::derive(move || request.with(|value| value.as_ref().map(|request| request.title.clone()).unwrap_or_default()))
+        <Dialog id="system-confirm" title=Signal::<String>::derive(move || request.with(|value| value.as_ref().map(|request| request.title.clone()).unwrap_or_default()))
           description=Signal::derive(move || request.with(|value| value.as_ref().map(|request| request.description.clone()).unwrap_or_default()))
           open=Signal::derive(move || request.with(Option::is_some)) on_close=cancel size="sm" confirmation=true>
           <div class="k-dialog__foot">
@@ -381,7 +381,7 @@ pub fn Menu(
             }
           }>{children()}</button>
         <div node_ref=menu popover="auto" class="k-pop k-menu bs-root system-menu" role="menu" aria-label=menu_label
-          on:toggle:undelegated=move |_| expanded.set(menu.get_untracked().is_some_and(|menu| menu.matches(":popover-open").unwrap_or(false)))
+          on:toggle=move |_| expanded.set(menu.get_untracked().is_some_and(|menu| menu.matches(":popover-open").unwrap_or(false)))
           on:keydown=move |event: web_sys::KeyboardEvent| {
             if event.key() == "Escape" {
                 event.prevent_default();
@@ -394,7 +394,7 @@ pub fn Menu(
                     if let Ok(items) = menu.query_selector_all("button") {
                         let key = event.key().to_lowercase();
                         let buttons = (0..items.length()).filter_map(|index| items.item(index)?.dyn_into::<web_sys::HtmlElement>().ok()).collect::<Vec<_>>();
-                        let after = document().active_element().and_then(|active| buttons.iter().position(|button| active.is_same_node(Some(*button)))).map_or(0, |index| index + 1);
+                        let after = document().active_element().and_then(|active| buttons.iter().position(|button| active.is_same_node(Some(button)))).map_or(0, |index| index + 1);
                         if let Some(button) = buttons.iter().cycle().skip(after).take(buttons.len()).find(|button| button.text_content().is_some_and(|text| text.trim_start().to_lowercase().starts_with(&key))) {
                             let _ = button.focus();
                         }

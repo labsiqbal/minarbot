@@ -982,7 +982,7 @@ pub fn panel() -> impl IntoView {
       <div class="k-page bs-root updates-page set4-page">
         <Header title="Updates" actions=content(move || view! {
           <Show when=move || run.with(Option::is_some) || !storage_error.with(String::is_empty)>
-            <Button label=Signal::derive(move || if storage_error.with(String::is_empty) { "Update progress".into() } else { "Update recovery".into() })
+            <Button label=Signal::<String>::derive(move || if storage_error.with(String::is_empty) { "Update progress".into() } else { "Update recovery".into() })
               on_click=move || show(Select::All) />
           </Show>
         }) />
@@ -1043,7 +1043,7 @@ pub fn panel() -> impl IntoView {
           })}
           <Section title="Paired machines" actions=content(move || view! {
             <Show when=move || !chosen.with(Vec::is_empty)>
-              <Button label=Signal::derive(move || format!("Update selected ({})", chosen.with(Vec::len)))
+              <Button label=Signal::<String>::derive(move || format!("Update selected ({})", chosen.with(Vec::len)))
                 disabled=Signal::derive(move || run.with(Option::is_some)) on_click=move || show(Select::Peers(chosen.get_untracked())) />
             </Show>
           })>
@@ -1076,7 +1076,7 @@ pub fn panel() -> impl IntoView {
             }}
           </Section>
         </Show>
-        <Dialog id="updates-plan" title=Signal::derive(title) description=Signal::derive(version_text) open=opened on_close=close size="lg"
+        <Dialog id="updates-plan" title=Signal::<String>::derive(title) description=Signal::derive(version_text) open=opened on_close=close size="lg"
           footer=content(move || view! {
             <Show when=move || run.with(Option::is_none) && !planning() && (count() > 0)>
               <span class="k-dialog__foot-note updates-warning">{move || {
@@ -1084,7 +1084,7 @@ pub fn panel() -> impl IntoView {
                 format!("{running} running {} will be interrupted and can resume after the restart.", if running == 1 { "turn" } else { "turns" })
               }}</span>
             </Show>
-            <Button label=Signal::derive(move || if run.with(Option::is_some) { "Close".into() } else { "Cancel".into() }) on_click=close />
+            <Button label=Signal::<String>::derive(move || if run.with(Option::is_some) { "Close".into() } else { "Cancel".into() }) on_click=close />
             <Show when=move || run.with(Option::is_none)>
               <Button label=text("Update") variant="primary" on_click=begin disabled=Signal::derive(move ||
                 count() == 0 || planning() || is_reconnecting() || !issue().is_empty() || !storage_error.with(String::is_empty) || !state.fresh.get()) />
@@ -1120,13 +1120,13 @@ pub fn panel() -> impl IntoView {
                   view! { <tr>
                     <th scope="row"><span>{row.name}</span>{row.local.then(|| view! { <small>"Connected server"</small> })}</th>
                     <td><span class="updates-version">{row.current}{row.target.map(|target| view! { {icon(icons().arrow)}<span class="sr-only">"to"</span>{target} })}</span>
-                      {if let Some(skipped) = row.skipped { view! { <small>{skipped}</small> }.into_any() } else { view! {
-                        <Show when=move || run.with(Option::is_some)><div class="updates-result">
+                      {if let Some(skipped) = row.skipped { view! { <small>{skipped}</small> }.into_any() } else { run.with(Option::is_some).then(|| view! {
+                        <div class="updates-result">
                           {badge(tone, move || id.with_value(|id| download(id)).map_or_else(|| label(&status).into(), |download| download.label()))}
                           {move || id.with_value(|id| download(id)).and_then(|download| download.source).map(|source| view! { <small>{source.label()}</small> })}
                           {row.reason.map(|reason| view! { <small>{reason}</small> })}
-                        </div></Show>
-                      }.into_any() }}
+                        </div>
+                      }).into_any() }}
                     </td><td>{row.running}</td>
                   </tr> }
                 }).collect_view()}</tbody>

@@ -181,10 +181,11 @@ pub fn panel() -> impl IntoView {
           {move || (!expired.get()).then(|| code.get()).flatten().map(|value| {
             let url = https_url(&value.url);
             let qr = value.qr.starts_with("data:image/svg+xml;base64,").then_some(value.qr);
+            let label = format!("Pairing code {}", value.code.chars().map(|digit| digit.to_string()).collect::<Vec<_>>().join(" "));
             view! { <div class="devices-pairing">
               {qr.map(|src| view! { <img src=src alt="QR code for the Minarbot pairing page" width="160" height="160" /> })}
-              <strong aria-label=format!("Pairing code {}", value.code.chars().map(|digit| digit.to_string()).collect::<Vec<_>>().join(" "))>{value.code}</strong>
-              {url.map(|url| view! { <a class="k-link" href=url.clone() target="_blank" rel="noopener noreferrer">{url}</a> })}
+              <strong aria-label=label>{value.code}</strong>
+              {url.map(|url| view! { <a class="k-link" href=url.clone() target="_blank" rel="noopener noreferrer">{url.clone()}</a> })}
               <span class="k-field__hint">"Valid for 2 minutes"</span>
             </div> }
           })}
