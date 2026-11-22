@@ -36,13 +36,12 @@ route ownership.
 
 ## Route ownership
 
-The preferences group, first-run screen, project overview, and `/pair` form use
-Leptos when `MINARBOT_APPEARANCE_CLIENT=leptos`. Agent conversation routes and
-project tabs transfer to React, along with the following settings: Providers, Engines, Skills,
-minarbot.com, Connected apps, Email, MCP connections, Vault, Craft Anything,
-Machines, Devices, Computer, Updates, Usage, Shared data, Backup & restore,
-and External access. `/pair` is a Rust-rendered form. The separate canonical hub
-continues to use its own session and client.
+General, Appearance, Providers, Engines, Skills, minarbot.com, Connected apps,
+Email, MCP connections, Vault, Craft Anything, first-run setup, project overview,
+and `/pair` use Leptos when `MINARBOT_APPEARANCE_CLIENT=leptos`. Agent conversations,
+project tabs, Machines, Devices, Computer, Updates, Usage, Shared data,
+Backup & restore, and External access transfer to React. `/pair` is a Rust-rendered
+form. The separate canonical hub continues to use its own session and client.
 
 Conversation and agent/room deep links stay with #63. Routines, workflows and
 calendar stay with #64. Port Memory (#48), Guide infrastructure cards (#54) and
@@ -53,6 +52,11 @@ Docs (#69) after their changes land on main.
 Install the UI smoke dependencies under `app/test-support/ui-smoke` and install the pinned Playwright Chromium. Run `node app/test-support/ui-smoke/appearance-smoke.mjs` with `MINARBOT_RUST_BINARY` pointing at the built server. It restarts a disposable loopback server on the same origin to verify both selectors, General API and keyboard parity, appearance persistence, and rollback.
 
 Set `MINARBOT_APPEARANCE_SCREENSHOTS` to a directory for dark and light desktop and narrow screenshots. Set `MINARBOT_APPEARANCE_BENCH=20` for 20 cold, warm reload and warmed settings-navigation samples per client. Readiness means Appearance has rendered and its heading has received focus.
+
+Run `node app/test-support/ui-smoke/settings-connections-smoke.mjs` to compare
+connection settings on the same server using synthetic API fixtures. The test
+compares mutation paths and redacted payloads. Set `MINARBOT_CONNECTION_SCREENSHOTS`
+to capture both themes at desktop and narrow widths.
 
 ## Warm navigation in #62
 

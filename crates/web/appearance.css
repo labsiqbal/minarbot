@@ -10,6 +10,9 @@
 @import "../../app/src/ui/kit.css";
 @import "../../app/src/ui/density.css";
 @import "../../app/src/ui/web-search-settings.css";
+@import "../../app/src/ui/agent-email.css";
+@import "../../app/src/whatsapp-settings.css";
+@import "../../app/src/hub/hub.css";
 @import "../../app/node_modules/@fontsource-variable/inter/index.css";
 
 #appearance-dialog {
@@ -73,3 +76,31 @@
 .leptos-workspace .project-dialog { inset: 50% auto auto 50%; margin: 0; color: var(--color-text-primary); }
 .leptos-workspace .project-dialog::backdrop { background: var(--color-bg-scrim); }
 .leptos-workspace .page-view { min-width: 0; }
+
+#appearance-dialog .connection-dialog:not([open]) { display: none; }
+.connection-dialog { inset: 50% auto auto 50%; margin: 0; padding: 0; color: var(--color-text-primary); }
+.connection-dialog::backdrop { background: var(--color-bg-scrim); }
+.connection-dialog .k-dialog__foot { flex-wrap: wrap; }
+#appearance-dialog .connection-dialog .k-fieldset { padding: 0; border: 0; background: transparent; }
+.connection-select { position: relative; display: block; width: 100%; }
+.connection-select.is-small { width: auto; }
+.connection-select select { appearance: none; padding-right: 32px; }
+.connection-select .k-select__chev { position: absolute; right: 9px; top: 50%; translate: 0 -50%; pointer-events: none; }
+.connection-select .k-select__chev svg { width: 14px; height: 14px; }
+.connection-checkbox { accent-color: var(--color-brand); }
+.legacy .connection-disclosure > summary { display: inline-flex; list-style: none; }
+.connection-disclosure > summary::before { content: none; }
+.connection-disclosure > summary::-webkit-details-marker { display: none; }
+.connection-disclosure .k-collapsible__chev svg { width: 15px; height: 15px; }
+.connection-disclosure[open] > summary .k-collapsible__chev { transform: rotate(180deg); }
+.connection-menu { margin: 0; inset: 0 auto auto 0; color: var(--color-ink); }
+.connection-menu > button { border: 0; background: transparent; width: 100%; text-align: left; }
+.connection-menu > button:is(:focus, :hover) { background: var(--color-bg-hover); }
+.bs-root:is(.bs-set3-apps, .bs-set3-mcp) .k-row__title { white-space: normal; overflow-wrap: anywhere; }
+.bs-root:is(.bs-set3-apps, .bs-set3-mcp) .k-row__meta { overflow-wrap: anywhere; }
+.apps-search { align-items: flex-end; }
+.bs-set3-skills .k-row__title, .bs-set3-skills .k-row__meta { white-space: normal; overflow-wrap: anywhere; }
+.pack-create { justify-content: flex-end; }
+.skill-version { width: 96px; }
+.skill-description { min-height: 60px; }
+.skill-instructions { min-height: 200px; }
