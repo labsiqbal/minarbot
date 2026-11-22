@@ -221,7 +221,11 @@ async function exercise(page, client, route, panel, state, commands) {
       assert.equal(attempts[0].version, release.version);
       uuid(attempts[0].id);
       await page.reload();
-      await visible(modal(page, 'Updating 1 machine'));
+      const recovered = modal(page, 'Updating 1 machine');
+      if (!(await recovered.isVisible())) {
+        await button(panel, 'Update progress').click();
+      }
+      await visible(recovered);
       state.update.lastAttempt.status = 'done';
       const completed = modal(page, 'Update complete');
       await visible(completed);
