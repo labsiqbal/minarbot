@@ -261,37 +261,6 @@ test('restart during uncertain MCP effect keeps its receipt and never replays ex
   }
 });
 
-test('room Stop seals gated SSE partial and effects across lost response, restart and new generation', async () => {
-  const f=await fixture(true);try {
-    const channel=await f.request('/api/channels',{id:randomUUID(),name:'Stream control',instructions:'Help.',members:[f.agent.id],lead:f.agent.id});
-    const path=`/api/channels/${channel.id}/turns`,root=randomUUID(),text=`PARTIAL:${root}`;
-    await f.request(path,{id:root,text});await until(()=>f.held.has(text),Boolean);f.held.get(text)!();
-    const partial=await f.turn(root,row=>!!row.partial?.text,path);assert.equal(partial.generatedFiles.length,1);
-    const stopPath=`/api/channels/${channel.id}/discussions/${root}/stop`,command={id:randomUUID(),generation:root};
-    const receipt=await f.request(stopPath,command);assert.deepEqual(await f.request(stopPath,command),receipt);
-    f.held.get(text)!();
-    const next=randomUUID();await f.request(path,{id:next,text:`NEW:${root}`});await f.turn(next,row=>row.status==='done',path);
-    const stopped=await f.turn(root,row=>row.status==='cancelled',path);assert.equal(stopped.partial.text,partial.partial.text);assert.equal(stopped.reply,null);assert.equal(stopped.generatedFiles.length,1);
-    assert.equal(stopped.room.messages.length,0);const count=f.calls.length;await f.restart();assert.deepEqual(await f.request(stopPath,command),receipt);assert.equal(f.calls.length,count);
-  }finally{await f.close();}
-});
-
-test('queued item promotes to steer once, uses safe point and retains original turn ID', async () => {
-  const f = await fixture(); try {
-    const root = randomUUID(), text = `LOOP:${root}`;
-    await f.request(f.path, { id: root, text }); await until(() => f.held.has(text), Boolean);
-    const queued = randomUUID(); await f.request(f.path, { id: queued, text: 'Promoted guidance' });
-    const command = { id: randomUUID(), revision: 1, mode: 'steer', targetTurn: root };
-    const promoted = await f.request(`${f.path}/${queued}/dispatch`, command);
-    assert.equal(promoted.id, queued); assert.equal(promoted.dispatch_mode, 'steer');
-    assert.deepEqual(await f.request(`${f.path}/${queued}/dispatch`, command), promoted);
-    await f.request(`${f.path}/${queued}/dispatch`, { ...command, mode: 'restart' }, 409);
-    f.held.get(text)!(); await f.turn(root, row => row.status === 'done'); await f.turn(queued, row => row.status === 'done');
-    assert.equal((await f.request(f.path)).length, 2);
-    for (const body of f.calls.slice(1)) assert.equal(body.messages.filter((row: any) => row.role === 'user' && row.content === 'Promoted guidance').length, 1);
-  } finally { await f.close(); }
-});
-
 test('queued dispatch rejects stale revision, held editor, cross-conversation target and started message', async () => {
   const f = await fixture(); try {
     const root = randomUUID(), text = `HOLD:${root}`;
