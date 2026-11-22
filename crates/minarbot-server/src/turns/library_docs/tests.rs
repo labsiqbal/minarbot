@@ -110,17 +110,7 @@ fn app(home: &ProbeHome) -> db::Result<(AppState, Value)> {
         json!({"database":home.0.join("state.sqlite"), "fixedClock":2000000, "testKeyring":{}}),
     )?;
     let database = db::open(&config.database, false, config.now())?;
-    crate::files::init(&database.connection)?;
-    crate::data::initialize(&database)?;
-    super::super::initialize(&database.connection)
-        .map_err(|e| format!("turn schema: {}", e.message))?;
-    crate::automation::initialize(&database.connection)
-        .map_err(|e| format!("automation schema: {}", e.message))?;
-    crate::harness::initialize(&database.connection)
-        .map_err(|e| format!("harness schema: {}", e.message))?;
-    crate::mcp::initialize(&database.connection)
-        .map_err(|e| format!("MCP schema: {}", e.message))?;
-    crate::computer::initialize(&database.connection)?;
+    crate::initialize_local(&database)?;
     database.connection.execute_batch(&format!(
         "INSERT INTO agents(id,name,model,instructions) VALUES('{AGENT}','Test','','');
          INSERT INTO threads(id,agent,name) VALUES('thread','{AGENT}','Test');

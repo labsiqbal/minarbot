@@ -28,6 +28,7 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/provider-accounts/{id}/test', 'Tests a saved local provider account.'],
     ['/api/provider-accounts/{id}/edit', 'Updates a saved local provider account.'],
     ['/api/provider-accounts/{id}/delete', 'Removes a saved local provider account.'],
+    ['/api/settings/library-docs', 'Checks Context7 reachability and Vault key status.'],
     ['/api/settings/web-search', 'Reads or saves the local SearXNG URL.'],
     ['/api/settings/web-search/test', 'Tests a SearXNG URL with one JSON search.'],
     ['/api/engine-logins', 'Lists and creates local engine login profiles.'],
