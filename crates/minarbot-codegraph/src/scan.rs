@@ -147,6 +147,40 @@ impl Defaults {
     }
 }
 
+/// Bounded, ignore-aware discovery for tools that read manifests instead of source.
+pub fn manifest_paths(root: &Path, matches: fn(&str) -> bool) -> Result<Vec<String>> {
+    let defaults = Defaults::new(root)?;
+    let filter_root = root.to_owned();
+    let mut walk = WalkBuilder::new(root);
+    walk.require_git(false)
+        .parents(false)
+        .max_depth(Some(16))
+        .sort_by_file_name(|a, b| a.cmp(b))
+        .filter_entry(move |entry| {
+            let Ok(path) = entry.path().strip_prefix(&filter_root) else {
+                return false;
+            };
+            path.as_os_str().is_empty()
+                || !defaults.ignores(path, entry.file_type().is_some_and(|kind| kind.is_dir()))
+        });
+    // ponytail: bound discovery per turn. Add incremental indexing if large workspaces need it.
+    let mut paths: Vec<_> = walk
+        .build()
+        .take(20_000)
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let file = entry.file_name().to_str()?;
+            if !entry.file_type()?.is_file() || !matches(file) {
+                return None;
+            }
+            Some(entry.path().strip_prefix(root).ok()?.to_str()?.to_owned())
+        })
+        .collect();
+    paths.sort_by_key(|path| path.bytes().filter(|&b| b == b'/').count());
+    paths.truncate(256);
+    Ok(paths)
+}
+
 pub(crate) fn discover(root: &Path) -> Result<Vec<FilePath>> {
     let mut paths = BTreeSet::new();
     let defaults = Defaults::new(root)?;

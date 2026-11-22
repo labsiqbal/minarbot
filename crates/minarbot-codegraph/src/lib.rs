@@ -43,6 +43,7 @@ mod rustlang;
 #[cfg(feature = "scala")]
 mod scala;
 mod scan;
+pub use scan::manifest_paths;
 mod stack;
 mod store;
 #[cfg(feature = "swift")]

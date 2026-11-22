@@ -265,6 +265,11 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         }
         (turn, profile, messages, tools)
     };
+    let stack_summary = super::library_docs::summary(state, &turn).await?;
+    if !stack_summary.is_empty() {
+        let system = messages[0]["content"].as_str().unwrap_or("");
+        messages[0]["content"] = json!(format!("{system}{stack_summary}"));
+    }
     if turn["routing"] == "pending" && turn["channel"].is_string() {
         let (channel, roster) = {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;

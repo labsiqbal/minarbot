@@ -106,7 +106,7 @@ pub(super) fn read_bytes(directory: &File, name: &str, limit: usize) -> Result<V
 pub fn download(root: &Path, relative: &str) -> Result<(String, Vec<u8>)> {
     download_bounded(root, relative, 10 * 1024 * 1024)
 }
-pub(super) fn download_bounded(
+pub(crate) fn download_bounded(
     root: &Path,
     relative: &str,
     limit: usize,

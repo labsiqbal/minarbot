@@ -1,6 +1,6 @@
 # Real-task benchmark
 
-16 fixed tasks measure whether Minarbot completes useful work. Each task lives under `bench/tasks/<id>/` with a prompt, seed inputs, time/token budgets, and a reference to its deterministic checker. Categories cover web apps with tests, seeded bug fixes and features, CSV cleanup, source-backed research, Computer browser flows, documents, delegated room work, HTML output, and routines.
+17 fixed tasks measure whether Minarbot completes useful work. Each task lives under `bench/tasks/<id>/` with a prompt, seed inputs, time/token budgets, and a reference to its deterministic checker. Categories cover web apps with tests, seeded bug fixes and features, CSV cleanup, source-backed research, Computer browser flows, documents, delegated room work, HTML output, and routines.
 
 ## Commands
 
@@ -22,7 +22,7 @@ node bench/run.mjs --tasks counter-app,cart-bug --runtime codex,claude --repeat 
 
 Requires Linux, Node matching `app/package.json`, `bwrap`, Git, and Chrome for HTML checks. Build the app and release binaries before a live run. Pass a release binary with `--binary`, defaulting to `target/release/minarbot-server`. Each attempt uses a random port, private temporary data, disposable workspace and disposable harness home. The release server uses its fixture configuration to expose the synthetic site to Computer with the normal sandbox and approval policies. It records status, turns, known and complete token counts, wall time, interventions, checker result, and binary/suite hashes in `bench/results/<version>/<timestamp>/`. Approval, question, Computer takeover, and recognized prose clarification requests fail a row. The runner stops at the time limit and checks reported usage as it arrives. A harness can exceed its token budget before reporting usage. Unknown totals cannot pass the token gate. Missing Computer support records a skip with its reason. Unknown provider billing stays unavailable.
 
-Research inputs use frozen source extracts, so checkers verify exact claims and attributed URLs without live web calls. Submitted outputs are checked through no-network `bwrap` sandboxes. Only live runs consume provider usage. Use `--results /path/to/output` for development receipts.
+Research checkers verify exact claims and attributed URLs. The `pgx-row-docs` task uses the module version in its `go.mod` and the public versioned API reference. Submitted outputs are checked through no-network `bwrap` sandboxes. Only live runs consume provider usage. Use `--results /path/to/output` for development receipts.
 
 For CodeGraph comparisons, add `--project-codegraph` to run seeded coding
 tasks in project conversations. Both binaries get the same prompt, seed, and

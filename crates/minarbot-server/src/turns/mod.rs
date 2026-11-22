@@ -14,6 +14,7 @@ pub(crate) mod harness;
 mod history;
 pub(crate) use crate::media::images as media;
 pub(crate) use memory::scoped as canonical_memory;
+pub(crate) mod library_docs;
 mod memory;
 pub(crate) mod memory_worker;
 pub(crate) mod messaging;
@@ -97,6 +98,7 @@ impl Runtime {
 pub fn initialize_canonical(db: &Connection) -> Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
     verification::migrate(db)?;
+    library_docs::initialize(db)?;
     if !all(db, "PRAGMA table_info(queue_edits)", [])?
         .iter()
         .any(|column| column["name"] == "expires_at")
