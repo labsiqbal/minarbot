@@ -1,0 +1,2192 @@
+{
+  "version": "0.17.0",
+  "binarySHA256": "a42d834bcc55c745f42b0062d96581d1e35242da67feedcf24c2c2cad04dbd06",
+  "checkoutCommit": "638e45150d182b15cebde147a606fe142b919628",
+  "suiteSHA256": "efdbe2b5b085bde168c5a495b459fb9c957892bd32513c8d30e9df0e66219aed",
+  "startedAt": "2026-11-22T17:12:47.071Z",
+  "runtime": {
+    "name": "claude",
+    "version": "2.1.328 (Claude Code)",
+    "account": "device",
+    "model": "claude-sonnet-4-6",
+    "reason": null
+  },
+  "repeat": 3,
+  "projectCodegraph": false,
+  "complete": true,
+  "results": [
+    {
+      "task": "browser-booking",
+      "category": "browser",
+      "attempt": 1,
+      "budget": {
+        "seconds": 180,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Missing Computer evidence: computer_type",
+      "checker": {
+        "passed": false,
+        "reason": "Missing Computer evidence: computer_type"
+      },
+      "turns": 1,
+      "wallSeconds": 45.94,
+      "tokens": 1395,
+      "knownTokens": 1395,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 21,
+              "outputTokens": 1374,
+              "tokens": 1395
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "browser-ticket",
+      "category": "browser",
+      "attempt": 1,
+      "budget": {
+        "seconds": 180,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 66.75,
+      "tokens": 2161,
+      "knownTokens": 2161,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 33,
+              "outputTokens": 2128,
+              "tokens": 2161
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "cart-bug",
+      "category": "bug-fix",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 49.54,
+      "tokens": 2822,
+      "knownTokens": 2822,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 14,
+              "outputTokens": 2808,
+              "tokens": 2822
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "contacts-csv",
+      "category": "csv",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 19.4,
+      "tokens": 1278,
+      "knownTokens": 1278,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 10,
+              "outputTokens": 1268,
+              "tokens": 1278
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "counter-app",
+      "category": "web-app",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 16.88,
+      "tokens": 1110,
+      "knownTokens": 1110,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 8,
+              "outputTokens": 1102,
+              "tokens": 1110
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "csv-research",
+      "category": "research",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 13.87,
+      "tokens": 745,
+      "knownTokens": 745,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 733,
+              "tokens": 745
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "expiry-bug",
+      "category": "bug-fix",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 22.85,
+      "tokens": 1269,
+      "knownTokens": 1269,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 1257,
+              "tokens": 1269
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "handover-doc",
+      "category": "document",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Missing 2400",
+      "checker": {
+        "passed": false,
+        "reason": "Missing 2400"
+      },
+      "turns": 1,
+      "wallSeconds": 21.61,
+      "tokens": 734,
+      "knownTokens": 734,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 722,
+              "tokens": 734
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "http-research",
+      "category": "research",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 25.15,
+      "tokens": 1313,
+      "knownTokens": 1313,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 13,
+              "outputTokens": 1300,
+              "tokens": 1313
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "paginate-feature",
+      "category": "feature",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 20.43,
+      "tokens": 1364,
+      "knownTokens": 1364,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 10,
+              "outputTokens": 1354,
+              "tokens": 1364
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "routine-setup",
+      "category": "routine",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 38.45,
+      "tokens": 2102,
+      "knownTokens": 2102,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 22,
+              "outputTokens": 2080,
+              "tokens": 2102
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "sales-csv",
+      "category": "csv",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 17.87,
+      "tokens": 1014,
+      "knownTokens": 1014,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 9,
+              "outputTokens": 1005,
+              "tokens": 1014
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "show-html",
+      "category": "html",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Checker timed out or was interrupted",
+      "checker": {
+        "passed": false,
+        "reason": "Checker timed out or was interrupted"
+      },
+      "turns": 1,
+      "wallSeconds": 51.71,
+      "tokens": 3613,
+      "knownTokens": 3613,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 14,
+              "outputTokens": 3599,
+              "tokens": 3613
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "slug-feature",
+      "category": "feature",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Native regression tests missing",
+      "checker": {
+        "passed": false,
+        "reason": "Native regression tests missing"
+      },
+      "turns": 1,
+      "wallSeconds": 27.36,
+      "tokens": 1327,
+      "knownTokens": 1327,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 13,
+              "outputTokens": 1314,
+              "tokens": 1327
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "team-review",
+      "category": "delegation",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "User intervention requested",
+      "checker": null,
+      "turns": 2,
+      "wallSeconds": 36.25,
+      "tokens": null,
+      "knownTokens": 0,
+      "providerCalls": 1,
+      "unknownUsage": 1,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 1,
+      "interventionKinds": {
+        "approvals": 1,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": null,
+              "outputTokens": null,
+              "tokens": null
+            }
+          ]
+        },
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": []
+        }
+      ]
+    },
+    {
+      "task": "tip-app",
+      "category": "web-app",
+      "attempt": 1,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Checker timed out or was interrupted",
+      "checker": {
+        "passed": false,
+        "reason": "Checker timed out or was interrupted"
+      },
+      "turns": 1,
+      "wallSeconds": 24.13,
+      "tokens": 1496,
+      "knownTokens": 1496,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 10,
+              "outputTokens": 1486,
+              "tokens": 1496
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "browser-booking",
+      "category": "browser",
+      "attempt": 2,
+      "budget": {
+        "seconds": 180,
+        "tokens": 150000
+      },
+      "status": "skipped",
+      "reason": "Computer unavailable in disposable server (HTTP 503)",
+      "checker": null,
+      "turns": null,
+      "wallSeconds": null,
+      "tokens": null,
+      "knownTokens": null,
+      "providerCalls": null,
+      "unknownUsage": null,
+      "models": [],
+      "interventions": null,
+      "interventionKinds": null,
+      "costUSD": null
+    },
+    {
+      "task": "browser-ticket",
+      "category": "browser",
+      "attempt": 2,
+      "budget": {
+        "seconds": 180,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 71.75,
+      "tokens": 2278,
+      "knownTokens": 2278,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 34,
+              "outputTokens": 2244,
+              "tokens": 2278
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "cart-bug",
+      "category": "bug-fix",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 31.46,
+      "tokens": 2022,
+      "knownTokens": 2022,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 13,
+              "outputTokens": 2009,
+              "tokens": 2022
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "contacts-csv",
+      "category": "csv",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 19.35,
+      "tokens": 1071,
+      "knownTokens": 1071,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 8,
+              "outputTokens": 1063,
+              "tokens": 1071
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "counter-app",
+      "category": "web-app",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Checker process failed",
+      "checker": {
+        "passed": false,
+        "reason": "Checker process failed"
+      },
+      "turns": 1,
+      "wallSeconds": 49.5,
+      "tokens": 2026,
+      "knownTokens": 2026,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 18,
+              "outputTokens": 2008,
+              "tokens": 2026
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "csv-research",
+      "category": "research",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 13.59,
+      "tokens": 743,
+      "knownTokens": 743,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 731,
+              "tokens": 743
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "expiry-bug",
+      "category": "bug-fix",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 25.68,
+      "tokens": 1425,
+      "knownTokens": 1425,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 13,
+              "outputTokens": 1412,
+              "tokens": 1425
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "handover-doc",
+      "category": "document",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Missing 2400",
+      "checker": {
+        "passed": false,
+        "reason": "Missing 2400"
+      },
+      "turns": 1,
+      "wallSeconds": 14.1,
+      "tokens": 771,
+      "knownTokens": 771,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 759,
+              "tokens": 771
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "http-research",
+      "category": "research",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 18.12,
+      "tokens": 1200,
+      "knownTokens": 1200,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 9,
+              "outputTokens": 1191,
+              "tokens": 1200
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "paginate-feature",
+      "category": "feature",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "User intervention requested",
+      "checker": null,
+      "turns": 1,
+      "wallSeconds": 16.64,
+      "tokens": null,
+      "knownTokens": 0,
+      "providerCalls": 1,
+      "unknownUsage": 1,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 1,
+      "interventionKinds": {
+        "approvals": 1,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": null,
+              "outputTokens": null,
+              "tokens": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "routine-setup",
+      "category": "routine",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 46.94,
+      "tokens": 2690,
+      "knownTokens": 2690,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 27,
+              "outputTokens": 2663,
+              "tokens": 2690
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "sales-csv",
+      "category": "csv",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 15.1,
+      "tokens": 1047,
+      "knownTokens": 1047,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 9,
+              "outputTokens": 1038,
+              "tokens": 1047
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "show-html",
+      "category": "html",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Checker timed out or was interrupted",
+      "checker": {
+        "passed": false,
+        "reason": "Checker timed out or was interrupted"
+      },
+      "turns": 1,
+      "wallSeconds": 31.17,
+      "tokens": 2124,
+      "knownTokens": 2124,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 15,
+              "outputTokens": 2109,
+              "tokens": 2124
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "slug-feature",
+      "category": "feature",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 19.64,
+      "tokens": 1149,
+      "knownTokens": 1149,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 11,
+              "outputTokens": 1138,
+              "tokens": 1149
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "team-review",
+      "category": "delegation",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "User intervention requested",
+      "checker": null,
+      "turns": 2,
+      "wallSeconds": 29.64,
+      "tokens": null,
+      "knownTokens": 0,
+      "providerCalls": 1,
+      "unknownUsage": 1,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 1,
+      "interventionKinds": {
+        "approvals": 1,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": null,
+              "outputTokens": null,
+              "tokens": null
+            }
+          ]
+        },
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": []
+        }
+      ]
+    },
+    {
+      "task": "tip-app",
+      "category": "web-app",
+      "attempt": 2,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 22.37,
+      "tokens": 1525,
+      "knownTokens": 1525,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 10,
+              "outputTokens": 1515,
+              "tokens": 1525
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "browser-booking",
+      "category": "browser",
+      "attempt": 3,
+      "budget": {
+        "seconds": 180,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Missing Computer evidence: computer_type",
+      "checker": {
+        "passed": false,
+        "reason": "Missing Computer evidence: computer_type"
+      },
+      "turns": 1,
+      "wallSeconds": 41.22,
+      "tokens": 1421,
+      "knownTokens": 1421,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 24,
+              "outputTokens": 1397,
+              "tokens": 1421
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "browser-ticket",
+      "category": "browser",
+      "attempt": 3,
+      "budget": {
+        "seconds": 180,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Missing Computer evidence: computer_type",
+      "checker": {
+        "passed": false,
+        "reason": "Missing Computer evidence: computer_type"
+      },
+      "turns": 1,
+      "wallSeconds": 42.96,
+      "tokens": 1589,
+      "knownTokens": 1589,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 24,
+              "outputTokens": 1565,
+              "tokens": 1589
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "cart-bug",
+      "category": "bug-fix",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 31.7,
+      "tokens": 2056,
+      "knownTokens": 2056,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 13,
+              "outputTokens": 2043,
+              "tokens": 2056
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "contacts-csv",
+      "category": "csv",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 18.35,
+      "tokens": 1170,
+      "knownTokens": 1170,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 1158,
+              "tokens": 1170
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "counter-app",
+      "category": "web-app",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 16.35,
+      "tokens": 1021,
+      "knownTokens": 1021,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 10,
+              "outputTokens": 1011,
+              "tokens": 1021
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "csv-research",
+      "category": "research",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 13.86,
+      "tokens": 759,
+      "knownTokens": 759,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 747,
+              "tokens": 759
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "expiry-bug",
+      "category": "bug-fix",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 21.66,
+      "tokens": 1282,
+      "knownTokens": 1282,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 1270,
+              "tokens": 1282
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "handover-doc",
+      "category": "document",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Missing 2400",
+      "checker": {
+        "passed": false,
+        "reason": "Missing 2400"
+      },
+      "turns": 1,
+      "wallSeconds": 14.84,
+      "tokens": 834,
+      "knownTokens": 834,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 822,
+              "tokens": 834
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "http-research",
+      "category": "research",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 22.37,
+      "tokens": 1355,
+      "knownTokens": 1355,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 16,
+              "outputTokens": 1339,
+              "tokens": 1355
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "paginate-feature",
+      "category": "feature",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "User intervention requested",
+      "checker": null,
+      "turns": 1,
+      "wallSeconds": 11.13,
+      "tokens": null,
+      "knownTokens": 0,
+      "providerCalls": 1,
+      "unknownUsage": 1,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 1,
+      "interventionKinds": {
+        "approvals": 1,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": null,
+              "outputTokens": null,
+              "tokens": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "routine-setup",
+      "category": "routine",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 24.89,
+      "tokens": 1462,
+      "knownTokens": 1462,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 17,
+              "outputTokens": 1445,
+              "tokens": 1462
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "sales-csv",
+      "category": "csv",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 18.64,
+      "tokens": 1281,
+      "knownTokens": 1281,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 8,
+              "outputTokens": 1273,
+              "tokens": 1281
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "show-html",
+      "category": "html",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Rendered behavior or required visible content failed",
+      "checker": {
+        "passed": false,
+        "reason": "Rendered behavior or required visible content failed"
+      },
+      "turns": 1,
+      "wallSeconds": 29.42,
+      "tokens": 1852,
+      "knownTokens": 1852,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 1840,
+              "tokens": 1852
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "slug-feature",
+      "category": "feature",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "Native regression tests missing",
+      "checker": {
+        "passed": false,
+        "reason": "Native regression tests missing"
+      },
+      "turns": 1,
+      "wallSeconds": 22.91,
+      "tokens": 1241,
+      "knownTokens": 1241,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 1229,
+              "tokens": 1241
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task": "team-review",
+      "category": "delegation",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "fail",
+      "reason": "User intervention requested",
+      "checker": null,
+      "turns": 4,
+      "wallSeconds": 135.79,
+      "tokens": null,
+      "knownTokens": 1028,
+      "providerCalls": 2,
+      "unknownUsage": 1,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 1,
+      "interventionKinds": {
+        "approvals": 1,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": null,
+              "outputTokens": null,
+              "tokens": null
+            }
+          ]
+        },
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": []
+        },
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 12,
+              "outputTokens": 1016,
+              "tokens": 1028
+            }
+          ]
+        },
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": []
+        }
+      ]
+    },
+    {
+      "task": "tip-app",
+      "category": "web-app",
+      "attempt": 3,
+      "budget": {
+        "seconds": 150,
+        "tokens": 150000
+      },
+      "status": "pass",
+      "reason": null,
+      "checker": {
+        "passed": true
+      },
+      "turns": 1,
+      "wallSeconds": 22.62,
+      "tokens": 1739,
+      "knownTokens": 1739,
+      "providerCalls": 1,
+      "unknownUsage": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "interventions": 0,
+      "interventionKinds": {
+        "approvals": 0,
+        "questions": 0,
+        "computer": 0,
+        "prose": 0
+      },
+      "costUSD": null,
+      "turnUsage": [
+        {
+          "autoRecallTokenUpperBound": 0,
+          "autoRecalledUnits": 0,
+          "usage": [
+            {
+              "phase": "answer",
+              "inputTokens": 8,
+              "outputTokens": 1731,
+              "tokens": 1739
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "finishedAt": "2026-11-22T17:39:08.073Z"
+}
