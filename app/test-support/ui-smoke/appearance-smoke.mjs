@@ -489,8 +489,13 @@ async function setupAndDirectory(origin, client) {
     await page.setViewportSize({ width: 1440, height: 900 });
     await post('/api/projects', { id, name: project, members: [] });
     await page.reload();
+    const projectsTab = page.getByRole('tab', { name: /^Projects\s*1$/ });
+    await projectsTab.waitFor();
+    if ((await projectsTab.getAttribute('aria-selected')) !== 'true') {
+      await page.getByRole('tab', { name: /^Agents/, selected: true }).press('ArrowRight');
+    }
+    await page.getByRole('tab', { name: /^Projects/, selected: true }).waitFor();
     const nav = page.getByRole('navigation', { name: 'Projects', exact: true });
-    if (await nav.isHidden()) await page.getByRole('tab', { name: /^Agents/ }).press('ArrowRight');
     const projectEntry = nav.getByText(project, { exact: true });
     await projectEntry.click();
     await page.waitForURL(origin + projectPath);
