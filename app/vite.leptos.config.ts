@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { ArrowUp, CalendarClock, CalendarDays, Check, ChevronDown, ChevronRight, CircleAlert, Copy, Ellipsis, ExternalLink, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, MessageSquare, Mic, Monitor, PanelLeft, PanelRight, Plug, Plus, Search, Send, Settings, ShieldCheck, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Plug, Plus, Search, Send, Server, Settings, ShieldCheck, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -37,6 +37,13 @@ const appearanceConfig: Plugin = {
           shield: svg(ShieldCheck, 18), more: svg(Ellipsis, 16), external: svg(ExternalLink, 14),
           folder: svg(Folder), next: svg(ChevronRight, 14), alert: svg(CircleAlert, 14),
         },
+        connectionIcons: Object.fromEntries(Object.entries({
+          'arrow-left': ArrowLeft, blocks: Blocks, book: BookOpen, bot: Bot,
+          'chevron-down': ChevronDown, 'chevron-left': ChevronLeft, 'chevron-right': ChevronRight,
+          close: X, copy: Copy, ellipsis: Ellipsis, error: CircleAlert, 'external-link': ExternalLink,
+          file: FileText, info: Info, key: KeyRound, link: Link, message: MessageCircle, package: Package, plug: Plug, plus: Plus,
+          search: Search, server: Server, shield: ShieldCheck, warn: AlertTriangle,
+        }).map(([name, icon]) => [name, svg(icon, ['arrow-left', 'external-link', 'plus', 'search'].includes(name) ? 14 : name === 'server' ? 20 : 16)])),
         workspaceIcons: {
           panel: svg(PanelLeft), filter: svg(Filter, 15), settings: svg(Settings),
           routines: svg(CalendarClock), workflows: svg(Workflow), calendar: svg(CalendarDays),

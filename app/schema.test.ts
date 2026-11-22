@@ -27,7 +27,7 @@ function fixture(name: string) {
 }
 
 function addMemorySchema(db: ReturnType<typeof testDatabase>, mode: 'canonical' | 'local', phase2 = true) {
-  for (const path of phase2 ? ['minarbot-memory/src/schema.sql', 'minarbot-memory/src/retain.sql'] : ['minarbot-memory/src/schema.sql']) {
+  for (const path of phase2 ? ['minarbot-memory/src/schema.sql', 'minarbot-memory/src/retain.sql', 'minarbot-memory/src/reflect.sql'] : ['minarbot-memory/src/schema.sql']) {
     db.exec(readFileSync(new URL(`../crates/${path}`, import.meta.url), 'utf8'));
   }
   if (mode === 'canonical') {

@@ -4,13 +4,28 @@ mod api;
 mod appearance;
 #[cfg(feature = "conversation")]
 pub mod conversation;
+mod connected_apps;
+mod connection_ui;
+mod craft_anything;
+mod email;
+mod engines;
 mod general;
+mod hub_connection;
+mod mcp_connections;
+mod messaging_connections;
 mod onboarding;
 mod pairing;
 mod projects;
+mod providers;
 mod routes;
 mod settings;
+mod settings_recovery;
 mod shell;
+#[path = "../../shared/skill_files.rs"]
+mod skill_files;
+mod skill_import;
+mod skills;
+mod vault;
 mod voice;
 mod workspace;
 mod workspace_route;

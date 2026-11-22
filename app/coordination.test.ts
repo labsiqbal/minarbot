@@ -44,8 +44,8 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     assert(response.ok, `HTTP ${response.status}`); return response.json();
   }
   async function rows(path: string) { return (await fetch(app.origin + path)).json(); }
-  async function waitTurn(path: string, id: string, status: string) {
-    for (let i = 0; i < 150; i++) {
+  async function waitTurn(path: string, id: string, status: string, polls = 150) {
+    for (let i = 0; i < polls; i++) {
       const turn = (await rows(path)).find((row: { id: string }) => row.id === id);
       if (turn?.status === status) return turn;
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -82,7 +82,8 @@ test('coordination: durable delegation, transfer, cancellation, rejection and re
     const cycleRoom = await post('/api/channels', { id: randomUUID(), name: 'Cycle', instructions: 'Coordinate.', members: cycleAgents.map(agent => agent.id), lead: cycleAgents[0].id });
     const cyclePath = `/api/channels/${cycleRoom.id}/turns`, cycle = { id: randomUUID(), text: 'cycle', recipient: cycleAgents[0].id };
     await post(cyclePath, cycle);
-    const cycled = await waitTurn(cyclePath, cycle.id, 'done');
+    // The cycle takes 32 serial transfers to reach the coordination limit.
+    const cycled = await waitTurn(cyclePath, cycle.id, 'done', 1_000);
     assert.match(cycled.reply, /Coordination limit/); assert.equal(cycled.coordination.length, 32);
     const cancellation = { id: randomUUID(), text: 'cancel-tree', recipient: alpha.id };
     await post(path, cancellation);

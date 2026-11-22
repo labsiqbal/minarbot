@@ -16,6 +16,8 @@ pub struct Config {
     search_icon: String,
     close_icon: String,
     pub(crate) error_icon: String,
+    #[serde(default)]
+    connection_icons: crate::connection_ui::Icons,
 }
 
 #[derive(Deserialize)]
@@ -32,7 +34,7 @@ struct Item {
 }
 
 fn buttons(container: &Element) -> Vec<HtmlElement> {
-    let Ok(list) = container.query_selector_all("button:not([hidden])") else {
+    let Ok(list) = container.query_selector_all("button:not([hidden]):not(:disabled)") else {
         return Vec::new();
     };
     (0..list.length())
@@ -88,6 +90,7 @@ fn visible(item: &Item, group: &str, query: &str, hub: bool) -> bool {
 }
 
 pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl IntoView {
+    provide_context(config.connection_icons.clone());
     let route = RwSignal::new(route);
     let listener = window_event_listener(leptos::ev::popstate, move |_| {
         if let Some(route_now) = current() {
@@ -228,15 +231,31 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                 let page = match route.get() {
                     SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
                     SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
+                    SettingsRoute::Providers => crate::providers::panel().into_any(),
+                    SettingsRoute::Engines => crate::engines::panel().into_any(),
+                    SettingsRoute::CraftAnything => crate::craft_anything::panel().into_any(),
+                    SettingsRoute::Vault => crate::vault::panel().into_any(),
+                    SettingsRoute::Email => crate::email::panel().into_any(),
+                    SettingsRoute::Hub => crate::hub_connection::panel().into_any(),
+                    SettingsRoute::ConnectedApps => crate::connected_apps::panel().into_any(),
+                    SettingsRoute::Mcp => crate::mcp_connections::panel().into_any(),
+                    SettingsRoute::Skills => crate::skills::panel().into_any(),
                 };
                 view! {
                     <main class="app-settings__main" node_ref=main>
-                        <div class="app-settings__page legacy app-settings__page--preferences">{page}</div>
+                        <div class="app-settings__page legacy" class:app-settings__page--preferences=move || matches!(route.get(), SettingsRoute::Appearance | SettingsRoute::General)>{page}</div>
                     </main>
                 }
             }}
         </dialog>
     }
+}
+
+pub fn linked_section_url(path: &str) -> String {
+    let from = document()
+        .get_element_by_id("leptos-root")
+        .and_then(|root| root.get_attribute("data-return-to"));
+    section_url(path, from.as_deref().unwrap_or("/"))
 }
 
 pub fn section_url(path: &str, from: &str) -> String {
