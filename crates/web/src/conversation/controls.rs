@@ -217,10 +217,12 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                         view! { <button type="button" class="panel-row" on:click=move |_| chat.inspect(id.clone())>{turn.text.clone()}</button> }
                     }).collect_view())}
                 </details>
-                <div class="k-inline" hidden=move || chat.context.with(Option::is_none)>
+                <Show when=move || chat.context.with(Option::is_some)>
+                <div class="k-inline">
                     <span role="status">"Reply context attached"</span>
                     <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || chat.locked() on:click=move |_| chat.context.set(None)>"Remove context"</button>
                 </div>
+                </Show>
                 <div class="k-inline">
                     {move || attachments.get().into_iter().map(|id| {
                         let title = file_names.with(|rows| rows.iter().find(|file| file.id == id).map(|file| file.name.clone())).unwrap_or_else(|| "Attachment".into());
@@ -234,7 +236,17 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                         }
                     }).collect_view()}
                 </div>
-                <form class="composer" aria-label="Composer" on:submit=move |event| { event.prevent_default(); submit(false); }>
+                <form class="composer" aria-label="Composer" on:submit=move |event| { event.prevent_default(); submit(false); }
+                    on:dragover=move |event: web_sys::DragEvent| {
+                        if event.data_transfer().is_some_and(|data| data.types().iter().any(|kind| kind.as_string().as_deref() == Some("Files"))) {
+                            event.prevent_default();
+                        }
+                    }
+                    on:drop=move |event: web_sys::DragEvent| {
+                        if let Some(list) = event.data_transfer().and_then(|data| data.files()).filter(|list| list.length() != 0) {
+                            event.prevent_default(); files(chat, list, uploading);
+                        }
+                    }>
                     <textarea node_ref=input class="composer__input" id="message" rows="2" maxlength=MAX_MESSAGE
                         aria-label=label placeholder="Write a message" readonly=move || chat.locked()
                         prop:value=move || chat.pending.with(|pending| pending.as_ref().map(|pending| pending.command.text.clone())).unwrap_or_else(|| chat.draft.get())
@@ -264,7 +276,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                                 element.set_value("");
                             }
                         } />
-                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" aria-label="Attach file"
+                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" aria-label="Attach conversation file"
                             disabled=move || chat.locked() || uploading.get() || attachments.with(|files| files.len() >= MAX_FILES)
                             on:click=move |_| { if let Some(element) = file_input.get_untracked() { element.click(); } }>"Attach"</button>
                         <select class="k-input" aria-label="Addressed member" hidden=move || !chat.config.with_value(|c| c.channel) || chat.active.with(Vec::is_empty)

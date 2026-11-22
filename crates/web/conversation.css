@@ -30,11 +30,12 @@ body[data-view="conversation"] { margin: 0; }
 .conversation-composer .composer { position: static; width: 100%; padding: 0; }
 .conversation-composer .composer__inner { width: 100%; margin: auto; }
 .conversation-composer .composer__input {
-  display: block; width: 100%; min-height: 64px; resize: vertical; padding: 10px 12px;
+  display: block; width: 100%; min-height: 58px; resize: none; padding: 10px 12px;
   border: 1px solid var(--color-border-secondary); border-radius: var(--radius-md);
   background: var(--color-bg-pane); color: var(--color-text-primary);
 }
 .conversation-composer .composer__bar { padding: 8px 0 0; }
+.conversation-composer .composer__bar button[type="submit"] { margin-inline-start: auto; }
 .conversation-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; }
 .conversation-tabs [aria-selected="true"] { background: var(--color-bg-active); }
 .conversation-layout .conversation-panel { flex: 0 1 360px; width: 360px; min-width: 0; }

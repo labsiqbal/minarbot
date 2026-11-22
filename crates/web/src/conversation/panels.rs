@@ -416,8 +416,31 @@ struct Control {
     revision: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ComputerCommand {
+    id: String,
+    revision: u64,
+    operation: String,
+    turn: Option<String>,
+}
+
+fn valid_computer_command(raw: &str) -> bool {
+    serde_json::from_str::<ComputerCommand>(raw).is_ok_and(|command| {
+        protocol::id(&command.id)
+            && command.revision <= 9_007_199_254_740_991
+            && match command.operation.as_str() {
+                "take" | "hand-back" => command.turn.is_none(),
+                "dismiss" => command.turn.as_deref().is_some_and(protocol::id),
+                _ => false,
+            }
+    })
+}
+
 fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
     let path = StoredValue::new(format!("/api/agents/{agent}/computer"));
+    let key = StoredValue::new(format!("minarbot-computer-control:{agent}"));
+    let pending = RwSignal::new(saved(&key.get_value()));
     let status = RwSignal::new(None::<ComputerStatus>);
     let clipboard = RwSignal::new(String::new());
     let error = RwSignal::new(String::new());
@@ -425,7 +448,12 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
     let busy = RwSignal::new(false);
     let screen = NodeRef::<leptos::html::Div>::new();
     let dialog = NodeRef::<leptos::html::Dialog>::new();
+    let stop_dialog = NodeRef::<leptos::html::Dialog>::new();
+    let recover_dialog = NodeRef::<leptos::html::Dialog>::new();
+    let hand_back = NodeRef::<leptos::html::Button>::new();
+    let reconnect = RwSignal::new(0_u32);
     let visible = RwSignal::new(!document().hidden());
+    let locked = move || busy.get() || pending.with(Option::is_some);
     let listener = window_event_listener(leptos::ev::visibilitychange, move |_| {
         visible.set(!document().hidden())
     });
@@ -434,6 +462,7 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
     fn refresh(
         path: StoredValue<String>,
         status: RwSignal<Option<ComputerStatus>>,
+        busy: RwSignal<bool>,
         error: RwSignal<String>,
     ) {
         if status.is_disposed() {
@@ -447,16 +476,26 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
             }
             match result {
                 Ok(next) => {
-                    if status.with_untracked(|current| current.as_ref() != Some(&next)) {
+                    if !busy.get_untracked()
+                        && status.with_untracked(|current| {
+                            current.as_ref().is_none_or(|current| {
+                                next.control.revision >= current.control.revision
+                                    && *current != next
+                            })
+                        })
+                    {
                         status.set(Some(next));
                     }
                 }
                 Err(reason) => error.set(reason.message),
             }
-            set_timeout(move || refresh(path, status, error), Duration::from_secs(1));
+            set_timeout(
+                move || refresh(path, status, busy, error),
+                Duration::from_secs(1),
+            );
         });
     }
-    refresh(path, status, error);
+    refresh(path, status, busy, error);
     let user =
         move || status.with(|status| status.as_ref().is_some_and(|s| s.control.mode == "user"));
     let running = move || {
@@ -467,7 +506,9 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
         })
     };
     dom_mount(screen, move |node| {
-        if !running() || !visible.get() || busy.get() {
+        reconnect.track();
+        clipboard.set(String::new());
+        if !running() || !visible.get() || locked() {
             return None;
         }
         let revision = status.with(|s| s.as_ref().map_or(0, |s| s.control.revision));
@@ -490,18 +531,53 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
         );
         Some((dispose, callback))
     });
-    let control = move |operation| {
-        if let Some(revision) = status.with_untracked(|s| s.as_ref().map(|s| s.control.revision)) {
-            controls::mutate(
-                format!("{}/control", path.get_value()),
-                json!({"revision": revision, "operation": operation}),
-                busy,
-                error,
-            );
+    let control = move |operation: Option<&str>| {
+        if busy.get_untracked() {
+            return;
         }
+        let key = key.get_value();
+        let raw = match (operation, pending.get_untracked()) {
+            (None, Some(raw)) if valid_computer_command(&raw) => raw,
+            (Some(operation), None) => {
+                let Some(revision) =
+                    status.with_untracked(|s| s.as_ref().map(|s| s.control.revision))
+                else {
+                    return;
+                };
+                let Some(id) = uuid() else { return };
+                json!({"id": id, "revision": revision, "operation": operation}).to_string()
+            }
+            _ => return,
+        };
+        if !save(&key, &raw) {
+            error.set("Computer request could not be saved.".into());
+            return;
+        }
+        pending.set(Some(raw.clone()));
+        busy.set(true);
+        error.set(String::new());
+        let endpoint = format!("{}/control", path.get_value());
+        leptos::task::spawn_local(async move {
+            match post::<ComputerStatus>(&endpoint, &raw).await {
+                Ok(value) => {
+                    status.try_set(Some(value));
+                    if remove(&key) {
+                        pending.try_set(None);
+                    } else {
+                        error.try_set(
+                            "Computer control changed. Recovery data could not be cleared.".into(),
+                        );
+                    }
+                }
+                Err(reason) => {
+                    error.try_set(reason.message);
+                }
+            }
+            busy.try_set(false);
+        });
     };
     let command = move |operation: &str| {
-        if busy.get_untracked() {
+        if locked() {
             return;
         }
         let path = format!("{}/{operation}", path.get_value());
@@ -519,12 +595,18 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
         });
     };
     let paste = move || {
-        if !user() || busy.get_untracked() {
+        if !running() || !user() || locked() {
             return;
         }
+        let revision = status.with_untracked(|s| s.as_ref().map(|s| s.control.revision));
         leptos::task::spawn_local(async move {
             let result = read_clipboard().await;
-            if busy.is_disposed() || !user() {
+            if busy.is_disposed()
+                || locked()
+                || !running()
+                || !user()
+                || status.with_untracked(|s| s.as_ref().map(|s| s.control.revision)) != revision
+            {
                 return;
             }
             let Some(text) = result.ok().and_then(|value| value.as_string()) else {
@@ -538,7 +620,6 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
             if text.is_empty() {
                 return;
             }
-            let revision = status.with_untracked(|s| s.as_ref().map(|s| s.control.revision));
             let body =
                 json!({"revision": revision, "name": "computer_type", "args": {"text": text}});
             if let Err(reason) =
@@ -554,34 +635,79 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
             <p role="status">{move || status.with(|status| status.as_ref().map(|s| {
                 if !s.available { "Unavailable".into() } else if !s.enabled { "No computer assigned.".into() } else { s.state.clone() }
             }).unwrap_or_else(|| "Loading computer status…".into()))}</p>
-            <div class="computer-viewer__screen" on:keydown:capture=move |event| {
+            <div class="computer-viewer__screen" role="application" aria-label="Agent computer. Shift+Escape returns to controls."
+                hidden=move || !running() on:keydown:capture=move |event| {
+                if user() && event.shift_key() && event.key() == "Escape" {
+                    event.prevent_default(); event.stop_propagation();
+                    if let Some(button) = hand_back.get_untracked() { let _ = button.focus(); }
+                }
                 if user() && (event.ctrl_key() || event.meta_key()) && event.key().eq_ignore_ascii_case("v") {
                     event.prevent_default(); event.stop_propagation(); paste();
                 }
-            }><div node_ref=screen aria-label="Agent computer screen"></div></div>
+            }><div class="computer-viewer__canvas" node_ref=screen aria-label="Agent computer screen"></div></div>
             <p role="status" hidden=move || !running()>{connection}</p>
             <div class="k-row-actions">
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=busy
+                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked
                     hidden=move || running() || status.with(|status| status.as_ref().is_none_or(|s| !s.enabled || !s.available || s.state == "starting"))
                     on:click=move |_| command("start")>"Start computer"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=busy hidden=move || !running() on:click=move |_| command("stop")>"Stop computer"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=busy hidden=move || !running() || user()
+                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked hidden=move || !running()
+                    on:click=move |_| { if let Some(dialog) = stop_dialog.get_untracked() { let _ = dialog.show_modal(); } }>"Stop computer"</button>
+                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked hidden=move || !running()
+                    on:click=move |_| reconnect.update(|count| *count = count.wrapping_add(1))>"Reconnect"</button>
+                <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=locked hidden=move || !running() || user()
                     on:click=move |_| { if let Some(dialog) = dialog.get_untracked() { let _ = dialog.show_modal(); } }>"Take control"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=busy hidden=move || !user()
-                    on:click=move |_| control("hand-back")>"Hand back to agent"</button>
-                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=busy hidden=move || !user() on:click=move |_| paste()>"Paste clipboard"</button>
+                <button type="button" class="k-btn k-btn--sm k-btn--primary" node_ref=hand_back disabled=locked hidden=move || !user()
+                    on:click=move |_| control(Some("hand-back"))>"Hand back to agent"</button>
+                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked hidden=move || !user() on:click=move |_| paste()>"Paste clipboard"</button>
                 <button type="button" class="k-btn k-btn--sm k-btn--secondary" hidden=move || !user() || clipboard.with(String::is_empty)
                     on:click=move |_| {
                         let text = clipboard.get_untracked();
                         leptos::task::spawn_local(async move { if write_clipboard(&text).await.is_err() { error.try_set("Clipboard could not be written.".into()); } });
                     }>"Copy clipboard"</button>
             </div>
+            <div class="k-row-actions" hidden=move || pending.with(Option::is_none)>
+                <p role="status">"Control change not confirmed"</p>
+                <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=busy
+                    hidden=move || !pending.with(|raw| raw.as_deref().is_some_and(valid_computer_command))
+                    on:click=move |_| control(None)>"Retry saved request"</button>
+                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=busy
+                    on:click=move |_| { if let Some(dialog) = recover_dialog.get_untracked() { let _ = dialog.show_modal(); } }>"Load current control"</button>
+            </div>
             <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
+            <dialog class="conversation-dialog" node_ref=recover_dialog aria-label="Load current control?">
+                <p>"Accepted changes still apply. Check current control before taking another action."</p>
+                <form method="dialog" class="k-row-actions">
+                    <button class="k-btn k-btn--sm k-btn--secondary">"Cancel"</button>
+                    <button class="k-btn k-btn--sm k-btn--primary" on:click=move |_| {
+                        if busy.get_untracked() { return }
+                        busy.set(true);
+                        let endpoint = path.get_value();
+                        let key = key.get_value();
+                        leptos::task::spawn_local(async move {
+                            match get::<ComputerStatus>(&endpoint).await {
+                                Ok(value) if remove(&key) => {
+                                    status.try_set(Some(value)); pending.try_set(None); error.try_set(String::new());
+                                }
+                                Ok(_) => { error.try_set("Computer recovery data could not be cleared.".into()); }
+                                Err(reason) => { error.try_set(reason.message); }
+                            }
+                            busy.try_set(false);
+                        });
+                    }>"Load current control"</button>
+                </form>
+            </dialog>
+            <dialog class="conversation-dialog" node_ref=stop_dialog aria-label="Stop computer?">
+                <p>"Unsaved work in the desktop may be lost."</p>
+                <form method="dialog" class="k-row-actions">
+                    <button class="k-btn k-btn--sm k-btn--secondary">"Cancel"</button>
+                    <button class="k-btn k-btn--sm k-btn--primary" on:click=move |_| command("stop")>"Stop computer"</button>
+                </form>
+            </dialog>
             <dialog class="conversation-dialog" node_ref=dialog aria-label="Take control?">
                 <p>"Computer tools pause until you hand control back."</p>
                 <form method="dialog" class="k-row-actions">
                     <button class="k-btn k-btn--sm k-btn--secondary">"Cancel"</button>
-                    <button class="k-btn k-btn--sm k-btn--primary" on:click=move |_| control("take")>"Take control"</button>
+                    <button class="k-btn k-btn--sm k-btn--primary" on:click=move |_| control(Some("take"))>"Take control"</button>
                 </form>
             </dialog>
         </section>

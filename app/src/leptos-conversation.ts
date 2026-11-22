@@ -13,6 +13,10 @@ import { uploadLimitError } from './attachments';
 const escape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
   .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 
+function markdownBlocks(text: string) {
+  return text.length > 64000 ? [text] : splitMarkdownBlocks(text) ?? [text];
+}
+
 function markdown(text: string, scope: string) {
   const lines = text.split(/\r\n|\r|\n/);
   const columns = lines.reduce((max, line) => Math.max(max, line.split('|').length), 1);
@@ -29,9 +33,7 @@ function markdown(text: string, scope: string) {
     },
   };
   try {
-    return (splitMarkdownBlocks(text) ?? [text]).map(block =>
-      marked.parse(block, { async: false, renderer: Object.assign(new marked.Renderer(), renderer) }),
-    ).join('');
+    return marked.parse(text, { async: false, renderer: Object.assign(new marked.Renderer(), renderer) });
   } catch { return escape(text); }
 }
 
@@ -65,6 +67,7 @@ function ask(title: string, text: string, label: string, signal: AbortSignal) {
   return new Promise<boolean>(resolve => {
     const dialog = document.createElement('dialog');
     dialog.className = 'conversation-dialog k-stack';
+    dialog.setAttribute('role', 'alertdialog');
     dialog.setAttribute('aria-label', title);
     const heading = document.createElement('h2');
     heading.textContent = title;
@@ -177,5 +180,5 @@ function mountVnc(target: HTMLElement, agent: string, revision: bigint, control:
   return dispose;
 }
 
-export const browserAdapter = { markdown, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
+export const browserAdapter = { markdown, markdownBlocks, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
   writeClipboard: copyText };

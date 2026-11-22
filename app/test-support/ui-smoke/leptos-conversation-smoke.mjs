@@ -34,9 +34,9 @@ const provider = createServer(async (req, res) => {
   calls.push(prompt);
   const frame = (content, finish_reason = null) => 'data: ' + JSON.stringify({ choices: [{ index: 0, delta: { content }, finish_reason }] }) + '\n\n';
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-  res.write(frame('First **café**.'));
+  res.write(frame('First **café**.\n\nFinal'));
   await Promise.race([finishAnswer, once(res, 'close')]);
-  res.end(frame(' Final answer.', 'stop') + 'data: [DONE]\n\n');
+  res.end(frame(' answer.', 'stop') + 'data: [DONE]\n\n');
 });
 const child = spawn(binary, ['--test-config'], { env: { ...process.env, MINARBOT_TEST_SERVER: 'rust' }, stdio: ['pipe', 'pipe', 'inherit'] });
 let browser;
@@ -76,10 +76,19 @@ try {
   await page.reload();
   assert.equal(await input.inputValue(), 'Replay fixture');
   let original, replay;
-  await page.route(origin + turns, async route => {
-    if (route.request().method() !== 'POST') return route.continue();
+  await page.route(url => url.origin === origin && url.pathname === turns, async route => {
+    if (route.request().method() !== 'POST') {
+      // Hold history recovery until the exact retry has reached the network.
+      if (original !== undefined && replay === undefined) return route.fulfill({ json: [] });
+      return route.continue();
+    }
     const raw = route.request().postData();
-    if (original === undefined) { original = raw; return route.abort('connectionreset'); }
+    if (original === undefined) {
+      original = raw;
+      const receipt = await route.fetch();
+      assert(receipt.ok(), await receipt.text());
+      return route.abort('connectionreset');
+    }
     replay = raw;
     return route.continue();
   });
@@ -93,12 +102,16 @@ try {
   assert.equal(calls.length, 1);
   await page.reload();
   await partial.getByText('café', { exact: true }).waitFor();
+  const firstBlock = await partial.locator('.markdown').first().elementHandle();
+  await firstBlock.evaluate(node => { node.dataset.retained = 'true'; });
   releaseAnswer();
   await page.getByText('Final answer.', { exact: false }).waitFor();
+  assert(await firstBlock.evaluate(node => node.isConnected && node.dataset.retained === 'true'));
+  await firstBlock.dispose();
   const rows = await page.request.get(origin + turns).then(response => response.json());
   assert.equal(rows.filter(row => row.id === JSON.parse(original).id).length, 1);
   assert.equal(calls.length, 1);
-  console.log('Replay + reload: exact original payload, 1 persisted turn, 1 provider call');
+  console.log('Accepted response loss + reload: exact replay, 1 persisted turn, 1 provider call, stable Markdown block');
 
   await page.getByRole('button', { name: 'Inspect run' }).click();
   await page.getByRole('region', { name: 'Run inspector' }).waitFor();
@@ -126,12 +139,19 @@ try {
 
   const computer = { available: true, enabled: true, state: 'running', control: { mode: 'agent', revision: 0 } };
   let clipboardInput;
+  const controlCommands = [];
   await page.route(new RegExp('/api/agents/' + agent + '/computer(?:/[^?]+)?$'), route => {
     const url = route.request().url();
     if (url.endsWith('/vnc-ticket')) return route.fulfill({ json: { ticket: 'fixture-viewer' } });
     if (url.endsWith('/control')) {
       const body = route.request().postDataJSON();
-      computer.control = { mode: body.operation === 'take' ? 'user' : 'agent', revision: computer.control.revision + 1 };
+      controlCommands.push(route.request().postData());
+      if (controlCommands.length === 1) {
+        assert.equal(body.revision, 0);
+        computer.control = { mode: 'user', revision: 1 };
+        return route.abort('connectionreset');
+      }
+      assert.equal(controlCommands[1], controlCommands[0]);
     }
     if (url.endsWith('/input')) {
       clipboardInput = route.request().postDataJSON();
@@ -145,6 +165,7 @@ try {
   await page.locator('.computer-viewer canvas').waitFor();
   await page.getByRole('button', { name: 'Take control', exact: true }).click();
   await page.getByRole('dialog', { name: 'Take control?' }).getByRole('button', { name: 'Take control' }).click();
+  await page.getByRole('button', { name: 'Retry saved request' }).click();
   await page.getByRole('button', { name: 'Paste clipboard', exact: true }).waitFor();
   await page.evaluate(() => navigator.clipboard.writeText('Fixture clipboard'));
   const sent = page.waitForResponse(response => response.url().endsWith('/computer/input'));
@@ -152,6 +173,8 @@ try {
   await sent;
   assert.deepEqual(clipboardInput, { revision: 1, name: 'computer_type', args: { text: 'Fixture clipboard' } });
   await page.waitForFunction(() => window.__vncFake.connections >= 2 && window.__vncFake.sockets[0]?._stage === 3);
+  await page.locator('.computer-viewer canvas').press('Shift+Escape');
+  assert(await page.getByRole('button', { name: 'Hand back to agent' }).evaluate(node => node === document.activeElement));
   await page.evaluate(() => {
     const text = new TextEncoder().encode('Copied from fixture');
     const packet = new Uint8Array(8 + text.length);
@@ -164,7 +187,7 @@ try {
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Copied from fixture');
   await page.getByRole('tab', { name: 'Chats', exact: true }).click();
   await page.waitForFunction(() => window.__vncFake.sockets.length === 0);
-  console.log('Computer: noVNC canvas, clipboard roundtrip and socket teardown passed');
+  console.log('Computer: noVNC canvas, exact control replay, clipboard roundtrip, focus return and socket teardown passed');
 
   const samples = Number(process.env.MINARBOT_CONVERSATION_BENCH ?? 0);
   const statistics = {};

@@ -691,6 +691,9 @@ fn subscribe(chat: Chat, snapshots: StoredValue<HashMap<String, Partial>>) {
 extern "C" {
     #[wasm_bindgen(js_namespace = MinarbotConversation)]
     fn markdown(text: &str, scope: &str) -> String;
+
+    #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = markdownBlocks)]
+    fn markdown_blocks(text: &str) -> js_sys::Array;
 }
 
 fn body(text: String, base: String) -> impl IntoView {
@@ -729,6 +732,15 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String) -> impl IntoView {
                 .unwrap_or_default()
         })
     });
+    let blocks = Memo::new(move |_| {
+        answer.with(|text| {
+            markdown_blocks(text)
+                .iter()
+                .enumerate()
+                .filter_map(|(index, block)| Some((index, block.as_string()?)))
+                .collect::<Vec<_>>()
+        })
+    });
     let activity = Memo::new(move |_| {
         row.with(|turn| {
             turn.activity
@@ -752,7 +764,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String) -> impl IntoView {
     view! {
         <article class="turn-block" id=format!("turn-{id}") tabindex="-1">
             <div class="human-message" hidden=move || prompt.get().is_none()>
-                <div class="human-message__bubble">{prompt}</div>
+                <div class="human-bubble message-plain">{prompt}</div>
                 {move || row.with(|turn| turn.files.iter().filter(|file| !file.deleted).cloned().map(|file| attachment(file, base.clone())).collect_view())}
             </div>
             <div class="agent-message">
@@ -764,13 +776,18 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String) -> impl IntoView {
                         })}</span>
                         <button type="button" class="k-btn k-btn--sm k-btn--ghost" aria-label="Inspect run" on:click=move |_| chat.inspect(inspect_id.clone())>"Inspect"</button>
                     </div>
-                    <p class="message-muted" hidden=move || !row.with(|turn| turn.goal_continuation)>"Goal continued"</p>
+                    <Show when=move || row.with(|turn| turn.goal_continuation)>
+                        <p class="message-muted">"Goal continued"</p>
+                    </Show>
                     <details class="steps" hidden=move || activity.with(Vec::is_empty)>
                         <summary class="steps__toggle">"Work log"</summary>
                         {move || activity.get().into_iter().map(|step| view! { <p>{step.text}</p> }).collect_view()}
                     </details>
                     <div class="message-body" aria-label=label hidden=move || answer.with(String::is_empty)>
-                        <div class="legacy" inner_html=move || answer.with(|text| markdown(text, &text_base))></div>
+                        <div class="legacy stream-markdown">
+                            <For each=move || blocks.get() key=|(index, block): &(usize, String)| (*index, block.clone())
+                                children=move |(_, block)| body(block, text_base.clone()) />
+                        </div>
                     </div>
                     <p class="message-muted">{move || row.with(|turn| turn.dispatch_label.clone())}</p>
                     <p class="message-error" hidden=move || row.with(|turn| turn.error.is_none())>{move || row.with(|turn| turn.error.clone())}</p>
