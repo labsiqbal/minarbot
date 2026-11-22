@@ -1,6 +1,88 @@
 use super::*;
 use conversations::{clause, owner};
 
+pub async fn search_sessions(
+    state: &AppState,
+    kind: &str,
+    id: &str,
+    params: &[(String, String)],
+) -> Result<Response> {
+    use minarbot_memory::{LocalModels, Query, Store};
+    use std::sync::{Mutex, TryLockError};
+
+    let text = param(params, "q").unwrap_or("").trim().to_owned();
+    let mode = param(params, "mode").unwrap_or("keyword");
+    if text.is_empty()
+        || text.encode_utf16().count() > 200
+        || !matches!(mode, "keyword" | "hybrid")
+        || params
+            .iter()
+            .any(|(k, _)| !matches!(k.as_str(), "q" | "mode"))
+        || params.len() > 2
+        || params.len() == 2 && params[0].0 == params[1].0
+    {
+        return Err(error(400, "Invalid history search."));
+    }
+    let hybrid = mode == "hybrid";
+    let path = state.config.database.clone();
+    let kind = kind.to_owned();
+    let id = id.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let flags = if hybrid {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+        } else {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+        };
+        let db = Connection::open_with_flags(&path, flags)?;
+        db.busy_timeout(std::time::Duration::from_secs(5))?;
+        owner(&db, &kind, &id)?;
+        let bank = format!("{kind}:{id}");
+        let query = Query {
+            bank: &bank,
+            text: &text,
+            budget: 10,
+            history_only: true,
+            ..Query::default()
+        };
+        let hits = if hybrid {
+            static MODELS: Mutex<Option<LocalModels>> = Mutex::new(None);
+            let mut cached = MODELS.try_lock().map_err(|e| match e {
+                TryLockError::WouldBlock => error(503, "Hybrid history search is busy."),
+                TryLockError::Poisoned(_) => Failure::storage(),
+            })?;
+            if cached.is_none() {
+                let directory = minarbot_launcher::files::sidecar(&path, ".memory-models");
+                *cached = Some(LocalModels::load(&directory).map_err(|_| {
+                    error(
+                        503,
+                        "Could not load local memory models. Keyword search is available.",
+                    )
+                })?);
+            }
+            let models = cached.as_ref().ok_or_else(Failure::storage)?;
+            while Store::new(&db)
+                .embed_pending(&bank, models)
+                .map_err(|_| Failure::storage())?
+                > 0
+            {}
+            let snapshot = db.unchecked_transaction()?;
+            owner(&snapshot, &kind, &id)?;
+            Store::new(&snapshot)
+                .recall(&query, models)
+                .map_err(|_| Failure::storage())?
+        } else {
+            let snapshot = db.unchecked_transaction()?;
+            owner(&snapshot, &kind, &id)?;
+            Store::new(&snapshot)
+                .keyword(&query)
+                .map_err(|_| Failure::storage())?
+        };
+        Ok(json_response(200, json!({"items":hits})))
+    })
+    .await
+    .map_err(|_| Failure::storage())?
+}
+
 fn silence(text: &str) -> Result<bool> {
     let value =
         text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c));
