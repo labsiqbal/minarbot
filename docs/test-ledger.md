@@ -1,4 +1,6 @@
-# Turn protocol test ledger
+# Test migration ledger
+
+## Issue #60 turn protocol
 
 Issue #60 runs production `minarbot-server` with stdin config, an OS-assigned IPv4 loopback port, and a private temporary SQLite and config root. Axum providers use their own loopback ports. The lifecycle test verifies startup rejection, child teardown, temporary root removal, and closure of both listeners.
 
@@ -31,14 +33,26 @@ The Cargo slot ran `cargo test -p minarbot-server --test turn_protocol --test br
 
 ## Issue #61 remaining HTTP migration
 
-The pre-change Node inventory ran from `df79baf` with the shared Node slot and the Rust server binary built from that commit. Run each listed file individually.
+The pre-change Node inventory ran from `df79baf` with the shared Node slot and Rust binaries built from that commit. From the baseline checkout, build the xtask fixture and set `fixture_executable` to the absolute executable path printed by the second command.
+
+```sh
+~/.cache/minarbot-cargo-slot.sh cargo build --workspace
+~/.cache/minarbot-cargo-slot.sh cargo test -p xtask --bin xtask --no-run
+```
+
+Run each listed file individually with its app-relative path in `file`.
 
 ```sh
 cd app
+npm ci
+npm run build
+```
+
+```sh
 MINARBOT_RUST_BINARY=$PWD/../target/debug/minarbot-server \
 MINARBOT_RUST_LAUNCHER_BINARY=$PWD/../target/debug/minarbot-launcher \
 MINARBOT_XTASK_BINARY=$PWD/../target/debug/xtask \
-MINARBOT_XTASK_FIXTURE_BINARY=$fixture_executable \
+MINARBOT_XTASK_FIXTURE_BINARY="$fixture_executable" \
 ~/.cache/minarbot-node-slot.sh node --experimental-strip-types --test --test-concurrency=1 "$file"
 ```
 
@@ -75,6 +89,19 @@ Both baseline launcher timeouts reproduced with `launcher.test.ts` alone on main
 Before Node removal, the Cargo slot ran `cargo test --workspace`. All 23 API contract cases, 11 turn protocol cases and 13 launcher cases passed. The turn protocol count includes nine cases from #60. Launcher fixtures reserve their loopback port until launch and allow five seconds for candidate startup. The first-probe disconnect and interrupted-trial fixtures allow 15 seconds.
 
 **38 ported and removed. 139 of the 177 baseline cases kept.** Seven Node files retired and six mixed files kept their remaining cases.
+
+The final Node run discovered 179 default test files. It reported 995 passes,
+7 failures and 1 existing loader-library skip across 1,003 cases. Isolated
+reruns on the pinned `df79baf` baseline used the same production source.
+
+| Retained file | Full Node failure | Isolated baseline result |
+| --- | --- | --- |
+| `agent-messages.test.ts` | Teammate delivery aborted. | 1 passed. |
+| `memory-selection.test.ts` | Legacy view refers to the dropped selection column. | Same failure. |
+| `routine-tools.test.ts` | Loopback provider could not be reached. | 1 passed. |
+| `rust-routes.test.ts` | History search route absent from frozen inventory. | Same failure. |
+| `schema.test.ts` | Canonical and local schema inventories differ from fixtures. | Same 2 failures, 1 passed. |
+| `updates.test.ts` | Native trial lost its launcher socket. | Earlier main run cancelled the same case at its deadline. |
 
 ### Batch A - server HTTP, auth, storage, automation, harness, connectors
 
