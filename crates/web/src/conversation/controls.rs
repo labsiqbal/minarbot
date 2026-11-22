@@ -180,6 +180,16 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
     let uploading = RwSignal::new(false);
     let recording = RwSignal::new("idle");
     let icons = use_context::<Icons>().unwrap_or_default();
+    let hidden_agent = chat.config.with_value(|config| {
+        config
+            .agent
+            .as_ref()
+            .filter(|agent| agent.hidden)
+            .map(|agent| agent.id.clone())
+    });
+    let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
+    let restoring = RwSignal::new(String::new());
+    let is_hidden = hidden_agent.is_some();
     let label = chat.config.with_value(|c| {
         if c.channel {
             format!("Message #{}", c.name)
@@ -347,7 +357,19 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                     <p role="alert">"Message recovery data could not be read. Check history before sending."</p>
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" on:click=move |_| dialog_open(discard)>"Discard message recovery"</button>
                 </div>
-                <p class="composer__note" hidden=move || !chat.config.with_value(|c| c.archived)>"Archived"</p>
+                {hidden_agent.map(|id| {
+                    let agent = StoredValue::new(id);
+                    view! { <div class="composer__note">"Hidden "
+                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || !restoring.with(String::is_empty) on:click=move |_| {
+                            if let Some(lifecycle) = lifecycle {
+                                if let Some(profile) = lifecycle.get(&agent.get_value()) {
+                                    crate::agent_profile::restore(lifecycle, agent, profile.visibility_revision, restoring);
+                                }
+                            }
+                        }>"Restore"</button>
+                    </div> }
+                })}
+                <p class="composer__note" hidden=move || is_hidden || !chat.config.with_value(|c| c.archived)>"Archived"</p>
                 <p class="composer__note" hidden=move || chat.config.with_value(|c| c.archived) || chat.can_send()><a class="k-link" href="/settings/providers">"Connect a provider"</a></p>
                 {goal_chip(chat)}
                 <details class="conversation-queue" hidden=move || rows.with(|rows| !rows.iter().any(|turn| turn.status == "queued"))>

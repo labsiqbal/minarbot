@@ -1,6 +1,10 @@
-use crate::{api, appearance, settings};
+use crate::{
+    agent_profile::{self, DialogTarget, Lifecycle},
+    api, appearance, settings,
+};
 use leptos::prelude::*;
 use serde::Deserialize;
+use wasm_bindgen::JsCast;
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct Directory {
@@ -10,6 +14,8 @@ pub(crate) struct Directory {
     pub configured: bool,
     #[serde(default, rename = "hubAvailable")]
     pub hub_available: bool,
+    #[serde(default, rename = "defaultModel")]
+    pub default_model: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -26,6 +32,12 @@ pub(crate) struct Agent {
     pub revision: u64,
     #[serde(default)]
     pub avatar_revision: u64,
+    #[serde(default)]
+    pub visibility_revision: u64,
+    #[serde(default)]
+    pub builtin: bool,
+    #[serde(flatten)]
+    pub profile: agent_profile::Profile,
 }
 
 #[derive(Clone, Deserialize)]
@@ -180,6 +192,11 @@ pub(crate) fn WorkspaceShell(
     appearance::initialize(colors);
     let directory = RwSignal::new(None::<Result<Directory, String>>);
     provide_context(directory.read_only());
+    let lifecycle = Lifecycle::new(directory);
+    provide_context(lifecycle);
+    let (confirm_agent, agent_confirmation) =
+        crate::system::kit::named_confirmation("agent-lifecycle-confirm");
+    provide_context(confirm_agent);
     let projects = RwSignal::new(None::<Result<Projects, String>>);
     let summaries = RwSignal::new(Vec::<Summary>::new());
     let machines = RwSignal::new(None::<Result<Machines, String>>);
@@ -426,17 +443,19 @@ pub(crate) fn WorkspaceShell(
         };
         let query = agent_search.get().trim().to_lowercase();
         let summaries = summaries.get();
+        let has_local_agents = !directory.agents.is_empty();
         let items = directory.agents.into_iter().chain(directory.guide).filter_map(|agent| {
             let path = format!("/agents/{}", agent.id);
             let current = base_path.with_value(|base| base == &path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/')));
             let summary = summaries.iter().find(|row| row.agent == agent.id);
-            let detail = summary.filter(|row| !row.preview.is_empty()).map(|row| plain_preview(&row.preview)).unwrap_or_else(|| agent.role.clone());
+            let mut detail = summary.filter(|row| !row.preview.is_empty()).map(|row| plain_preview(&row.preview)).unwrap_or_else(|| agent.role.clone());
             if agent.hidden && !current || !format!("{} {}", agent.name, detail).to_lowercase().contains(&query) {
                 return None;
             }
             if attention.get() && summary.is_none_or(|row| row.needs_you == 0) {
                 return None;
             }
+            if agent.hidden { detail = "Hidden".into(); }
             let active = summary.map_or(0, |row| row.needs_you);
             let working = summary.is_some_and(|row| row.status == "running");
             let status = if active > 0 { "Needs you" } else if working { "Working" } else { "Idle" };
@@ -444,7 +463,14 @@ pub(crate) fn WorkspaceShell(
             let time = summary.filter(|_| active == 0).and_then(|row| row.time.as_deref());
             let avatar = (agent.avatar_revision > 0).then(|| format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision));
             let initial = agent.name.chars().next().map(|initial| initial.to_uppercase().to_string());
+            let actions = agent_profile::row_actions(lifecycle, agent.clone());
             Some(view! {
+                <div class="sidebar-agent" on:contextmenu=move |event| { event.prevent_default(); open_agent_actions(event.current_target()); }
+                    on:keydown=move |event| {
+                        if event.key() == "ContextMenu" || event.shift_key() && event.key() == "F10" {
+                            event.prevent_default(); open_agent_actions(event.current_target());
+                        }
+                    }>
                 <a class="bot-row" class:is-selected=current href=if conversation_navigation { format!("{path}?ui=leptos") } else { path } aria-current=current.then_some("page")>
                     <span class="bot-row__avatar" aria-hidden="true"><span class="avatar bs-avatar">
                         {if let Some(src) = avatar { view! { <img src=src alt="" /> }.into_any() } else { initial.into_any() }}
@@ -453,15 +479,18 @@ pub(crate) fn WorkspaceShell(
                     <span class="bot-row__text"><span class="bot-row__name">{agent.name}</span><span class="bot-row__preview">{detail}</span></span>
                     {time.map(|time| view! { <time class="bot-row__time" datetime=time.to_owned()>{relative_time(time)}</time> })}
                     {(active > 0).then(|| view! { <span class="needs-you-badge"><span class="k-badge is-warn" aria-label=format!("{active} need you")>{active}</span></span> })}
-                </a>
+                </a>{actions}
+                </div>
             })
         }).collect_view();
-        if items.is_empty() {
+        if items.is_empty() && has_local_agents {
             view! { <p class="machine-group__note" role="status">{if attention.get() && query.is_empty() { "No agents need you." } else if query.is_empty() && !online.get() { "No agents yet." } else { "No matching agents." }}</p> }.into_any()
         } else {
             items.into_any()
         }
     };
+    let hidden_agents =
+        agent_profile::hidden_agents(lifecycle, directory.read_only(), agent_search);
     let remote_rows = move || {
         let query = agent_search.get().trim().to_lowercase();
         let online = online.get();
@@ -616,6 +645,17 @@ pub(crate) fn WorkspaceShell(
     };
     let monitor = icons.monitor.clone();
     let create_menu = NodeRef::<leptos::html::Details>::new();
+    let create_trigger = NodeRef::<leptos::html::Summary>::new();
+    let open_lifecycle = move |target| {
+        if let Some(menu) = create_menu.get_untracked() {
+            menu.set_open(false);
+        }
+        if let Some(trigger) = create_trigger.get_untracked() {
+            let _ = trigger.focus();
+        }
+        lifecycle.open(target);
+    };
+    let directory_ready = move || directory.with(|data| data.as_ref().is_some_and(Result::is_ok));
     let conversation_creation =
         conversation_navigation && base_path.with_value(|path| path.starts_with("/agents/"));
     let plus = icons.plus.clone();
@@ -651,7 +691,7 @@ pub(crate) fn WorkspaceShell(
                         {automation_link("/workflows", "Workflows", icons.workflows)}
                         {automation_link("/calendar", "Automation calendar", icons.calendar)}
                         <details class="sidebar-create" node_ref=create_menu>
-                            <summary class="k-icon-btn" aria-label="Create new" title="Create new"><span class="appearance-icon" inner_html=plus></span></summary>
+                            <summary class="k-icon-btn" node_ref=create_trigger aria-label="Create new" title="Create new"><span class="appearance-icon" inner_html=plus></span></summary>
                             <div class="k-pop k-menu">
                                 <button type="button" class="k-menu__item" hidden=!conversation_creation on:click=move |_| {
                                     if let Some(menu) = create_menu.get_untracked() { menu.set_open(false); }
@@ -659,6 +699,10 @@ pub(crate) fn WorkspaceShell(
                                         let _ = window().dispatch_event(&event);
                                     }
                                 }>"New conversation"</button>
+                                <button type="button" class="k-menu__item" disabled=move || !directory_ready()
+                                    on:click=move |_| open_lifecycle(DialogTarget::Create)><crate::connection_ui::Icon name="plus" />"New agent"</button>
+                                <button type="button" class="k-menu__item" disabled=move || !directory_ready()
+                                    on:click=move |_| open_lifecycle(DialogTarget::Import)><crate::connection_ui::Icon name="download" />"Import template"</button>
                                 <a class="k-menu__item" href=move || settings_link("/settings/machines")>"Add a machine"</a>
                             </div>
                         </details>
@@ -692,13 +736,22 @@ pub(crate) fn WorkspaceShell(
                                         <span class="appearance-icon" inner_html=monitor.clone()></span><span class="machine-group__name">"This device"</span>
                                         <span class="machine-group__count" aria-label=move || format!("{} agents", local_agent_count())>{local_agent_count}</span>
                                     </summary>
-                                    <div class="machine-group__content"><nav class="bot-list" aria-label="Choose agent">{agent_rows}</nav></div>
+                                    <div class="machine-group__content"><nav class="bot-list" aria-label="Choose agent">{agent_rows}
+                                        <Show when=move || agent_search.with(String::is_empty) && !attention.get() && directory.with(|data| matches!(data, Some(Ok(data)) if data.agents.is_empty()))>
+                                            <button type="button" class="bot-list__empty" on:click=move |_| lifecycle.open(DialogTarget::Create)>
+                                                <span class="bot-list__empty-plus"><crate::connection_ui::Icon name="plus" /></span>
+                                                <span><span class="bot-row__name">"New agent"</span></span>
+                                            </button>
+                                        </Show>
+                                    </nav></div>
                                 </details>
                                 {remote_rows}
+                                {crate::system::kit::error(lifecycle.error)}
                                 <a class="bot-list__empty" href=move || settings_link("/settings/machines") hidden=move || attention.get() || machines.with(|value|
                                     !matches!(value, Some(Ok(machines)) if machines.machines.is_empty()))>
                                     <span class="appearance-icon" inner_html=monitor.clone()></span><span><span class="bot-row__name">"Pair a machine"</span></span>
                                 </a>
+                                {hidden_agents}
                             </nav>
                         </div>
                         <div id="workspace-panel-projects" role="tabpanel" aria-labelledby="workspace-tab-projects" hidden=move || !projects_tab.get()>
@@ -759,10 +812,23 @@ pub(crate) fn WorkspaceShell(
                         }).collect_view()}
                 </div></div>
             </dialog>
+            {agent_profile::mount(lifecycle)}
+            {agent_confirmation}
             <div class="leptos-workspace__outlet" inert=move || viewport.get() && narrow_open.get()>
                 {header.map(|header| view! { <header class="leptos-workspace__header">{header()}</header> })}
                 {children()}
             </div>
         </div>
+    }
+}
+
+fn open_agent_actions(target: Option<web_sys::EventTarget>) {
+    if let Some(button) = target
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|row| row.query_selector(".agent-actions").ok().flatten())
+        .and_then(|button| button.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = button.focus();
+        button.click();
     }
 }

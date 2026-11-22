@@ -662,13 +662,47 @@ fn turn_query(chat: Chat) -> String {
     format!("{base}/turns?{query}")
 }
 
-fn polling(chat: Chat, snapshots: StoredValue<HashMap<String, Partial>>) {
+fn polling(
+    chat: Chat,
+    snapshots: StoredValue<HashMap<String, Partial>>,
+    abort: StoredValue<Option<web_sys::AbortController>, LocalStorage>,
+    dispatch_busy: RwSignal<bool>,
+) {
     if chat.turns.is_disposed() {
         return;
     }
     let path = turn_query(chat);
+    let signal =
+        abort.with_value(|controller| controller.as_ref().map(web_sys::AbortController::signal));
+    if !dispatch_busy.get_untracked() {
+        dispatch_busy.set(true);
+        let dispatch_signal = signal.clone();
+        let dispatch_path = format!("{}/dispatch", chat.base());
+        leptos::task::spawn_local(async move {
+            let response = Request::get(&dispatch_path)
+                .abort_signal(dispatch_signal.as_ref())
+                .send()
+                .await;
+            let result = read::<Vec<Dispatch>>(response).await;
+            if dispatch_busy.try_set(false).is_none() {
+                if let Ok(active) = result {
+                    chat.active.maybe_update(|previous| {
+                        if *previous == active {
+                            return false;
+                        }
+                        *previous = active;
+                        true
+                    });
+                }
+            }
+        });
+    }
     leptos::task::spawn_local(async move {
-        let result = get::<Vec<Turn>>(&path).await;
+        let response = Request::get(&path)
+            .abort_signal(signal.as_ref())
+            .send()
+            .await;
+        let result = read::<Vec<Turn>>(response).await;
         if chat.turns.is_disposed() {
             return;
         }
@@ -725,16 +759,10 @@ fn polling(chat: Chat, snapshots: StoredValue<HashMap<String, Partial>>) {
         } else {
             delay = Duration::ZERO;
         }
-        let result = get::<Vec<Dispatch>>(&format!("{}/dispatch", chat.base())).await;
-        if chat.turns.is_disposed() {
-            return;
-        }
-        if let Ok(active) = result {
-            if chat.active.with_untracked(|old| *old != active) {
-                chat.active.set(active);
-            }
-        }
-        set_timeout(move || polling(chat, snapshots), delay);
+        set_timeout(
+            move || polling(chat, snapshots, abort, dispatch_busy),
+            delay,
+        );
     });
 }
 
@@ -1193,6 +1221,13 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
         }
     });
     on_cleanup(move || keys.remove());
+    let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
+    let profile_agent = config
+        .agent
+        .as_ref()
+        .filter(|agent| !agent.builtin)
+        .map(|agent| agent.id.clone());
+    let main_chat = config.thread.is_none();
     view! {
         <header class="chat__header">
             <details class="chat__pill-anchor chat-pilot-menu" node_ref=menu on:keydown=move |event| {
@@ -1218,6 +1253,21 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
                         if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                     }><span class="appearance-icon" inner_html=icons.panel.clone()></span>
                       {move || if chat.details.get() { "Hide panel" } else { "Show panel" }}</button>
+                    {profile_agent.map(|id| {
+                        let target = StoredValue::new(id);
+                        view! {
+                            {main_chat.then(|| view! { <button type="button" class="k-menu__item" on:click=move |_| {
+                                if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                                if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
+                                if let Some(lifecycle) = lifecycle { lifecycle.open(crate::agent_profile::DialogTarget::Edit(target.get_value())); }
+                            }>"Edit profile"</button> })}
+                            <button type="button" class="k-menu__item" on:click=move |_| {
+                                if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                                if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
+                                if let Some(lifecycle) = lifecycle { lifecycle.open(crate::agent_profile::DialogTarget::Export(target.get_value())); }
+                            }>"Export template"</button>
+                        }
+                    })}
                 </nav>
             </details>
             <div class="chat__header-right">
@@ -1237,7 +1287,16 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
     let chat = Chat::new(config.clone());
     let snapshots = StoredValue::new(HashMap::new());
     subscribe(chat, snapshots);
-    polling(chat, snapshots);
+    let abort = StoredValue::new_local(web_sys::AbortController::new().ok());
+    // Abort in-flight reads as soon as the lifecycle removes the current chat.
+    on_cleanup(move || {
+        abort.try_with_value(|controller| {
+            if let Some(controller) = controller {
+                controller.abort();
+            }
+        });
+    });
+    polling(chat, snapshots, abort, RwSignal::new(false));
     let create = window_event_listener(
         leptos::ev::Custom::<web_sys::Event>::new("minarbot:new-conversation"),
         move |_| {

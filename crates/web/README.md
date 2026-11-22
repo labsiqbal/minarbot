@@ -45,7 +45,11 @@ project Calendar tab also use Leptos. The three automation routes share a mounte
 workspace shell and load the `workflows` bundle. The project Calendar link loads
 the same bundle. Setup and Settings use `appearance`, and the #63 agent, named
 conversation and room pilot uses `conversation` when its URL includes
-`?ui=leptos`. Settings return links and browser history retain the selected route.
+`?ui=leptos`. The workspace shell mounts agent creation, profile editing and template dialogs
+inside the selected route group. Agent creation and import open the conversation
+bundle through the existing pilot selector. Settings return links and browser
+history retain the selected route. The Advanced profile panel exposes
+`#agent-memory-mount` for the Memory port in #77.
 React remains the default for the staged rollout in #67.
 
 ## React inventory for #67
@@ -57,7 +61,6 @@ issue.
 | Issue group | React screens and dialogs | React sources |
 | --- | --- | --- |
 | Conversation routing and remaining chat controls | Post-setup `/`, agent Main chat, named and project conversations, and rooms use React on ordinary links. The explicit #63 pilot covers the core transcript, composer, rich replies, queue, approvals, Goals/Loops, chat list and Computer panel. Still on the React path are timeline minimap, historical paging and task-family navigation, speech playback, chat history search across conversations, fork history/origin, checkpoint restore, signed event connection, room management and the remaining dispatch controls. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `ui/AgentConversation.tsx`, `ui/ChatPrimitives.tsx`, `ui/MessageFind.tsx`, `ui/TimelineMinimap.tsx`, `ui/TurnActivity.tsx`, `ui/RunControls.tsx`, `SourceControl.tsx`, `SpeechPlayback.tsx`, `EventConnection.tsx` |
-| Agent lifecycle and profile | New agent, Draft with AI, full Profile, Model and Advanced tabs, avatar and look editor, availability/hidden agent restore and deletion, model/provider/runtime and access controls, working folder and Computer settings, Sites and template import/export. The #63 pilot has a basic profile form. | `App.tsx`, `AgentProfileDialog.tsx`, `AgentActions.tsx`, `AgentSidebar.tsx`, `AgentAvatar.tsx`, `AgentVisibility.tsx`, `AgentFolderSettings.tsx`, `AgentComputerSettings.tsx`, `SitesPanel.tsx`, `AgentTemplateImport.tsx` |
 | Memory and history summary | Agent and section Memory, including Notes, Learned and Standing questions, search, source links, edit, pin, forget and undo. History summary and compaction controls from chat and profile. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
 | Workspace search and Needs you | Quick switcher search over conversations, hidden agents and remote agents, plus restore and create actions. Needs you routes pending questions/approvals to exact conversations and focuses their input. Leptos has basic directory search, a quick switcher, keyboard help and sidebar badges. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useQuickSwitcher.ts`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx`, `QuestionCard.tsx`, `ApprovalCard.tsx`, `HarnessApprovalCard.tsx`, `HelpPage.tsx` |
 | Guide and update prompts | Guide chat on ordinary links, AI connection/preferences dialog and Guide change cards for routine/agent proposals, infrastructure setup, machine install/pairing status and approval. Sidebar update capsule, release notes and Update everything dialog. | `App.tsx`, `GuideActions.tsx`, `FirstRun.tsx`, `SidebarUpdateCapsule.tsx`, `SidebarUpdateReleaseNotes.tsx`, `UpdateEverythingDialog.tsx`, `hooks/useUpdateEverything.ts` |
@@ -132,3 +135,13 @@ NUC, Chromium 156.0.8078.4, optimized Axum build, loopback, no throttling. Twent
 The original warm-navigation p95 exceeded the 10% regression budget. General-to-Appearance navigation now stays within the Leptos document, preserving the settings rail and workspace queries.
 
 Packaged WASM plus startup glue measured 349,332 bytes raw and 129,079 bytes gzip. Release build wall time was 1,365.09 s for native Cargo, 38.83 s for the React build, 87.57 s for the incremental WASM build and 15.49 s for asset packaging. Build slot wait and network setup are outside those measurements.
+
+## Verify agent lifecycle
+
+Package Leptos, then run from `app/` with `MINARBOT_RUST_BINARY` pointing to
+the built server. Use `MINARBOT_AGENT_BENCH=20` for cold and warm profile
+timings, and pass a screenshot directory.
+
+```sh
+node --experimental-strip-types test-support/ui-smoke/agent-profile-parity-smoke.mjs /tmp/minarbot-agent-profile
+```

@@ -18,6 +18,7 @@
 @import "../../app/src/machines-data.css";
 @import "../../app/src/devices.css";
 @import "./system.css";
+@import "./agent-profile.css";
 @import "../../app/node_modules/@fontsource-variable/inter/index.css";
 @import "../../app/src/ui/quick-switcher.css";
 

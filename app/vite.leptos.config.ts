@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Plug, Plus, Receipt, RefreshCw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
-import { CircleDot, ListTodo, Siren } from 'lucide-react';
+import { CircleDot, Eye, EyeOff, Globe, Inbox, ListTodo, Pencil, Siren, Trash2 } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -42,8 +42,9 @@ const appearanceConfig: Plugin = {
     const connectionIcons = {
           'arrow-left': ArrowLeft, blocks: Blocks, book: BookOpen, bot: Bot,
           'chevron-down': ChevronDown, 'chevron-left': ChevronLeft, 'chevron-right': ChevronRight,
-          close: X, copy: Copy, ellipsis: Ellipsis, error: CircleAlert, 'external-link': ExternalLink,
+          close: X, copy: Copy, ellipsis: Ellipsis, error: CircleAlert, 'external-link': ExternalLink, globe: Globe, check: Check,
           file: FileText, info: Info, key: KeyRound, link: Link, message: MessageCircle, package: Package, plug: Plug, plus: Plus,
+          download: Download, edit: Pencil, inbox: Inbox, eye: Eye, 'eye-off': EyeOff, trash: Trash2,
           search: Search, server: Server, shield: ShieldCheck, warn: AlertTriangle,
     };
     const iconMap = (icons: Record<string, LucideIcon>) => Object.fromEntries(Object.entries(icons)
@@ -70,6 +71,8 @@ const appearanceConfig: Plugin = {
       },
       conversation: {
         ...shell,
+        systemIcons,
+        connectionIcons: iconMap(connectionIcons),
         conversationIcons: {
           attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
           chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),
