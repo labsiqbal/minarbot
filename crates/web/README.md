@@ -56,12 +56,12 @@ Set `MINARBOT_APPEARANCE_SCREENSHOTS` to a directory for dark and light desktop 
 
 ## Warm navigation in #62
 
-On the NUC, headless Chrome 155 measured 20 warmed General-to-Appearance switches per client against the same local server. Times are from click to heading focus.
+On the NUC, Playwright Chromium 156.0.8078.4 measured 20 warmed General-to-Appearance switches per client against the same local server. Times are from click to heading focus.
 
 | Client | Median | p95 |
 | --- | ---: | ---: |
-| React | 6.3 ms | 14.7 ms |
-| Leptos | 4.7 ms | 6.9 ms |
+| React | 13.0 ms | 18.0 ms |
+| Leptos | 12.4 ms | 14.1 ms |
 
 The settings rail stays mounted and navigation reuses the document. Each section gets its own scroll container. This removes the `scrollTop` reset that triggered 38 ms of synchronous layout in the pre-fix Chrome trace.
 
