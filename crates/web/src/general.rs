@@ -56,6 +56,9 @@ pub(crate) fn ErrorAlert(message: RwSignal<String>, icon: String) -> impl IntoVi
 }
 
 fn notifications(error_icon: String) -> impl IntoView {
+    let info_icon = use_context::<crate::shell::Icons>()
+        .map(|icons| icons.info)
+        .unwrap_or_default();
     let available = window().get("Notification").is_some();
     let permission = RwSignal::new(available.then(Notification::permission));
     let muted = RwSignal::new(
@@ -116,6 +119,7 @@ fn notifications(error_icon: String) -> impl IntoView {
             </Row></div>
             <ErrorAlert message=error icon=error_icon />
             <div class="k-alert is-info" role="status" hidden=move || permission.get() != Some(NotificationPermission::Denied)>
+                <span class="appearance-icon" aria-hidden="true" inner_html=info_icon></span>
                 <div class="k-alert__body"><div class="k-alert__text">"Notifications are blocked. Change site permissions in browser settings."</div></div>
             </div>
         </Section>
