@@ -602,123 +602,29 @@ fn member_reply(chat: Chat, item: DiscussionRow, rows: Memo<Vec<DiscussionRow>>)
     }
 }
 
-pub(super) fn addressed_member(chat: Chat, icon: String) -> impl IntoView {
-    let trigger = NodeRef::<leptos::html::Button>::new();
-    let list = NodeRef::<leptos::html::Div>::new();
-    let expanded = RwSignal::new(false);
-    let options = Memo::new(move |_| {
+pub(super) fn addressed_member(chat: Chat) -> impl IntoView {
+    let options = Signal::derive(move || {
         let mut options = vec![(String::new(), "Everyone".to_owned())];
-        options.extend(chat.active.with(|active| {
-            active
-                .iter()
-                .map(|run| {
-                    let name = chat.config.with_value(|config| {
-                        config
-                            .members
-                            .iter()
-                            .find(|member| member.id == run.agent)
-                            .map_or_else(|| run.agent.clone(), |member| member.name.clone())
-                    });
-                    (run.id.clone(), name)
-                })
-                .collect::<Vec<_>>()
-        }));
+        chat.active.with(|active| {
+            options.extend(active.iter().map(|run| {
+                let name = chat.config.with_value(|config| {
+                    config
+                        .members
+                        .iter()
+                        .find(|member| member.id == run.agent)
+                        .map_or_else(|| run.agent.clone(), |member| member.name.clone())
+                });
+                (run.id.clone(), name)
+            }));
+        });
         options
     });
-    let selected = Memo::new(move |_| chat.target().map(|run| run.id).unwrap_or_default());
-    let close = move || {
-        expanded.set(false);
-        if let Some(trigger) = trigger.get_untracked() {
-            let _ = trigger.focus();
-        }
-    };
-    let focus = move |index: u32| {
-        if let Some(list) = list.get_untracked() {
-            if let Ok(options) = list.query_selector_all("[role=option]") {
-                if let Some(option) = options
-                    .item(index)
-                    .and_then(|option| option.dyn_into::<web_sys::HtmlElement>().ok())
-                {
-                    let _ = option.focus();
-                }
-            }
-        }
-    };
-    let show = move || {
-        if chat.locked() {
-            return;
-        }
-        if expanded.get_untracked() {
-            close();
-            return;
-        }
-        expanded.set(true);
-        let index = options.with_untracked(|options| {
-            options
-                .iter()
-                .position(|(id, _)| *id == selected.get_untracked())
-                .unwrap_or_default()
-        });
-        request_animation_frame(move || {
-            if !expanded.is_disposed() {
-                focus(index as u32);
-            }
-        });
-    };
-    let outside = window_event_listener(leptos::ev::pointerdown, move |event| {
-        if !expanded.get_untracked() {
-            return;
-        }
-        if event
-            .target()
-            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-            .is_some_and(|target| {
-                target
-                    .closest(".room-addressed-member")
-                    .ok()
-                    .flatten()
-                    .is_none()
-            })
-        {
-            expanded.set(false);
-        }
-    });
-    on_cleanup(move || outside.remove());
     view! {
-        <div class="room-addressed-member" hidden=move || chat.active.with(Vec::is_empty)>
-            <button type="button" role="combobox" class="k-select k-select--sm" aria-label="Addressed member" aria-controls="addressed-members"
-                aria-haspopup="listbox" aria-expanded=move || expanded.get().to_string() node_ref=trigger disabled=move || chat.locked()
-                data-state=move || if expanded.get() { "open" } else { "closed" }
-                on:click=move |_| show()
-                on:keydown=move |event| { if matches!(event.key().as_str(), "ArrowDown" | "ArrowUp") { event.prevent_default(); show(); } }>
-                <span>{move || options.with(|options| options.iter().find(|(id, _)| *id == selected.get()).map(|(_, name)| name.clone()).unwrap_or_default())}</span>
-                <span class="appearance-icon k-select__chev" inner_html=icon></span>
-            </button>
-            <div id="addressed-members" class="k-pop room-addressed-member__options" role="listbox"
-                aria-label="Addressed member" hidden=move || !expanded.get() node_ref=list
-                on:keydown=move |event| {
-                    if event.key() == "Escape" { event.prevent_default(); event.stop_propagation(); close(); return; }
-                    if event.key() == "Tab" { expanded.set(false); return; }
-                    let count = options.with_untracked(Vec::len) as u32;
-                    let current = event.target().and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-                        .and_then(|target| target.get_attribute("data-option"))
-                        .and_then(|value| value.parse::<u32>().ok()).unwrap_or_default();
-                    let index = match event.key().as_str() {
-                        "ArrowDown" => (current + 1).min(count.saturating_sub(1)),
-                        "ArrowUp" => current.saturating_sub(1),
-                        "Home" => 0,
-                        "End" => count.saturating_sub(1),
-                        _ => return,
-                    };
-                    event.prevent_default(); focus(index);
-                }>
-                {move || options.get().into_iter().enumerate().map(|(index, (id, name))| {
-                    let choice = id.clone();
-                    view! { <button type="button" class="k-menu__item" role="option" data-option=index tabindex="-1"
-                        aria-selected=move || (id == selected.get()).to_string()
-                        on:click=move |_| { chat.addressed.set(choice.clone()); close(); }>{name}</button> }
-                }).collect_view()}
-            </div>
+        <div hidden=move || chat.active.with(Vec::is_empty)>
+            <crate::select::Select name="addressed-members" label="Addressed member" described_by=None small=true
+                value=Signal::derive(move || chat.target().map(|run| run.id).unwrap_or_default())
+                change=Callback::new(move |value| chat.addressed.set(value))
+                disabled=Signal::derive(move || chat.locked()) options=options />
         </div>
     }
 }

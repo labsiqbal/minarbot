@@ -21,7 +21,12 @@ const provider = createServer(async (request, response) => {
   }));
 });
 let browser, app;
-const evidence = [], faults = [], navigation = {};
+const evidence = [], faults = [], navigation = {}, cold = {};
+const stats = times => {
+  const n = times.length;
+  times.sort((a, b) => a - b);
+  return { median: (times[Math.floor((n - 1) / 2)] + times[Math.floor(n / 2)]) / 2, p95: times[Math.ceil(n * .95) - 1], samples: n };
+};
 try {
   await mkdir(output, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
@@ -321,46 +326,70 @@ try {
       }
     }
     const samples = Number(process.env.MINARBOT_CONVERSATION_NAV_BENCH ?? 20);
-    for (const client of samples ? ['react', 'leptos'] : []) {
-      const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
-      try {
+    const clients = ['react', 'leptos'];
+    if (samples) {
+      const options = { viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' };
+      const coldTimes = { react: [], leptos: [] };
+      for (let n = 0; n < samples; n++) {
+        for (const client of n % 2 === 0 ? clients : [...clients].reverse()) {
+          const page = await browser.newPage(options);
+          try {
+            const start = performance.now();
+            await page.goto(selectClient(main, client), { waitUntil: 'commit' });
+            await page.waitForFunction(id => document.querySelector('#message:enabled') && document.getElementById('turn-' + id), realTurn);
+            coldTimes[client].push(performance.now() - start);
+          } finally { await page.close(); }
+        }
+      }
+      const pages = {};
+      const warmTimes = { react: [], leptos: [] };
+      for (const client of clients) {
+        cold[client] = stats(coldTimes[client]);
+        const page = pages[client] = await browser.newPage(options);
         await page.addInitScript(() => localStorage.setItem('minarbot:details-open', '1'));
         await page.goto(selectClient(main, client));
         await page.getByRole('tab', { name: 'Chats', exact: true }).waitFor();
-        const times = [];
-        for (let n = 0; n < samples; n++) {
-          const label = n % 2 === 0 ? 'Named chat' : 'Main chat';
-          const target = page.getByRole('complementary', { name: 'Conversation details' }).locator('.panel-row').filter({ hasText: label });
-          const title = n % 2 === 0 ? 'Named chat' : agent.name;
-          await target.evaluate((link, title) => {
-            link.addEventListener('click', () => {
-              const start = performance.now();
-              window.fixtureRouteReady = null;
-              const ready = () => {
-                if (document.querySelector('.chat__pill-name')?.textContent !== title || !document.querySelector('#message')) return;
-                window.fixtureRouteReady = performance.now() - start;
-                observer.disconnect();
-              };
-              const observer = new MutationObserver(ready);
-              observer.observe(document, { subtree: true, childList: true, characterData: true });
-              queueMicrotask(ready);
-            }, { once: true });
-          }, title);
-          await target.click();
-          await page.waitForFunction(() => typeof window.fixtureRouteReady === 'number');
-          times.push(await page.evaluate(() => window.fixtureRouteReady));
+      }
+      try {
+        for (let n = -2; n < samples; n++) {
+          for (const client of n % 2 === 0 ? clients : [...clients].reverse()) {
+            const page = pages[client];
+            const label = n % 2 === 0 ? 'Named chat' : 'Main chat';
+            const target = page.getByRole('complementary', { name: 'Conversation details' }).locator('.panel-row').filter({ hasText: label });
+            const title = n % 2 === 0 ? 'Named chat' : agent.name;
+            await target.evaluate((link, title) => {
+              link.addEventListener('click', () => {
+                const start = performance.now();
+                window.fixtureRouteReady = null;
+                const ready = () => {
+                  if (document.querySelector('.chat__pill-name')?.textContent !== title || !document.querySelector('#message')) return;
+                  window.fixtureRouteReady = performance.now() - start;
+                  observer.disconnect();
+                };
+                const observer = new MutationObserver(ready);
+                observer.observe(document, { subtree: true, childList: true, characterData: true });
+                queueMicrotask(ready);
+              }, { once: true });
+            }, title);
+            await target.click();
+            await page.waitForFunction(() => typeof window.fixtureRouteReady === 'number');
+            if (n >= 0) warmTimes[client].push(await page.evaluate(() => window.fixtureRouteReady));
+          }
         }
-        times.sort((a, b) => a - b);
-        navigation[client] = { median: (times[Math.floor((samples - 1) / 2)] + times[Math.floor(samples / 2)]) / 2, p95: times[Math.ceil(samples * .95) - 1], samples };
-      } finally { await page.close(); }
+      } finally { await Promise.all(Object.values(pages).map(page => page.close())); }
+      for (const client of clients) navigation[client] = stats(warmTimes[client]);
     }
+    console.log('Cold conversation readiness (ms)', JSON.stringify(cold));
     console.log('Warm conversation navigation (ms)', JSON.stringify(navigation));
-    if (samples >= 20) assert(navigation.leptos.p95 <= navigation.react.p95 * 1.1, 'Warm navigation exceeds the 10% budget.');
+    if (samples >= 20) {
+      assert(cold.leptos.p95 <= cold.react.p95 * 1.2, 'Cold readiness exceeds the 20% budget.');
+      assert(navigation.leptos.p95 <= navigation.react.p95 * 1.1, 'Warm navigation exceeds the 10% budget.');
+    }
     assert.deepEqual(faults, []);
     console.log(`PASS route selection, controls, API payloads and CSP. ${evidence.length} screenshot pairs.`);
   }
 } finally {
-  if (browser) await writeFile(join(output, 'receipt.json'), JSON.stringify({ browser: browser.version(), evidence, faults, navigation }, null, 2));
+  if (browser) await writeFile(join(output, 'receipt.json'), JSON.stringify({ browser: browser.version(), evidence, faults, cold, navigation }, null, 2));
   await browser?.close();
   await app?.close();
   provider.closeAllConnections();

@@ -447,7 +447,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                                 <span class="appearance-icon" inner_html=icons.attach></span>
                             </button>
                         </span>
-                        {channel.then(|| rooms::addressed_member(chat, icons.chevron.clone()))}
+                        {channel.then(|| rooms::addressed_member(chat))}
                         <div class="composer__right">
                             <span class="composer__retry" hidden=move || chat.busy.get() || chat.pending.with(Option::is_none)>"Retry send"</span>
                             {recording_control(chat, recording, uploading)}
@@ -1025,12 +1025,12 @@ fn resume_dialog(
             on:close=move |_| { checked.set(false); recipient.set(String::new()); }
             on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
             <div class="k-dialog__head"><h2 class="k-dialog__title">"Resume or reassign"</h2>
-                <form method="dialog"><button type="submit" class="k-icon-btn" aria-label="Close" disabled=busy><span class="appearance-icon" inner_html=icons.close></span></button></form>
+                <form method="dialog"><button type="submit" class="k-icon-btn" aria-label="Close" disabled=busy autofocus><span class="appearance-icon" inner_html=icons.close></span></button></form>
             </div>
             <div class="k-dialog__body"><div class="k-stack">
                 <p class="k-field__hint">"Check previous results and effects in the provider. Resuming may resend steps that are not confirmed yet."</p>
                 <div class="k-check">
-                    <button id=acknowledge.clone() type="button" role="checkbox" class="k-check__box" autofocus disabled=busy
+                    <button id=acknowledge.clone() type="button" role="checkbox" class="k-check__box" disabled=busy
                         aria-checked=move || checked.get().to_string() data-state=move || if checked.get() { "checked" } else { "unchecked" }
                         on:click=move |_| checked.update(|value| *value = !*value)>
                         <span class="appearance-icon" hidden=move || !checked.get()><crate::connection_ui::Icon name="check" /></span>

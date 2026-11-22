@@ -1231,7 +1231,11 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
             steps.extend(turn.coordination.iter().map(|action| {
                 let owner = action["owner_name"].as_str().unwrap_or("Agent");
                 let target = action["target_name"].as_str().unwrap_or("Agent");
-                let verb = if action["kind"] == "delegate_task" { "delegated to" } else { "transferred to" };
+                let verb = if action["kind"] == "delegate_task" {
+                    "delegated to"
+                } else {
+                    "transferred to"
+                };
                 (false, format!("{owner} {verb} {target}"))
             }));
             for tool in turn.activity.tools.iter().chain(&turn.activity.harness) {
@@ -1477,11 +1481,6 @@ fn header(
         {
             return;
         }
-        if event.key() == "F6" {
-            event.prevent_default();
-            history::focus_element("#message");
-            return;
-        }
         if !(event.ctrl_key() || event.meta_key()) {
             return;
         }
@@ -1696,11 +1695,13 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                     let target = document()
                         .get_element_by_id(&format!("room-reply-{focus}"))
                         .or_else(|| document().get_element_by_id(&format!("turn-{focus}")));
-                    target.and_then(|target| {
-                        document().get_element_by_id(&card)
-                            .filter(|element| target.contains(Some(element)))
-                            .or(Some(target))
-                    })
+                    target
+                        .and_then(|target| {
+                            document()
+                                .get_element_by_id(&card)
+                                .filter(|element| target.contains(Some(element)))
+                                .or(Some(target))
+                        })
                         .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
                 } else if before.is_some() {
                     navigation

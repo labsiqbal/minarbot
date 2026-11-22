@@ -89,12 +89,8 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .chat-action-tooltip { position: relative; display: inline-flex; }
 .chat-action-tooltip > .k-tooltip { position: absolute; left: 50%; bottom: calc(100% + 6px); translate: -50% 0; display: none; white-space: nowrap; pointer-events: none; }
 .chat-action-tooltip:is(:hover, :focus-within) > .k-tooltip { display: block; }
-.room-addressed-member { position: relative; min-width: 0; }
-.room-addressed-member > .k-select { padding-inline: 11px; border-radius: var(--radius-full); box-shadow: var(--color-border-secondary) 0 0 0 0.5px inset; }
-.room-addressed-member__options { position: absolute; inset: auto auto calc(100% + 4px) 0; max-height: 240px; overflow-y: auto; }
-.room-addressed-member__options > button { width: 100%; }
-.room-addressed-member__options > button:is(:focus, :hover) { background: var(--color-bg-hover); }
 body[data-view="conversation"] .automation-select { position: fixed; inset: auto; margin: 0; overflow-y: auto; }
+body[data-view="conversation"] .k-select__chev svg { width: 14px; height: 14px; }
 body[data-view="conversation"] .automation-select .k-menu__item { width: 100%; }
 body[data-view="conversation"] .automation-select .k-menu__item:is(:hover, :focus-visible) { background: var(--color-bg-hover); }
 @media (hover: hover) {
@@ -105,7 +101,7 @@ body[data-view="conversation"] .automation-select .k-menu__item:is(:hover, :focu
 .chat-control-dialog .k-check__box svg { width: 12px; height: 12px; stroke-width: 3; }
 .queue-order-row-actions { margin-top: 6px; }
 .event-connection .k-field__hint { margin: 0; }
-
+.event-connection .k-alert__icon > svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
 
 .question-card-body { padding: 12px; }
 .question-card-body :is(h3, p, .k-check__label) { white-space: pre-wrap; overflow-wrap: anywhere; }

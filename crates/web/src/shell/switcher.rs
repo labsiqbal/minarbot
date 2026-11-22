@@ -133,10 +133,7 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
         }
     }
     let thread_link = |thread: Thread, detail: String| {
-        let path = format!(
-            "/agents/{}/conversations/{}",
-            thread.agent, thread.id
-        );
+        let path = format!("/agents/{}/conversations/{}", thread.agent, thread.id);
         Item::link(
             thread.name,
             "Conversations",

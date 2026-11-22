@@ -64,10 +64,7 @@ fn event_connection(id: String) -> impl IntoView {
                 <p class="k-field__hint">{format!("Event name: {}. Deadline: {}.", value.event, history::date(value.deadline))}</p>
                 <label class="k-field"><span class="k-field__label">"Event URL"</span><input class="k-input" readonly prop:value=value.url /></label>
                 <label class="k-field"><span class="k-field__label">"Signing secret"</span><input class="k-input" readonly autocomplete="off" spellcheck="false" prop:value=value.secret /></label>
-                <div class="k-alert is-warn" role="status">
-                    <crate::connection_ui::Icon name="warn" />
-                    <div class="k-alert__body"><div class="k-alert__text">"The secret grants permission to resume this step. Store it only in trusted integrations; do not enter it in conversations."</div></div>
-                </div>
+                <crate::system::kit::Alert tone="warn">"The secret grants permission to resume this step. Store it only in trusted integrations; do not enter it in conversations."</crate::system::kit::Alert>
                 <p class="k-field__hint">"Send JSON with event, optional eventTime, and payload. The X-Minarbot-Time header contains Unix time in seconds, X-Minarbot-Id contains a unique delivery ID, and X-Minarbot-Signature contains the hexadecimal HMAC-SHA256 of the time, newline, ID, newline, then the exact JSON bytes. Use the secret as UTF-8 text."</p>
             })}
         </section>
@@ -230,9 +227,9 @@ pub(super) fn checkpoint(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
                         }).collect_view()}</ul> }.into_any()
                     })}
                 </div>
-                <div class="k-dialog__foot k-row-actions">
+                <div class="k-dialog__foot">
                     <button type="button" class="k-btn k-btn--md k-btn--secondary" hidden=move || !invalid.get() && pending.with(Option::is_none) disabled=busy on:click=move |_| controls::dialog_open(clear)>"Clear request"</button>
-                    <form method="dialog"><button type="submit" class="k-btn k-btn--md k-btn--secondary" disabled=busy>"Cancel"</button></form>
+                    <form method="dialog"><button type="submit" class="k-btn k-btn--md k-btn--secondary" disabled=busy autofocus>"Cancel"</button></form>
                     <button type="button" class="k-btn k-btn--md k-btn--danger"
                         disabled=move || busy.get() || invalid.get() || pending.with(Option::is_none) && preview.with(|value| value.as_ref().is_none_or(|preview| preview.files.is_empty()))
                         on:click=move |_| restore()>{move || if pending.with(Option::is_some) { "Check restoration result" } else { "Restore files" }}</button>
