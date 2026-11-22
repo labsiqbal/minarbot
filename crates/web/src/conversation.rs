@@ -1145,7 +1145,12 @@ fn avatar(agent: Option<Agent>, name: &str, channel: bool, size: u8) -> impl Int
     let image = agent
         .as_ref()
         .filter(|agent| agent.avatar_revision > 0 && protocol::id(&agent.id))
-        .map(|agent| format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision));
+        .map(|agent| {
+            format!(
+                "/api/agents/{}/avatar/image?v={}",
+                agent.id, agent.avatar_revision
+            )
+        });
     let initial = if channel {
         "#".into()
     } else {
