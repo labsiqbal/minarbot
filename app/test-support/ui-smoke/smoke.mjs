@@ -77,6 +77,8 @@ async function listen(server) {
 }
 
 function fakeProvider(req, res) {
+  // Long waits between checks can overlap the fixture's idle socket close.
+  res.setHeader('Connection', 'close');
   void (async () => {
     const chunks = [];
     for await (const chunk of req) {
