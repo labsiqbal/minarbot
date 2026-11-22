@@ -31,6 +31,12 @@ jobs:
         run: npm ci
       - working-directory: app
         run: npm run lint && npm run build
+      - run: node --experimental-strip-types scripts/build-leptos-appearance.mjs
+      - working-directory: app/test-support/ui-smoke
+        run: |
+          npm ci
+          npx playwright-core install --with-deps chromium
+          node appearance-smoke.mjs
       - working-directory: app
         env:
           NODE_OPTIONS: --max-old-space-size=2048

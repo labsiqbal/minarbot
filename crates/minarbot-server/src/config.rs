@@ -20,6 +20,14 @@ pub struct AuthConfig {
     pub api_url: Option<String>,
 }
 
+#[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AppearanceClient {
+    #[default]
+    React,
+    Leptos,
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
@@ -30,6 +38,8 @@ pub struct Config {
     pub host: String,
     #[serde(default = "default_dist")]
     pub dist: PathBuf,
+    #[serde(default)]
+    pub appearance_client: AppearanceClient,
     #[serde(default)]
     pub allowed_origins: Vec<String>,
     pub auth: Option<AuthConfig>,
@@ -211,6 +221,11 @@ impl Config {
             port,
             host: default_host(),
             dist: default_dist(),
+            appearance_client: match env::var("MINARBOT_APPEARANCE_CLIENT").as_deref() {
+                Ok("leptos") => AppearanceClient::Leptos,
+                Ok("react") | Err(env::VarError::NotPresent) => AppearanceClient::React,
+                _ => return Err("MINARBOT_APPEARANCE_CLIENT must be react or leptos".into()),
+            },
             auth,
             allowed_origins: std::env::var("MINARBOT_ALLOWED_ORIGINS")
                 .unwrap_or_default()

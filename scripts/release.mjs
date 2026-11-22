@@ -257,6 +257,7 @@ function packCI(binaries, output, notes) {
   try {
     const source = join(root, 'app');
     if (!existsSync(join(source, 'dist/index.html'))) throw new Error('Build app before CI packaging.');
+    if (!existsSync(join(source, 'dist/_leptos/appearance.html'))) throw new Error('Build Leptos Appearance before CI packaging.');
     stageRuntime(source, stage);
     copyNativeRuntime(root, binaries, stage);
     mkdirSync(join(stage, 'machine'));
@@ -421,7 +422,13 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   const id = `${version}-${commit.slice(0, 8)}`;
   const target = join(releases, id);
   if (existsSync(target)) throw new Error(`Release already exists: ${id}`);
-  if (build) for (const script of ['lint', 'build', 'test']) execFileSync('npm', ['run', script], { cwd: source, stdio: 'inherit' });
+  if (build) {
+    for (const script of ['lint', 'build']) execFileSync('npm', ['run', script], { cwd: source, stdio: 'inherit' });
+    if (existsSync(join(repository, 'crates/web/Cargo.toml'))) {
+      execFileSync(process.execPath, ['--experimental-strip-types', join(repository, 'scripts/build-leptos-appearance.mjs'), join(source, 'dist')], { cwd: repository, stdio: 'inherit' });
+    }
+    execFileSync('npm', ['run', 'test'], { cwd: source, stdio: 'inherit' });
+  }
   const rust = existsSync(join(repository, 'Cargo.toml'));
   if (build && rust) {
     // Publication copies from this directory, so a caller's CARGO_TARGET_DIR must not redirect the build.

@@ -52,6 +52,7 @@ jobs:
         run: |
           npm --prefix app ci
           npm --prefix app run build
+          node --experimental-strip-types scripts/build-leptos-appearance.mjs
           cargo build --workspace --release --locked
           node scripts/release.mjs --pack-ci target/release --output artifacts --notes "$RELEASE_NOTES"
           test -n "$(find artifacts -name "*-${{ matrix.platform }}.tar.gz")"

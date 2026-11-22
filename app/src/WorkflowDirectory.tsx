@@ -1,4 +1,5 @@
 import { useCachedData, useQueryPolling } from './hooks/useCachedQuery';
+import { useAppearanceReturnFocus } from './hooks/useAppRoute';
 import { queryCache } from './hooks/queryCache';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { WorkflowPanel } from './WorkflowPanel';
@@ -27,6 +28,7 @@ export function WorkflowDirectory({ agents, request, renderConversation }: {
     catch (reason) { if (!signal.aborted) setError(reason instanceof Error ? reason.message : 'Workflows could not load.'); }
   }, { interval: 5000, enabled: !opened && !inbox }, [after, refresh, deleted, request]);
   useEffect(() => { if (!opened && !inbox) heading.current?.focus(); }, [opened, after, inbox]);
+  useAppearanceReturnFocus(!opened && !inbox);
   const selectedOwner = agents.find(agent => agent.id === (opened && opened !== 'new' ? opened.agent : owner));
   if (inbox) return <WorkflowInbox request={request} onBack={() => setInbox(false)} />;
   if (opened && selectedOwner) return <WorkflowPanel key={selectedOwner.id} owner={selectedOwner} agents={agents} initial={opened} request={request}
