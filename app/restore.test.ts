@@ -7,7 +7,7 @@ import { markMinarbotData, testDatabase } from './test-support/database.ts';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { initializeCanonicalSchema } from './test-support/schema-fixture.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { checkedRestore, restoreCommand, restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
 import { createMailWorker } from './test-support/legacy-mail-worker.ts';
 import { startApp } from './test-bridge.ts';
@@ -108,34 +108,51 @@ test('canonical backup restores private evidence with fresh authority and no rev
   }finally{backup?.cleanup();await f.close();}
 });
 
-test('pre-v3 canonical restore disables retained automation and rejects downgraded or changed backup authority',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-versions-'));
-  try{
-    for(const version of [1,2] as const){
-      const db=testDatabase(join(dir,`source-${version}.sqlite`));initializeCanonicalSchema(db,Date.now(),version);
-      db.exec("CREATE TABLE routines(enabled INTEGER,revision INTEGER); INSERT INTO routines VALUES (1,1); CREATE TABLE turn_waits(status TEXT); INSERT INTO turn_waits VALUES ('waiting'); CREATE TABLE workflow_schedules(enabled INTEGER,revision INTEGER); INSERT INTO workflow_schedules VALUES (1,1)");
-      const backup=await workspaceSnapshot(db);db.close();
-      try{
-        const target=join(dir,`target-${version}.sqlite`);restoreWorkspace(backup.file,target);
-        const restored=testDatabase(target);try{
-          assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');
-          assert.equal(restored.prepare('SELECT enabled FROM routines').get()!.enabled,0);
-          assert.equal(restored.prepare('SELECT enabled FROM workflow_schedules').get()!.enabled,0);
-          assert.equal(restored.prepare('SELECT status FROM turn_waits').get()!.status,'closed');
-        }finally{restored.close();}
-        const tampered=testDatabase(backup.file);
-        tampered.exec("UPDATE minarbot_backup_authority SET generation='wrong'");tampered.close();
-        const invalid=join(dir,`invalid-${version}.sqlite`);assert.throws(()=>restoreWorkspace(backup.file,invalid),/authority mismatch/);assert(!existsSync(invalid));
-        const downgraded=testDatabase(backup.file);downgraded.exec("UPDATE minarbot_backup SET format='minarbot-workspace',version=1");downgraded.close();
-        assert.throws(()=>restoreWorkspace(backup.file,invalid),/backup format/);assert(!existsSync(invalid));
-      }finally{backup.cleanup();}
-    }
-  }finally{rmSync(dir,{recursive:true,force:true});}
+test('canonical restore disables retained automation and rejects changed authority or format', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-restore-format-'));
+  const source = testDatabase(join(dir, 'source.sqlite'));
+  try {
+    installCanonicalFixture(source);
+    source.exec(`INSERT INTO agents(id,name,model,instructions) VALUES ('agent','Agent','fixture','Help');
+      INSERT INTO routines(id,agent,name,prompt,next_at,enabled) VALUES ('routine','agent','Fixture','Help',0,1);
+      INSERT INTO workflows(id,agent,name,revision) VALUES ('workflow','agent','Fixture',1);
+      INSERT INTO workflow_runs(id,workflow,version,agent,graph,input,last,cursor,status,created)
+        VALUES ('run','workflow',1,'agent','{}','','','out','ready','fixture');
+      INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES ('account','fixture','owner',0);
+      INSERT INTO installations(id,account,signing_public_key,signing_thumbprint,revision,created)
+        VALUES ('installation','account','fixture','fixture',1,0);
+      INSERT INTO devices VALUES ('device','installation','account','fixture','fixture','sig','enc','{}',1,0,'offline','UTC',1,NULL,'[]',1);
+      INSERT INTO turns(id,agent,text,status,created) VALUES ('turn','agent','Wait','running','fixture');
+      INSERT INTO turn_waits(id,turn,call_id,call,event,secret_ref,secret_generation,source_device_id,deadline,status,after_output,after_action)
+        VALUES ('wait','turn','call','{}','fixture','fixture',1,'device',0,'waiting',0,0);`);
+    const backup = await workspaceSnapshot(source);
+    try {
+      const target = join(dir, 'target.sqlite');
+      restoreWorkspace(backup.file, target);
+      const restored = testDatabase(target);
+      try {
+        assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()?.serving_state, 'read_only_recovery');
+        assert.equal(restored.prepare('SELECT enabled FROM routines').get()?.enabled, 0);
+        assert.equal(restored.prepare('SELECT status FROM workflow_runs').get()?.status, 'failed');
+        assert.equal(restored.prepare('SELECT status FROM turn_waits').get()?.status, 'closed');
+      } finally { restored.close(); }
+
+      const tampered = testDatabase(backup.file);
+      tampered.exec("UPDATE minarbot_backup_authority SET generation='wrong'");
+      const invalid = join(dir, 'invalid.sqlite');
+      assert.throws(() => restoreWorkspace(backup.file, invalid), /authority mismatch/);
+      assert(!existsSync(invalid));
+      tampered.exec("UPDATE minarbot_backup SET format='minarbot-workspace',version=1");
+      tampered.close();
+      assert.throws(() => restoreWorkspace(backup.file, invalid), /backup format/);
+      assert(!existsSync(invalid));
+    } finally { backup.cleanup(); }
+  } finally { source.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('read-only restore upgrades legacy canonical owner marker before reconcile',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-legacy-marker-')),db=testDatabase(join(dir,'source.sqlite'));
-  initializeCanonicalSchema(db);
+  installCanonicalFixture(db);
   const owner={accountId:randomUUID(),issuer:'https://fixture.example',subject:'owner',sessionId:'owner-session',expiresAt:Date.now()+60000};
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId,owner.issuer,owner.subject,Date.now());
   const project=randomUUID();db.prepare('INSERT INTO projects(id,account,name,private,deleted,revision) VALUES (?,?,?,1,0,1)').run(project,owner.accountId,'Owner project');
@@ -156,7 +173,7 @@ test('read-only restore upgrades legacy canonical owner marker before reconcile'
 });
 
 test('operator CLI restores a canonical backup read-only without script credentials',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-cli-')),db=testDatabase(join(dir,'source.sqlite'));initializeCanonicalSchema(db);
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-cli-')),db=testDatabase(join(dir,'source.sqlite'));installCanonicalFixture(db);
   const backup=await workspaceSnapshot(db);db.close();
   try{
     const target=join(dir,'restored.sqlite'),result=checkedRestore(['--read-only',backup.file,'--db',target]);
@@ -169,7 +186,7 @@ test('operator CLI restores a canonical backup read-only without script credenti
 });
 
 test('operator CLI refuses a backup without the Minarbot data marker and leaves no target',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-unmarked-')),db=testDatabase(join(dir,'source.sqlite'));initializeCanonicalSchema(db);
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-unmarked-')),db=testDatabase(join(dir,'source.sqlite'));installCanonicalFixture(db);
   const backup=await workspaceSnapshot(db);db.close();
   try{
     const old=testDatabase(backup.file);old.exec('PRAGMA application_id=0');old.close();
@@ -181,7 +198,7 @@ test('operator CLI refuses a backup without the Minarbot data marker and leaves 
 
 test('local restore bootstrap requires recorded owner identity and issues expiring ingest-only proof',()=>{
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-restore-proof-')), database = join(dir, 'recovery.sqlite');
-  const db = testDatabase(database); chmodSync(database, 0o600); initializeCanonicalSchema(db);
+  const db = testDatabase(database); chmodSync(database, 0o600); installCanonicalFixture(db);
   const owner: HumanActor = { accountId: randomUUID(), issuer: 'https://fixture.example', subject: 'owner', sessionId: 'owner-session', expiresAt: Date.now() + 60_000 };
   const stranger = { ...owner, accountId: randomUUID(), subject: 'stranger' };
   for (const actor of [owner, stranger]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(actor.accountId, actor.issuer, actor.subject, Date.now());

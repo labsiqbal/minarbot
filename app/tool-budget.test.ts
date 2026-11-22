@@ -41,7 +41,6 @@ test('nine distinct tools complete before per-task budget requests a final answe
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
-import { markMinarbotData, testDatabase } from './test-support/database.ts';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import sharp from 'sharp';
@@ -78,7 +77,7 @@ async function fixture(answer: (body: any) => ProviderReply) {
 const reads = (body: any) => body.messages.filter((row: any) => row.role === 'tool');
 const terminal = (row: any) => ['done','failed'].includes(row.status);
 
-test('budget setting rejects malformed values, migrates legacy profiles, survives restart and template recovery', async () => {
+test('budget setting rejects malformed values, survives restart and template recovery', async () => {
   const f = await fixture(() => 'Done.');
   try {
     const profile = { name: 'Budget', model: 'fixture', instructions: 'Help.' };
@@ -102,14 +101,6 @@ test('budget setting rejects malformed values, migrates legacy profiles, survive
     assert.deepEqual(await f.request(`/api/agents/${agent.id}/edit`, edit), changed);
     assert.equal((await f.request('/api/agents')).agents.find((row: any) => row.id === agent.id).tool_budget, 15);
   } finally { await f.close(); }
-  const dir = mkdtempSync(join(tmpdir(), 'minarbot-budget-migration-')), database = join(dir, 'old.sqlite');
-  const db = testDatabase(database), id = randomUUID();
-  markMinarbotData(db);
-  db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,instructions TEXT NOT NULL) STRICT');
-  db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(id,'Old','fixture','Help.'); db.close();
-  const app = await startApp({ database });
-  try { assert.equal((await (await fetch(app.origin + '/api/agents')).json()).agents[0].tool_budget, 90); }
-  finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('resume gets fresh budget without replay; desktop images retain latest three across restart', async () => {

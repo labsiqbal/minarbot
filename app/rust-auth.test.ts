@@ -8,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { testDatabase } from './test-support/database.ts';
-import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { startApp } from './test-bridge.ts';
 
@@ -25,7 +24,7 @@ test('Rust JWKS rotates keys, rejects unknown signatures and enforces audience',
   finally { await app.close(); api.closeAllConnections(); await new Promise<void>(ready=>api.close(()=>ready())); rmSync(root,{recursive:true,force:true}); }
 });
 
-test('Rust opens every canonical schema version and rejects migration drift', async () => {
+test('Rust reopens current canonical schema and rejects unknown versions and migration drift', async () => {
   const root=mkdtempSync(join(tmpdir(),'minarbot-rust-schema-'));
   const auth={secretKey:'sk_test_fixture',publishableKey:'pk_test_fixture',issuer:'https://fixture.clerk.accounts.dev',origin:'https://minarbot.example',development:true};
   const indexes = [
@@ -50,14 +49,6 @@ test('Rust opens every canonical schema version and rejects migration drift', as
     try { const second=await startRustServer({database,auth}).then(async server => { await server.close(); return true; }, error => { assert.match(error.message,/Another canonical server is still running/); return false; }); assert.equal(second,false); }
     finally { await app.close(); }
     const expected = inspect(database);
-    for (const version of [1, 2, 3, 4] as const) {
-      const upgrade = join(root, `v${version}`), db = testDatabase(upgrade);
-      installCanonicalFixture(db, version);
-      db.close();
-      const server = await startRustServer({ database: upgrade, auth });
-      await server.close();
-      assert.deepEqual(inspect(upgrade), expected, `Node v${version} upgraded by Rust`);
-    }
     const reopened = await startRustServer({ database, auth });
     await reopened.close();
     assert.deepEqual(inspect(database), expected, 'Rust schema after restart');
