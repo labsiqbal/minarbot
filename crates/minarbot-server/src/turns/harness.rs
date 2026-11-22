@@ -106,6 +106,7 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
         }
     }
     specs.extend(crate::mcp::execution::specs()?);
+    specs.extend(crate::computer::craft::specs(state, db, turn)?);
     if crate::connectors::mailbox::available(state, db, turn)? {
         specs.extend(crate::connectors::mailbox::specs()?);
     }

@@ -8,6 +8,7 @@ export function HarnessApprovalCard({ approval, path, status, archived, request 
   const pending = useRef<{ id: string; revision: number; decision: string } | null>(null);
   const open = approval.state === 'approval', disabled = busy || archived || status !== 'running';
   const email = approval.kind === 'email';
+  const craft = approval.kind === 'craft';
   const draft = email ? approval.input as { from: string; to: string; subject: string; text: string } | null : null;
   async function decide(decision: string) {
     if (disabled || !open) return;
@@ -23,8 +24,8 @@ export function HarnessApprovalCard({ approval, path, status, archived, request 
     finally { setBusy(false); }
   }
   const outcome = approval.state === 'expired' ? 'Expired; ask again' : approval.decision === 'deny' ? 'Not allowed' : email ? 'Draft saved' : approval.decision === 'always' ? 'Always allowed for this command prefix' : 'Allowed once';
-  return <section className="bs-root k-stack" aria-label={email ? 'Email draft approval' : 'Coding harness approval'}><Card><div className="k-stack" style={{ padding: 14 }}>
-    <Row leading={<ShieldCheck size={18} aria-hidden />} title={<h3 className="k-section__title">{email ? 'Email draft' : 'Coding harness permission'}</h3>} trailing={<Badge tone={open ? 'warn' : 'neutral'}>{open ? 'Approval needed' : outcome}</Badge>} />
+  return <section className="bs-root k-stack" aria-label={email ? 'Email draft approval' : craft ? 'Craft Anything approval' : 'Coding harness approval'}><Card><div className="k-stack" style={{ padding: 14 }}>
+    <Row leading={<ShieldCheck size={18} aria-hidden />} title={<h3 className="k-section__title">{email ? 'Email draft' : craft ? 'Craft Anything permission' : 'Coding harness permission'}</h3>} trailing={<Badge tone={open ? 'warn' : 'neutral'}>{open ? 'Approval needed' : outcome}</Badge>} />
     <p className="message-plain" style={{ margin: 0, overflowWrap: 'anywhere' }}>{approval.description}</p>
     {approval.command && <CodeBlock label="Shell command">{approval.command}</CodeBlock>}
     {email ? draft && <CodeBlock label="Email preview">{`From: ${draft.from}\nTo: ${draft.to}\nSubject: ${draft.subject}\n\n${draft.text}`}</CodeBlock> : <Collapsible title="Request details"><CodeBlock label="Harness request arguments">{JSON.stringify(approval.input, null, 2)}</CodeBlock></Collapsible>}

@@ -531,7 +531,7 @@ struct Request {
     args: Vec<String>,
 }
 
-async fn forward(listener: TcpListener, path: &'static str) {
+pub(super) async fn forward(listener: TcpListener, path: &'static str) {
     while let Ok((mut client, _)) = listener.accept().await {
         tokio::spawn(async move {
             if let Ok(mut upstream) = UnixStream::connect(path).await {

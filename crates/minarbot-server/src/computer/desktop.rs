@@ -169,6 +169,7 @@ pub struct Desktop {
     pub disconnected: watch::Sender<u64>,
 }
 pub struct Manager {
+    pub(crate) craft: super::craft::Sessions,
     pub viewers: super::vnc::Viewers,
     pub hub: super::hub::Hub,
     pub metrics: Mutex<super::host_metrics::Metrics>,
@@ -215,6 +216,7 @@ impl Manager {
         let uid = rustix::process::geteuid().as_raw();
         let (stop, _) = watch::channel(false);
         Ok(Self {
+            craft: Default::default(),
             viewers: super::vnc::Viewers::default(),
             hub: super::hub::Hub::default(),
             metrics: Mutex::new(super::host_metrics::Metrics::default()),
@@ -251,6 +253,19 @@ impl Manager {
     }
     pub fn enabled(&self) -> bool {
         self.setup.backend().is_some()
+    }
+    pub(super) fn craft_proxy(&self) -> Result<&Path> {
+        if !self.enabled() || self.closing.load(Ordering::SeqCst) {
+            return Err(error(503, "Set up Computer to use Craft Anything."));
+        }
+        let mut leases = self.leases.lock().map_err(|_| Failure::storage())?;
+        if leases.is_none() {
+            *leases = Some(self.open_storage()?);
+        }
+        self.proxy_path
+            .get()
+            .map(PathBuf::as_path)
+            .ok_or_else(Failure::storage)
     }
     fn open_storage(&self) -> Result<Connection> {
         if self.closing.load(Ordering::SeqCst) {
@@ -1223,6 +1238,7 @@ impl Manager {
     }
     pub async fn close(&self) {
         self.closing.store(true, Ordering::SeqCst);
+        let _ = self.craft.clear();
         let agents = self
             .desktops
             .lock()

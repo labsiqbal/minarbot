@@ -621,6 +621,9 @@ async fn main() -> db::Result<()> {
         }
         return computer::desktop_supervisor::run().await;
     }
+    if std::env::args().nth(1).as_deref() == Some("--craft-mcp") {
+        return computer::craft::supervise().await;
+    }
     if std::env::args().nth(1).as_deref() == Some("--device-host") {
         if !platform::LINUX_SANDBOX {
             return Err(platform::COMPUTER_UNAVAILABLE.into());

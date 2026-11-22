@@ -168,6 +168,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         );
     }
     specs.extend(crate::mcp::execution::specs()?);
+    specs.extend(crate::computer::craft::specs(state, db, turn)?);
     if turn["profile_setup"] == 1 {
         specs.retain(|t| ["edit_profile", "ask_user"].contains(&string(&t["function"], "name")));
         for tool in &mut specs {
@@ -318,6 +319,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     if ["list_mcp_tools", "call_mcp_tool"].contains(&name) {
         return crate::mcp::execution::run(state, turn, call, &args).await;
+    }
+    if crate::computer::craft::is_tool(name) {
+        return crate::computer::craft::run(state, turn, call, &args).await;
     }
     if name == "run_shell" {
         return super::shell::run(state, turn, call, args).await;

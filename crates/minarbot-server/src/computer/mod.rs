@@ -4,6 +4,7 @@ mod browser_actions;
 mod browser_pipe;
 #[allow(dead_code)]
 pub mod control;
+pub(crate) mod craft;
 mod desktop;
 mod desktop_secret;
 pub(crate) mod desktop_supervisor;
@@ -40,6 +41,7 @@ pub type Result<T> = std::result::Result<T, Failure>;
 pub fn initialize(db: &rusqlite::Connection) -> crate::db::Result<()> {
     db.execute_batch(include_str!("local.sql"))?;
     initialize_canonical(db)?;
+    craft::initialize(db)?;
     vault::recover_requests(db)
 }
 pub fn initialize_canonical(db: &rusqlite::Connection) -> crate::db::Result<()> {
@@ -77,6 +79,8 @@ pub fn routes() -> Router<AppState> {
         .merge(devices::routes())
         .merge(hub::routes())
         .route("/api/settings/computer", any(entry))
+        .route("/api/settings/craft-anything", any(entry))
+        .route("/api/settings/craft-anything/{action}", any(entry))
         .route("/api/agents/{id}/computer", any(entry))
         .route("/api/agents/{id}/computer/start", any(entry))
         .route("/api/agents/{id}/computer/stop", any(entry))
@@ -154,6 +158,9 @@ async fn entry(State(state): State<AppState>, request: Request) -> Response {
         }
         if path == "/api/settings/computer" {
             return device_setup(&state, request).await;
+        }
+        if craft::handles(&path) {
+            return craft::settings(&state, request).await;
         }
         if path.starts_with("/api/agents/") {
             return handle_computer(&state, request).await;
