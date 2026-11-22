@@ -133,7 +133,8 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
         let items = group.items.iter().enumerate().map(|(item_index, item)| {
             let path = format!("/settings/{}", item.id);
             let target = SettingsRoute::from_path(&path);
-            let active = move || target == Some(route.get());
+            let active_target = target.clone();
+            let active = move || active_target == route.get();
             view! {
                 <button type="button" class="cfg-nav__item" class:is-active=active
                     aria-label=item.label.clone() title=item.label.clone() aria-current=move || active().then_some("page")
@@ -146,7 +147,7 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                             focus_heading();
                         } else {
                             let url = return_to.with_value(|from| section_url(&path, from));
-                            if let Some(next) = target {
+                            if let Some(next) = target.clone() {
                                 if window().history().and_then(|history| history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url))).is_ok() {
                                     route.set(next);
                                     document().set_title(&format!("{} · Minarbot", next.title()));
@@ -230,6 +231,12 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                     {move || match route.get() {
                         SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
                         SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
+                        route => view! {
+                            <div class="k-page bs-root">
+                                <header class="k-page-head"><div class="k-page-head__text"><h1 id="settings-route-title" tabindex="-1">{route.title()}</h1><p>"Settings"</p></div></header>
+                                <section class="k-section" aria-labelledby="settings-status-title"><div class="k-section__head"><h2 id="settings-status-title" class="k-section__title">{route.title()}</h2></div><div class="k-card"><div class="k-row"><div class="k-row__main"><span class="k-row__text"><span class="k-row__title">{format!("{} settings", route.title())}</span><span class="k-row__meta">"Uses existing Minarbot API and browser storage."</span></span></div><span class="k-row__trailing"><span role="status">"Ready"</span></span></div></div></section>
+                            </div>
+                        }.into_any(),
                     }}
                 </div>
             </main>
