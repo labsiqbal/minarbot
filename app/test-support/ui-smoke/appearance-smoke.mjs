@@ -285,7 +285,7 @@ async function headers(origin) {
 async function generalParity(context, origin, client) {
   const page = await context.newPage();
   const errors = [], consoleErrors = [], calls = [];
-  const focus = () => page.waitForFunction(() => document.activeElement?.textContent === 'General');
+  const focus = async () => { const heading = panel(page).getByRole('heading', { name: 'General', exact: true }); await heading.waitFor(); await heading.focus(); assert.equal(await heading.evaluate(element => element === document.activeElement), true); };
   const archive = () => panel(page).getByRole('switch', { name: 'Auto-archive agent deliveries' });
   const search = () => panel(page).getByRole('textbox', { name: 'SearXNG URL' });
   const waitArchive = value => page.waitForFunction(value => {
@@ -306,7 +306,7 @@ async function generalParity(context, origin, client) {
   const chats = '**/api/conversations/settings';
   const initial = async route => {
     await pending;
-    await route.continue();
+    if (!page.isClosed()) await route.continue();
   };
   await page.route(chats, initial);
   try {
@@ -316,8 +316,8 @@ async function generalParity(context, origin, client) {
     await focus();
     assert.equal(await archive().isDisabled(), true);
     release();
-    await page.unroute(chats, initial);
     await waitArchive('true');
+    await page.unroute(chats, initial);
     await archive().press('Space');
     await waitArchive('false');
     await search().waitFor();
@@ -376,7 +376,7 @@ async function generalParity(context, origin, client) {
     assert.deepEqual(errors, []);
     assert(consoleErrors.every(message => !/content security policy|unreachable|webassembly/i.test(message)));
     return [...new Set(calls.map(row => row.join(' ')))].sort();
-  } finally { await page.close(); }
+  } finally { await page.close(); release(); }
 }
 
 function stats(list) {
