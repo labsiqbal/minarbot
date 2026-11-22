@@ -26,6 +26,23 @@ function fixture(name: string) {
   return readFileSync(new URL(`./test-support/fixtures/${name}-pre-collapse.sql`, import.meta.url), 'utf8');
 }
 
+function addMemorySchema(db: ReturnType<typeof testDatabase>, mode: 'canonical' | 'local') {
+  for (const path of ['minarbot-memory/src/schema.sql', 'minarbot-memory/src/retain.sql']) {
+    db.exec(readFileSync(new URL(`../crates/${path}`, import.meta.url), 'utf8'));
+  }
+  if (mode === 'canonical') {
+    db.exec(readFileSync(new URL('../crates/minarbot-server/src/data/memory-history-canonical.sql', import.meta.url), 'utf8'));
+  } else {
+    db.exec(`CREATE VIEW memory_history_scope AS
+      SELECT t.id, CASE WHEN t.channel IS NOT NULL THEN 'channels:'||t.channel
+                        ELSE 'agents:'||coalesce(th.agent,t.agent) END AS bank
+      FROM turns t LEFT JOIN threads th ON th.id=t.thread
+      WHERE t.channel IS NOT NULL OR coalesce(th.agent,t.agent) IS NOT NULL`);
+  }
+  db.exec(readFileSync(new URL('../crates/minarbot-server/src/data/memory-import.sql', import.meta.url), 'utf8'));
+  db.exec('CREATE TABLE memory_imports(version INTEGER PRIMARY KEY) STRICT');
+}
+
 async function startAndClose(database: string, mode: 'canonical' | 'local') {
   const app = await startRustServer({ database, auth: mode === 'canonical' ? auth : undefined });
   await app.close();
@@ -47,7 +64,7 @@ const retainedData = `SELECT a.*, c.request, t.reply, t.status, p.enabled, o.age
   WHERE a.id='fixture-agent'`;
 
 for (const mode of ['canonical', 'local'] as const) {
-  test(`fresh ${mode} startup matches 85373b3 and reopens its data unchanged`, async () => {
+  test(`fresh ${mode} startup adds memory schema to 85373b3 and reopens its data unchanged`, async () => {
     const directory = mkdtempSync(join(tmpdir(), 'minarbot-schema-'));
     const old = join(directory, 'pre-collapse.sqlite');
     const fresh = join(directory, 'fresh.sqlite');
@@ -56,10 +73,12 @@ for (const mode of ['canonical', 'local'] as const) {
       expected.exec(fixture(mode));
       const frozen = snapshot(expected);
       const frozenLedger = mode === 'canonical' ? expected.prepare(ledger).all() : [];
+      addMemorySchema(expected, mode);
+      const current = snapshot(expected);
       await startAndClose(fresh, mode);
       const actual = testDatabase(fresh, { readOnly: true });
       try {
-        assert.deepEqual(snapshot(actual), frozen);
+        assert.deepEqual(snapshot(actual), current);
         if (mode === 'canonical') {
           assert.deepEqual(actual.prepare(ledger).all(), frozenLedger);
           assert.equal(actual.prepare('SELECT serving_state FROM authority_state').get()?.serving_state, 'active');
@@ -86,8 +105,12 @@ for (const mode of ['canonical', 'local'] as const) {
         const beforeVersion = existing.prepare('PRAGMA schema_version').get();
         const beforeLedger = mode === 'canonical' ? existing.prepare('SELECT * FROM schema_migrations ORDER BY version').all() : [];
         await startAndClose(old, mode);
-        assert.deepEqual(snapshot(existing), frozen);
-        assert.deepEqual(existing.prepare('PRAGMA schema_version').get(), beforeVersion);
+        assert.deepEqual(snapshot(existing), current);
+        const upgradedVersion = existing.prepare('PRAGMA schema_version').get();
+        assert.notDeepEqual(upgradedVersion, beforeVersion);
+        await startAndClose(old, mode);
+        assert.deepEqual(snapshot(existing), current);
+        assert.deepEqual(existing.prepare('PRAGMA schema_version').get(), upgradedVersion);
         assert.deepEqual(existing.prepare(retainedData).get(), saved);
         if (mode === 'canonical') assert.deepEqual(existing.prepare('SELECT * FROM schema_migrations ORDER BY version').all(), beforeLedger);
       } finally { existing.close(); }
