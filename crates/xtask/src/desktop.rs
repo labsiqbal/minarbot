@@ -311,8 +311,12 @@ pub fn release(
     output: &Path,
     version: &str,
     dry: bool,
-) -> Result<[String; 3]> {
+    pilot: bool,
+) -> Result<Vec<String>> {
     electron(root, runtime, output, version, dry)?;
+    if !dry && !pilot {
+        return Ok(Vec::new());
+    }
     let temp = tempfile::tempdir()?;
     let fixture = if dry {
         let key = temp.path().join("fixture.key");
@@ -328,7 +332,7 @@ pub fn release(
         None
     };
     build_tauri(root, runtime, output, version, fixture.as_ref())?;
-    Ok(tauri_names(version, platform()?))
+    Ok(tauri_names(version, platform()?).into())
 }
 
 pub fn command(args: &[String]) -> Result<()> {

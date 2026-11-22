@@ -356,12 +356,20 @@ fn build_desktop(
     directory: &Path,
     version: &str,
     dry_run: bool,
+    tauri_pilot: bool,
 ) -> Result<([String; 2], BTreeMap<String, String>)> {
     files::mkdir(directory)?;
     let stage = private_stage(".desktop-", directory)?;
     let archive_path = stage.path().join("runtime.tar.gz");
     archive(runtime, &archive_path)?;
-    let tauri_names = desktop::release(root, &archive_path, stage.path(), version, dry_run)?;
+    let tauri_names = desktop::release(
+        root,
+        &archive_path,
+        stage.path(),
+        version,
+        dry_run,
+        tauri_pilot,
+    )?;
     let [image, yaml] = desktop_assets(stage.path(), version)?;
     let hashes = [sha256(&image)?, sha256(&yaml)?];
     let mut tauri = BTreeMap::new();
@@ -572,6 +580,7 @@ const SWITCHES: &[&str] = &[
     "--allow-dirty",
     "--no-github",
     "--desktop",
+    "--tauri-pilot",
     "--no-image",
     "--dry-run",
 ];
@@ -644,6 +653,11 @@ pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
     }
     let allow_dirty = flags.contains_key("--allow-dirty");
     let dry_run = flags.contains_key("--dry-run");
+    let desktop = flags.contains_key("--desktop");
+    let tauri_pilot = flags.contains_key("--tauri-pilot");
+    if tauri_pilot && !desktop {
+        return Err("--tauri-pilot requires --desktop.".into());
+    }
     if dry_run
         && !args
             .iter()
@@ -708,13 +722,14 @@ pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
             b"Prebuilt inputs. Publication is disabled.\n",
         )?;
     }
-    let (desktop, tauri) = if flags.contains_key("--desktop") {
+    let (desktop, tauri) = if desktop {
         let (legacy, tauri) = build_desktop(
             root,
             &releases.join(&info.id),
             &directory,
             &info.version,
             dry_run,
+            tauri_pilot,
         )?;
         (Some(legacy), tauri)
     } else {
