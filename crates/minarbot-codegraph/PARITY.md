@@ -125,3 +125,46 @@ resolved. The 460 metadata differences retain the same edge identity.
 Pass `--artifacts` to write every discrepant row to `*-diff.jsonl`, with its
 side, edge or reference keys, source coordinates, and metadata. The harness
 prints the reason counts for each repository.
+
+## Phase 3 query gate
+
+The query comparison exercises the MCP tool responses. It reads the 12 pinned
+upstream cases from `__tests__/evaluation/test-cases.ts` and runs 24 named and
+prose queries on Minarbot. Recall is the fraction of expected symbols in source
+sections or search results. File overlap is intersection divided by union
+against the Node CLI. Both engines query the Node database first. A second
+native run over the native index measures extraction and resolution effects.
+
+Use CodeGraph 1.6.2 sources at `6560052`, Elasticsearch v8.17.0
+(`2b6a7fed`, sparse paths `server/src/main/java` and `libs/core/src/main/java`),
+and a disposable Minarbot checkout. Elasticsearch exercises query parity
+through the Node-built database because Java is outside the native indexer's
+five MVP grammars.
+
+```sh
+~/.cache/minarbot-cargo-slot.sh cargo build --locked -p minarbot-server
+~/.cache/minarbot-node-slot.sh python3 crates/minarbot-codegraph/parity/queries.py \
+  target/debug/minarbot-server --upstream-sources /path/to/codegraph-v1.6.2 \
+  --minarbot /path/to/minarbot-clone --elasticsearch /path/to/elasticsearch \
+  --artifacts /tmp/minarbot-query-parity
+```
+
+The Minarbot snapshot exposed four TypeScript-family parser errors in valid
+source, including bare `&` in JSX and inline `import(...).Type` annotations.
+The native index now keeps recovered declarations and flags those files as
+`parse_recovered`. The extraction baseline above records Phase 1 behavior.
+
+| Corpus | Queries | Query engine / index | Mean symbol recall | File overlap vs. Node |
+|---|---:|---|---:|---:|
+| Elasticsearch | 12 | Node / Node | 68.8% | 100% |
+| Elasticsearch | 12 | Rust / Node | 79.2% | 75.5% |
+| Minarbot `c707e98` | 24 | Node / Node | 81.2% | 100% |
+| Minarbot `c707e98` | 24 | Rust / Node | 81.2% | 69.3% |
+| Minarbot `c707e98` | 24 | Rust / Rust | 81.2% | 69.0% |
+
+The six Elasticsearch search cases returned identical file sets on the shared
+database. Across the Minarbot queries, Rust returned the same expected
+symbols on either database, with 94.6% file overlap between those runs. Rust
+explore showed 7.9 files per Minarbot query on average, versus Node's 7.0.
+This corpus shows differences in ranking and breadth, with unchanged recall
+when substituting the native extraction and resolution.

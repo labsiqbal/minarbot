@@ -615,6 +615,9 @@ async fn canonical_request(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> db::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("codegraph") {
+        return mcp::codegraph::codegraph_command(&std::env::args().skip(2).collect::<Vec<_>>());
+    }
     if std::env::args().nth(1).as_deref() == Some("--desktop-supervisor") {
         if !platform::LINUX_SANDBOX {
             return Err(platform::COMPUTER_UNAVAILABLE.into());
@@ -754,6 +757,7 @@ async fn main() -> db::Result<()> {
     let automation_task = automation::start(state.clone());
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
+    let codegraph_task = mcp::codegraph::start(state.clone());
     let trial_watch = updates::watch_trial(state.clone());
     let maintenance_state = state.clone();
     let maintenance = tokio::spawn(async move {
@@ -851,6 +855,7 @@ async fn main() -> db::Result<()> {
     automation_task.abort();
     maintenance.abort();
     conversation_maintenance.abort();
+    codegraph_task.abort();
     connector_maintenance.abort();
     discord_task.abort();
     whatsapp_maintenance.abort();

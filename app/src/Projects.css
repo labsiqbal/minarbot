@@ -31,3 +31,5 @@
 .project-navigation__header > .k-icon-btn:first-child { opacity: 1; width: 24px; min-width: 24px; }
 .project-navigation__header > .k-icon-btn:first-child .is-open { transform: rotate(90deg); }
 .project-navigation__section:has(.is-selected) > .k-icon-btn { background: transparent; }
+
+.project-index-status { font-variant-numeric: tabular-nums; }

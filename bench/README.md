@@ -23,3 +23,9 @@ node bench/run.mjs --tasks counter-app,cart-bug --runtime codex,claude --repeat 
 Requires Linux, Node matching `app/package.json`, `bwrap`, Git, and Chrome for HTML checks. Build the app and release binaries before a live run. Pass a release binary with `--binary`, defaulting to `target/release/minarbot-server`. Each attempt uses a random port, private temporary data, disposable workspace and disposable harness home. The release server uses its fixture configuration to expose the synthetic site to Computer with the normal sandbox and approval policies. It records status, turns, known and complete token counts, wall time, interventions, checker result, and binary/suite hashes in `bench/results/<version>/<timestamp>/`. Approval, question, Computer takeover, and recognized prose clarification requests fail a row. The runner stops at the time limit and checks reported usage as it arrives. A harness can exceed its token budget before reporting usage. Unknown totals cannot pass the token gate. Missing Computer support records a skip with its reason. Unknown provider billing stays unavailable.
 
 Research inputs use frozen source extracts, so checkers verify exact claims and attributed URLs without live web calls. Submitted outputs are checked through no-network `bwrap` sandboxes. Only live runs consume provider usage. Use `--results /path/to/output` for development receipts.
+
+For CodeGraph comparisons, add `--project-codegraph` to run seeded coding
+tasks in project conversations. Both binaries get the same prompt, seed, and
+checker. For a pre-native baseline, put CodeGraph 1.6.2 on PATH so the runner
+can enable the project's external engine. The native server uses its built-in
+engine even when that CLI is installed.

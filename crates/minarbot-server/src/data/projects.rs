@@ -14,7 +14,7 @@ pub fn migrate(db: &Connection, now: i64) -> Result<()> {
             "INSERT OR IGNORE INTO local_project_legacy_channels VALUES(?)",
             [cid],
         )?;
-        db.execute("INSERT INTO local_projects(id,name,description,created,updated,channel) VALUES(?,?,?,?,?,?)",rusqlite::params![pid,row["name"].as_str(),row["instructions"].as_str(),now,now,cid])?;
+        db.execute("INSERT INTO local_projects(id,name,description,created,updated,channel,codegraph_enabled) VALUES(?,?,?,?,?,?,1)",rusqlite::params![pid,row["name"].as_str(),row["instructions"].as_str(),now,now,cid])?;
         db.execute(
             "UPDATE channels SET project=? WHERE id=?",
             [pid.as_str(), cid],
@@ -236,7 +236,7 @@ fn create(state: &AppState, db: &Connection, v: &Value) -> Result<Value> {
         }
         let channel = uuid::Uuid::new_v4().to_string();
         let now = state.config.now();
-        db.execute("INSERT INTO local_projects(id,name,description,created,updated,channel) VALUES(?,?,?,?,?,?)",rusqlite::params![id,name,description,now,now,channel])?;
+        db.execute("INSERT INTO local_projects(id,name,description,created,updated,channel,codegraph_enabled) VALUES(?,?,?,?,?,?,1)",rusqlite::params![id,name,description,now,now,channel])?;
         db.execute(
             "INSERT INTO channels(id,name,instructions,lead,project) VALUES(?,'general',?,NULL,?)",
             [channel.as_str(), description.as_str(), id],
@@ -385,9 +385,6 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
                     let enabled = enabled
                         .as_bool()
                         .ok_or_else(|| error(400, "Invalid CodeGraph setting."))?;
-                    if enabled && !crate::mcp::codegraph::available(state) {
-                        return Err(error(409, "CodeGraph is unavailable on this host."));
-                    }
                     db.execute(
                         "UPDATE local_projects SET codegraph_enabled=? WHERE id=?",
                         rusqlite::params![enabled, pid],
@@ -630,6 +627,12 @@ pub fn sync_channel(db: &Connection, cid: &str, now: i64) -> Result<()> {
     )?;
     Ok(())
 }
+fn read_with_index(state: &AppState, db: &Connection, id: &str) -> Result<Value> {
+    let mut project = read(db, id)?;
+    project["codegraphIndex"] = crate::mcp::codegraph::project_status(state, &project);
+    Ok(project)
+}
+
 pub fn route(
     state: &AppState,
     db: &Connection,
@@ -661,12 +664,16 @@ pub fn route(
     match p {
         ["api", "projects"] if get => {
             let rows=all(db,"SELECT id FROM local_projects WHERE deleted=0 AND archived=0 ORDER BY updated DESC,rowid DESC",[])?;
+            let projects = rows
+                .iter()
+                .map(|v| read_with_index(state, db, string(v, "id")))
+                .collect::<Result<Vec<_>>>()?;
             Ok(
-                json!({"projects":rows.iter().map(|v|read(db,string(v,"id"))).collect::<Result<Vec<_>>>()?,"root":folders::root(state)?,"codegraphAvailable":crate::mcp::codegraph::available(state)}),
+                json!({"projects":projects,"root":folders::root(state)?,"codegraphAvailable":crate::mcp::codegraph::available()}),
             )
         }
         ["api", "projects"] => create(state, db, v),
-        ["api", "projects", id] if get => read(db, id),
+        ["api", "projects", id] if get => read_with_index(state, db, id),
         ["api", "projects", id, op]
             if ["edit", "archive", "delete", "thread"].contains(op) && !get =>
         {
