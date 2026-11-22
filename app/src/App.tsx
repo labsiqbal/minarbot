@@ -1334,7 +1334,12 @@ function App() {
   const routeThread = useRouteThread<Thread & { project?: string; folder?: string }>(route.thread, route.agent, api);
   const projectConversation = routeThread?.thread?.project ? routeThread.thread : null;
   const projectThread = projectConversation ? { project: projectConversation.project!, agent: selected, thread: projectConversation.id, conversation: projectConversation } : null;
-  const [dialog, setDialog] = useState<Dialog>(null);
+  const [dialog, setDialog] = useState<Dialog>(() => {
+    const params = new URLSearchParams(location.search);
+    const create = params.get('create');
+    if (location.pathname === '/' && params.get('ui') === 'react' && (create === 'agent' || create === 'project')) return create;
+    return null;
+  });
   const [firstRunAgent, setFirstRunAgent] = useState('');
   const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem(notificationMuteKey) === '1'; } catch { return false; } });
   const [notificationError, setNotificationError] = useState('');

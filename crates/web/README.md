@@ -43,13 +43,13 @@ when `MINARBOT_APPEARANCE_CLIENT=leptos`. First-run setup, project overview,
 the Rust-rendered `/pair` form, `/routines`, `/workflows`, `/calendar`, and the
 project Calendar tab also use Leptos. The three automation routes share a mounted
 workspace shell and load the `workflows` bundle. The project Calendar link loads
-the same bundle. Setup and Settings use `appearance`, and the #63 agent, named
-conversation and room pilot uses `conversation` when its URL includes
-`?ui=leptos`. The workspace shell mounts agent creation, profile editing and template dialogs
-inside the selected route group. Agent creation and import open the conversation
-bundle through the existing pilot selector. Settings return links and browser
-history retain the selected route. The Advanced profile panel exposes
-`#agent-memory-mount` for the Memory port in #77.
+the same bundle. Setup and Settings use `appearance`, and the Guide uses the `conversation` bundle on its ordinary URL.
+The #63 agent, named conversation and room pilot uses that same bundle when
+its URL includes `?ui=leptos`. The workspace shell mounts agent creation, profile
+editing and template dialogs inside the selected route group. Agent creation and
+import open the conversation bundle through the existing pilot selector. Settings
+return links and browser history retain the selected route. The Advanced profile
+panel exposes `#agent-memory-mount` for the Memory port in #77.
 React remains the default for the staged rollout in #67.
 
 ## React inventory for #67
@@ -62,8 +62,7 @@ issue.
 | --- | --- | --- |
 | Conversation routing and remaining chat controls | Post-setup `/`, agent Main chat, named and project conversations, and rooms use React on ordinary links. The explicit #63 pilot covers the core transcript, composer, rich replies, queue, approvals, Goals/Loops, chat list and Computer panel. Still on the React path are timeline minimap, historical paging and task-family navigation, speech playback, chat history search across conversations, fork history/origin, checkpoint restore, signed event connection, room management and the remaining dispatch controls. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `ui/AgentConversation.tsx`, `ui/ChatPrimitives.tsx`, `ui/MessageFind.tsx`, `ui/TimelineMinimap.tsx`, `ui/TurnActivity.tsx`, `ui/RunControls.tsx`, `SourceControl.tsx`, `SpeechPlayback.tsx`, `EventConnection.tsx` |
 | Memory and history summary | Agent and section Memory, including Notes, Learned and Standing questions, search, source links, edit, pin, forget and undo. History summary and compaction controls from chat and profile. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
-| Workspace search and Needs you | Quick switcher search over conversations, hidden agents and remote agents, plus restore and create actions. Needs you routes pending questions/approvals to exact conversations and focuses their input. Leptos has basic directory search, a quick switcher, keyboard help and sidebar badges. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useQuickSwitcher.ts`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx`, `QuestionCard.tsx`, `ApprovalCard.tsx`, `HarnessApprovalCard.tsx`, `HelpPage.tsx` |
-| Guide and update prompts | Guide chat on ordinary links, AI connection/preferences dialog and Guide change cards for routine/agent proposals, infrastructure setup, machine install/pairing status and approval. Sidebar update capsule, release notes and Update everything dialog. | `App.tsx`, `GuideActions.tsx`, `FirstRun.tsx`, `SidebarUpdateCapsule.tsx`, `SidebarUpdateReleaseNotes.tsx`, `UpdateEverythingDialog.tsx`, `hooks/useUpdateEverything.ts` |
+| Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. New agent and New project hand off to their staged creation forms pending #76 and #81. Remote agent detail remains React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
 | Agent inbox and remote agent detail | Agent email inbox and message content at `/agents/:id/inbox`, and paired-machine agent detail at `/machines/:id/agents/:id`. | `App.tsx`, `AgentEmail.tsx`, `MachinesPanel.tsx`, `AgentActions.tsx` |
 | Conversation files, results and Computer | Full workspace browser, contextual file attachment and artifact previews, Changes/diff/source control, Preview, result file/URL/Computer deep links, standalone Computer window, and secure Computer request dialogs. Corresponding #63 Files, Computer and Run panels are available in the pilot. | `App.tsx`, `RightPanel.tsx`, `RightPanelFiles.tsx`, `RightPanelDiff.tsx`, `WorkspacePanel.tsx`, `HtmlPreview.tsx`, `ResultURLPreview.tsx`, `SourceControl.tsx`, `ComputerViewer.tsx`, `AgentComputerPanel.tsx`, `SecureComputerRequest.tsx`, `RunInspector.tsx` |
 | Automation embedded in conversations | Agent/section Upcoming routines, inbound routine reports and deep links, and the agent-scoped workflow library, editor, versions, webhook/schedule forms and run inspector with inline step conversations. | `App.tsx`, `WorkflowPanel.tsx`, `WorkflowEditor.tsx`, `WorkflowGraph.tsx`, `WorkflowSchedule.tsx`, `WorkflowWebhook.tsx`, `WorkflowInbox.tsx` |
@@ -110,6 +109,15 @@ Set `MINARBOT_AUTOMATION_COLD_BENCH=20` to record cold readiness for all three
 automation routes in fresh Chromium contexts. The receipt also records 40
 warmed switches per route and client, measured from clicking an automation
 control to layout of the visible route heading.
+
+Run the #78 workspace and Guide fixture smokes from `app/` after packaging. The
+workspace smoke starts isolated loopback servers and a private fixture launcher,
+then writes dark/light desktop/narrow comparison images and a timing receipt.
+
+```sh
+node --experimental-strip-types test-support/ui-smoke/workspace-prompts-smoke.mjs /tmp/minarbot-workspace-prompts
+MINARBOT_SMOKE_UI=leptos node --experimental-strip-types test-support/ui-smoke/guide-smoke.mjs
+```
 
 ## Warm navigation in #62
 

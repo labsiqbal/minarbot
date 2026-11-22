@@ -1,3 +1,5 @@
+pub const GUIDE_PATH: &str = "/agents/00000000-0000-4000-8000-000000000005";
+
 // Shared workspace route ownership for Axum and Leptos.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceRoute {

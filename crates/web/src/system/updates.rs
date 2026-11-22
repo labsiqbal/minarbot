@@ -560,13 +560,14 @@ fn clear_local(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn panel() -> impl IntoView {
-    let state = Query::<Status>::new(|| "/api/updates".into(), 1000, RwSignal::new(false));
-    let peers = Query::<Peers>::new(
-        || "/api/updates/machines".into(),
-        1000,
-        RwSignal::new(false),
-    );
+#[derive(Clone)]
+struct SettingsPanel(ViewFn);
+
+pub(crate) fn panel() -> AnyView {
+    use_context::<SettingsPanel>().map_or_else(|| ().into_any(), |panel| panel.0.run())
+}
+
+pub(crate) fn workspace() -> (impl IntoView, impl IntoView) {
     let machines =
         Query::<machines::Machines>::new(|| machines::PATH.into(), 5000, RwSignal::new(false));
     let environment = Query::<machines::Environment>::new(
@@ -587,6 +588,38 @@ pub fn panel() -> impl IntoView {
     let command_issue = RwSignal::new(String::new());
     let flight = RwSignal::new(false);
     let active = move || run.with(|run| run.as_ref().is_some_and(Run::active));
+    let urgent = move || {
+        active()
+            || opened.get()
+            || window()
+                .location()
+                .pathname()
+                .is_ok_and(|path| path.starts_with("/settings/"))
+    };
+    let state = Query::<Status>::paced(
+        || "/api/updates".into(),
+        1000,
+        RwSignal::new(false),
+        move || if urgent() { 1000 } else { 15000 },
+    );
+    let peers_disabled = RwSignal::new(true);
+    Effect::new(move |_| {
+        peers_disabled.set(
+            !urgent()
+                && run.with(Option::is_none)
+                && machines.value.with(|value| {
+                    value
+                        .as_ref()
+                        .is_none_or(|machines| machines.machines.is_empty())
+                }),
+        )
+    });
+    let peers = Query::<Peers>::paced(
+        || "/api/updates/machines".into(),
+        1000,
+        peers_disabled,
+        move || if urgent() { 1000 } else { 5000 },
+    );
     let is_reconnecting = move || {
         [state.error, machines.error, peers.error, command_issue]
             .iter()
@@ -904,6 +937,7 @@ pub fn panel() -> impl IntoView {
     let show = move |choice| {
         selection.set(choice);
         opened.set(true);
+        state.retry();
     };
     let chosen = Memo::new(move |_| {
         rows.with(|rows| {
@@ -978,104 +1012,222 @@ pub fn panel() -> impl IntoView {
         }
     };
 
-    view! {
-      <div class="k-page bs-root updates-page set4-page">
-        <Header title="Updates" actions=content(move || view! {
-          <Show when=move || run.with(Option::is_some) || !storage_error.with(String::is_empty)>
-            <Button label=Signal::derive(move || if storage_error.with(String::is_empty) { "Update progress".to_owned() } else { "Update recovery".into() })
-              on_click=move || show(Select::All) />
-          </Show>
-        }) />
-        <Show when=move || !issue().is_empty()><Alert tone="error">{issue}</Alert></Show>
-        <Show when=is_reconnecting><Alert title=text("Reconnecting") /></Show>
-        <Show when=move || state.value.with(Option::is_some) fallback=move || skeleton(3, "Loading updates...")>
-          {move || state.value.get().map(|status| {
-            let offers = status.offers();
-            let multiple = offers.len() > 1;
-            let disabled = Signal::derive(move || active() || run.with(Option::is_some) || state.value.with(|value| value.as_ref().and_then(|value| value.last_attempt.as_ref()).is_some_and(|attempt| !terminal(&attempt.status))));
-            let running = status.running_turns;
-            let commit = if status.current.id == "development" { "Development".into() } else { status.current.commit.chars().take(8).collect::<String>() };
-            let no_offer = offers.is_empty();
-            view! {
-              {status.github_error.clone().map(|error| view! { <Alert tone="warn">{error}</Alert> })}
-              <Section title="This device"><Card>
-                <Row leading=icons().monitor title=text("Current version") meta=content(move || commit.into_view())
-                  trailing=content(move || view! { {badge("neutral", status.current.version)} }) />
-                {status.previous.filter(|_| status.launcher_available).map(|previous| view! {
-                  <Row title=text("Previous version") trailing=content(move || view! { {badge("neutral", previous.version)} }) />
-                })}
-                {status.launcher_available.then(|| offers.into_iter().map(|release| {
-                  let selected_offer = release.clone();
-                  let source = release.source.map_or("Local feed", Source::label);
-                  let created = String::from(date(release.created).to_locale_date_string("default", &JsValue::UNDEFINED));
-                  view! {
-                    <Row leading=icons().download title=text(format!("Minarbot {}", release.version))
-                      meta=content(move || format!("{source} · Published {created}").into_view())
-                      trailing=content(|| view! { {badge("brand", "Update available")} }) />
-                    <div class="updates-release"><p class="updates-notes">{release.notes}</p><div class="updates-actions">
-                      <span class="k-field__hint">{format!("{running} running {}", if running == 1 { "turn" } else { "turns" })}</span>
-                      <button type="button" class="k-btn k-btn--primary k-btn--md" disabled=disabled
-                        aria-label=move || (multiple && legacy.with(Option::is_none)).then(|| format!("Update from {source}"))
-                        on:click=move |_| show(Select::Local(selected_offer.clone()))>
-                        {move || if legacy.with(Option::is_some) { "Retry update" } else { "Update now" }}
-                      </button>
-                    </div></div>
-                  }
-                }).collect_view())}
-                {(status.launcher_available && no_offer).then(|| view! {
-                  <Row title=text(if status.github_error.is_some() { "No updates available" } else { "Up to date" }) />
-                })}
-              </Card></Section>
-              {status.last_attempt.map(|attempt| {
-                let status = attempt.status.clone();
-                let is_downloading = status == "downloading";
-                let title = if is_downloading { attempt.download.label() } else { label(&status).to_owned() };
-                let source = attempt.download.source.map_or_else(String::new, |source| format!(" · {}", source.label()));
-                let reason = attempt.reason.map_or_else(String::new, |reason| format!(" - {reason}"));
-                view! { <Section title="Last update"><Alert tone=if matches!(status.as_str(), "failed" | "rolled-back") { "warn" } else { "info" } title=text(title)>
-                  <span>{format!("Version {}{source}{reason}", attempt.version)}</span>
-                  {attempt.download.total_bytes.filter(|total| is_downloading && *total > 0).map(|total| view! {
-                    <progress class="updates-download" aria-label="Download progress" max=total value=attempt.download.bytes_transferred.unwrap_or_default()></progress>
-                  })}
-                </Alert></Section> }
-              })}
+    let ready = move || rows.with(|rows| rows.iter().any(|row| row.skipped.is_none()));
+    let capsule = Memo::new(move |_| {
+        let mut downloads = state.value.with(|status| {
+            status
+                .as_ref()
+                .and_then(|status| status.last_attempt.as_ref())
+                .filter(|attempt| attempt.status == "downloading")
+                .map(|attempt| attempt.download.clone())
+                .into_iter()
+                .collect::<Vec<_>>()
+        });
+        peers.value.with(|status| {
+            downloads.extend(
+                status
+                    .iter()
+                    .flat_map(|status| status.machines.iter())
+                    .filter_map(|peer| peer.fan_out_attempt.as_ref())
+                    .filter(|attempt| attempt.state == "transferring")
+                    .map(|attempt| attempt.download.clone()),
+            );
+        });
+        let source = if let Some(first) = downloads.first() {
+            downloads
+                .iter()
+                .all(|entry| entry.source == first.source)
+                .then_some(first.source)
+                .flatten()
+        } else if run.with(Option::is_none) {
+            rows.with(|rows| {
+                rows.iter()
+                    .find(|row| row.skipped.is_none())
+                    .and_then(|row| row.source)
+            })
+        } else {
+            None
+        };
+        let download = (!downloads.is_empty()).then(|| Download {
+            source,
+            bytes_transferred: Some(
+                downloads
+                    .iter()
+                    .filter_map(|download| download.bytes_transferred)
+                    .fold(0_u64, u64::saturating_add),
+            ),
+            total_bytes: Some(
+                downloads
+                    .iter()
+                    .filter_map(|download| download.total_bytes)
+                    .fold(0_u64, u64::saturating_add),
+            ),
+        });
+        let (label, attention) = if !storage_error.with(String::is_empty) {
+            ("Update recovery".into(), true)
+        } else if is_reconnecting() {
+            ("Reconnecting".into(), false)
+        } else if let Some(download) = &download {
+            (download.label(), false)
+        } else if let Some(run) = run.get() {
+            let machines = run.rows.iter().filter(|row| row.skipped.is_none());
+            let failed = machines
+                .clone()
+                .filter(|row| matches!(row.status.as_str(), "failed" | "rolled-back"))
+                .count();
+            let unconfirmed = machines
+                .clone()
+                .filter(|row| row.status == "unconfirmed")
+                .count();
+            if !run.active() && failed > 0 {
+                (
+                    format!(
+                        "{failed} update{} failed",
+                        if failed == 1 { "" } else { "s" }
+                    ),
+                    true,
+                )
+            } else if !run.active() && unconfirmed > 0 {
+                (
+                    format!(
+                        "{unconfirmed} update{} unconfirmed",
+                        if unconfirmed == 1 { "" } else { "s" }
+                    ),
+                    true,
+                )
+            } else {
+                let done = machines.clone().filter(|row| row.status == "done").count();
+                (format!("{done} of {} updated", machines.count()), false)
             }
-          })}
-          <Section title="Paired machines" actions=content(move || view! {
-            <Show when=move || !chosen.with(Vec::is_empty)>
-              <Button label=Signal::derive(move || format!("Update selected ({})", chosen.with(Vec::len)))
-                disabled=Signal::derive(move || run.with(Option::is_some)) on_click=move || show(Select::Peers(chosen.get_untracked())) />
+        } else {
+            ("Update available".into(), false)
+        };
+        (
+            ready() || run.with(Option::is_some) || download.is_some() || attention,
+            label,
+            source,
+            attention,
+        )
+    });
+    let capsule_icons = icons();
+    let capsule_view = view! {
+        <div class="sidebar-update" hidden=move || !capsule.with(|(visible, _, _, _)| *visible)>
+          <button type="button" class="k-btn k-btn--md k-btn--secondary sidebar-update__capsule" aria-haspopup="dialog" on:click=move |_| show(Select::All)>
+            <span class="appearance-icon k-btn__icon" aria-hidden="true" inner_html=move || {
+              if capsule.with(|(_, _, _, attention)| *attention) { capsule_icons.alert.clone() }
+              else if run.with(Option::is_some) && !active() { capsule_icons.check.clone() }
+              else { capsule_icons.download.clone() }
+            }></span>
+            <span class="sidebar-update__text">
+              <span>{move || capsule.with(|(_, label, _, _)| label.clone())}</span>
+              {move || capsule.with(|(_, _, source, _)| *source).filter(|_| storage_error.with(String::is_empty)).map(|source| view! { <small>{source.label()}</small> })}
+            </span>
+          </button>
+        </div>
+    };
+    let settings = ViewFn::from(move || {
+        view! { <div class="k-page bs-root updates-page set4-page">
+            <Header title="Updates" actions=content(move || view! {
+              <Show when=move || run.with(Option::is_some) || !storage_error.with(String::is_empty)>
+                <Button label=Signal::derive(move || if storage_error.with(String::is_empty) { "Update progress".to_owned() } else { "Update recovery".into() })
+                  on_click=move || show(Select::All) />
+              </Show>
+            }) />
+            <Show when=move || !issue().is_empty()><Alert tone="error">{issue}</Alert></Show>
+            <Show when=is_reconnecting><Alert title=text("Reconnecting") /></Show>
+            <Show when=move || state.value.with(Option::is_some) fallback=move || skeleton(3, "Loading updates...")>
+              {move || state.value.get().map(|status| {
+                let offers = status.offers();
+                let multiple = offers.len() > 1;
+                let disabled = Signal::derive(move || active() || run.with(Option::is_some) || state.value.with(|value| value.as_ref().and_then(|value| value.last_attempt.as_ref()).is_some_and(|attempt| !terminal(&attempt.status))));
+                let running = status.running_turns;
+                let commit = if status.current.id == "development" { "Development".into() } else { status.current.commit.chars().take(8).collect::<String>() };
+                let no_offer = offers.is_empty();
+                view! {
+                  {status.github_error.clone().map(|error| view! { <Alert tone="warn">{error}</Alert> })}
+                  <Section title="This device"><Card>
+                    <Row leading=icons().monitor title=text("Current version") meta=content(move || commit.into_view())
+                      trailing=content(move || view! { {badge("neutral", status.current.version)} }) />
+                    {status.previous.filter(|_| status.launcher_available).map(|previous| view! {
+                      <Row title=text("Previous version") trailing=content(move || view! { {badge("neutral", previous.version)} }) />
+                    })}
+                    {status.launcher_available.then(|| offers.into_iter().map(|release| {
+                      let selected_offer = release.clone();
+                      let source = release.source.map_or("Local feed", Source::label);
+                      let created = String::from(date(release.created).to_locale_date_string("default", &JsValue::UNDEFINED));
+                      view! {
+                        <Row leading=icons().download title=text(format!("Minarbot {}", release.version))
+                          meta=content(move || format!("{source} · Published {created}").into_view())
+                          trailing=content(|| view! { {badge("brand", "Update available")} }) />
+                        <div class="updates-release"><p class="updates-notes">{release.notes}</p><div class="updates-actions">
+                          <span class="k-field__hint">{format!("{running} running {}", if running == 1 { "turn" } else { "turns" })}</span>
+                          <button type="button" class="k-btn k-btn--primary k-btn--md" disabled=disabled
+                            aria-label=move || (multiple && legacy.with(Option::is_none)).then(|| format!("Update from {source}"))
+                            on:click=move |_| show(Select::Local(selected_offer.clone()))>
+                            {move || if legacy.with(Option::is_some) { "Retry update" } else { "Update now" }}
+                          </button>
+                        </div></div>
+                      }
+                    }).collect_view())}
+                    {(status.launcher_available && no_offer).then(|| view! {
+                      <Row title=text(if status.github_error.is_some() { "No updates available" } else { "Up to date" }) />
+                    })}
+                  </Card></Section>
+                  {status.last_attempt.map(|attempt| {
+                    let status = attempt.status.clone();
+                    let is_downloading = status == "downloading";
+                    let title = if is_downloading { attempt.download.label() } else { label(&status).to_owned() };
+                    let source = attempt.download.source.map_or_else(String::new, |source| format!(" · {}", source.label()));
+                    let reason = attempt.reason.map_or_else(String::new, |reason| format!(" - {reason}"));
+                    view! { <Section title="Last update"><Alert tone=if matches!(status.as_str(), "failed" | "rolled-back") { "warn" } else { "info" } title=text(title)>
+                      <span>{format!("Version {}{source}{reason}", attempt.version)}</span>
+                      {attempt.download.total_bytes.filter(|total| is_downloading && *total > 0).map(|total| view! {
+                        <progress class="updates-download" aria-label="Download progress" max=total value=attempt.download.bytes_transferred.unwrap_or_default()></progress>
+                      })}
+                    </Alert></Section> }
+                  })}
+                }
+              })}
+              <Section title="Paired machines" actions=content(move || view! {
+                <Show when=move || !chosen.with(Vec::is_empty)>
+                  <Button label=Signal::derive(move || format!("Update selected ({})", chosen.with(Vec::len)))
+                    disabled=Signal::derive(move || run.with(Option::is_some)) on_click=move || show(Select::Peers(chosen.get_untracked())) />
+                </Show>
+              })>
+                {move || {
+                  let rows = rows.get().into_iter().filter(|row| !row.local).collect::<Vec<_>>();
+                  if rows.is_empty() { return empty("No paired machines", String::new()).into_any(); }
+                  view! { <Card>{rows.into_iter().map(|row| {
+                    let id = StoredValue::new(row.id);
+                    let name = row.name.clone();
+                    let can_update = row.skipped.is_none();
+                    let meta = row.skipped.unwrap_or_else(|| row.source.map_or_else(|| "Ready to update".into(), |source| format!("Ready to update · {}", source.label())));
+                    view! { <Row title=text(row.name)
+                      meta=content(move || view! {
+                        {move || id.with_value(|id| download(id)).map_or_else(|| meta.clone(), |download|
+                          download.source.map_or_else(|| download.label(), |source| format!("{} · {}", source.label(), download.label())))}
+                        <span>{format!("{} running turns", row.running)}</span>
+                      })
+                      trailing=content(move || view! {
+                        {badge("neutral", row.current)}
+                        {can_update.then(|| view! { <label class="k-inline"><span>{format!("Also update {name}")}</span>
+                          <button class="k-switch" type="button" role="switch" aria-label=format!("Also update {name}")
+                            aria-checked=move || selected.with(|ids| id.with_value(|id| ids.contains(id))).to_string()
+                            data-state=move || if selected.with(|ids| id.with_value(|id| ids.contains(id))) { "checked" } else { "unchecked" }
+                            on:click=move |_| selected.update(|items| id.with_value(|id| {
+                              if let Some(index) = items.iter().position(|item| item == id) { items.remove(index); } else { items.push(id.clone()); }
+                            }))><span class="k-switch__thumb" data-state=move || if selected.with(|ids| id.with_value(|id| ids.contains(id))) { "checked" } else { "unchecked" }></span></button>
+                        </label> })}
+                      }) /> }
+                  }).collect_view()}</Card> }.into_any()
+                }}
+              </Section>
             </Show>
-          })>
-            {move || {
-              let rows = rows.get().into_iter().filter(|row| !row.local).collect::<Vec<_>>();
-              if rows.is_empty() { return empty("No paired machines", String::new()).into_any(); }
-              view! { <Card>{rows.into_iter().map(|row| {
-                let id = StoredValue::new(row.id);
-                let name = row.name.clone();
-                let can_update = row.skipped.is_none();
-                let meta = row.skipped.unwrap_or_else(|| row.source.map_or_else(|| "Ready to update".into(), |source| format!("Ready to update · {}", source.label())));
-                view! { <Row title=text(row.name)
-                  meta=content(move || view! {
-                    {move || id.with_value(|id| download(id)).map_or_else(|| meta.clone(), |download|
-                      download.source.map_or_else(|| download.label(), |source| format!("{} · {}", source.label(), download.label())))}
-                    <span>{format!("{} running turns", row.running)}</span>
-                  })
-                  trailing=content(move || view! {
-                    {badge("neutral", row.current)}
-                    {can_update.then(|| view! { <label class="k-inline"><span>{format!("Also update {name}")}</span>
-                      <button class="k-switch" type="button" role="switch" aria-label=format!("Also update {name}")
-                        aria-checked=move || selected.with(|ids| id.with_value(|id| ids.contains(id))).to_string()
-                        data-state=move || if selected.with(|ids| id.with_value(|id| ids.contains(id))) { "checked" } else { "unchecked" }
-                        on:click=move |_| selected.update(|items| id.with_value(|id| {
-                          if let Some(index) = items.iter().position(|item| item == id) { items.remove(index); } else { items.push(id.clone()); }
-                        }))><span class="k-switch__thumb" data-state=move || if selected.with(|ids| id.with_value(|id| ids.contains(id))) { "checked" } else { "unchecked" }></span></button>
-                    </label> })}
-                  }) /> }
-              }).collect_view()}</Card> }.into_any()
-            }}
-          </Section>
-        </Show>
+          </div>
+        }
+    });
+    provide_context(SettingsPanel(settings));
+    let dialog = view! {
         <Dialog id="updates-plan" title=Signal::derive(title) description=Signal::derive(version_text) open=opened on_close=close size="lg"
           footer=content(move || view! {
             <Show when=move || run.with(Option::is_none) && !planning() && (count() > 0)>
@@ -1144,8 +1296,8 @@ pub fn panel() -> impl IntoView {
             </Show>
           </div>
         </Dialog>
-      </div>
-    }
+    };
+    (capsule_view, dialog)
 }
 
 #[cfg(test)]

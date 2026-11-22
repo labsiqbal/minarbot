@@ -17,8 +17,11 @@ pub fn conversation_route(path: &str, query: &str) -> bool {
     crate::navigation(path)
         && (path.starts_with("/rooms/")
             || path.starts_with("/agents/") && !path.ends_with("/inbox"))
-        && form_urlencoded::parse(query.as_bytes())
-            .any(|(key, value)| key == "ui" && value == "leptos")
+        && !form_urlencoded::parse(query.as_bytes())
+            .any(|(key, _)| matches!(key.as_ref(), "result" | "computer"))
+        && (path.eq_ignore_ascii_case(workspace_route::GUIDE_PATH)
+            || form_urlencoded::parse(query.as_bytes())
+                .any(|(key, value)| key == "ui" && value == "leptos"))
 }
 
 pub fn conversation_document(html: &str, path: &str, query: &str) -> String {

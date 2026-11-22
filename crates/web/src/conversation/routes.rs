@@ -14,6 +14,8 @@ pub struct Agent {
     pub avatar_revision: u64,
     pub model: Option<String>,
     pub runtime: Option<String>,
+    #[serde(rename = "providerAccount", alias = "provider_account")]
+    pub provider_account: Option<String>,
     #[serde(default)]
     pub instructions: String,
     #[serde(default)]
