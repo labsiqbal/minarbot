@@ -7,6 +7,15 @@ pub use routes::SettingsRoute;
 pub const NAMESPACE: &str = "/_leptos/";
 pub const DOCUMENT: &str = "_leptos/appearance.html";
 
+/// Pairing may load only the hashed startup module from the packaged document.
+pub fn startup_asset(document: &str) -> Option<&str> {
+    let (_, rest) = document.split_once(r#"<script type="module" src=""#)?;
+    let (src, _) = rest.split_once('"')?;
+    (src.ends_with(".js") && asset(src)).then_some(src)
+}
+
+pub const POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self' https: http:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
 pub fn asset(path: &str) -> bool {
     let Some((name, hash, extension)) = path
         .strip_prefix("/_leptos/assets/")
