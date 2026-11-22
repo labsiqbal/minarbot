@@ -72,7 +72,7 @@ fn upload_files(chat: Chat, selected: Vec<web_sys::File>, uploading: RwSignal<bo
     });
 }
 
-fn dialog_open(dialog: NodeRef<leptos::html::Dialog>) {
+pub(super) fn dialog_open(dialog: NodeRef<leptos::html::Dialog>) {
     if let Some(dialog) = dialog.get_untracked() {
         let _ = dialog.show_modal();
     }
@@ -629,7 +629,17 @@ fn goal_chip(chat: Chat) -> impl IntoView {
     }
 }
 
-pub fn mutate(path: String, mut body: Value, busy: RwSignal<bool>, error: RwSignal<String>) {
+pub fn mutate(path: String, body: Value, busy: RwSignal<bool>, error: RwSignal<String>) {
+    mutate_then(path, body, busy, error, || {});
+}
+
+fn mutate_then(
+    path: String,
+    mut body: Value,
+    busy: RwSignal<bool>,
+    error: RwSignal<String>,
+    complete: impl FnOnce() + 'static,
+) {
     if busy.get_untracked() {
         return;
     }
@@ -666,7 +676,11 @@ pub fn mutate(path: String, mut body: Value, busy: RwSignal<bool>, error: RwSign
         }
         match result {
             Ok(_) => {
-                let _ = remove(&key);
+                if remove(&key) {
+                    complete();
+                } else {
+                    error.set("Change saved. Recovery data could not be cleared.".into());
+                }
             }
             Err(reason) => {
                 if reason.definitive {
@@ -694,8 +708,16 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let harness = Memo::new(move |_| row.with(|turn| turn.harness_approvals.clone()));
     let icons = use_context::<Icons>().unwrap_or_default();
     let menu = NodeRef::<leptos::html::Details>::new();
-    let active = move || row.with(|turn| turn.active() && !turn.waiting_for_answer() && turn.paused == 0
-        && !turn.approvals.iter().any(|approval| matches!(approval["state"].as_str(), Some("approval" | "ready"))));
+    let active = move || {
+        row.with(|turn| {
+            turn.active()
+                && !turn.waiting_for_answer()
+                && turn.paused == 0
+                && !turn.approvals.iter().any(|approval| {
+                    matches!(approval["state"].as_str(), Some("approval" | "ready"))
+                })
+        })
+    };
     let resumable = move || {
         row.with(|turn| {
             !turn.needs_you()
@@ -704,7 +726,14 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     };
     let available =
         move || !chat.config.with_value(|config| config.archived) && (active() || resumable());
-    let finished = move || row.with(|turn| matches!(turn.status.as_str(), "done" | "cancelled" | "failed" | "interrupted"));
+    let finished = move || {
+        row.with(|turn| {
+            matches!(
+                turn.status.as_str(),
+                "done" | "cancelled" | "failed" | "interrupted"
+            )
+        })
+    };
     let close = move || {
         if let Some(menu) = menu.get_untracked() {
             menu.set_open(false);
@@ -922,4 +951,92 @@ fn approval(chat: Chat, path: String, a: Value, harness: bool) -> impl IntoView 
             </div></div>
         </section>
     }.into_any()
+}
+
+pub(super) fn edit_dialog(
+    agent: Agent,
+    thread: Option<Thread>,
+    dialog: NodeRef<leptos::html::Dialog>,
+) -> impl IntoView {
+    let form = NodeRef::<leptos::html::Form>::new();
+    let busy = RwSignal::new(false);
+    let error = RwSignal::new(String::new());
+    let thread_edit = thread.is_some();
+    let title = if thread_edit {
+        "Conversation settings"
+    } else {
+        "Edit profile"
+    };
+    let name = thread
+        .as_ref()
+        .map_or_else(|| agent.name.clone(), |value| value.name.clone());
+    let endpoint = thread.as_ref().map_or_else(
+        || format!("/api/agents/{}/edit", agent.id),
+        |thread| format!("/api/threads/{}/edit", thread.id),
+    );
+    let recovery = format!("minarbot:leptos-action:{endpoint}");
+    let pending = RwSignal::new(saved(&recovery));
+    let recovery = StoredValue::new(recovery);
+    Effect::new(move |_| {
+        busy.track();
+        recovery.with_value(|key| pending.set(saved(key)));
+    });
+    let model = agent.model.unwrap_or_default();
+    let role = agent.role.unwrap_or_default();
+    let instructions = agent.instructions;
+    let payload = move |form: &HtmlFormElement| {
+        let mut body = json!({"name": field(form, "name").trim()});
+        if let Some(thread) = &thread {
+            body["revision"] = json!(thread.revision);
+            body["archived"] = json!(thread.archived != 0);
+        } else {
+            body["revision"] = json!(agent.revision);
+            body["role"] = json!(field(form, "role").trim());
+            body["model"] = json!(field(form, "model").trim());
+            body["instructions"] = json!(field(form, "instructions").trim());
+        }
+        body
+    };
+    let submit = move |event: web_sys::SubmitEvent| {
+        event.prevent_default();
+        let body = if let Some(raw) = pending.get_untracked() {
+            let Ok(body) = serde_json::from_str::<Value>(&raw) else {
+                error.set("Saved profile change could not be read.".into());
+                return;
+            };
+            body
+        } else {
+            let Some(form) = form.get_untracked() else {
+                return;
+            };
+            payload(&form)
+        };
+        mutate_then(endpoint.clone(), body, busy, error, move || {
+            let _ = window().location().reload();
+        });
+    };
+    view! {
+        <dialog class="conversation-dialog bs-root" node_ref=dialog aria-label=title
+            on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
+            <h2 class="k-dialog__title">{title}</h2>
+            <form class="k-stack" node_ref=form on:submit=submit>
+                <fieldset class="component-fields k-stack" disabled=move || busy.get() || pending.with(Option::is_some)>
+                    <label class="k-field"><span class="k-field__label">"Name"</span><input class="k-input" name="name" value=name maxlength="80" required autofocus /></label>
+                    {(!thread_edit).then(|| view! {
+                        <label class="k-field"><span class="k-field__label">"Role"</span><input class="k-input" name="role" value=role maxlength="80" /></label>
+                        <label class="k-field"><span class="k-field__label">"Model"</span><input class="k-input" name="model" value=model maxlength="160" required /></label>
+                        <label class="k-field"><span class="k-field__label">"Instructions"</span><textarea class="k-input k-textarea" name="instructions" maxlength="8000" required>{instructions}</textarea></label>
+                    })}
+                </fieldset>
+                <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
+                <div class="k-row-actions">
+                    <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=busy
+                        on:click=move |_| { if let Some(dialog) = dialog.get_untracked() { dialog.close(); } }>"Cancel"</button>
+                    <button type="submit" class="k-btn k-btn--sm k-btn--primary" disabled=busy>
+                        {move || if pending.with(Option::is_some) { "Retry saved change" } else { "Save" }}
+                    </button>
+                </div>
+            </form>
+        </dialog>
+    }
 }

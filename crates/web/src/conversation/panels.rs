@@ -251,7 +251,14 @@ fn files_panel(chat: Chat, context: RwSignal<Option<Context>>) -> impl IntoView 
     let selected = RwSignal::new(None::<FileRef>);
     let error = RwSignal::new(String::new());
     let path = format!("{}/panel/files", chat.base());
-    let has_workspace = move || context.with(|value| value.as_ref().is_some_and(|value| value.workspace.is_some()));
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let has_workspace = move || {
+        context.with(|value| {
+            value
+                .as_ref()
+                .is_some_and(|value| value.workspace.is_some())
+        })
+    };
     leptos::task::spawn_local(async move {
         match get::<Vec<FileRef>>(&path).await {
             Ok(value) => {
@@ -275,7 +282,10 @@ fn files_panel(chat: Chat, context: RwSignal<Option<Context>>) -> impl IntoView 
                     let label = file.name.clone();
                     view! {
                         <div class="right-panel__file-row">
-                            <button type="button" class="right-panel__file" aria-label=format!("Preview {label}") on:click=move |_| selected.set(Some(file.clone()))>{label.clone()}</button>
+                            <button type="button" class="right-panel__file" aria-label=format!("Preview {label}") on:click=move |_| selected.set(Some(file.clone()))>
+                                <span class="right-panel__thumbnail"><span class="appearance-icon" inner_html=icons.file.clone()></span></span>
+                                <span class="right-panel__file-name">{label.clone()}</span>
+                            </button>
                             <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || chat.locked()
                                 on:click=move |_| {
                                     let mut attached = chat.files.get_untracked();
@@ -313,22 +323,33 @@ fn workspace_panel(base: String) -> impl IntoView {
     Effect::new(move |_| {
         let path = directory.get();
         let cursor = after.get();
-        let Ok(params) = web_sys::UrlSearchParams::new() else { return };
+        let Ok(params) = web_sys::UrlSearchParams::new() else {
+            return;
+        };
         params.set("path", &path);
-        if let Some(cursor) = cursor.as_deref() { params.set("after", cursor); }
-        let url = format!("{}/entries?{}", base.get_value(), params.to_string().as_string().unwrap_or_default());
+        if let Some(cursor) = cursor.as_deref() {
+            params.set("after", cursor);
+        }
+        let url = format!(
+            "{}/entries?{}",
+            base.get_value(),
+            params.to_string().as_string().unwrap_or_default()
+        );
         page.set(None);
         leptos::task::spawn_local(async move {
             let result = get::<Value>(&url).await.map_err(|reason| reason.message);
-            if !directory.is_disposed() && directory.get_untracked() == path && after.get_untracked() == cursor {
+            if !directory.is_disposed()
+                && directory.get_untracked() == path
+                && after.get_untracked() == cursor
+            {
                 page.set(Some(result));
             }
         });
     });
     view! {
-        <div class="k-stack bs-root">
+        <div class="k-stack bs-root conversation-workspace">
             <nav class="k-row-actions" aria-label="Workspace path">
-                <button type="button" class="k-btn k-btn--ghost" on:click=move |_| {
+                <button type="button" class="k-btn k-btn--md k-btn--ghost" on:click=move |_| {
                     file.set(None); after.set(None); directory.set(String::new());
                 }><span class="appearance-icon" inner_html=folder.get_value()></span>"Workspace"</button>
                 {move || directory.with(|path| (!path.is_empty()).then(|| view! { <span class="right-panel__path">{path.clone()}</span> }))}
@@ -713,7 +734,9 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
         });
     };
     let icons = use_context::<Icons>().unwrap_or_default();
-    let title = chat.config.with_value(|config| format!("{}'s computer", config.name));
+    let title = chat
+        .config
+        .with_value(|config| format!("{}'s computer", config.name));
     let title_attr = title.clone();
     let menu = NodeRef::<leptos::html::Details>::new();
     let close_menu = move || {
@@ -868,6 +891,24 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
         ("computer", "Computer", icons.computer),
         ("run", "Run", icons.inspect.clone()),
     ];
+    let profile = NodeRef::<leptos::html::Dialog>::new();
+    let thread_settings = NodeRef::<leptos::html::Dialog>::new();
+    let (agent, thread) = chat
+        .config
+        .with_value(|config| (config.agent.clone(), config.thread.clone()));
+    let settings_label = if thread.is_some() {
+        "Conversation settings"
+    } else if agent.as_ref().is_some_and(|agent| agent.builtin) {
+        "AI connection"
+    } else {
+        "Edit profile"
+    };
+    let settings = if thread.is_some() {
+        thread_settings
+    } else {
+        profile
+    };
+    let settings_icon = icons.settings;
     let drawer = NodeRef::<leptos::html::Dialog>::new();
     let narrow = RwSignal::new(details_overlay());
     let resize = window_event_listener(leptos::ev::resize, move |_| narrow.set(details_overlay()));
@@ -876,7 +917,9 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
         let overlay = narrow.get();
         let open = chat.details.get();
         if let Some(drawer) = drawer.get() {
-            if drawer.open() && (!open || previous.is_some_and(|was_overlay| was_overlay != overlay)) {
+            if drawer.open()
+                && (!open || previous.is_some_and(|was_overlay| was_overlay != overlay))
+            {
                 drawer.close();
             }
             if open && !drawer.open() {
@@ -899,6 +942,16 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
             on:cancel=move |event: web_sys::Event| { event.prevent_default(); chat.set_details(false); }>
         <aside class="details right-panel conversation-panel bs-root" aria-label="Conversation details">
             <div class="right-panel__header"><div>
+                {agent.as_ref().map(|agent| if agent.builtin {
+                    let from = routes::link(&format!("/agents/{}", agent.id));
+                    view! { <a class="k-icon-btn" aria-label=settings_label title=settings_label href=crate::settings::section_url("/settings/providers", &from)>
+                        <span class="appearance-icon" inner_html=settings_icon.clone()></span>
+                    </a> }.into_any()
+                } else {
+                    view! { <button type="button" class="k-icon-btn" aria-label=settings_label title=settings_label on:click=move |_| controls::dialog_open(settings)>
+                        <span class="appearance-icon" inner_html=settings_icon.clone()></span>
+                    </button> }.into_any()
+                })}
                 <button type="button" class="k-icon-btn" aria-label="Close details" title="Close details" on:click=move |_| chat.set_details(false)>
                     <span class="appearance-icon" inner_html=icons.close></span>
                 </button>
@@ -924,18 +977,26 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
                             "computer" => context.with(|context| context.as_ref().and_then(|value| value.computer.clone()))
                                 .filter(|agent| protocol::id(agent)).map(|agent| view! { <div class="right-panel__computer">{computer_panel(chat, agent)}</div> }).into_any(),
                             "run" => view! { <div class="right-panel__body">{run_panel(chat)}</div> }.into_any(),
-                            _ => routes::chats(chat).into_any(),
+                            _ => routes::chats(chat, profile).into_any(),
                         }
                     }}
                 </div>
             </div>
         </aside>
+        {agent.filter(|agent| !agent.builtin).map(|agent| view! {
+            {controls::edit_dialog(agent.clone(), None, profile)}
+            {thread.map(|thread| controls::edit_dialog(agent, Some(thread), thread_settings))}
+        })}
         </dialog>
     }
 }
 
 fn details_overlay() -> bool {
-    window().match_media("(max-width: 767px)").ok().flatten().is_some_and(|query| query.matches())
+    window()
+        .match_media("(max-width: 767px)")
+        .ok()
+        .flatten()
+        .is_some_and(|query| query.matches())
 }
 
 pub fn rich_replies(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {

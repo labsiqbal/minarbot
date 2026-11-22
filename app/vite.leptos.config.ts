@@ -32,7 +32,8 @@ const appearanceConfig: Plugin = {
           chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),
           copy: svg(Copy, 14), fork: svg(GitFork, 14),
           inspect: svg(Wrench, 14), close: svg(X),
-          chats: svg(MessageSquare, 14), files: svg(Files, 14), filter: svg(Filter, 15),
+          chats: svg(MessageSquare, 14), files: svg(Files, 14), file: svg(FileText, 16), filter: svg(Filter, 15),
+          settings: svg(Settings, 16),
           computer: svg(Monitor, 14), members: svg(Users, 14),
           shield: svg(ShieldCheck, 18), more: svg(Ellipsis, 16), external: svg(ExternalLink, 14),
           folder: svg(Folder), next: svg(ChevronRight, 14), alert: svg(CircleAlert, 14),
@@ -47,7 +48,7 @@ const appearanceConfig: Plugin = {
         workspaceIcons: {
           panel: svg(PanelLeft), filter: svg(Filter, 15), settings: svg(Settings),
           routines: svg(CalendarClock), workflows: svg(Workflow), calendar: svg(CalendarDays),
-          search: svg(Search, 15), info: svg(Info, 14), voice: svg(Volume2),
+          search: svg(Search, 15), quickSearch: svg(Search, 16), book: svg(BookOpen, 16), info: svg(Info, 14), voice: svg(Volume2),
           monitor: svg(Monitor), plug: svg(Plug, 15), plus: svg(Plus, 15), send: svg(Send, 15), check: svg(Check, 15),
           folder: svg(Folder), folderOpen: svg(FolderOpen), hash: svg(Hash), chevron: svg(ChevronRight),
         },

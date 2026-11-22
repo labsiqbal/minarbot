@@ -74,7 +74,7 @@ try {
   const failed = await thread('Failed run');
   await seed(failed.scope, 'Inspect failed run', turn => turn.status === 'failed');
   const rich = await thread('October report');
-  await seed(rich.scope, 'Show the report', turn => turn.harnessApprovals?.some(item => item.kind === 'form' && item.state === 'approval'));
+  const richTurn = await seed(rich.scope, 'Show the report', turn => turn.harnessApprovals?.some(item => item.kind === 'form' && item.state === 'approval'));
   const screen = 'data:image/png;base64,' + (await desktopImage).toString('base64');
   const fixed = new Date(Math.max(Date.now(), Date.parse(completed.created) + 5_000));
   const selector = (path, client) => app.origin + path + '?ui=' + client;
@@ -93,8 +93,11 @@ try {
             localStorage.setItem('minarbot:details-open', '0');
           }, theme);
           async function capture(name, anchor) {
+            await page.evaluate(async () => {
+              await document.fonts.ready;
+              await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            });
             if (anchor) await anchor.scrollIntoViewIfNeeded();
-            await page.evaluate(() => document.fonts.ready);
             const raw = await page.screenshot({ animations: 'disabled', path: join(out, `${viewport}-${theme}-${name}-${client}.png`) });
             const entries = images.get(name) ?? [];
             images.set(name, [...entries, raw]);
@@ -109,7 +112,9 @@ try {
           await capture('conversation');
           await page.getByRole('button', { name: 'Show details' }).click();
           await details.getByRole('tab', { name: 'Chats', exact: true }).waitFor();
-          await details.getByText('Conversations', { exact: true }).waitFor();
+          await details.getByRole('button', { name: 'Edit profile', exact: true }).waitFor();
+          await details.getByLabel('Menu conversation Main chat', { exact: true }).waitFor();
+          await details.getByLabel('Menu conversation October report', { exact: true }).waitFor();
           await capture('chats');
           await details.getByRole('tab', { name: 'Files', exact: true }).click();
           await details.getByText('Directory is empty on this page.', { exact: true }).waitFor();
@@ -155,6 +160,7 @@ try {
           await details.locator('canvas').waitFor();
           await page.waitForFunction(() => window.__vncFake?.frames > 0);
           await capture('computer');
+
         } finally { await context.close(); }
       }
       for (const [name, [react, leptos]] of images) {
@@ -171,6 +177,36 @@ try {
       }
     }
   }
+  await api(`${rich.scope}/turns/${richTurn.id}/cancel`, { id: randomUUID() });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.addInitScript(() => localStorage.setItem('minarbot:details-open', '0'));
+  await page.goto(selector(main, 'leptos'));
+  await page.getByRole('button', { name: 'Help', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Keyboard shortcuts' }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: /Quick switcher/ }).click();
+  const search = page.getByRole('dialog', { name: 'Quick switcher' });
+  await search.getByLabel('Jump to').fill('Conversation fixture');
+  await search.getByRole('link', { name: 'Conversation fixture Agents' }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Show details' }).click();
+  const details = page.getByRole('complementary', { name: 'Conversation details' });
+  const editor = page.getByRole('dialog', { name: 'Edit profile' });
+  await details.getByRole('button', { name: 'Edit profile', exact: true }).click();
+  await editor.getByRole('button', { name: 'Cancel' }).click();
+  await details.getByLabel('Menu conversation Main chat').click();
+  await details.locator('.chat-list-menu').getByRole('button', { name: 'Edit profile', exact: true }).click();
+  assert.equal(await editor.getByLabel('Name', { exact: true }).inputValue(), agent.name);
+  const saved = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(`/api${main}/edit`));
+  const reloaded = page.waitForEvent('load');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  const response = await saved;
+  assert(response.ok(), `Profile edit returned ${response.status()}`);
+  await reloaded;
+  const updated = (await api('/api/agents')).agents.find(item => item.id === agent.id);
+  assert.equal(updated.revision, agent.revision + 1);
+  assert.equal(updated.name, agent.name);
+  console.log('PASS quick switcher, keyboard help, panel gear, Main chat menu, and profile save');
 } finally {
   await browser?.close();
   await app?.close();

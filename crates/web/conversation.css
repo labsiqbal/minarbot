@@ -44,7 +44,7 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 /* Keep panel content mounted across viewport changes. Native modal handles focus and Escape. */
 .conversation-panel-shell {
   position: static; inset: auto; margin: 0; padding: 0; border: 0; color: inherit;
-  background: transparent; max-width: none; max-height: none; flex: 0 1 360px; min-width: 0;
+  background: transparent; max-width: none; max-height: none; height: 100%; flex: 0 1 360px; min-width: 0;
 }
 .conversation-panel-shell > .conversation-panel { width: 100%; }
 .conversation-panel-shell:modal {
@@ -55,6 +55,8 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .conversation-panel-shell:modal::backdrop { background: var(--color-bg-scrim); overflow: hidden; overscroll-behavior: contain; }
 .conversation-disclosure > summary { list-style: none; }
 .conversation-disclosure > summary::-webkit-details-marker { display: none; }
+.leptos-workspace .conversation-disclosure .k-collapsible__chev { display: inline-flex; }
+.conversation-disclosure .k-collapsible__chev svg { width: 15px; height: 15px; }
 .conversation-disclosure[open] .k-collapsible__chev { transform: rotate(180deg); }
 .approval-card-body { padding: 14px; }
 .approval-card-body > p { margin: 0; overflow-wrap: anywhere; }
@@ -65,8 +67,15 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .computer-actions .task-actions { top: calc(100% + 4px); bottom: auto; }
 .composer__cta--stop svg { fill: currentColor; }
 
-.chat-list-menu { position: relative; }
+.chat-list-menu { position: relative; flex: none; margin-right: 4px; }
+.chat-list-menu > .k-icon-btn { width: 28px; height: 28px; }
+.chat-list-menu > .k-icon-btn svg { width: 15px; height: 15px; }
+.conversation-workspace > nav svg { width: 14px; height: 14px; }
+.conversation-workspace .k-empty__icon > svg { width: 18px; height: 18px; }
 .chat-list-menu .k-pop { position: absolute; right: 0; z-index: 2; }
+.leptos-workspace .turn-activity__details .k-collapsible__chev { display: inline-flex; }
 .turn-activity__details[open] .k-collapsible__chev { transform: none; }
 .answer-actions:not([hidden]) { display: contents; }
-.message-error > .appearance-icon { flex: none; align-self: flex-start; margin-top: 5px; }
+.message-error > .appearance-icon > svg { flex: none; align-self: flex-start; margin-top: 5px; }
+
+.conversation-panel > .right-panel__header { padding-inline-end: 12px; }

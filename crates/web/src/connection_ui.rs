@@ -325,7 +325,13 @@ pub fn Switch(
     #[prop(optional, into)] disabled: Signal<bool>,
     change: Callback<bool>,
 ) -> impl IntoView {
-    let state = move || if checked.get() { "checked" } else { "unchecked" };
+    let state = move || {
+        if checked.get() {
+            "checked"
+        } else {
+            "unchecked"
+        }
+    };
     view! {
         <button type="button" role="switch" class="k-switch" aria-label=label
             aria-checked=move || checked.get().to_string()

@@ -34,6 +34,8 @@ pub(crate) struct Icons {
     pub members: String,
     pub filter: String,
     pub close: String,
+    pub settings: String,
+    pub file: String,
     pub shield: String,
     pub more: String,
     pub external: String,
@@ -170,7 +172,9 @@ impl Turn {
     }
 
     fn waiting_for_answer(&self) -> bool {
-        self.questions.iter().any(|question| question["answer"].is_null())
+        self.questions
+            .iter()
+            .any(|question| question["answer"].is_null())
     }
 
     fn live_activity(&self) -> bool {
@@ -178,19 +182,24 @@ impl Turn {
     }
 
     fn approval_subject(&self) -> Option<&'static str> {
-        if self.approvals.iter().any(|approval| approval["state"] == "approval") {
+        if self
+            .approvals
+            .iter()
+            .any(|approval| approval["state"] == "approval")
+        {
             return Some("connected app action");
         }
-        self.harness_approvals.iter().find(|approval| approval["state"] == "approval").map(|approval| {
-            match approval["kind"].as_str() {
+        self.harness_approvals
+            .iter()
+            .find(|approval| approval["state"] == "approval")
+            .map(|approval| match approval["kind"].as_str() {
                 Some("command") => "shell command",
                 Some("file") => "file change",
                 Some("network") => "network access request",
                 Some("email") => "email draft",
                 Some("form") => "form",
                 _ => "tool request",
-            }
-        })
+            })
     }
 
     fn streaming(&self) -> bool {
@@ -312,6 +321,7 @@ struct Chat {
     tab: RwSignal<&'static str>,
     details: RwSignal<bool>,
     run: RwSignal<String>,
+    new_thread: RwSignal<bool>,
 }
 
 impl Chat {
@@ -356,6 +366,7 @@ impl Chat {
             tab: RwSignal::new("chats"),
             details: RwSignal::new(restore_details()),
             run: RwSignal::new(String::new()),
+            new_thread: RwSignal::new(false),
             config: StoredValue::new(config),
         }
     }
@@ -1131,17 +1142,23 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
 }
 
 fn avatar(agent: Option<Agent>, name: &str, channel: bool, size: u8) -> impl IntoView {
-    let image = agent.filter(|agent| agent.avatar_revision > 0 && protocol::id(&agent.id));
+    let image = agent
+        .as_ref()
+        .filter(|agent| agent.avatar_revision > 0 && protocol::id(&agent.id))
+        .map(|agent| format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision));
     let initial = if channel {
         "#".into()
     } else {
-        name.chars()
+        agent
+            .as_ref()
+            .map_or(name, |agent| agent.name.as_str())
+            .chars()
             .next()
             .map_or_else(String::new, |letter| letter.to_uppercase().collect())
     };
     view! {
         <span class="avatar bs-avatar" class:is-channel=channel style:width=format!("{size}px") style:height=format!("{size}px") style:font-size=format!("{}px", (size as f32 * 0.42).round()) aria-hidden="true">
-            {image.map(|agent| view! { <img src=format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision) alt="" /> }.into_any()).unwrap_or_else(|| initial.into_any())}
+            {image.map(|src| view! { <img src=src alt="" /> }.into_any()).unwrap_or_else(|| initial.into_any())}
         </span>
     }
 }
@@ -1216,6 +1233,22 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
     let snapshots = StoredValue::new(HashMap::new());
     subscribe(chat, snapshots);
     polling(chat, snapshots);
+    let create = window_event_listener(
+        leptos::ev::Custom::<web_sys::Event>::new("minarbot:new-conversation"),
+        move |_| {
+            if chat.config.with_value(|config| {
+                config
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| !agent.builtin && !agent.hidden)
+            }) {
+                chat.new_thread.set(true);
+                chat.tab.set("chats");
+                chat.set_details(true);
+            }
+        },
+    );
+    on_cleanup(move || create.remove());
     let filter = RwSignal::new(String::new());
     let searching = RwSignal::new(false);
     let search_input = NodeRef::<leptos::html::Input>::new();
@@ -1230,7 +1263,34 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
     });
     let rows = Memo::new(move |_| chat.turns.with(|rows| rows.clone().unwrap_or_default()));
     let timeline = NodeRef::<leptos::html::Section>::new();
+    let content = NodeRef::<leptos::html::Div>::new();
     let follow = RwSignal::new(true);
+    let last_scroll = RwSignal::new(0);
+    let scroll_to_bottom = move |node: &web_sys::HtmlElement| {
+        node.set_scroll_top(node.scroll_height());
+        last_scroll.set(node.scroll_top());
+    };
+    Effect::new(move |_| {
+        let (Some(timeline), Some(content)) = (timeline.get(), content.get()) else {
+            return;
+        };
+        let target = timeline.clone();
+        let resize = Closure::<dyn FnMut()>::new(move || {
+            if follow.get_untracked()
+                && chat.focus.with_untracked(String::is_empty)
+                && chat.before.get_untracked().is_none()
+                && !searching.get_untracked()
+            {
+                scroll_to_bottom(&target);
+            }
+        });
+        if let Ok(observer) = web_sys::ResizeObserver::new(resize.as_ref().unchecked_ref()) {
+            observer.observe(&timeline);
+            observer.observe(&content);
+            let handle = StoredValue::new_local((observer, resize));
+            on_cleanup(move || handle.with_value(|(observer, _)| observer.disconnect()));
+        }
+    });
     Effect::new(move |_| {
         rows.track();
         if follow.get_untracked() {
@@ -1246,7 +1306,7 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                         follow.set(false);
                     }
                 } else if let Some(node) = timeline.get_untracked() {
-                    node.set_scroll_top(node.scroll_height());
+                    scroll_to_bottom(&node);
                 }
             });
         }
@@ -1281,9 +1341,14 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                 </form>
                 <div class="transcript-wrap">
                 <section class="transcript" aria-label="Conversation history" node_ref=timeline on:scroll=move |_| {
-                    if let Some(node) = timeline.get_untracked() { follow.set(node.scroll_height() - node.client_height() - node.scroll_top() <= 80); }
+                    if let Some(node) = timeline.get_untracked() {
+                        let top = node.scroll_top();
+                        if top == last_scroll.get_untracked() && follow.get_untracked() { return; }
+                        last_scroll.set(top);
+                        follow.set(node.scroll_height() - node.client_height() - top < 32);
+                    }
                 }>
-                    <div class="transcript__col">
+                    <div class="transcript__col" node_ref=content>
                         <p role="status" hidden=move || chat.turns.with(Option::is_some)>"Loading conversation…"</p>
                         <p class="message-error" role="alert" hidden=move || chat.read_error.with(String::is_empty)>{chat.read_error}</p>
                         <p class="message-muted" hidden=move || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty()))>

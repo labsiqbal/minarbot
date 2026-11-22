@@ -2,10 +2,10 @@
 
 mod api;
 mod appearance;
-#[cfg(feature = "conversation")]
-pub mod conversation;
 mod connected_apps;
 mod connection_ui;
+#[cfg(feature = "conversation")]
+pub mod conversation;
 mod craft_anything;
 mod email;
 mod engines;

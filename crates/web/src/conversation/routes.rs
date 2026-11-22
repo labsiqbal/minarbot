@@ -14,6 +14,12 @@ pub struct Agent {
     pub avatar_revision: u64,
     pub model: Option<String>,
     pub runtime: Option<String>,
+    #[serde(default)]
+    pub instructions: String,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -180,7 +186,7 @@ pub fn standalone() -> impl IntoView {
     }
 }
 
-pub fn chats(chat: Chat) -> impl IntoView {
+pub fn chats(chat: Chat, edit_profile: NodeRef<leptos::html::Dialog>) -> impl IntoView {
     let config = chat.config.get_value();
     if config.channel {
         return view! {
@@ -309,12 +315,18 @@ pub fn chats(chat: Chat) -> impl IntoView {
             }
         });
     };
-    let create = move |_| {
+    let create = move || {
         let Some(id) = uuid() else { return };
         execute(Some(
             json!({"path": api.get_value(), "data": {"id": id, "name": "New conversation"}}),
         ));
     };
+    Effect::new(move |_| {
+        if chat.new_thread.get() {
+            chat.new_thread.set(false);
+            create();
+        }
+    });
     let icons = use_context::<Icons>().unwrap_or_default();
     let role = agent
         .role
@@ -334,7 +346,7 @@ pub fn chats(chat: Chat) -> impl IntoView {
     view! {
         <div class="details__scroll">
         <div class="details__identity">
-            {avatar(Some(agent), &name, false, 36)}
+            {avatar(Some(agent.clone()), &name, false, 36)}
             <div class="details__identity-text">
                 <div class="details__name" title=name>{name.clone()}</div>
                 <div class="details__who-sub" title=role>{role.clone()}</div>
@@ -351,7 +363,7 @@ pub fn chats(chat: Chat) -> impl IntoView {
                         <label class="k-pop k-check"><input type="checkbox" on:change=move |event| show_archived.set(event_target_checked(&event)) />"Show archived"</label>
                     </details>
                     <button type="button" class="k-icon-btn" aria-label="New conversation" title="New conversation"
-                        disabled=move || busy.get() || pending.with(Option::is_some) on:click=create><span class="appearance-icon" inner_html=icons.attach></span></button>
+                        disabled=move || busy.get() || pending.with(Option::is_some) on:click=move |_| create()><span class="appearance-icon" inner_html=icons.attach></span></button>
                 </div>
             </div>
             <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
@@ -359,10 +371,21 @@ pub fn chats(chat: Chat) -> impl IntoView {
                 <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=busy on:click=move |_| execute(None)>"Retry change"</button>
             </div>
             <div class="panel-card">
-            <div class="conversation-row" class:is-current=main>
+            <div class="conversation-row" data-conversation-id="main" class:is-current=main>
                 <a class="panel-row panel-row--link" class:is-current=main aria-current=main.then_some("true") href=link(&base)>
                     <span class="appearance-icon" inner_html=icons.chats></span><span class="panel-row__title">"Main chat"</span>
                 </a>
+                <details class="chat-pilot-menu chat-list-menu"><summary class="k-icon-btn" aria-label="Menu conversation Main chat" title="More actions">
+                    <span class="appearance-icon" inner_html=more.get_value()></span></summary>
+                    <div class="k-pop k-menu">
+                        {if agent.builtin {
+                            let from = link(&base);
+                            view! { <a class="k-menu__item" href=crate::settings::section_url("/settings/providers", &from)>"AI connection"</a> }.into_any()
+                        } else {
+                            view! { <button class="k-menu__item" type="button" on:click=move |_| controls::dialog_open(edit_profile)>"Edit profile"</button> }.into_any()
+                        }}
+                    </div>
+                </details>
             </div>
             {move || threads.get().into_iter().filter(|thread| thread.archived == 0 || show_archived.get()).map(|thread| {
                 let selected = current.as_deref() == Some(thread.id.as_str());
@@ -373,8 +396,9 @@ pub fn chats(chat: Chat) -> impl IntoView {
                 let href = link(&format!("{base}/conversations/{}", thread.id));
                 let rename = thread.clone();
                 let archive = thread.clone();
+                let delete = thread.clone();
                 view! {
-                    <div class="conversation-row">
+                    <div class="conversation-row" data-conversation-id=thread.id.clone()>
                         <a class="panel-row panel-row--link" class:is-current=selected aria-current=selected.then_some("true") href=href>
                             <span class="appearance-icon" inner_html=chat_icon.get_value()></span>
                             <span class="panel-row__text"><span class="panel-row__title">{name}</span>
@@ -389,7 +413,7 @@ pub fn chats(chat: Chat) -> impl IntoView {
                                 <button class="k-btn k-btn--sm k-btn--ghost" type="button" disabled=move || busy.get() || pending.with(Option::is_some)
                                     on:click=move |_| open(archive.clone(), if archived { "restore" } else { "archive" })>{if archived { "Restore" } else { "Archive" }}</button>
                                 <button class="k-btn k-btn--sm k-btn--ghost" type="button" disabled=move || busy.get() || pending.with(Option::is_some)
-                                    on:click=move |_| open(thread.clone(), "delete")>"Delete"</button>
+                                    on:click=move |_| open(delete.clone(), "delete")>"Delete"</button>
                             </div>
                         </details>
                     </div>
