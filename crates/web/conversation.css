@@ -1,3 +1,4 @@
+@import "../../app/src/guide.css";
 @import "./appearance.css";
 @import "../../app/src/ui/details.css";
 @import "../../app/src/right-panel.css";
@@ -102,3 +103,8 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .conversation-select > select { appearance: none; padding-right: 30px; field-sizing: content; }
 .conversation-select > .k-select__chev { position: absolute; right: 8px; top: 50%; translate: 0 -50%; pointer-events: none; }
 .computer-empty-icon svg { width: 28px; height: 28px; stroke-width: 1.5; }
+
+.question-card-body { padding: 12px; }
+.question-card-body :is(h3, p, .k-check__label) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-card-note { margin: 0; overflow-wrap: anywhere; }
+.turn-request { scroll-margin-block-start: 12px; }

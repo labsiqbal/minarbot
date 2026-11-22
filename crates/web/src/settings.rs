@@ -19,7 +19,7 @@ pub struct Config {
     #[serde(default)]
     connection_icons: crate::connection_ui::Icons,
     #[serde(default)]
-    system_icons: crate::system::kit::Icons,
+    pub(crate) system_icons: crate::system::kit::Icons,
     #[serde(default)]
     mcp_scopes: Vec<crate::system::external::Scope>,
 }
