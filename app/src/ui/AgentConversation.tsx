@@ -5,6 +5,8 @@ import { AgentAvatar } from '../AgentAvatar';
 import { Markdown, StreamingMarkdown } from '../Markdown';
 import { HtmlReplies } from '../HtmlReply';
 import { ComponentReplies, type ComponentReplyData } from '../ComponentReply';
+import { McpAppReplies, type McpAppHandler } from '../McpAppFrame';
+import type { McpAppReference } from '../mcp-app-host';
 import type { HtmlReplyAction, HtmlReplyReference } from '../html-reply';
 import { AgentMessage } from './ChatPrimitives';
 import { Collapsible } from './kit';
@@ -25,9 +27,9 @@ export function AgentConversation({ items, sender, scope, onOpen }: { items: Exc
   </div>)}</section>;
 }
 export type RoomView = { root: string; generation: string; active: boolean; stopped: boolean; round: number; silent: string | null; note: string | null; quiet: { agent: string; name: string; silent: string }[]; messages: { seq: number; turn: string; agent: string; name: string; role: string; target_name?: string; text: string; kind: string }[] };
-type RoomTurn = { htmlReplies?: HtmlReplyReference[]; componentReplies?: ComponentReplyData[]; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: StreamPartial | null; activity?: TurnActivityData; questions?: { id: string; prompt: string; answer: string | null }[] };
+type RoomTurn = { mcpApps?: McpAppReference[]; htmlReplies?: HtmlReplyReference[]; componentReplies?: ComponentReplyData[]; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: StreamPartial | null; activity?: TurnActivityData; questions?: { id: string; prompt: string; answer: string | null }[] };
 type RoomMember = { id: string; name: string; role: string; avatar_revision?: number };
-function RoomReply({ turn, member, text, scope, details, controls, extras, onHtmlReplyAction }: { turn: RoomTurn; onHtmlReplyAction?: (action: HtmlReplyAction) => void; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {
+function RoomReply({ turn, member, text, scope, details, controls, extras, onHtmlReplyAction, onMcpAppAction }: { onMcpAppAction?: McpAppHandler; turn: RoomTurn; onHtmlReplyAction?: (action: HtmlReplyAction) => void; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {
   const [open, setOpen] = useState(false);
   const live = liveTurn(turn), streaming = livePartial(turn), now = useLiveClock(live);
   const answer = text ?? turn.partial?.text ?? '';
@@ -41,17 +43,18 @@ function RoomReply({ turn, member, text, scope, details, controls, extras, onHtm
     {hasWork && <Disclosure.Content className="room-agent__activity">{details}</Disclosure.Content>}
     <HtmlReplies replies={turn.htmlReplies} scope={scope} onAction={onHtmlReplyAction} />
     <ComponentReplies replies={turn.componentReplies} scope={scope} />
+    <McpAppReplies apps={turn.mcpApps} scope={scope} onAction={onMcpAppAction} />
     {(answer || !['queued', 'running'].includes(turn.status) && !!turn.generatedFiles?.length) && <div className="message-body" aria-label={streaming ? `Streaming answer from ${member.name}` : `Answer from ${member.name}`}><div className="legacy"><StreamingMarkdown files={turn.generatedFiles} key={turn.id} text={answer} scope={scope} origin={window.location.origin} /></div></div>}
     {extras}
     {turn.error && turn.status !== 'cancelled' && <p className="message-error">{turn.error}</p>}
     <div className="turn-controls" role="group" aria-label="Message actions">{controls}</div>
   </section></Disclosure.Root>;
 }
-export function RoomMessages({ room, members, pending, turns, scope, details, controls, extras, onHtmlReplyAction }: { room: RoomView; onHtmlReplyAction?: (action: HtmlReplyAction) => void; members: RoomMember[]; pending: RoomTurn[]; turns: RoomTurn[]; scope: string; details: (turn: string) => ReactNode; controls: (turn: string) => ReactNode; extras: (turn: string) => ReactNode }) {
+export function RoomMessages({ room, members, pending, turns, scope, details, controls, extras, onHtmlReplyAction, onMcpAppAction }: { onMcpAppAction?: McpAppHandler; room: RoomView; onHtmlReplyAction?: (action: HtmlReplyAction) => void; members: RoomMember[]; pending: RoomTurn[]; turns: RoomTurn[]; scope: string; details: (turn: string) => ReactNode; controls: (turn: string) => ReactNode; extras: (turn: string) => ReactNode }) {
   const rows = [...room.messages.map(item => ({ key: `${item.kind}-${item.turn}`, item, turn: turns.find(turn => turn.id === item.turn) })), ...pending.filter(turn => turn.status !== 'cancelled' || !!turn.activity?.calls.length || !!turn.partial?.text || !!turn.activity?.stream?.length || !!turn.activity?.tools.length || !!turn.activity?.harness?.length).map(turn => ({ key: `reply-${turn.id}`, item: undefined, turn }))];
   return <div className="room-conversation" aria-label="Section conversation">
     {rows.map(({ key, item, turn }) => item?.kind === 'request' ? <AgentMessage key={key} identity={<div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === item.agent) ?? { id: item.agent, name: item.name }} size={24} /><strong className="message-name">{item.name}</strong>{item.target_name && <span className="message-role">to {item.target_name}</span>}</div>}><div className="room-message-request legacy"><Markdown results text={item.text} scope={scope} origin={window.location.origin} /></div></AgentMessage>
-      : <RoomReply key={key} onHtmlReplyAction={onHtmlReplyAction} turn={turn ?? { id: item!.turn, agent: item!.agent, status: 'done', paused: 0, created: '', error: null }} member={members.find(member => member.id === (turn?.agent ?? item?.agent)) ?? { id: item?.agent ?? turn!.agent, name: item?.name ?? turn!.agent, role: '' }} text={item?.text} scope={scope} details={details(turn?.id ?? item!.turn)} controls={controls(turn?.id ?? item!.turn)} extras={extras(turn?.id ?? item!.turn)} />)}
+      : <RoomReply key={key} onHtmlReplyAction={onHtmlReplyAction} onMcpAppAction={onMcpAppAction} turn={turn ?? { id: item!.turn, agent: item!.agent, status: 'done', paused: 0, created: '', error: null }} member={members.find(member => member.id === (turn?.agent ?? item?.agent)) ?? { id: item?.agent ?? turn!.agent, name: item?.name ?? turn!.agent, role: '' }} text={item?.text} scope={scope} details={details(turn?.id ?? item!.turn)} controls={controls(turn?.id ?? item!.turn)} extras={extras(turn?.id ?? item!.turn)} />)}
     {room.note && <p className="room-system-note" role="status">{room.note}</p>}
   </div>;
 }

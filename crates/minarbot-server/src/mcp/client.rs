@@ -50,7 +50,7 @@ impl Session {
             capabilities: Value::Null,
             _permit: permit,
         };
-        let init=s.rpc("initialize",json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"minarbot","version":"0.1.0"}})).await?;
+        let init=s.rpc("initialize",json!({"protocolVersion":"2025-03-26","capabilities":{"extensions":{"io.modelcontextprotocol/ui":{}}},"clientInfo":{"name":"minarbot","version":"0.1.0"}})).await?;
         s.capabilities = init["capabilities"].clone();
         s.notify("notifications/initialized").await?;
         Ok(s)
@@ -82,6 +82,18 @@ impl Session {
         Ok(())
     }
     pub async fn rpc(&mut self, method: &str, params: Value) -> Result<Value> {
+        self.rpc_with_limit(method, params, None).await
+    }
+    pub async fn read_app(&mut self, uri: &str, limit: usize) -> Result<Value> {
+        self.rpc_with_limit("resources/read", json!({"uri":uri}), Some(limit))
+            .await
+    }
+    async fn rpc_with_limit(
+        &mut self,
+        method: &str,
+        params: Value,
+        document_limit: Option<usize>,
+    ) -> Result<Value> {
         self.seq += 1;
         let id = self.seq;
         let mut response = self
@@ -108,8 +120,12 @@ impl Session {
             .is_some_and(|v| v.starts_with("text/event-stream"));
         let mut bytes = vec![];
         while let Some(chunk) = response.chunk().await.map_err(|_| failed())? {
-            self.bytes += chunk.len();
-            if self.bytes > 256 * 1024 {
+            if document_limit.is_none() {
+                self.bytes += chunk.len();
+            }
+            if document_limit.map_or(self.bytes > 256 * 1024, |limit| {
+                bytes.len() + chunk.len() > limit
+            }) {
                 return Err(failed());
             }
             bytes.extend_from_slice(&chunk);

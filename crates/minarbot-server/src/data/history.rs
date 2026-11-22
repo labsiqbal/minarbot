@@ -249,6 +249,10 @@ fn decorate(state: &AppState, db: &Connection, turn: &mut Value, channel: bool) 
             turn["htmlReplies"] = json!(replies);
         }
     }
+    let apps = crate::mcp::apps::references(db, &id)?;
+    if !apps.is_null() {
+        turn["mcpApps"] = apps;
+    }
     turn["events"]=json!(rows(db,"turn_waits","SELECT w.id,w.event,w.deadline,CASE WHEN w.status='waiting' AND t.status NOT IN('queued','running') THEN 'closed' ELSE w.status END AS status FROM turn_waits w JOIN turns t ON t.id=w.turn WHERE w.turn=? ORDER BY w.rowid",[&id])?);
     let mut approvals = rows(db,"composio_calls","SELECT call_id,tool,state,decision,revision FROM composio_calls WHERE turn=? AND decision IS NOT NULL ORDER BY rowid",[&id])?;
     for approval in &mut approvals {

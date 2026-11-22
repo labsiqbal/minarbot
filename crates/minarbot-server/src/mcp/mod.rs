@@ -1,3 +1,4 @@
+pub(crate) mod apps;
 pub(crate) mod client;
 pub(crate) mod codegraph;
 mod connections;

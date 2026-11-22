@@ -193,6 +193,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/threads/{id}/files", any(entry))
         .route("/api/threads/{id}/files/{file}", any(entry))
         .route("/api/{kind}/{id}/html-replies/{reply}", any(entry))
+        .route("/api/{kind}/{id}/mcp-apps/{app}", any(entry))
+        .route("/api/{kind}/{id}/mcp-apps/{app}/{action}", any(entry))
         .route("/api/agents/{id}/sites", any(entry))
         .route("/api/agents/{id}/sites/{site}", any(entry))
         .route("/api/skills", any(entry))
@@ -280,6 +282,12 @@ pub(crate) async fn entry(State(state): State<AppState>, req: Request) -> Respon
         }
         if let ["api", kind, owner, "html-replies", id] = parts.as_slice() {
             return rich_html::serve(&state, &req, kind, owner, id);
+        }
+        if let ["api", kind, owner, "mcp-apps", id] = parts.as_slice() {
+            return crate::mcp::apps::route(&state, req, kind, owner, id, None).await;
+        }
+        if let ["api", kind, owner, "mcp-apps", id, action] = parts.as_slice() {
+            return crate::mcp::apps::route(&state, req, kind, owner, id, Some(action)).await;
         }
         if path == "/api/backup" {
             return backup::handle(&state, req).await;

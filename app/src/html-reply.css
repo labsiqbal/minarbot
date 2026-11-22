@@ -10,6 +10,14 @@
   outline-offset: 2px;
 }
 
+.html-reply[hidden] {
+  display: none;
+}
+
+.mcp-app-frame {
+  margin-block-end: 8px;
+}
+
 .html-reply-context {
   display: flex;
   justify-content: space-between;
@@ -17,4 +25,12 @@
   gap: 8px;
   color: var(--color-text-secondary);
   font-size: var(--text-sm);
+}
+
+.mcp-app-approval {
+  display: block;
+  max-height: min(40vh, 24rem);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }

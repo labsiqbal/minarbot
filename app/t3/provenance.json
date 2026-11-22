@@ -2794,6 +2794,137 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "compatibilityCheck": "app/test-support/ui-smoke/html-replies-smoke.mjs"
+    },
+    {
+      "sourcePath": "packages/client-runtime/src/mcpApps/host.ts",
+      "symbols": [
+        "makeMcpAppHost",
+        "mcpAppStyleVariables"
+      ],
+      "localPaths": [
+        "app/src/McpAppFrame.tsx",
+        "app/src/mcp-app-host.ts"
+      ],
+      "adaptation": "Port JSON-RPC lifecycle, bounded messages, tool delivery, context and host theme.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "eaef7de26a85ff35ae72decd10b371d361536c26d849e906f56cd9799538cc77",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/mcp-apps-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/McpAppFrame.tsx",
+      "symbols": [
+        "McpAppFrame"
+      ],
+      "localPaths": [
+        "app/src/McpAppFrame.tsx"
+      ],
+      "adaptation": "Adopt frame source checks, user confirmations and host context on the Minarbot kit.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f7935be7bd4ff77070a2780014fa71d66db82e07ac7b631b5c02834c68ea54c0",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/mcp-apps-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/mcpApps/McpAppSnapshot.ts",
+      "symbols": [
+        "snapshotMcpApp"
+      ],
+      "localPaths": [
+        "crates/minarbot-server/src/mcp/apps.rs"
+      ],
+      "adaptation": "Resolve HTML and metadata from MCP resources and snapshot them with the owning turn.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "0a3b23f9bb87870fff776bebf74889877812408f1b057207b814f5f9842af128",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/mcp-apps-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/mcpApps/McpAppRequests.ts",
+      "symbols": [
+        "McpAppRequests"
+      ],
+      "localPaths": [
+        "crates/minarbot-server/src/mcp/apps.rs"
+      ],
+      "adaptation": "Use configured MCP connections, scoped grants and one-use server approval for writes.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "a5dc54d7898e9f4c5b4bd7916d7559c6bb95b4cbbe5b82d7cc3befd5807323b8",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/mcp-apps-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/mcpApps/McpAppModelContext.ts",
+      "symbols": [
+        "McpAppModelContext"
+      ],
+      "localPaths": [
+        "crates/minarbot-server/src/mcp/apps.rs"
+      ],
+      "adaptation": "Scope app context to its conversation and attach it on explicit user submission.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f32f4ea95e9418b91d29208defb8241633deeeca4bf88b7dabd65eeaa1692d5d",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/mcp-apps-smoke.mjs"
+    },
+    {
+      "sourcePath": "packages/contracts/src/mcpApps.ts",
+      "symbols": [
+        "McpAppCallToolInput",
+        "McpAppCallToolResult"
+      ],
+      "localPaths": [
+        "crates/minarbot-server/src/mcp/apps.rs"
+      ],
+      "adaptation": "Represent app and tool requests in Rust serde contracts.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "2dc158150bca35dddd45365d7e119266156353ea85e203e458335acb1a6d4a3f",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/mcp-apps-smoke.mjs"
+    },
+    {
+      "sourcePath": "packages/shared/src/mcpApp.ts",
+      "symbols": [
+        "mcpAppContentSecurityPolicy",
+        "readMcpAppCsp"
+      ],
+      "localPaths": [
+        "crates/minarbot-server/src/mcp/apps/document.rs"
+      ],
+      "adaptation": "Validate declared origins and deny access to Minarbot origins in both sandboxes.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "842d73a06814a375770bd2c4564fcc373d7d1645ade63b60f80e44d09cbb9c0a",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/mcp-apps-smoke.mjs"
+    }
+  ],
+  "copilotKitSources": [
+    {
+      "repository": "https://github.com/CopilotKit/CopilotKit",
+      "sourceRevision": "4bf3945125a27a9eb21fe722d26bc90779e296fc",
+      "sourcePath": "packages/mcp-apps-renderer/src/sandbox.ts",
+      "sourceSha256": "b9d9004755293d675b5ce3cbff304f9cf5e3fe21235e6024f116096341e241a7",
+      "symbols": ["buildSandboxHTML"],
+      "localPaths": ["crates/minarbot-server/src/mcp/apps/proxy.html"],
+      "adaptation": "Relay JSON-RPC through nested opaque frames using a per-frame channel and validated Window source.",
+      "license": "MIT",
+      "notice": "app/t3/CopilotKit-NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/mcp-apps-smoke.mjs"
     }
   ]
 }
