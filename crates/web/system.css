@@ -1,22 +1,22 @@
-#appearance-dialog .k-dialog:not([open]) { display: none; }
-#appearance-dialog .k-dialog {
+#appearance-dialog .system-dialog:not([open]) { display: none; }
+#appearance-dialog .system-dialog {
   inset: 50% auto auto 50%;
   margin: 0;
   padding: 0;
   color: var(--color-text-primary);
   overscroll-behavior: contain;
 }
-#appearance-dialog .k-dialog::backdrop { background: var(--color-bg-scrim); }
+#appearance-dialog .system-dialog::backdrop { background: var(--color-bg-scrim); }
 #appearance-dialog .system-menu { position: fixed; inset: auto; margin: 0; }
 #appearance-dialog .system-menu:not(:popover-open) { display: none; }
 #appearance-dialog .system-menu button:focus-visible { background: var(--color-bg-hover); }
 #appearance-dialog .system-menu .k-menu__item { width: 100%; }
-#appearance-dialog details.k-collapsible > summary { display: inline-flex; list-style: none; }
-#appearance-dialog details.k-collapsible > summary::before { content: none; }
-#appearance-dialog details.k-collapsible > summary::-webkit-details-marker { display: none; }
-#appearance-dialog .k-collapsible__chev { display: flex; }
-#appearance-dialog details[open] .k-collapsible__chev { transform: rotate(180deg); }
-#appearance-dialog .k-collapsible__chev svg { width: 15px; height: 15px; }
+#appearance-dialog .system-disclosure > summary { display: inline-flex; list-style: none; }
+#appearance-dialog .system-disclosure > summary::before { content: none; }
+#appearance-dialog .system-disclosure > summary::-webkit-details-marker { display: none; }
+#appearance-dialog .system-disclosure .k-collapsible__chev { display: flex; }
+#appearance-dialog .system-disclosure[open] > summary .k-collapsible__chev { transform: rotate(180deg); }
+#appearance-dialog .system-disclosure .k-collapsible__chev svg { width: 15px; height: 15px; }
 #appearance-dialog .machines-page .k-btn--ghost svg { width: 14px; height: 14px; }
 #appearance-dialog .devices-page .k-row__meta:has(> span:only-child[hidden]) { display: none; }
 #appearance-dialog .updates-page .k-row__leading svg { width: 17px; height: 17px; }

@@ -168,7 +168,7 @@ pub fn Disclosure(
 ) -> impl IntoView {
     let chevron = icons().down;
     let expanded = RwSignal::new(open);
-    view! { <details class="k-collapsible" open=open on:toggle=move |event| {
+    view! { <details class="k-collapsible system-disclosure" open=open on:toggle=move |event| {
       expanded.set(event.target().and_then(|node| node.dyn_into::<web_sys::Element>().ok()).is_some_and(|node| node.has_attribute("open")));
     }><summary class="k-collapsible__trigger" role="button" aria-expanded=move || expanded.get().to_string()>
       <span class="k-collapsible__title">{title}</span>
@@ -228,7 +228,7 @@ pub fn Dialog(
     let desc_for = desc_id.clone();
     let backdrop_press = RwSignal::new(false);
     view! {
-      <dialog node_ref=node class=format!("k-dialog bs-root k-dialog--{size}") tabindex="-1"
+      <dialog node_ref=node class=format!("k-dialog bs-root k-dialog--{size} system-dialog") tabindex="-1"
         role=confirmation.then_some("alertdialog")
         aria-labelledby=title_for
         aria-describedby=move || (!description.with(String::is_empty)).then(|| desc_for.clone())
