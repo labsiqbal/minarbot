@@ -77,8 +77,13 @@ for (const mode of ['canonical', 'local'] as const) {
       expected.exec(fixture(mode));
       const frozen = snapshot(expected);
       const frozenLedger = mode === 'canonical' ? expected.prepare(ledger).all() : [];
-      if (mode === 'local') expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8'));
+      if (mode === 'local') {
+        expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8'));
+        expected.exec(`CREATE TABLE IF NOT EXISTS craft_grants(agent TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE) STRICT;
+          CREATE TABLE IF NOT EXISTS craft_deep(project TEXT PRIMARY KEY REFERENCES local_projects(id) ON DELETE CASCADE) STRICT;`);
+      }
       expected.exec(readFileSync(new URL('../crates/minarbot-server/src/files/schema.sql', import.meta.url), 'utf8'));
+      expected.exec(readFileSync(new URL('../crates/minarbot-server/src/mcp/schema.sql', import.meta.url), 'utf8'));
       addMemorySchema(expected, mode);
       const current = snapshot(expected);
       await startAndClose(fresh, mode);
