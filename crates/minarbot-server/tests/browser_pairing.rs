@@ -1,59 +1,19 @@
-use reqwest::{header, redirect::Policy, StatusCode};
+#[path = "support/server.rs"]
+mod server;
+
+use reqwest::{header, StatusCode};
+use rustix::process::Signal;
 use serde_json::{json, Value};
-use std::{
-    io::{BufRead, BufReader, Write},
-    path::PathBuf,
-    process::{Child, Command, Stdio},
-    time::Duration,
-};
-
-struct Server {
-    child: Child,
-    data: PathBuf,
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.data);
-    }
-}
+use server::{Result, TestRoot};
 
 #[tokio::test]
-async fn pairing_gates_remote_routes_without_locking_out_loopback(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn pairing_gates_remote_routes_without_locking_out_loopback() -> Result<()> {
     const HOST: &str = "minarbot.example";
     const ORIGIN: &str = "https://minarbot.example";
-    let data = std::env::temp_dir().join(format!("minarbot-pairing-{}", uuid::Uuid::new_v4()));
-    let child = Command::new(env!("CARGO_BIN_EXE_minarbot-server"))
-        .arg("--test-config")
-        .env("MINARBOT_TEST_SERVER", "rust")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let mut server = Server { child, data };
-    let config = json!({
-        "database": server.data.join("minarbot.sqlite"),
-        "port": 0,
-        "allowedOrigins": [ORIGIN]
-    });
-    write!(
-        server.child.stdin.take().ok_or("server stdin missing")?,
-        "{config}"
-    )?;
-    let mut output = BufReader::new(server.child.stdout.take().ok_or("server stdout missing")?);
-    let mut line = String::new();
-    output.read_line(&mut line)?;
-    let local = line
-        .trim()
-        .strip_prefix("Minarbot: ")
-        .ok_or("server did not report its origin")?;
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(Policy::none())
-        .timeout(Duration::from_secs(5))
-        .build()?;
+    let root = TestRoot::new()?;
+    let server = root.start(json!({"allowedOrigins": [ORIGIN]})).await?;
+    let local = &server.origin;
+    let client = &server.client;
 
     let manage = format!("{local}/api/device-pairing");
     let agents = format!("{local}/api/agents");
@@ -83,9 +43,8 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback(
     assert_eq!(locked.status(), StatusCode::FORBIDDEN);
     assert_eq!(locked.json::<Value>().await?["code"], "pair_browser_first");
 
-    let issue = client
-        .post(format!("{manage}/code"))
-        .header(header::ORIGIN, local)
+    let issue = server
+        .post("/api/device-pairing/code")
         .json(&json!({}))
         .send()
         .await?
@@ -107,8 +66,8 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback(
         .error_for_status()?;
     assert_eq!(client.get(&agents).send().await?.status(), StatusCode::OK);
     assert_eq!(
-        client
-            .get(&agents)
+        server
+            .get("/api/agents")
             .header("x-forwarded-for", "100.64.0.1")
             .send()
             .await?
@@ -187,5 +146,6 @@ async fn pairing_gates_remote_routes_without_locking_out_loopback(
             .status(),
         StatusCode::UNAUTHORIZED
     );
+    assert!(server.terminate(Signal::TERM).await?.success());
     Ok(())
 }
