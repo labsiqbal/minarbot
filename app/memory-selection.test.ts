@@ -77,7 +77,21 @@ test('automatic memory selection is atomic, user-protected, scoped and durable a
     await request(memory, { ...third, id: randomUUID(), revision: 2, text: '', essential: false, remove: true });
     args = { items: [choose(third.entry, 3)] }; await run(path); assert.equal(result.status, 404);
     const old = note('LEGACY'); delete (old as { automatic?: boolean }).automatic; const receipt = await request(memory, old);
-    await app.close(); const db = testDatabase(options.database); db.exec('ALTER TABLE memories DROP COLUMN selection_locked'); db.close(); app = await startApp(options);
+    await app.close();
+    const db = testDatabase(options.database);
+    try {
+      // Remove Phase 1's mirrors before reconstructing the legacy note schema.
+      db.exec([
+        'DROP TRIGGER memory_note_insert',
+        'DROP TRIGGER memory_note_update',
+        'DROP TRIGGER memory_note_delete',
+        'DROP VIEW memory_legacy_rows',
+        "DELETE FROM memory_units WHERE origin='legacy'",
+        'DELETE FROM memory_imports WHERE version=1',
+        'ALTER TABLE memories DROP COLUMN selection_locked',
+      ].join('; '));
+    } finally { db.close(); }
+    app = await startApp(options);
     assert.deepEqual(await request(memory, old), receipt); assert((await request(memory)).items.every((r: any) => r.selection_locked === 1));
     const legacyDraft = { entry: { id: first.entry, text: first.text, essential: 0, revision: 1 }, text: 'Draft', essential: false };
     assert.deepEqual(memoryDraft(legacyDraft), legacyDraft);
