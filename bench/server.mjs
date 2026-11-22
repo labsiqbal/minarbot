@@ -73,7 +73,7 @@ export async function startServer({ binary, scratch, fixture, provider, dist, pr
 
     try {
         const origin = await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(Error('Disposable server startup timed out')), 15000);
+            const timer = setTimeout(() => reject(Error('Disposable server startup timed out')), 60000);
             let output = '';
             const fail = error => { clearTimeout(timer); reject(error); };
             child.once('error', fail);
