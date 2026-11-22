@@ -982,7 +982,7 @@ pub fn panel() -> impl IntoView {
       <div class="k-page bs-root updates-page set4-page">
         <Header title="Updates" actions=content(move || view! {
           <Show when=move || run.with(Option::is_some) || !storage_error.with(String::is_empty)>
-            <Button label=Signal::<String>::derive(move || if storage_error.with(String::is_empty) { "Update progress".into() } else { "Update recovery".into() })
+            <Button label=Signal::derive(move || if storage_error.with(String::is_empty) { "Update progress".to_owned() } else { "Update recovery".into() })
               on_click=move || show(Select::All) />
           </Show>
         }) />
@@ -1043,7 +1043,7 @@ pub fn panel() -> impl IntoView {
           })}
           <Section title="Paired machines" actions=content(move || view! {
             <Show when=move || !chosen.with(Vec::is_empty)>
-              <Button label=Signal::<String>::derive(move || format!("Update selected ({})", chosen.with(Vec::len)))
+              <Button label=Signal::derive(move || format!("Update selected ({})", chosen.with(Vec::len)))
                 disabled=Signal::derive(move || run.with(Option::is_some)) on_click=move || show(Select::Peers(chosen.get_untracked())) />
             </Show>
           })>
@@ -1076,7 +1076,7 @@ pub fn panel() -> impl IntoView {
             }}
           </Section>
         </Show>
-        <Dialog id="updates-plan" title=Signal::<String>::derive(title) description=Signal::derive(version_text) open=opened on_close=close size="lg"
+        <Dialog id="updates-plan" title=Signal::derive(title) description=Signal::derive(version_text) open=opened on_close=close size="lg"
           footer=content(move || view! {
             <Show when=move || run.with(Option::is_none) && !planning() && (count() > 0)>
               <span class="k-dialog__foot-note updates-warning">{move || {
@@ -1084,7 +1084,7 @@ pub fn panel() -> impl IntoView {
                 format!("{running} running {} will be interrupted and can resume after the restart.", if running == 1 { "turn" } else { "turns" })
               }}</span>
             </Show>
-            <Button label=Signal::<String>::derive(move || if run.with(Option::is_some) { "Close".into() } else { "Cancel".into() }) on_click=close />
+            <Button label=Signal::derive(move || if run.with(Option::is_some) { "Close".to_owned() } else { "Cancel".into() }) on_click=close />
             <Show when=move || run.with(Option::is_none)>
               <Button label=text("Update") variant="primary" on_click=begin disabled=Signal::derive(move ||
                 count() == 0 || planning() || is_reconnecting() || !issue().is_empty() || !storage_error.with(String::is_empty) || !state.fresh.get()) />

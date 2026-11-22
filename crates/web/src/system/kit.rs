@@ -290,7 +290,7 @@ pub fn confirmation() -> (Confirm, impl IntoView) {
     let request: Confirm = RwSignal::new(None);
     let cancel = move || request.set(None);
     let view = view! {
-        <Dialog id="system-confirm" title=Signal::<String>::derive(move || request.with(|value| value.as_ref().map(|request| request.title.clone()).unwrap_or_default()))
+        <Dialog id="system-confirm" title=Signal::derive(move || request.with(|value| value.as_ref().map(|request| request.title.clone()).unwrap_or_default()))
           description=Signal::derive(move || request.with(|value| value.as_ref().map(|request| request.description.clone()).unwrap_or_default()))
           open=Signal::derive(move || request.with(Option::is_some)) on_close=cancel size="sm" confirmation=true>
           <div class="k-dialog__foot">

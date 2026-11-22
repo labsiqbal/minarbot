@@ -349,7 +349,7 @@ pub fn panel() -> impl IntoView {
             </div></Field>
           </div>
         </Dialog>
-        <Dialog id="external-detail" title=Signal::<String>::derive(move || detail.with(|token| token.as_ref().map_or_else(|| "Token permissions".into(), |token| token.name.clone()))) open=Signal::derive(move || detail.with(Option::is_some)) on_close=move || detail.set(None)>
+        <Dialog id="external-detail" title=Signal::derive(move || detail.with(|token| token.as_ref().map_or_else(|| "Token permissions".into(), |token| token.name.clone()))) open=Signal::derive(move || detail.with(Option::is_some)) on_close=move || detail.set(None)>
           {move || detail.get().map(|token| view! { <div class="k-stack">
             <div>{token_badge(&token)}</div>
             <Section title="Permissions"><Card>{token.scopes.into_iter().map(|id| {

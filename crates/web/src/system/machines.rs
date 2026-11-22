@@ -406,7 +406,7 @@ pub fn panel() -> impl IntoView {
             }).collect_view()}</Card> }.into_any(),
           }}
         </Section>
-        <Section title="This device"><Card><Row title=Signal::<String>::derive(move || environment.value.with(|value| value.as_ref().map_or_else(|| "This device".into(), |value| value.name.clone())))
+        <Section title="This device"><Card><Row title=Signal::derive(move || environment.value.with(|value| value.as_ref().map_or_else(|| "This device".into(), |value| value.name.clone())))
           leading=icons().monitor meta=content(|| view! { "This device" })
           action=Callback::new(move |_| open(DialogKind::Local))
           trailing=content(move || view! {
@@ -429,7 +429,7 @@ pub fn panel() -> impl IntoView {
             <Show when=move || active.get() == Some(DialogKind::Local)><HostMetrics /></Show>
           </div>
         </Dialog>
-        <Dialog id="machine-detail" title=Signal::<String>::derive(move || peer().map_or_else(|| "Machine".into(), |machine| machine.name))
+        <Dialog id="machine-detail" title=Signal::derive(move || peer().map_or_else(|| "Machine".into(), |machine| machine.name))
           open=is_open(DialogKind::Peer) on_close=close locked=busy
           footer=content(move || view! { <Button label=text("Unpair machine") variant="danger" disabled=busy on_click=move || if let Some(machine) = untrack(peer) { unpair(machine); } /> })>
           <div class="k-stack set4-detail">
@@ -513,7 +513,7 @@ pub fn panel() -> impl IntoView {
           footer=content(move || view! {
             <Button label=text("Close") disabled=busy on_click=close />
             <Show when=move || command.with(Option::is_none)>
-              <Button label=Signal::<String>::derive(move || if install.with(Option::is_some) { "Create new command".into() } else { "Create install command".into() }) variant="primary" busy=busy on_click=create_install />
+              <Button label=Signal::derive(move || if install.with(Option::is_some) { "Create new command".to_owned() } else { "Create install command".into() }) variant="primary" busy=busy on_click=create_install />
             </Show>
           })>
           <div class="k-stack machine-install set4-detail">
@@ -526,7 +526,7 @@ pub fn panel() -> impl IntoView {
               <div class="machines-form-actions">
                 {hint("Private, single use", "Grants one pairing code. Closing hides the command. Provider credentials stay on each machine.")}
                 <span class="k-field__hint">"Expires in "<span class="machines-countdown">{move || install.with(|install| install.as_ref().map(|value| countdown(value.expires_at, now.get())))}</span></span>
-                <Button label=Signal::<String>::derive(move || if copied.get() { "Copied".into() } else { "Copy command".into() })
+                <Button label=Signal::derive(move || if copied.get() { "Copied".to_owned() } else { "Copy command".into() })
                   on_click=move || if let Some(value) = command.get_untracked() { copy_value(value); } />
               </div>
               <span class="sr-only" role="status">{move || if copied.get() { "Command copied." } else { "" }}</span>

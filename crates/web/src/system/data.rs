@@ -168,7 +168,7 @@ pub fn panel() -> impl IntoView {
         <Show when=move || !error_text().is_empty()><Alert tone="error">{error_text}</Alert></Show>
         <Show when=move || pending.with(Option::is_some)>
           <Show when=move || busy.get() fallback=move || view! {
-            <Alert tone="warn" title=Signal::<String>::derive(move || pending.with(|command| command.as_ref().map_or_else(String::new, |command| format!("Not confirmed: delete {}", command.table))))
+            <Alert tone="warn" title=Signal::derive(move || pending.with(|command| command.as_ref().map_or_else(String::new, |command| format!("Not confirmed: delete {}", command.table))))
               actions=content(move || view! {
                 <Button label=text("Try again") size="sm" disabled=Signal::derive(move || query.value.with(Option::is_none)) on_click=move || execute(pending.get_untracked()) />
                 <Button label=text("Discard request") size="sm" on_click=move || match discard(KEY) {
@@ -219,7 +219,7 @@ pub fn panel() -> impl IntoView {
             <Field id="shared-data-sql" label="SQL query"><textarea id="shared-data-sql" class="k-input k-textarea" rows="4" maxlength="16000"
               placeholder=r#"SELECT * FROM "table_name" LIMIT 50"# aria-description="Read-only SQL. No writes or schema changes."
               prop:value=sql on:input=move |event| sql.set(event_target_value(&event)) disabled=locked /></Field>
-            <div class="k-row-actions"><Button label=Signal::<String>::derive(move || if busy.get() { "Processing...".into() } else { "Run query".into() }) variant="primary" busy=busy
+            <div class="k-row-actions"><Button label=Signal::derive(move || if busy.get() { "Processing...".to_owned() } else { "Run query".into() }) variant="primary" busy=busy
               on_click=move || execute(None) disabled=Signal::derive(move || locked.get() || !query.fresh.get() || sql.with(|sql| sql.trim().is_empty())) /></div>
           </Disclosure>
         </Show>
