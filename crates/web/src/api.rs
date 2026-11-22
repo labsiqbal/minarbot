@@ -4,11 +4,16 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 
 pub async fn read<T: DeserializeOwned>(path: &str) -> Result<T, String> {
+    read_status(path).await.map_err(|(_, message)| message)
+}
+
+pub async fn read_status<T: DeserializeOwned>(path: &str) -> Result<T, (u16, String)> {
     let response = Request::get(path)
         .send()
         .await
-        .map_err(|_| "Minarbot connection lost. Try again.")?;
-    decode(response).await
+        .map_err(|_| (0, "Minarbot connection lost. Try again.".to_owned()))?;
+    let status = response.status();
+    decode(response).await.map_err(|message| (status, message))
 }
 
 pub async fn command<T: DeserializeOwned>(path: &str, mut body: Value) -> Result<T, String> {

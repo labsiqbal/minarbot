@@ -275,7 +275,7 @@ async function headers(origin) {
   const generalResponse = await fetch(origin + general);
   assert.equal(generalResponse.headers.get('content-security-policy').includes('wasm-unsafe-eval'), true);
   assert.match(await generalResponse.text(), /Open standard General/);
-  for (const path of ['/settings/general?ui=react', '/settings/vault']) {
+  for (const path of ['/settings/general?ui=react', '/calendar']) {
     const other = await fetch(origin + path);
     assert.equal(other.headers.get('content-security-policy').includes('wasm-unsafe-eval'), false);
   }
