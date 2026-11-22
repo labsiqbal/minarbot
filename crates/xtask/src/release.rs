@@ -304,8 +304,12 @@ fn run_build(root: &Path, source: &Path) -> Result<()> {
             return Ok(());
         }
         let target = root.join("target/release");
+        // Earlier gate steps can rebuild target/debug/xtask while this process runs;
+        // the running image is then unlinked and current_exe() names a deleted file.
         #[cfg(not(test))]
-        let executable = env::current_exe()?;
+        let executable = Some(env::current_exe()?)
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| root.join("target/debug/xtask"));
         #[cfg(test)]
         let executable = env::var_os("MINARBOT_XTASK_BINARY")
             .map_or_else(|| root.join("target/debug/xtask"), PathBuf::from);
