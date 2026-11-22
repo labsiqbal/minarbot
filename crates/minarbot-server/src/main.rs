@@ -750,20 +750,21 @@ async fn main() -> db::Result<()> {
         mcp::guide::inherit_connection(&state, &db.connection).map_err(|e| e.message)?;
     }
     automation::scripts::sync(&state).map_err(|e| e.message)?;
-    let turn_task = turns::start(state.clone()).map_err(|e| e.message)?;
-    let memory_task = if state.auth.is_none()
-        && (!state.config.harness.test_mode || state.config.test_memory_extraction)
-    {
+    let memory_task = if state.auth.is_none() {
         let db = state
             .database
             .lock()
             .map_err(|_| "Database lock poisoned")?;
-        db.connection
-            .execute_batch(include_str!("data/memory-worker.sql"))?;
-        Some(turns::memory_worker::start(state.clone()))
+        turns::memory_worker::initialize(&db.connection)?;
+        if !state.config.harness.test_mode || state.config.test_memory_extraction {
+            Some(turns::memory_worker::start(state.clone()))
+        } else {
+            None
+        }
     } else {
         None
     };
+    let turn_task = turns::start(state.clone()).map_err(|e| e.message)?;
     let automation_task = automation::start(state.clone());
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());

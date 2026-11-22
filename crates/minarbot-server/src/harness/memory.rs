@@ -12,20 +12,17 @@ use rusqlite::params;
 use serde_json::Value;
 use std::time::Duration;
 
-pub async fn call(
-    state: &AppState,
-    turn: &str,
-    model: &str,
-    messages: &[Value],
-    phase: &str,
-) -> Result<String> {
+pub async fn call(state: &AppState, turn: &str, messages: &[Value], phase: &str) -> Result<String> {
     let (agent, credential, mut redactions) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
-        let agent = one(db,
-            "SELECT a.* FROM agents a JOIN turns t ON t.agent=a.id WHERE t.id=? AND t.status='done'",
+        let agent = one(
+            db,
+            "SELECT a.*, r.model AS learning_model FROM agents a JOIN memory_learning_ready r
+             ON r.agent=a.id WHERE r.id=?",
             [turn],
-        )?.ok_or_else(Failure::storage)?;
+        )?
+        .ok_or_else(Failure::storage)?;
         let runtime = string(&agent, "runtime");
         if !logins::device_runtime(runtime) {
             return Err(error(503, "Engine memory login is unavailable."));
@@ -44,6 +41,7 @@ pub async fn call(
         let redactions = crate::computer::vault::redactions(state, db)?;
         (agent, credential, redactions)
     };
+    let model = string(&agent, "learning_model");
     let runtime = string(&agent, "runtime");
     let binding = string(&agent, "provider_account");
     let scratch = ProbeHome::new().map_err(|_| Failure::storage())?;
@@ -140,8 +138,15 @@ pub async fn call(
     let call = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
-        if crate::turns::pending(state) {
-            return Err(error(503, "Memory engine is unavailable."));
+        if crate::turns::pending(state)
+            || !data::exists(
+                db,
+                "SELECT 1 FROM memory_learning_ready r JOIN agents a ON a.id=r.agent
+                WHERE r.id=? AND r.agent=? AND a.revision=?",
+                params![turn, string(&agent, "id"), agent["revision"].as_i64()],
+            )?
+        {
+            return Err(error(409, "Conversation learning settings changed."));
         }
         db.execute(
             "INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created)

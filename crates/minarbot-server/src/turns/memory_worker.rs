@@ -2,6 +2,11 @@ use super::*;
 use minarbot_memory::Store;
 use tokio::time::{interval, Duration, MissedTickBehavior};
 
+pub fn initialize(db: &Connection) -> crate::db::Result<()> {
+    db.execute_batch(include_str!("../data/memory-worker.sql"))?;
+    Ok(())
+}
+
 pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut timer = interval(Duration::from_secs(2));
@@ -19,30 +24,34 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
 }
 
 async fn step(state: &AppState) -> Result<()> {
-    let (work, model, secrets) = {
+    let (work, secrets) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let store = Store::new(db);
+        let disabled = all(
+            db,
+            "SELECT id FROM agents WHERE learn_from_conversations=0",
+            [],
+        )?;
+        let disabled = disabled.iter().map(|a| string(a, "id")).collect::<Vec<_>>();
         let Some(work) = store
-            .pending_work(crate::config::now())
+            .pending_work_excluding(crate::config::now(), &disabled)
             .map_err(|_| Failure::storage())?
         else {
             return Ok(());
         };
         let turn = string(work.source(), "id");
-        let Some(agent) = one(
+        if !exists(
             db,
-            "SELECT a.model FROM memory_extractable_turns x JOIN turns t ON t.id=x.id
-             JOIN agents a ON a.id=t.agent WHERE t.id=? AND a.id=?",
+            "SELECT 1 FROM memory_learning_ready WHERE id=? AND agent=?",
             params![turn, string(work.source(), "agent")],
-        )?
-        else {
+        )? {
             return store
                 .retry_work(&work, crate::config::now())
                 .map_err(|_| Failure::storage());
         };
         let secrets = crate::mcp::secrets::project(state, db, None)?;
-        (work, string(&agent, "model").to_owned(), secrets)
+        (work, secrets)
     };
     let (system, input) = work.prompt();
     let messages = [
@@ -58,7 +67,7 @@ async fn step(state: &AppState) -> Result<()> {
     let result = provider::call(
         state,
         string(work.source(), "id"),
-        &model,
+        "",
         &messages,
         &[],
         phase,
@@ -74,6 +83,13 @@ async fn step(state: &AppState) -> Result<()> {
         if store.apply_work(&work, &answer).is_ok() {
             return Ok(());
         }
+    }
+    if exists(
+        &guard.connection,
+        "SELECT 1 FROM agents WHERE id=? AND learn_from_conversations=0",
+        [string(work.source(), "agent")],
+    )? {
+        return Ok(());
     }
     store
         .retry_work(&work, crate::config::now())

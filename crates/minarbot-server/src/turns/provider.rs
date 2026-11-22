@@ -46,7 +46,7 @@ pub async fn call(
         ));
     }
     if native && memory {
-        return crate::harness::memory::call(state, turn, model, messages, phase)
+        return crate::harness::memory::call(state, turn, messages, phase)
             .await
             .map(Answer::Text);
     }
@@ -60,7 +60,7 @@ pub async fn call(
         return Err(error(503, "Update trial is pending."));
     }
     let mut messages = messages.to_vec();
-    let (account, seq, vault_secrets) = {
+    let (account, seq, vault_secrets, learning_model) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let row = one(
@@ -76,6 +76,17 @@ pub async fn call(
             }
         })
         .ok_or_else(|| error(409, "Task has stopped."))?;
+        let learning_model = if memory {
+            let learning = one(
+                db,
+                "SELECT model FROM memory_learning_ready WHERE id=? AND agent=?",
+                params![turn, string(&row, "agent")],
+            )?
+            .ok_or_else(|| error(409, "Conversation learning is paused."))?;
+            Some(string(&learning, "model").to_owned())
+        } else {
+            None
+        };
         let account = admission::account(state, db, string(&row, "agent"))?;
         if !private
             && phase != "routing"
@@ -109,13 +120,14 @@ pub async fn call(
         } else {
             "completion"
         };
-        db.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES (?,?,?,?,?,?,?,?, 'pending',?)",params![turn,row["agent"].as_str(),model,origin,purpose,phase,account.family,account.id,iso(db,state.config.now())?])?;
+        db.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES (?,?,?,?,?,?,?,?, 'pending',?)",params![turn,row["agent"].as_str(),learning_model.as_deref().unwrap_or(model),origin,purpose,phase,account.family,account.id,iso(db,state.config.now())?])?;
         let seq = db.last_insert_rowid();
         if !memory {
             state.events.turn(db, turn)?;
         }
-        (account, seq, vault_secrets)
+        (account, seq, vault_secrets, learning_model)
     };
+    let model = learning_model.as_deref().unwrap_or(model);
     let streamed = account.stream;
     let max_tokens = if memory {
         account.max_tokens.min(4096)

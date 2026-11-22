@@ -64,6 +64,14 @@ returns world facts, assistant experiences, entities, event dates, and causal
 links in JSON. Raw prompt and reply units stay searchable when extraction or
 consolidation fails.
 
+Agents start with **Learn from conversations** on. Turning it off pauses
+queued work and excludes turns completed while off. A call already started
+can finish. Existing memory remains searchable. Re-enabling resumes eligible
+work. **Memory model** defaults to the agent model and can select another
+model through the same provider binding.
+Upgrade imports historical turns for search. Only turns that finish after
+upgrade can enter the learning queue.
+
 The consolidation queue folds facts into one-facet observations. It uses
 Hindsight's fact-by-fact temporal rules, preserves earlier states in
 contradictions, deduplicates normalized text, and records evidence links and
@@ -77,3 +85,15 @@ so `/api/usage` reports model calls and input/output/total tokens per source
 turn. API agents use their configured account. Codex and Claude Code agents use
 their existing login binding in a tool-free, ephemeral run. Old turns, explicit
 notes, and turns that run under remote authority keep their Phase 1 recall units.
+
+The real Claude Haiku smoke used a temporary data directory and random-port
+server. One finished message made three background calls. These are the
+recorded usage rows for the prompt extraction, consolidation, and reply
+extraction stages.
+
+| Source | Calls per message | Input tokens | Output tokens | Total tokens |
+| --- | ---: | ---: | ---: | ---: |
+| Prompt extraction | 1 | 6,812 | 915 | 7,727 |
+| Consolidation | 1 | 8,735 | 599 | 9,334 |
+| Reply extraction | 1 | 6,770 | 82 | 6,852 |
+| Full message | 3 | 22,317 | 1,596 | 23,913 |

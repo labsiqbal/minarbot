@@ -42,11 +42,13 @@ fn fake_model_extracts_and_reconciles_observations_with_evidence() -> Result<()>
     let db = fixture()?;
     let store = Store::new(&db);
     let first = raw(&db, "Atlas is owned by Ada.", 3000, "prompt")?;
+    assert!(store.pending_work_excluding(0, &["a"])?.is_none());
     respond(
         &store,
         true,
         json!({"facts":[world("Atlas is owned by Ada.")]}),
     )?;
+    assert!(store.pending_work_excluding(0, &["a"])?.is_none());
     respond(
         &store,
         false,

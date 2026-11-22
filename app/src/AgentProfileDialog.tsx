@@ -21,7 +21,7 @@ import { AgentTemplateExport, AvatarPicker as LookPicker, MemoryPanel, SitesPane
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
-export type Agent = { builtin?: boolean; workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; goal_judge_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
+export type Agent = { builtin?: boolean; workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; goal_judge_model?: string; learn_from_conversations?: 0 | 1; memory_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 
 export type FirstAgentDefaults = { runtime: Runtime; account: string; model: string };
 export type FirstRunConnection = { value: string; label: string; runtime: Runtime; defaults: FirstAgentDefaults };
@@ -126,13 +126,15 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
   const [judgeModel, setJudgeModel] = useState(profile?.goal_judge_model ?? '');
+  const [learnFromConversations, setLearnFromConversations] = useState(profile?.learn_from_conversations !== 0);
+  const [memoryModel, setMemoryModel] = useState(profile?.memory_model ?? '');
   const [webAccess, setWebAccess] = useState(profile?.web_access !== 0);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
     const followEngineDefault = quick && model === 'default' && usesEngineSignIn(account) && !modelEdited.current;
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision, webAccess, ...(judgeModel !== (profile.goal_judge_model ?? '') ? { goalJudgeModel: judgeModel.trim() } : {}) } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: followEngineDefault ? 'default' : String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision, webAccess, learnFromConversations, memoryModel: memoryModel.trim(), ...(judgeModel !== (profile.goal_judge_model ?? '') ? { goalJudgeModel: judgeModel.trim() } : {}) } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: followEngineDefault ? 'default' : String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
     if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
       Object.assign(data, { runtime, confirmRuntime: true });
     }
@@ -204,9 +206,9 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
   </>;
   const modelField = <Combobox name="model" value={modelValue} onChange={changeModel} suggestions={models} required maxLength={160} readOnly={locked || busy || !discoversModels} placeholder="Enter model ID" />;
   const modelFields = <>
-    {profile?.runtime === 'api' && <Button type="button" onClick={event => { flushSync(() => setRuntime('codex')); event.currentTarget.form?.requestSubmit(); }} disabled={locked || busy || !runtimeChoices.some(choice => choice.runtime === 'codex' && choice.available && choice.enabled)}>Use Codex</Button>}
+    {profile?.runtime === 'api' && <Button type="button" onClick={event => { flushSync(() => { setRuntime('codex'); setMemoryModel(''); }); event.currentTarget.form?.requestSubmit(); }} disabled={locked || busy || !runtimeChoices.some(choice => choice.runtime === 'codex' && choice.available && choice.enabled)}>Use Codex</Button>}
     <Field label="Run with" error={runtimeError}>
-      <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime) ? harnessLabels[runtime] : undefined} value={runtime} onChange={value => { runtimeChosen.current = true; setRuntime(value as Runtime); setHarnessModel(null); if (value !== runtime) setJudgeModel(''); if (value !== runtime && (isLoginBinding(account) || account === DEVICE_BINDING && value !== 'codex' && value !== 'claude')) setAccount(''); }} disabled={locked || busy} options={[
+      <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime) ? harnessLabels[runtime] : undefined} value={runtime} onChange={value => { runtimeChosen.current = true; setRuntime(value as Runtime); setHarnessModel(null); if (value !== runtime) { setJudgeModel(''); setMemoryModel(''); } if (value !== runtime && (isLoginBinding(account) || account === DEVICE_BINDING && value !== 'codex' && value !== 'claude')) setAccount(''); }} disabled={locked || busy} options={[
         { value: 'api', label: runtimeLabel('api', 'API model') },
         ...runtimeChoices.map(choice => {
           const disabled = !choice.available || !choice.enabled;
@@ -219,7 +221,7 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
       ]} /></span>
     </Field>
     <Field label="Provider" error={accountError && <>{accountError} <button type="button" className="k-link" onClick={() => setAccountReload(value => value + 1)}>Reload</button></>}>
-      <Select value={account} onChange={setAccount} disabled={locked || !['api', 'codex', 'claude'].includes(runtime)} options={accountOptions} />
+      <Select value={account} onChange={value => { if (value !== account) setMemoryModel(''); setAccount(value); }} disabled={locked || !['api', 'codex', 'claude'].includes(runtime)} options={accountOptions} />
     </Field>
     {runtime !== 'api' && runtime !== 'codex' && runtime !== 'claude' && <Field label="Harness model">
       <Select label="Harness model" value={harnessModel ?? runtimeChoices.find(choice => choice.runtime === runtime)?.model ?? ''} onChange={setHarnessModel} disabled={locked || busy} options={[{ value: '', label: 'Host default' }, ...(runtimeChoices.find(choice => choice.runtime === runtime)?.models ?? []).map(model => ({ value: model.id, label: model.label }))]} />
@@ -235,6 +237,8 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
         suggestions={discoversModels ? models : (runtimeChoices.find(choice => choice.runtime === runtime)?.models ?? []).map(model => ({ value: model.id, label: model.label }))}
         maxLength={160} readOnly={locked} placeholder="Use agent model" /></Field>
     </Collapsible>}
+    {profile && <Card><Row title="Learn from conversations" trailing={<Switch label="Learn from conversations" checked={learnFromConversations} onChange={setLearnFromConversations} disabled={locked || busy} />} /></Card>}
+    {profile && <Field label="Memory model" optional><Combobox name="memoryModel" value={memoryModel} onChange={setMemoryModel} suggestions={models} maxLength={160} readOnly={locked || busy} placeholder="Use agent model" /></Field>}
   </>;
   const advancedFields = <>
     {!profile && <Field label="Fallback model" optional><Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" /></Field>}

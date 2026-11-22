@@ -74,11 +74,21 @@ impl Store<'_> {
 
     /// Compute one bounded request. Its result can be committed after releasing the connection.
     pub fn pending_work(&self, now: i64) -> Result<Option<Work>> {
+        self.pending_work_excluding(now, &[])
+    }
+
+    pub fn pending_work_excluding(
+        &self,
+        now: i64,
+        disabled_agents: &[&str],
+    ) -> Result<Option<Work>> {
+        let disabled = json!(disabled_agents).to_string();
         let fact = self.db.query_row(
             "SELECT f.raw,f.offset,f.attempts FROM memory_facts f JOIN memory_units u ON u.id=f.raw
              WHERE f.consolidated=0 AND f.attempts<3 AND f.ready_at<=? AND u.removed=0
+               AND NOT EXISTS(SELECT 1 FROM json_each(?2) WHERE value=json_extract(u.source,'$.agent'))
              ORDER BY f.ready_at,f.unit LIMIT 1",
-            [now],
+            params![now,disabled],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).optional()?;
         if let Some((raw, offset, attempts)) = fact {
@@ -97,8 +107,9 @@ impl Store<'_> {
                     length(CAST(u.text AS BLOB))
              FROM memory_extraction q JOIN memory_units u ON u.id=q.raw
              WHERE q.done=0 AND q.attempts<3 AND q.ready_at<=?1 AND u.removed=0
+               AND NOT EXISTS(SELECT 1 FROM json_each(?3) WHERE value=json_extract(u.source,'$.agent'))
              ORDER BY q.ready_at,q.raw LIMIT 1",
-                params![now, CHUNK_BYTES],
+                params![now, CHUNK_BYTES, disabled],
                 |r| {
                     Ok((
                         r.get::<_, i64>(0)?,

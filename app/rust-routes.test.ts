@@ -44,6 +44,7 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/email/inbound', 'Receives signed raw email from the relay.'],
     ['/api/agents/{id}/email', 'Lists the selected agent inbox.'],
     ['/api/agents/{id}/email/messages/{message}', 'Reads a message in the selected agent inbox.'],
+    ['/api/{kind}/{id}/html-replies/{reply}', 'Reads a rendered HTML reply.'],
     ['/api/vault', 'Lists Vault entry metadata or saves an entry with agent grants.'],
     ['/api/vault/delete', 'Deletes a Vault entry at the expected revision.'],
     ['/api/vault/respond', 'Resolves a Computer secure-fill request.'],
