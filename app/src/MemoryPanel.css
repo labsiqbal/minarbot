@@ -17,3 +17,7 @@
 }
 .memory-sources summary { cursor: pointer; min-height: 24px; width: fit-content; }
 .memory-sources ul { padding-inline-start: 16px; margin-block: 4px; }
+
+@media (max-width: 560px) {
+  .memory-toolbar > .k-field:first-child { flex-basis: 100%; }
+}

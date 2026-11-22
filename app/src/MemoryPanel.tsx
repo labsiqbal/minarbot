@@ -87,8 +87,8 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
       actions={<><Button variant="ghost" onClick={async () => { if (draftStored || await confirm({ title: 'Leave and discard changes?', description: 'Draft has not been saved in the browser.', confirm: 'Leave', danger: true })) onClose(); }}>Back</Button></>} />
     {archived && <Alert>Section archived. Restore the section to change memory.</Alert>}
     <Tabs value={tab} onChange={setTab} label="Memory views" tabs={[
-      { value: 'notes', label: 'Saved notes' },
-      { value: 'learned', label: 'Learned memory' },
+      { value: 'notes', label: 'Notes' },
+      { value: 'learned', label: 'Learned' },
       { value: 'questions', label: 'Standing questions' },
     ]}>
     {tab === 'notes' ? <TabPanel value="notes"><div className="k-stack memory-view">

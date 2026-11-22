@@ -53,7 +53,7 @@ export async function detailsDeclutterSmoke({ page, check, origin, screenshot, g
       await page.keyboard.press('Escape'); await sites.waitFor({ state: 'hidden' });
       await page.waitForFunction(el => document.activeElement === el, await profile.getByRole('button', { name: 'Agent sites', exact: true }).elementHandle());
       await profile.getByRole('button', { name: 'Agent memory', exact: true }).click();
-      const memory = page.getByRole('dialog', { name: 'Agent memory', exact: true }); await memory.getByRole('heading', { name: 'Minarbot Memory', exact: true }).waitFor();
+      const memory = page.getByRole('dialog', { name: 'Minarbot Memory', exact: true }); await memory.getByRole('heading', { name: 'Minarbot Memory', exact: true }).waitFor();
       await page.waitForFunction(el => el.contains(document.activeElement), await memory.elementHandle());
       await page.keyboard.press('Escape'); await memory.waitFor({ state: 'hidden' });
       await page.waitForFunction(el => document.activeElement === el, await profile.getByRole('button', { name: 'Agent memory', exact: true }).elementHandle());

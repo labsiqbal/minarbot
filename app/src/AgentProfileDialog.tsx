@@ -318,7 +318,7 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
         {error && <Alert tone="error">{error}</Alert>}
       </div>
     </Dialog>
-    {profile && resource && <Dialog open size="lg" title={resource === 'memory' ? 'Agent memory' : 'Agent sites'} onOpenChange={open => { if (!open) closeResource(); }}>
+    {profile && resource && <Dialog open size="lg" title={resource === 'memory' ? 'Minarbot Memory' : 'Agent sites'} hideHeader={resource === 'memory'} onOpenChange={open => { if (!open) closeResource(); }}>
       <Suspense fallback={<Delayed><p role="status">Loading...</p></Delayed>}>{resource === 'memory' ? <MemoryPanel channel={false} archived={false} path={`/api/agents/${profile.id}/memory`} request={api} onClose={closeResource} /> : <SitesPanel agent={profile.id} request={api} />}</Suspense>
     </Dialog>}
     {profile && onVisibilityChanged && <Dialog open={visibilityOpen} title="Availability" onOpenChange={setVisibilityOpen} footer={<Button onClick={() => setVisibilityOpen(false)}>Done</Button>}><AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} /></Dialog>}
