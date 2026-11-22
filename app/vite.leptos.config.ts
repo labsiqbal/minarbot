@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { AlertTriangle, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Database, Download, Ellipsis, KeyRound, Monitor, Plus, Receipt, RefreshCw, Smartphone, CalendarClock, CalendarDays, CircleAlert, Filter, Info, PanelLeft, Search, Settings, Volume2, Workflow, X, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, Filter, Folder, FolderOpen, Hash, Info, KeyRound, Monitor, PanelLeft, Plug, Plus, Receipt, RefreshCw, Search, Send, Settings, Smartphone, Volume2, Workflow, X, type LucideIcon } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -40,6 +40,8 @@ const appearanceConfig: Plugin = {
           panel: svg(PanelLeft), filter: svg(Filter, 15), settings: svg(Settings),
           routines: svg(CalendarClock), workflows: svg(Workflow), calendar: svg(CalendarDays),
           search: svg(Search, 15), info: svg(Info, 14), voice: svg(Volume2),
+          monitor: svg(Monitor), plug: svg(Plug, 15), plus: svg(Plus, 15), send: svg(Send, 15), check: svg(Check, 15),
+          folder: svg(Folder), folderOpen: svg(FolderOpen), hash: svg(Hash), chevron: svg(ChevronRight),
         },
       }),
     });

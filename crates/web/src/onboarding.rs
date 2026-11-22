@@ -263,7 +263,7 @@ fn ProviderForm(
                 <option value="" disabled>"Test to load models"</option>
                 {move || models.get().unwrap_or_default().into_iter().map(|value| view! { <option value=value.clone()>{value.clone()}</option> }).collect_view()}
             </select></label>
-            <span role="status" class="k-field__hint">{move || models.with(|value| value.as_ref().map(|models| format!("{} models found", models.len())))}</span>
+            <span role="status" class="k-field__hint" hidden=move || models.with(Option::is_none)>{move || models.with(|value| value.as_ref().map(|models| format!("{} models found", models.len())))}</span>
             <ErrorAlert message=error icon=error_icon />
             <div class="k-row-actions">
                 <button type="submit" name="action" value="test" class="k-btn k-btn--md k-btn--secondary" disabled=busy>"Test"</button>
@@ -302,6 +302,15 @@ fn recovery() -> Result<Option<Value>, String> {
 }
 
 pub fn page(error_icon: String) -> impl IntoView {
+    let icons = StoredValue::new(use_context::<shell::Icons>());
+    let icon = move |pick: fn(&shell::Icons) -> &String| {
+        icons.with_value(|value| {
+            value
+                .as_ref()
+                .map(|icons| pick(icons).clone())
+                .unwrap_or_default()
+        })
+    };
     let available = RwSignal::new(Vec::<Connection>::new());
     let choice = RwSignal::new(String::new());
     let codex = RwSignal::new(false);
@@ -490,10 +499,11 @@ pub fn page(error_icon: String) -> impl IntoView {
             {workspace::heading("Set up Minarbot".into(), String::new())}
             <ErrorAlert message=load_error icon=error_icon.clone() />
             <button type="button" class="k-btn k-btn--sm k-btn--secondary" hidden=move || load_error.with(String::is_empty) on:click=move |_| retry()>"Retry"</button>
-            {computer(error_icon.clone())}
+            {computer(error_icon.clone(), icon(|icons| &icons.monitor))}
             <ol class="first-run__steps" aria-label="Setup progress">
                 <li class:is-active=move || !create() class:is-done=create aria-current=move || (!create()).then_some("step")>
-                    <div class="first-run__step"><span class="first-run__icon" aria-hidden="true">{move || if create() { "✓" } else { "1" }}</span>
+                    <div class="first-run__step"><span class="first-run__icon" aria-hidden="true"
+                        inner_html=move || if create() { icon(|icons| &icons.check) } else { icon(|icons| &icons.plug) }></span>
                         <strong>"Connect an AI"</strong><span class="first-run__status" hidden=move || !create()>{move || selected.get().map(|entry| entry.label)}</span>
                         <button type="button" class="k-btn k-btn--md k-btn--secondary" hidden=move || !create() || locked() || selected.with(|entry| entry.as_ref().is_some_and(|entry| entry.value.starts_with("account:")))
                             on:click=move |_| adding.set(true)>"Use an API key"</button>
@@ -510,7 +520,7 @@ pub fn page(error_icon: String) -> impl IntoView {
                     </div></div>
                 </li>
                 <li class:is-active=create aria-current=move || create().then_some("step")>
-                    <div class="first-run__step"><span class="first-run__icon" aria-hidden="true">"2"</span><strong>"Create agent"</strong></div>
+                    <div class="first-run__step"><span class="first-run__icon" aria-hidden="true" inner_html=icon(|icons| &icons.plus)></span><strong>"Create agent"</strong></div>
                     <div class="first-run__form" hidden=move || !create() && pending.with(Result::is_ok)><div class="k-stack">
                         <button type="button" class="k-btn k-btn--md k-btn--secondary" hidden=move || guide().is_none() || locked() on:click=guide_click>
                             {move || guide().map(|agent| format!("Set up with {}", agent.name))}
@@ -544,7 +554,7 @@ pub fn page(error_icon: String) -> impl IntoView {
                         </form>
                     </div></div>
                 </li>
-                <li><div class="first-run__step"><span class="first-run__icon" aria-hidden="true">"3"</span><strong>"Send first message"</strong></div></li>
+                <li><div class="first-run__step"><span class="first-run__icon" aria-hidden="true" inner_html=icon(|icons| &icons.send)></span><strong>"Send first message"</strong></div></li>
             </ol>
         </div></div></main>
     }
@@ -560,7 +570,7 @@ struct Computer {
     message: Option<String>,
 }
 
-fn computer(error_icon: String) -> impl IntoView {
+fn computer(error_icon: String, monitor: String) -> impl IntoView {
     let status = RwSignal::new(None::<Computer>);
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
@@ -596,7 +606,7 @@ fn computer(error_icon: String) -> impl IntoView {
     view! {
         <div class="first-run__computer k-stack">
             <div class="k-card" hidden=move || status.with(Option::is_none)>
-                <div class="k-row"><div class="k-row__main"><span class="k-row__text">
+                <div class="k-row"><div class="k-row__main"><span class="k-row__leading" aria-hidden="true" inner_html=monitor></span><span class="k-row__text">
                     <span class="k-row__title">"Computer (optional)"</span>
                     <span class="k-row__meta" role="status">{move || status.get().map(|value| match value.state.as_str() {
                         "no_runtime" => "No container runtime".into(), "image_missing" => "Image missing".into(),
