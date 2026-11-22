@@ -34,7 +34,7 @@ export function useAppRoute() {
   const navigate = (next: SetStateAction<AppRoute>, replace = false) => {
     const value = typeof next === 'function' ? next(current.current) : next;
     const path = ownedPath(value);
-    if ((value.settings === 'appearance' || value.settings === 'general') && current.current.settings !== value.settings
+    if (value.settings && ['appearance', 'general', 'machines', 'devices', 'computer', 'updates', 'usage', 'data', 'backup', 'mcp-server'].includes(value.settings) && current.current.settings !== value.settings
       && document.querySelector('meta[name="minarbot-appearance-client"][content="leptos"]')) {
       window.location[replace ? 'replace' : 'assign'](path);
       return;

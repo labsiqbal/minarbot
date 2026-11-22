@@ -7,6 +7,7 @@ mod pairing;
 mod routes;
 mod settings;
 mod shell;
+mod system;
 mod voice;
 
 use leptos::{mount::mount_to, prelude::*};

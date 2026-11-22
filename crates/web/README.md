@@ -1,6 +1,6 @@
 # Leptos workspace and settings
 
-Axum serves React by default. Set `MINARBOT_APPEARANCE_CLIENT=leptos` in the local server environment and restart to select Leptos at `/settings/general` and `/settings/appearance`. Set it to `react` or remove it and restart to roll back. The launcher passes this setting from its environment file. A missing Leptos build selects React automatically. The fallback page links to React for that visit with `?ui=react`.
+Axum serves React by default. Set `MINARBOT_APPEARANCE_CLIENT=leptos` in the local server environment and restart to select Leptos for the settings routes below. Set it to `react` or remove it and restart to roll back. The launcher passes this setting from its environment file. A missing Leptos build selects React automatically. The fallback page links to React for that visit with `?ui=react`.
 
 Both clients use `minarbot-presentation-v1` in the browser's local storage. The same origin is required to retain preferences. Appearance uses `GET /api/agents` to determine hub-link visibility. It makes no settings API writes.
 
@@ -36,11 +36,12 @@ route ownership.
 
 ## Route ownership
 
-The preferences group is the Leptos pilot. The first-run screen, agent and project
-pages, and the following settings still use React: Providers, Engines, Skills,
-minarbot.com, Connected apps, Email, MCP connections, Vault, Craft Anything,
-Machines, Devices, Computer, Updates, Usage, Shared data, Backup & restore,
-and External access. `/pair` is a Rust-rendered form. The separate canonical hub
+Leptos owns General, Appearance, Machines, Devices, Computer, Updates, Usage,
+Shared data, Backup & restore, and External access when selected. Computer
+viewer links open the existing viewer document.
+The first-run screen, agent and project pages, and the following settings still
+use React: Providers, Engines, Skills, minarbot.com, Connected apps, Email,
+MCP connections, Vault, and Craft Anything. `/pair` is a Rust-rendered form. The separate canonical hub
 continues to use its own session and client.
 
 Conversation and agent/room deep links stay with #63. Routines, workflows and
@@ -52,6 +53,16 @@ Docs (#69) after their changes land on main.
 Install the UI smoke dependencies under `app/test-support/ui-smoke` and install the pinned Playwright Chromium. Run `node app/test-support/ui-smoke/appearance-smoke.mjs` with `MINARBOT_RUST_BINARY` pointing at the built server. It restarts a disposable loopback server on the same origin to verify both selectors, General API and keyboard parity, appearance persistence, and rollback.
 
 Set `MINARBOT_APPEARANCE_SCREENSHOTS` to a directory for dark and light desktop and narrow screenshots. Set `MINARBOT_APPEARANCE_BENCH=20` for 20 cold, warm reload and warmed settings-navigation samples per client. Readiness means Appearance has rendered and its heading has received focus.
+
+Run `node --experimental-strip-types app/test-support/ui-smoke/settings-system-smoke.mjs`
+with the built server for the system settings parity suite. Set
+`MINARBOT_SYSTEM_SCREENSHOTS` to capture both clients at desktop and narrow
+widths in dark and light. Update commands use browser fixtures on the
+disposable server. The persisted journal keys and JSON formats are shared
+with React for updates, table deletion, and access token recovery.
+
+The system settings use `js-sys` (MIT OR Apache-2.0), already pinned through
+wasm-bindgen, directly for browser date and URI formatting.
 
 ## Appearance pilot baseline from #59
 

@@ -1,0 +1,37 @@
+#appearance-dialog .k-dialog:not([open]) { display: none; }
+#appearance-dialog .k-dialog {
+  inset: 50% auto auto 50%;
+  margin: 0;
+  padding: 0;
+  color: var(--color-text-primary);
+  overscroll-behavior: contain;
+}
+#appearance-dialog .k-dialog::backdrop { background: var(--color-bg-scrim); }
+#appearance-dialog .system-menu { position: fixed; inset: auto; margin: 0; }
+#appearance-dialog .system-menu:not(:popover-open) { display: none; }
+#appearance-dialog .system-menu button:focus-visible { background: var(--color-bg-hover); }
+#appearance-dialog .system-menu .k-menu__item { width: 100%; }
+#appearance-dialog details.k-collapsible > summary { list-style: none; }
+#appearance-dialog details.k-collapsible > summary::-webkit-details-marker { display: none; }
+#appearance-dialog details[open] .k-collapsible__chev { transform: rotate(180deg); }
+#appearance-dialog .bs-set3-external .k-row__title,
+#appearance-dialog .bs-set3-external .k-row__meta { white-space: normal; overflow-wrap: anywhere; }
+#appearance-dialog .system-code { max-height: 280px; }
+#appearance-dialog .system-query-cell { white-space: pre-wrap; }
+#appearance-dialog .system-tooltip { position: relative; display: inline-block; }
+#appearance-dialog .system-tooltip > .k-tooltip { display: none; position: absolute; top: 100%; left: 0; z-index: 3; text-align: left; }
+#appearance-dialog .system-tooltip:is(:hover, :focus-visible, :focus-within) > .k-tooltip { display: block; }
+#appearance-dialog .system-tooltip:has([role=checkbox]) > .k-tooltip { top: auto; bottom: 100%; }
+.usage-agent-col { width: var(--usage-agent-width, 240px); }
+.usage-provider-col { width: 220px; }
+.usage-purpose-col { width: 160px; }
+.usage-status-col { width: var(--usage-status-width, 236px); }
+.usage-number-col { width: 88px; }
+.usage-origin { display: block; overflow: hidden; text-overflow: ellipsis; }
+#appearance-dialog .k-check.system-tooltip { display: flex; }
+#appearance-dialog .system-checkbox { appearance: none; }
+#appearance-dialog .system-checkbox-check {
+  display: none; position: absolute; top: 1px; left: 0; width: 18px; height: 18px;
+  place-items: center; color: var(--bot-on-action); pointer-events: none;
+}
+#appearance-dialog .system-checkbox:checked + .system-checkbox-check { display: grid; }

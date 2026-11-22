@@ -16,6 +16,10 @@ pub struct Config {
     search_icon: String,
     close_icon: String,
     error_icon: String,
+    #[serde(default)]
+    system_icons: crate::system::kit::Icons,
+    #[serde(default)]
+    mcp_scopes: Vec<crate::system::external::Scope>,
 }
 
 #[derive(Deserialize)]
@@ -32,7 +36,7 @@ struct Item {
 }
 
 fn buttons(container: &Element) -> Vec<HtmlElement> {
-    let Ok(list) = container.query_selector_all("button:not([hidden])") else {
+    let Ok(list) = container.query_selector_all("button:not([hidden]):not(:disabled)") else {
         return Vec::new();
     };
     (0..list.length())
@@ -89,8 +93,13 @@ fn visible(item: &Item, group: &str, query: &str, hub: bool) -> bool {
 
 pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl IntoView {
     let route = RwSignal::new(route);
+    provide_context(config.system_icons);
+    provide_context(StoredValue::new(config.mcp_scopes));
+    let (confirm, confirmation) = crate::system::kit::confirmation();
+    provide_context(confirm);
     let listener = window_event_listener(leptos::ev::popstate, move |_| {
         if let Some(route_now) = current() {
+            confirm.set(None);
             route.set(route_now);
             document().set_title(&format!("{} · Minarbot", route_now.title()));
         }
@@ -226,13 +235,16 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                 inner_html=config.close_icon>
             </button>
             <main class="app-settings__main" node_ref=main>
-                <div class="app-settings__page legacy app-settings__page--preferences">
+                <div class="app-settings__page legacy"
+                    class:app-settings__page--preferences=move || matches!(route.get(), SettingsRoute::General | SettingsRoute::Appearance)>
                     {move || match route.get() {
                         SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
                         SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
+                        section => crate::system::panel(section),
                     }}
                 </div>
             </main>
+            {confirmation}
         </dialog>
     }
 }

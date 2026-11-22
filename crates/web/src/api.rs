@@ -30,16 +30,25 @@ pub async fn post<T: DeserializeOwned>(path: &str, body: &impl Serialize) -> Res
     decode(response).await
 }
 
+pub async fn response_error(response: gloo_net::http::Response, fallback: &str) -> String {
+    let status = response.status();
+    match response.json::<Value>().await {
+        Ok(body) => body["error"]
+            .as_str()
+            .or_else(|| body["error"]["message"].as_str())
+            .unwrap_or(fallback)
+            .to_owned(),
+        Err(_) if matches!(status, 502..=504) => {
+            "Minarbot is restarting. Try again in a moment.".into()
+        }
+        Err(_) => fallback.to_owned(),
+    }
+}
+
 async fn decode<T: DeserializeOwned>(response: gloo_net::http::Response) -> Result<T, String> {
     if !response.ok() {
-        let status = response.status();
-        if let Ok(body) = response.json::<Value>().await {
-            let error = &body["error"];
-            if let Some(message) = error.as_str().or_else(|| error["message"].as_str()) {
-                return Err(message.into());
-            }
-        }
-        return Err(format!("HTTP {status}"));
+        let fallback = format!("HTTP {}", response.status());
+        return Err(response_error(response, &fallback).await);
     }
     response
         .json()
