@@ -161,9 +161,13 @@ export async function timelineMinimapSmoke({ check, page, origin, root, agentCha
         return [{ ...turn, room }, { ...child, room }];
       });
       await open(true);
-      await page.getByText(humans[3].text, { exact: true }).waitFor();
+      await page.waitForFunction(expected => {
+        const room = document.querySelector('main[aria-label="Conversation MM1 Room / general"]');
+        const bubbles = [...(room?.querySelectorAll('.turn-block > .human-message > .human-bubble') ?? [])];
+        return bubbles.length === expected.length && bubbles.every((bubble, index) =>
+          bubble.textContent === expected[index]);
+      }, humans.map(turn => turn.text));
       await waitCount(4);
-      assert.deepEqual(await page.locator('.transcript .human-bubble').allTextContents(), humans.map(turn => turn.text));
       await rail.focus(); await rail.press('Home'); await rail.press('Enter'); await aligned(humans[0].id);
       const position = await point(1); await page.mouse.move(position.x, position.y);
       await page.locator('.timeline-minimap__preview').getByText('Final room reply', { exact: true }).waitFor();
