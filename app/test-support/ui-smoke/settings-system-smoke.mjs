@@ -74,6 +74,9 @@ async function fixtures(page, commands) {
   });
   await Promise.all([
     stub('/api/agents', { agents: [{ id: agentId, name: 'Fixture agent', role: 'Assistant', model: 'fixture-model', runtime: 'api' }], hubAvailable: false, configured: true, defaultModel: 'fixture-model' }),
+    stub('/api/projects', { projects: [] }),
+    stub('/api/channels', []),
+    stub('/api/sidebar/summary', { summaries: [] }),
     stub('/api/environment', environment, body => Object.assign(environment, { name: body.name })),
     stub('/api/machines', () => ({ machines: [machine] }), () => ({})),
     stub('/api/machines/agent-messaging', undefined, body => { machine.allowAgentMessaging = body.allowed; return {}; }),
@@ -304,10 +307,15 @@ const clients = process.env.MINARBOT_SYSTEM_CLIENT ? [process.env.MINARBOT_SYSTE
 const routes = process.env.MINARBOT_SYSTEM_ROUTE ? [process.env.MINARBOT_SYSTEM_ROUTE] : Object.keys(names);
 let app, browser;
 try {
-  app = await startRustServer({ database: join(data, 'state.sqlite'), dist, port: 0, appearanceClient: 'leptos' });
+  app = await startRustServer({ database: join(data, 'state.sqlite'), defaultModel: 'fixture-model', dist, port: 0, appearanceClient: 'leptos' });
   origin = app.origin;
   assert.match(origin, /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.notEqual(new URL(origin).port, '4317');
+  const seed = await fetch(origin + '/api/agents', {
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: agentId, name: 'Fixture agent', instructions: 'Help.', model: 'fixture-model', runtime: 'api' }),
+  });
+  assert.equal(seed.status, 201);
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
   assert(clients.every(client => client === 'react' || client === 'leptos'));
   assert(routes.every(route => Object.hasOwn(names, route)));
@@ -320,7 +328,10 @@ try {
         const commands = [], errors = [];
         page.on('pageerror', error => errors.push(error.message));
         page.on('console', message => {
-          if (message.type() === 'error' || /content security policy/i.test(message.text())) errors.push(message.text());
+          if (message.type() === 'error' || /content security policy/i.test(message.text())) {
+            const url = message.location().url;
+            errors.push(`${url ? new URL(url).pathname + ' ' : ''}${message.text()}`);
+          }
         });
         await page.addInitScript(() => {
           document.addEventListener('securitypolicyviolation', event => console.error('CSP violation', event.violatedDirective));
