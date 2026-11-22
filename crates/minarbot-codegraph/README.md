@@ -6,6 +6,17 @@ removes deleted files, and resolves references in one transaction. A file with
 a parser error retains a `files.errors` row so the caller can report it and
 retry after an edit.
 
+`Index::query()` exposes the read-only MCP query facade. Explore combines
+FTS5, identifier segments, and graph traversal to return numbered source,
+call paths, and blast radius within a per-file budget. Each MCP connection
+deduplicates unchanged source spans it has already returned.
+
+Minarbot indexes enabled project folders when attached and refreshes the
+selected folder before a project turn. The toggle starts on for new projects.
+The server mounts the workspace read-only in bubblewrap and keeps the index
+under its data directory. Codex, Claude Code, ACP, and API turns share this
+engine.
+
 Git supplies tracked paths and unignored worktree files. Outside Git, the
 walker applies local `.gitignore` rules. Both paths exclude dependency,
 build, and index directories by default. Generated files remain searchable

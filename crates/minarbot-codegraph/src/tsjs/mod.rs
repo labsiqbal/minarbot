@@ -291,7 +291,7 @@ pub struct Walker<'t> {
 
 const MAX_VALUE_REF_NODES: usize = 20_000;
 
-pub fn extract(file_path: &str, source: &str, language: &str) -> Result<Tables, String> {
+pub fn extract(file_path: &str, source: &str, language: &str) -> Result<(Tables, bool), String> {
     let variant = Variant::from_language(language)
         .ok_or_else(|| format!("tsjs walker does not handle language: {language}"))?;
     let grammar = langs::grammar_for(language)
@@ -305,18 +305,10 @@ pub fn extract(file_path: &str, source: &str, language: &str) -> Result<Tables, 
         .parse(source, None)
         .ok_or_else(|| "parser returned null tree".to_string())?;
 
-    // Files with parse ERRORS defer to the wasm extractor (the `defer:` prefix
-    // tells the TS side this is expected routing, not a malfunction). Reason:
-    // tree-sitter's error RECOVERY — same grammar, same core version — resolves
-    // differently under UTF-8 (native) vs UTF-16 (web-tree-sitter) parsing, so
-    // an erroring file's tree can differ between the paths (proven on vscode:
-    // `readonly import('x').T[]` recovered with the ERROR inside vs outside the
-    // type annotation). Erroring files are rare (0-0.42% across express/
-    // excalidraw/vscode) and per-file wasm fallback keeps routing graph-neutral
-    // by construction; clean files — 99.6%+ — stay on the fast path.
-    if tree.root_node().has_error() {
-        return Err("parse tree contains syntax errors".to_string());
-    }
+    // Upstream sends error trees to the WASM extractor. Use the native
+    // recovery tree and report partial extraction so valid declarations
+    // remain queryable without a second runtime.
+    let recovered = tree.root_node().has_error();
 
     let mut w = Walker {
         src: source,
@@ -375,7 +367,7 @@ pub fn extract(file_path: &str, source: &str, language: &str) -> Result<Tables, 
     w.commonjs_imports(tree.root_node());
     w.stack.pop();
 
-    Ok(w.tables)
+    Ok((w.tables, recovered))
 }
 
 impl<'t> Walker<'t> {

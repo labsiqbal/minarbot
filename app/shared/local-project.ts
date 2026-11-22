@@ -5,6 +5,11 @@ export type LocalProject = {
   archived: boolean;
   allowInstallationApps: boolean;
   codegraphEnabled?: boolean;
+  codegraphIndex?: {
+    state: 'off' | 'noFolders' | 'unavailable' | 'queued' | 'ready' | 'error';
+    files?: number;
+    errors?: number;
+  };
   revision: number;
   updated: number;
   folders: string[];

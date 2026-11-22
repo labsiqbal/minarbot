@@ -9,6 +9,7 @@ import { createServer, get } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { startApp } from './test-bridge.ts';
 import { restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
+import type { LocalProject } from './shared/local-project.ts';
 const scratch = () => mkdtempSync(resolve('node_modules/.projects-test-'));
 test('Rust project folders reject system, traversal, home, credential, data and symlink paths before creation', async () => {
   const f = await fixture();
@@ -98,6 +99,52 @@ test('Rust project grants resolve by room or selected side thread folder and fai
   } finally { await f.close(); }
 });
 
+test('built-in CodeGraph indexes projects and serves API turns without a CLI', async t => {
+  const f = await fixture();
+  try {
+    const projects = await f.request('/api/projects');
+    if (!projects.codegraphAvailable) return t.skip('requires Linux with bubblewrap');
+    const source = join(f.workspace, 'fixture.ts');
+    writeFileSync(source, 'export function projectFixture() { return 42; }\n');
+    writeFileSync(join(f.directory, 'outside.ts'), 'export function outsideFixture() {}\n');
+    symlinkSync(join(f.directory, 'outside.ts'), join(f.workspace, 'outside.ts'));
+    const path = `/api/projects/${f.project.id}`;
+    assert.equal(f.project.codegraphEnabled, true);
+    // First indexing can happen before the fixture file is written. Attach a
+    // fresh folder so readiness proves indexing occurred before any turn.
+    const second = join(f.directory, 'codegraph-source');
+    mkdirSync(second);
+    writeFileSync(join(second, 'second.ts'), 'export const secondFixture = true;\n');
+    const changed = await f.request(path + '/edit', {
+      id: randomUUID(), revision: f.project.revision, folders: [f.workspace, second],
+    });
+    let status;
+    const deadline = Date.now() + 15000;
+    do {
+      status = (await f.request(path)).codegraphIndex;
+      if (status.state !== 'queued') break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    assert.equal(status.state, 'ready', JSON.stringify(status));
+    assert(status.files >= 1);
+    const turns = `/api/channels/${f.project.channel}/turns`;
+    const first = await f.send(turns, 'EXPLORE');
+    assert.equal(first.status, 'done', JSON.stringify(first.error));
+    assert.match(first.reply, /projectFixture\(\) \{ return 42; \}/);
+    assert.doesNotMatch(first.reply, /outsideFixture/);
+    assert(!existsSync(join(f.workspace, '.codegraph')));
+
+    writeFileSync(source, 'export function projectFixture() { return 43; }\n');
+    assert.match((await f.send(turns, 'EXPLORE')).reply, /return 43/);
+    await f.request(path + '/edit', { id: randomUUID(), revision: changed.revision, codegraphEnabled: false });
+    assert.equal((await f.request(path)).codegraphIndex.state, 'off');
+    f.calls.length = 0;
+    await f.send(turns, 'READ');
+    assert(f.calls.every(call => call.tools?.every((tool: { function: { name: string } }) =>
+      !tool.function.name.startsWith('codegraph_')) ?? true));
+  } finally { await f.close(); }
+});
+
 async function fixture() {
   const directory = scratch(), workspace = join(directory, 'workspace'), data = join(directory, 'data');
   mkdirSync(workspace);
@@ -111,9 +158,9 @@ async function fixture() {
     const body = JSON.parse(Buffer.concat(chunks).toString());
     calls.push(body);
     const latest = [...body.messages].reverse().find((m: any) => m.role === 'user')?.content;
-    const name = latest === 'READ' ? 'read_workspace_file' : latest === 'WRITE' ? 'create_workspace_file' : latest === 'GIT' ? 'git_status' : '';
+    const name = latest === 'READ' ? 'read_workspace_file' : latest === 'WRITE' ? 'create_workspace_file' : latest === 'GIT' ? 'git_status' : latest === 'EXPLORE' ? 'codegraph_explore' : '';
     const tool = body.messages.at(-1)?.role === 'tool';
-    res.end(JSON.stringify({ choices: [tool || !name ? { finish_reason: 'stop', message: { content: tool ? JSON.stringify(body.messages.at(-1).content) : 'No tools' } } : { finish_reason: 'tool_calls', message: { tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(name === 'read_workspace_file' ? { path: 'read.txt' } : name === 'create_workspace_file' ? { path: 'made.txt', text: 'made' } : {}) } }] } }] }));
+    res.end(JSON.stringify({ choices: [tool || !name ? { finish_reason: 'stop', message: { content: tool ? JSON.stringify(body.messages.at(-1).content) : 'No tools' } } : { finish_reason: 'tool_calls', message: { tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(name === 'read_workspace_file' ? { path: 'read.txt' } : name === 'create_workspace_file' ? { path: 'made.txt', text: 'made' } : name === 'codegraph_explore' ? { query: 'projectFixture' } : {}) } }] } }] }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address() as any;
@@ -385,6 +432,12 @@ test('folderless project and side threads isolate host grants, accept folders la
   } finally {await f.close();}
 });
 
+function projectConfiguration(project: LocalProject) {
+  const configuration = { ...project };
+  delete configuration.codegraphIndex;
+  return configuration;
+}
+
 test('Rust project migration rolls back ownership and retries without touching standalone data', async () => {
   const f = await fixture();
   await f.stop();
@@ -402,7 +455,11 @@ test('Rust project migration rolls back ownership and retries without touching s
     await f.restart();
     const before = await f.request('/api/projects');
     await f.restart();
-    assert.deepEqual(await f.request('/api/projects'), before);
+    const after = await f.request('/api/projects');
+    assert.deepEqual(
+      { ...after, projects: after.projects.map(projectConfiguration) },
+      { ...before, projects: before.projects.map(projectConfiguration) },
+    );
     const project = before.projects.find((p: { id: string }) => p.id === room);
     assert.equal(project.sections[0].id, room);
     assert.equal(project.sections[0].name, 'general');
@@ -427,9 +484,15 @@ test('Rust migrates a standalone channel with a colliding ID into its own projec
     assert(migrated);
     assert.notEqual(migrated.id, f.project.id);
     assert.equal(migrated.sections[0].id, f.project.id);
-    assert.deepEqual(projects.projects.find((project: { id: string }) => project.id === f.project.id), f.project);
+    const original = projects.projects.find((project: LocalProject) => project.id === f.project.id);
+    assert(original);
+    assert.deepEqual(projectConfiguration(original), f.project);
     await f.restart();
-    assert.deepEqual(await f.request('/api/projects'), projects);
+    const after = await f.request('/api/projects');
+    assert.deepEqual(
+      { ...after, projects: after.projects.map(projectConfiguration) },
+      { ...projects, projects: projects.projects.map(projectConfiguration) },
+    );
   } finally { await f.close(); }
 });
 
