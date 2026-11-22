@@ -3,11 +3,15 @@
 mod api;
 mod appearance;
 mod general;
+mod onboarding;
 mod pairing;
+mod projects;
 mod routes;
 mod settings;
 mod shell;
 mod voice;
+mod workspace;
+mod workspace_route;
 
 use leptos::{mount::mount_to, prelude::*};
 use wasm_bindgen::{prelude::*, JsCast};
@@ -39,21 +43,35 @@ pub fn mount_appearance() -> Result<(), JsValue> {
             .unwrap_or_default(),
     )
     .map_err(|_| JsValue::from_str("Appearance configuration is invalid"))?;
+    let icons = config.workspace_icons.clone();
+    let error_icon = config.error_icon.clone();
     let path = window().location().pathname().unwrap_or_default();
-    let route = routes::SettingsRoute::from_path(&path)
-        .ok_or_else(|| JsValue::from_str("Unknown settings route"))?;
-    let mount = mount_to(root, move || {
-        let colors = StoredValue::new(config.colors.clone());
-        view! {
-            <shell::WorkspaceShell base_path=return_to.clone() colors=colors icons=config.workspace_icons.clone()>
-                {settings::shell(config, return_to, route)}
-            </shell::WorkspaceShell>
-        }
-    });
-    element("appearance-dialog")?
-        .dyn_into::<HtmlDialogElement>()?
-        .show_modal()?;
-    settings::focus_heading();
-    mount.forget();
+    if let Some(route) = routes::SettingsRoute::from_path(&path) {
+        let mount = mount_to(root, move || {
+            let colors = StoredValue::new(config.colors.clone());
+            view! {
+                <shell::WorkspaceShell base_path=return_to.clone() colors=colors icons=icons.clone()>
+                    {settings::shell(config, return_to, route)}
+                </shell::WorkspaceShell>
+            }
+        });
+        element("appearance-dialog")?
+            .dyn_into::<HtmlDialogElement>()?
+            .show_modal()?;
+        settings::focus_heading();
+        mount.forget();
+    } else if let Some(route) = workspace_route::WorkspaceRoute::from_path(&path) {
+        mount_to(root, move || {
+            let colors = StoredValue::new(config.colors);
+            view! {
+                <shell::WorkspaceShell base_path=path colors=colors icons=icons>
+                    {workspace::page(route, error_icon)}
+                </shell::WorkspaceShell>
+            }
+        })
+        .forget();
+    } else {
+        return Err(JsValue::from_str("Unknown Minarbot route"));
+    }
     Ok(())
 }
