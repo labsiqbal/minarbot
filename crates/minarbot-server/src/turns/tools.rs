@@ -140,6 +140,9 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         _ => false,
     });
     specs.extend(crate::automation::tools(db, turn)?);
+    if super::goals::offer_tools(state, db, turn)? {
+        specs.extend(super::goals::specs());
+    }
     if crate::connectors::mailbox::available(state, db, turn)? {
         specs.extend(crate::connectors::mailbox::specs()?);
     }
@@ -169,6 +172,10 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         );
     }
     specs.extend(crate::mcp::execution::specs()?);
+    if crate::files::rich_html::available(state, turn) {
+        specs.push(crate::files::components::spec());
+    }
+    specs.extend(crate::computer::craft::specs(state, db, turn)?);
     if turn["profile_setup"] == 1 {
         specs.retain(|t| ["edit_profile", "ask_user"].contains(&string(&t["function"], "name")));
         for tool in &mut specs {
@@ -204,6 +211,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     if turn["agent"] == crate::mcp::guide::ID {
         return crate::mcp::guide::call(state, turn, name, &args).await;
+    }
+    if name == "render_component" {
+        return crate::files::components::run(state, turn, call, &args).await;
     }
     if name == "html_preview" {
         let result = crate::files::rich_html::preview(state, turn, &args)
@@ -331,6 +341,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     if ["list_mcp_tools", "call_mcp_tool"].contains(&name) {
         return crate::mcp::execution::run(state, turn, call, &args).await;
+    }
+    if crate::computer::craft::is_tool(name) {
+        return crate::computer::craft::run(state, turn, call, &args).await;
     }
     if name == "run_shell" {
         return super::shell::run(state, turn, call, args).await;
@@ -491,9 +504,9 @@ pub fn journal(db: &Connection, turn: &Value, call: &Value, result: &Value) -> R
     if exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND call_id=? UNION ALL SELECT 1 FROM generated_files WHERE turn=? AND call_id=?",[string(turn,"id"),string(call,"id"),string(turn,"id"),string(call,"id")])? {return Ok(());}
     let recorded = if matches!(
         string(&call["function"], "name"),
-        "html_render" | "html_preview"
+        "html_render" | "html_preview" | "render_component"
     ) {
-        // Rendered source lives in html_replies. Keep raw documents out of the tool journal.
+        // Reply payloads have their own tables. Keep raw documents out of the tool journal.
         let mut recorded = call.clone();
         recorded["function"]["arguments"] = json!("{}");
         recorded.to_string()
@@ -668,6 +681,7 @@ pub(super) fn dispatch(
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
         | "cancel_task" | "interrupt_agent" => super::messaging::run(state, db, turn, call, args),
         "verify_result" => super::verification::review(db, turn, args),
+        "set_goal" | "set_loop" => super::goals::tool(state, db, turn, name, args),
         "edit_profile" | "set_avatar" | "list_sites" | "publish_site" | "delete_site" => {
             super::profile::execute(state, db, turn, name, args, avatar)
         }

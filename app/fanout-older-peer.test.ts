@@ -6,7 +6,7 @@ import { createServer, request } from 'node:http';
 import { createServer as controlServer } from 'node:net';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { fileManifest, verifyRelease } from '../scripts/release-lib.mjs';
+import { fileManifest, verifyRelease } from './test-support/release.ts';
 
 async function api(origin: string, path: string, body?: unknown) {
   const response = await fetch(origin + path, body === undefined ? {} : { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

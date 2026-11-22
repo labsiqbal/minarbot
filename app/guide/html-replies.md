@@ -6,6 +6,8 @@ A reply can draft a follow-up in the composer. Review it and send when ready. A 
 
 ## Authoring replies
 
+Use [native component replies](component-replies.md) for standard charts, tables, metrics, timelines, Mermaid diagrams, and forms that wait for input.
+
 Use `html_preview` before `html_render`. Pass inline UTF-8 HTML, a readable attachment ID from the conversation, or an HTML file path inside the active workspace. Pages are limited to 512,000 bytes. Preview returns a PNG, measured CSS height, and console diagnostics. It requires Chrome or Chromium and bubblewrap on Linux. Publishing works independently of preview.
 
 Use fluid widths and CSS variables such as `--background`, `--foreground`, `--accent`, `--border`, and `--chart-1` through `--chart-6`. Repaint canvas charts on the `minarbot:theme` event. Let content size the document and give charts a fixed height inside it. Include a text equivalent or accessible data table for charts.

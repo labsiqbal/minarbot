@@ -21,6 +21,7 @@ function snapshot(db: ReturnType<typeof testDatabase>) {
 }
 
 const ledger = 'SELECT version, name, checksum FROM schema_migrations ORDER BY version';
+const goalSchema = readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8');
 
 function fixture(name: string) {
   return readFileSync(new URL(`./test-support/fixtures/${name}-pre-collapse.sql`, import.meta.url), 'utf8');
@@ -47,7 +48,7 @@ const retainedData = `SELECT a.*, c.request, t.reply, t.status, p.enabled, o.age
   WHERE a.id='fixture-agent'`;
 
 for (const mode of ['canonical', 'local'] as const) {
-  test(`fresh ${mode} startup matches 85373b3 and reopens its data unchanged`, async () => {
+  test(`fresh ${mode} startup matches current schema and reopens 85373b3 data unchanged`, async () => {
     const directory = mkdtempSync(join(tmpdir(), 'minarbot-schema-'));
     const old = join(directory, 'pre-collapse.sqlite');
     const fresh = join(directory, 'fresh.sqlite');
@@ -56,10 +57,12 @@ for (const mode of ['canonical', 'local'] as const) {
       expected.exec(fixture(mode));
       const frozen = snapshot(expected);
       const frozenLedger = mode === 'canonical' ? expected.prepare(ledger).all() : [];
+      if (mode === 'local') expected.exec(goalSchema);
+      const installed = snapshot(expected);
       await startAndClose(fresh, mode);
       const actual = testDatabase(fresh, { readOnly: true });
       try {
-        assert.deepEqual(snapshot(actual), frozen);
+        assert.deepEqual(snapshot(actual), installed);
         if (mode === 'canonical') {
           assert.deepEqual(actual.prepare(ledger).all(), frozenLedger);
           assert.equal(actual.prepare('SELECT serving_state FROM authority_state').get()?.serving_state, 'active');
@@ -86,8 +89,14 @@ for (const mode of ['canonical', 'local'] as const) {
         const beforeVersion = existing.prepare('PRAGMA schema_version').get();
         const beforeLedger = mode === 'canonical' ? existing.prepare('SELECT * FROM schema_migrations ORDER BY version').all() : [];
         await startAndClose(old, mode);
-        assert.deepEqual(snapshot(existing), frozen);
-        assert.deepEqual(existing.prepare('PRAGMA schema_version').get(), beforeVersion);
+        assert.deepEqual(snapshot(existing), installed);
+        const afterVersion = existing.prepare('PRAGMA schema_version').get();
+        if (mode === 'local') {
+          assert.notDeepEqual(afterVersion, beforeVersion);
+          await startAndClose(old, mode);
+          assert.deepEqual(snapshot(existing), installed);
+        }
+        assert.deepEqual(existing.prepare('PRAGMA schema_version').get(), mode === 'local' ? afterVersion : beforeVersion);
         assert.deepEqual(existing.prepare(retainedData).get(), saved);
         if (mode === 'canonical') assert.deepEqual(existing.prepare('SELECT * FROM schema_migrations ORDER BY version').all(), beforeLedger);
       } finally { existing.close(); }

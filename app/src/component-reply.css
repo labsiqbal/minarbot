@@ -1,0 +1,173 @@
+.component-reply {
+  color: var(--color-text-primary);
+  min-inline-size: 0;
+  margin-block: 4px 8px;
+}
+
+.component-node {
+  min-inline-size: 0;
+  padding: 12px 14px;
+  overflow-wrap: anywhere;
+}
+
+.component-node + .component-node { border-block-start: 1px solid var(--color-border-secondary); }
+
+.component-node > .k-section__title {
+  margin: 0 0 8px;
+  text-wrap: balance;
+}
+
+.component-detail {
+  margin: 0;
+  color: var(--color-text-secondary);
+  white-space: pre-line;
+}
+
+.component-metric {
+  display: block;
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  margin-block-end: 4px;
+}
+
+.component-table {
+  overflow: auto;
+  max-block-size: 24rem;
+}
+
+.component-table table {
+  inline-size: 100%;
+  border-spacing: 0;
+  text-align: start;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.component-table caption {
+  text-align: start;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  padding-block-end: 8px;
+}
+
+.component-table :is(th, td) {
+  padding: 5px 8px;
+  border-block-end: 1px solid var(--color-border-secondary);
+  text-align: start;
+  vertical-align: top;
+  min-inline-size: 64px;
+  max-inline-size: 240px;
+}
+
+.component-table thead th {
+  position: sticky;
+  inset-block-start: 0;
+  background: var(--color-bg-pane);
+}
+.component-table tbody th { font-weight: normal; }
+
+.component-chart-data summary {
+  cursor: pointer;
+  inline-size: fit-content;
+  padding: 5px 4px;
+  border-radius: var(--radius-sm);
+  color: var(--color-brand-text);
+  font-size: var(--text-sm);
+}
+
+.component-chart-data .component-table { margin-block-start: 6px; }
+
+.component-cartesian {
+  position: relative;
+  inline-size: min(100%, 616px);
+  margin-inline: auto;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.component-cartesian svg { display: block; inline-size: 100%; }
+
+.component-axis-value, .component-axis-label {
+  position: absolute;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: 1;
+}
+.component-axis-value {
+  right: 89%;
+  max-inline-size: 11%;
+  transform: translateY(-50%);
+  text-align: end;
+}
+.component-axis-label {
+  top: 87%;
+  max-inline-size: 17%;
+  transform: translateX(-50%);
+}
+
+.component-gridline { stroke: var(--color-border-secondary); }
+.component-baseline { stroke: var(--color-border-primary); }
+.component-plot-fill { fill: var(--color-brand); }
+.component-plot-line { fill: none; stroke: var(--color-brand); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.component-pie {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.component-pie svg { inline-size: clamp(90px, 26%, 150px); flex-shrink: 0; }
+.component-pie circle { fill: none; stroke: var(--slice); stroke-width: 26px; }
+.component-pie ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 110px), 1fr));
+  gap: 4px 12px;
+  inline-size: 100%;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.component-pie li { display: flex; align-items: baseline; gap: 6px; }
+.component-pie li span { flex: 0 0 9px; block-size: 9px; border-radius: 2px; background: var(--slice); }
+.component-palette-0 { --slice: var(--color-brand); }
+.component-palette-1 { --slice: var(--color-success-text); }
+.component-palette-2 { --slice: var(--color-warn-text); }
+.component-palette-3 { --slice: var(--color-danger-text); }
+.component-palette-4 { --slice: var(--color-text-secondary); }
+.component-palette-5 { --slice: var(--color-bot-purple); }
+
+.component-timeline {
+  display: grid;
+  gap: 8px;
+  padding-inline-start: 24px;
+  margin: 0;
+}
+.component-timeline li { padding-inline-start: 2px; }
+.component-timeline li > span { display: block; color: var(--color-text-secondary); font-size: var(--text-sm); }
+
+.component-fields { padding: 0; margin: 0; border: 0; min-inline-size: 0; }
+.component-checkbox { min-block-size: 36px; align-items: center; cursor: pointer; }
+.component-checkbox input { accent-color: var(--color-brand); inline-size: 16px; block-size: 16px; }
+.component-form select { color-scheme: inherit; }
+
+.component-sr-only {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.component-node :is(summary, .component-table, input, select):focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+@media (pointer: coarse) {
+  .component-form :is(.k-input, .k-btn, .component-checkbox), .component-chart-data summary { min-block-size: 44px; }
+  .component-form .k-input { font-size: max(1rem, 1em); }
+}

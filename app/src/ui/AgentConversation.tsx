@@ -4,6 +4,7 @@ import { Collapsible as Disclosure } from 'radix-ui';
 import { AgentAvatar } from '../AgentAvatar';
 import { Markdown, StreamingMarkdown } from '../Markdown';
 import { HtmlReplies } from '../HtmlReply';
+import { ComponentReplies, type ComponentReplyData } from '../ComponentReply';
 import type { HtmlReplyAction, HtmlReplyReference } from '../html-reply';
 import { AgentMessage } from './ChatPrimitives';
 import { Collapsible } from './kit';
@@ -24,7 +25,7 @@ export function AgentConversation({ items, sender, scope, onOpen }: { items: Exc
   </div>)}</section>;
 }
 export type RoomView = { root: string; generation: string; active: boolean; stopped: boolean; round: number; silent: string | null; note: string | null; quiet: { agent: string; name: string; silent: string }[]; messages: { seq: number; turn: string; agent: string; name: string; role: string; target_name?: string; text: string; kind: string }[] };
-type RoomTurn = { htmlReplies?: HtmlReplyReference[]; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: StreamPartial | null; activity?: TurnActivityData; questions?: { id: string; prompt: string; answer: string | null }[] };
+type RoomTurn = { htmlReplies?: HtmlReplyReference[]; componentReplies?: ComponentReplyData[]; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; id: string; agent: string; status: string; paused: number; created: string; error: string | null; partial?: StreamPartial | null; activity?: TurnActivityData; questions?: { id: string; prompt: string; answer: string | null }[] };
 type RoomMember = { id: string; name: string; role: string; avatar_revision?: number };
 function RoomReply({ turn, member, text, scope, details, controls, extras, onHtmlReplyAction }: { turn: RoomTurn; onHtmlReplyAction?: (action: HtmlReplyAction) => void; member: RoomMember; text?: string; scope: string; details: ReactNode; controls: ReactNode; extras: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -39,6 +40,7 @@ function RoomReply({ turn, member, text, scope, details, controls, extras, onHtm
     </div>
     {hasWork && <Disclosure.Content className="room-agent__activity">{details}</Disclosure.Content>}
     <HtmlReplies replies={turn.htmlReplies} scope={scope} onAction={onHtmlReplyAction} />
+    <ComponentReplies replies={turn.componentReplies} scope={scope} />
     {(answer || !['queued', 'running'].includes(turn.status) && !!turn.generatedFiles?.length) && <div className="message-body" aria-label={streaming ? `Streaming answer from ${member.name}` : `Answer from ${member.name}`}><div className="legacy"><StreamingMarkdown files={turn.generatedFiles} key={turn.id} text={answer} scope={scope} origin={window.location.origin} /></div></div>}
     {extras}
     {turn.error && turn.status !== 'cancelled' && <p className="message-error">{turn.error}</p>}

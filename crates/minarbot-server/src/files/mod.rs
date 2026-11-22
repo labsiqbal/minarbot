@@ -1,5 +1,6 @@
 pub(crate) mod attachments;
 mod backup;
+pub(crate) mod components;
 pub(crate) mod git;
 mod panel;
 pub(crate) mod preview;

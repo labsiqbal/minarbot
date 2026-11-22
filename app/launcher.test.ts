@@ -12,7 +12,7 @@ import { testDatabase } from './test-support/database.ts';
 import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
 import { rustBinary } from './rust-binary.ts';
-import { fileManifest, selectRelease } from '../scripts/release-lib.mjs';
+import { fileManifest, selectRelease } from './test-support/release.ts';
 import { launcherRequest } from './rust-launcher-test.ts';
 
 const delay = (ms: number) => new Promise(done => setTimeout(done, ms));

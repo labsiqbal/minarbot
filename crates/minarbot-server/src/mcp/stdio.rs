@@ -37,12 +37,13 @@ pub async fn run() -> crate::db::Result<()> {
             return Err("MCP input exceeds the size limit".into());
         }
         let message: Value = serde_json::from_slice(&line)?;
-        let mut response = client
-            .post(url.clone())
-            .bearer_auth(&token)
-            .json(&message)
-            .send()
-            .await?;
+        let mut request = client.post(url.clone()).bearer_auth(&token).json(&message);
+        if message["method"] == "tools/call" && message["params"]["name"] == "render_component" {
+            request = request.timeout(std::time::Duration::from_secs(
+                crate::files::components::FORM_WAIT_SECONDS + 10,
+            ));
+        }
+        let mut response = request.send().await?;
         let limit =
             if message["method"] == "tools/call" && message["params"]["name"] == "html_preview" {
                 MCP_PREVIEW_LIMIT

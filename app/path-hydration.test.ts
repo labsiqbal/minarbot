@@ -7,8 +7,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { buildEnvironmentCaptureCommand, hydratePosixHome, hydratePosixPath, listLoginShellCandidates, mergePathEntries, readEnvironmentFromLoginShell } from './t3/path.ts';
 import { rustBinary } from './rust-binary.ts';
-
-const { freePort, stop } = await import(new URL('../scripts/production-env-gate.mjs', import.meta.url).href);
+import { freePort, stop } from './test-support/test-process.ts';
 
 for (const broken of [false, true]) test(broken ? 'broken login shell keeps service startup working' : 'service launch discovers Codex exported only by the login shell', { timeout: 20_000 }, async t => {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-login-path-'));

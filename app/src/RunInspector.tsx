@@ -13,7 +13,8 @@ type ProviderCall = {
   seq: number; model: string; status: string; created: string; finished: string | null;
   duration_ms: number | null; input_tokens: number | null; output_tokens: number | null; total_tokens: number | null;
 };
-type Inspection = { status: string; error: string | null; tools: Tool[]; harness: NativeTool[]; providers: ProviderCall[]; engineStderr: string | null };
+type Judgment = { turn: string; met: number; reason: string; number: number };
+type Inspection = { status: string; error: string | null; judgments?: Judgment[]; tools: Tool[]; harness: NativeTool[]; providers: ProviderCall[]; engineStderr: string | null };
 type Step = ReturnType<typeof mergeRunSteps<Tool, NativeTool>>[number];
 const clock = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' });
 
@@ -69,7 +70,11 @@ function toolState(step: Step, status: string) {
   return stepState(failed ? 'failed' : step.native?.state ?? step.tool?.state, status);
 }
 
-export function RunInspector({ target, request }: { target: RunTarget; request: PanelRequest }) {
+function providerState(call: ProviderCall, turnStatus: string) {
+  return stepState(call.status === 'interrupted' && turnStatus === 'cancelled' ? 'cancelled' : call.status, turnStatus);
+}
+
+export function RunInspector({ target, request, turnStatus }: { target: RunTarget; request: PanelRequest; turnStatus?: string }) {
   const [data, setData] = useState<Inspection | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -80,7 +85,7 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
     } catch (reason) {
       if (current()) setError(reason instanceof Error ? reason.message : 'Run could not load.');
     }
-  }, [target.turnId, request, retry]));
+  }, [target.turnId, request, retry, turnStatus]));
   const steps = data ? mergeRunSteps(data.tools, data.harness) : [];
   const selected = steps.find(step => step.id === target.stepId)
     ?? (!target.stepId && data ? steps.findLast(step => toolState(step, data.status) === 'Failed') : undefined);
@@ -88,12 +93,20 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
     {error && <Alert tone="error" actions={<Button size="sm" onClick={() => setRetry(value => value + 1)}>Retry</Button>}>{error}</Alert>}
     {!data && !error && <SkeletonRows count={3} />}
     {data && <>
-      {data.error && <InspectText label="Run error" text={data.error} />}
+      {data.error && <InspectText label={data.status === 'cancelled' ? 'Run stopped' : 'Run error'} text={data.error} />}
+      {!!data.judgments?.length && <section className="run-inspector__providers" aria-label="Goal judge">
+        <h3>Goal judge</h3>
+        <ul className="run-inspector__list">{data.judgments.map(judgment => <li key={judgment.turn}><details>
+          <summary><ChevronRight size={14} aria-hidden /><span>Turn {judgment.number}</span><span className="run-inspector__state" data-state={judgment.met ? 'Done' : undefined}>{judgment.met ? 'Met' : 'More work'}</span></summary>
+          <div className="run-inspector__details"><p>{judgment.reason}</p></div>
+        </details></li>)}</ul>
+      </section>}
+
       {steps.length > 0 && <ul className="run-inspector__list" aria-label="Steps">{steps.map(step => <StepDetails key={step.id} step={step} state={toolState(step, data.status)} selected={selected?.id === step.id ? target : null} />)}</ul>}
       {data.providers.length > 0 && <section className="run-inspector__providers" aria-labelledby="run-provider-calls">
         <h3 id="run-provider-calls">Provider calls</h3>
         <ul className="run-inspector__list">{data.providers.map(call => <li key={call.seq}><details>
-          <summary><ChevronRight size={14} aria-hidden /><span>{call.model}</span><span className="run-inspector__state">{stepState(call.status)}{call.duration_ms !== null && ` · ${duration(call.duration_ms)}`}</span></summary>
+          <summary><ChevronRight size={14} aria-hidden /><span>{call.model}</span><span className="run-inspector__state">{providerState(call, turnStatus ?? data.status)}{call.duration_ms !== null && ` · ${duration(call.duration_ms)}`}</span></summary>
           <div className="run-inspector__details"><dl>
             <dt>Started</dt><dd><Time value={call.created} /></dd>
             <dt>Ended</dt><dd><Time value={call.finished} /></dd>
@@ -104,7 +117,7 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
         </details></li>)}</ul>
       </section>}
       {data.engineStderr && <InspectText label="Engine stderr" text={data.engineStderr} />}
-      {!steps.length && !data.providers.length && !data.error && !data.engineStderr && <p role="status">No run details</p>}
+      {!steps.length && !data.providers.length && !data.error && !data.engineStderr && !data.judgments?.length && <p role="status">No run details</p>}
     </>}
   </div>;
 }

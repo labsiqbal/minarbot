@@ -228,6 +228,10 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
     if !valid(&decl["inputSchema"], &args) {
         return Err(error(400, "Invalid MCP tool call."));
     }
+    if name == "render_component" && super::secrets::reflected(args.to_string().as_bytes(), &bearer)
+    {
+        return Err(error(400, "Component replies cannot include credentials."));
+    }
     if decl["native"] == true {
         let result = harness::tool(
             state,

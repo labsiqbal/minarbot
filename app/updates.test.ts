@@ -15,11 +15,10 @@ import { rustBinary } from './rust-binary.ts';
 import { startApp } from './test-bridge.ts';
 import { launcherRequest } from './rust-launcher-test.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
-import { durableWrite, fileManifest, latestRelease, selectRelease, selectedRelease, verifyRelease } from '../scripts/release-lib.mjs';
+import { buildRelease, fileManifest, latestRelease, selectRelease, selectedRelease, verifyRelease, xtask } from './test-support/release.ts';
 import { receiveRelease, releaseArchive } from './rust-update-test.ts';
-import { freePort } from '../scripts/test-port.mjs';
+import { freePort } from './test-support/test-process.ts';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const { buildRelease } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 const delay = (ms: number) => new Promise(r=>setTimeout(r,ms));
 const temp = () => mkdtempSync(join(tmpdir(),'updates-'));
 async function until<T>(read:()=>Promise<T|undefined|false>, timeout=15000):Promise<T> { const deadline=Date.now()+timeout; while(Date.now()<deadline){const result=await read();if(result)return result;await delay(80);}throw new Error('Update test timed out.'); }
@@ -71,7 +70,7 @@ test('release lint failure stops build, tests and packaging; successful gates ru
 test('desktop build follows dirty guard and packages release version without changing tracked desktop version',()=>{
  const dir=temp();try{
  for(const folder of ['app','scripts','desktop/scripts','desktop/src'])mkdirSync(join(dir,folder),{recursive:true});
- cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));for(const name of ['install-machine.sh','uninstall-machine.sh'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));cpSync(join(root,'scripts/release-lib.mjs'),join(dir,'scripts/release-lib.mjs'));
+ for(const name of ['install-machine.sh','uninstall-machine.sh'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));
  const desktopPackage=JSON.parse(readFileSync(join(root,'desktop/package.json'),'utf8'));
  const app={name:'release-fixture',version:'1.0.1',type:'module',scripts:{lint:'node -e "0"',test:'node -e "0"',build:'node -e "0"'}};
  writeFileSync(join(dir,'app/package.json'),JSON.stringify(app));writeFileSync(join(dir,'app/package-lock.json'),JSON.stringify({name:app.name,version:app.version,lockfileVersion:3,packages:{'':app}}));
@@ -80,9 +79,9 @@ test('desktop build follows dirty guard and packages release version without cha
  writeFileSync(join(dir,'desktop/scripts/build.mjs'),`import {writeFileSync} from 'node:fs';import {join} from 'node:path';const [version, out] = process.argv.slice(2);const name = 'Minarbot-' + version + '-x86_64.AppImage';writeFileSync(join(out,name),version);writeFileSync(join(out,'latest-linux.yml'),'version: ' + version + '\\npath: ' + name + '\\n');`);
  const git=(args:string[])=>execFileSync('git',args,{cwd:dir,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Fixture']);
  const releases=join(dir,'releases');
- const args=[join(dir,'scripts/release.mjs'),'--desktop','--no-github','--releases',releases];
- writeFileSync(join(dir,'dirty'),'uncommitted');assert.throws(()=>execFileSync(process.execPath,args,{stdio:'pipe'}),/dirty worktree/);assert(!existsSync(releases));rmSync(join(dir,'dirty'));
- execFileSync(process.execPath,args,{stdio:'pipe'});const info=latestRelease(releases)!;assert.equal(info.version,'1.0.1');assert.equal(readFileSync(join(releases,'.github',info.id,'Minarbot-1.0.1-x86_64.AppImage'),'utf8'),'1.0.1');assert.equal(JSON.parse(readFileSync(join(dir,'desktop/package.json'),'utf8')).version,'1.0.0');
+ const args=['release','--desktop','--no-github','--releases',releases];
+ writeFileSync(join(dir,'dirty'),'uncommitted');assert.throws(()=>execFileSync(xtask(),args,{cwd:dir,stdio:'pipe'}),/dirty worktree/);assert(!existsSync(releases));rmSync(join(dir,'dirty'));
+ execFileSync(xtask(),args,{cwd:dir,stdio:'pipe'});const info=latestRelease(releases)!;assert.equal(info.version,'1.0.1');assert.equal(readFileSync(join(releases,'.github',info.id,'Minarbot-1.0.1-x86_64.AppImage'),'utf8'),'1.0.1');assert.equal(JSON.parse(readFileSync(join(dir,'desktop/package.json'),'utf8')).version,'1.0.0');
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -185,7 +184,7 @@ if(process.env.MINARBOT_UPDATE_IT==='1')test('real release build, HTTP update, b
  try{
  cpSync(join(root,'app'),source,{recursive:true,filter:p=>!p.includes('/node_modules')&&!p.includes('/dist')});symlinkSync(join(root,'app/node_modules'),join(source,'node_modules'),'dir');
  let pkg=JSON.parse(readFileSync(join(source,'package.json'),'utf8'));pkg.version='0.1.0';writeFileSync(join(source,'package.json'),JSON.stringify(pkg,null,2)+'\n');let lock=JSON.parse(readFileSync(join(source,'package-lock.json'),'utf8'));lock.version=pkg.version;lock.packages[''].version=pkg.version;writeFileSync(join(source,'package-lock.json'),JSON.stringify(lock,null,2)+'\n');
- async function realBuild(notes:string){await new Promise<void>((done,reject)=>{const builder=spawn(process.execPath,['--input-type=module','-e',`import {buildRelease} from ${JSON.stringify(new URL('../scripts/release.mjs',import.meta.url).href)};buildRelease(${JSON.stringify({source,releases,allowDirty:true,notes})});`],{stdio:'inherit'});builder.once('error',reject);builder.once('exit',code=>code===0?done():reject(new Error('Real release build failed.')));});return latestRelease(releases)!;}
+ function realBuild(notes:string){return buildRelease({source,releases,allowDirty:true,notes});}
  const first=await realBuild('Integration v1');f=await launcher(dir,first.id);const config=JSON.parse(readFileSync(f.config,'utf8'));config.trialTimeoutMs=30000;writeFileSync(f.config,JSON.stringify(config),{mode:0o600});await f.close();
  const child=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});let log='';child.stdout!.on('data',b=>{log+=b;});child.stderr!.on('data',b=>{log+=b;});f={...f,child,async close(){await stop(child);},get log(){return log;}};
  const app={origin:`http://127.0.0.1:${f.port}`};await until(async()=>{try{return (await originalFetch(app.origin+'/api/environment')).ok;}catch{return false;}},30000);

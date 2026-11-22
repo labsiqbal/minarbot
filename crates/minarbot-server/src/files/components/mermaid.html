@@ -1,0 +1,65 @@
+<style>
+  html { padding: 0; font-size: var(--text-sm, 0.8125rem); }
+  #diagram { display: grid; justify-items: center; }
+  #diagram svg { max-width: 100%; height: auto; }
+  #description, #fallback { margin: 0 0 8px; color: var(--muted-foreground); }
+  #fallback { overflow-wrap: anywhere; white-space: pre-wrap; }
+</style>
+<p id="description"></p>
+<pre id="fallback"></pre>
+<div id="diagram" aria-hidden="true"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.5/dist/mermaid.min.js"
+  integrity="sha256-YWoQnxnNGGhC4R1Fs1rAdFazp1UTMQ9uoHU1GqQwseI=" crossorigin="anonymous"></script>
+<script>
+  const source = document.querySelector('#fallback');
+  const diagram = document.querySelector('#diagram');
+  let rendering = false;
+  let pending = false;
+  async function drawDiagram() {
+    if (rendering) { pending = true; return; }
+    if (!window.mermaid) return;
+    rendering = true;
+    try {
+      const styles = getComputedStyle(document.documentElement);
+      const token = name => styles.getPropertyValue(name).trim();
+      const text = token('--foreground');
+      const fill = token('--primary-soft') || token('--muted');
+      const border = token('--primary');
+      const line = token('--muted-foreground');
+      const mode = document.documentElement.dataset.theme;
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: 'base',
+        themeVariables: {
+          darkMode: mode === 'dark',
+          fontFamily: token('--font-sans'),
+          fontSize: styles.fontSize,
+          background: token('--background'),
+          primaryColor: fill,
+          primaryBorderColor: border,
+          primaryTextColor: text,
+          textColor: text,
+          lineColor: line,
+          defaultLinkColor: line,
+          edgeLabelBackground: token('--card'),
+        },
+        maxTextSize: 8000,
+        maxEdges: 200,
+        flowchart: { htmlLabels: false },
+      });
+      const { svg } = await mermaid.render('minarbot-diagram', source.textContent, diagram);
+      diagram.innerHTML = svg;
+      diagram.dataset.theme = mode;
+      source.hidden = true;
+    } catch {
+      diagram.replaceChildren();
+      source.hidden = false;
+    } finally {
+      rendering = false;
+      if (pending) { pending = false; void drawDiagram(); }
+    }
+  }
+  addEventListener('minarbot:theme', drawDiagram);
+  void drawDiagram();
+</script>

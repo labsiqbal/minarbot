@@ -111,6 +111,13 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
         }
     }
     specs.extend(crate::mcp::execution::specs()?);
+    if crate::files::rich_html::available(state, turn) {
+        specs.push(crate::files::components::spec());
+    }
+    if super::goals::offer_tools(state, db, turn)? {
+        specs.extend(super::goals::specs());
+    }
+    specs.extend(crate::computer::craft::specs(state, db, turn)?);
     if crate::connectors::mailbox::available(state, db, turn)? {
         specs.extend(crate::connectors::mailbox::specs()?);
     }

@@ -2,6 +2,7 @@ use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 
 pub async fn run(state: &AppState, id: &str) -> Result<()> {
+    let _craft = state.computer.craft.for_turn(id);
     let pdfs = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
@@ -175,6 +176,11 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         }
         if context_channel.is_none() && crate::automation::model(db, id)?.is_none() {
             system.push_str(&crate::files::skills::context(db, string(&turn, "agent"))?);
+        }
+        if state.auth.is_none() {
+            if let Some(instructions) = goals::instructions(db, id)? {
+                system.push_str(&format!("\n\n{instructions}"));
+            }
         }
         let mut messages = vec![json!({"role":"system","content":system})];
         if let Some(summary) = &compacted {
@@ -456,22 +462,37 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         };
         match reply {
             provider::Answer::Text(text) => {
+                {
+                    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+                    let db = &guard.connection;
+                    if turn["profile_setup"] == 1 && !exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name')='edit_profile' AND json_extract(result,'$.revision') IS NOT NULL",[id])? {
+                        return Err(error(502,"Provider has not saved the agent profile. Check the result, then resume the task to try again."));
+                    }
+                    if !exhausted
+                        && turn["profile_setup"] != 1
+                        && super::verification::nudge(db, id, &turn, &profile)?
+                    {
+                        let system = messages[0]["content"].as_str().unwrap_or("").to_owned();
+                        messages[0]["content"]=json!(format!("{system}\n\nOne verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. Keep tool mechanics out of the reply."));
+                        db.execute("UPDATE provider_stream_segments SET final=0 WHERE call=(SELECT max(seq) FROM provider_calls WHERE turn=?)",[id])?;
+                        continue;
+                    }
+                }
+                let judgment = goals::judge(state, &turn, &text, &model).await?;
                 let guard = state.database.lock().map_err(|_| Failure::storage())?;
                 let db = &guard.connection;
-                if turn["profile_setup"] == 1 && !exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name')='edit_profile' AND json_extract(result,'$.revision') IS NOT NULL",[id])? {
-                    return Err(error(502,"Provider has not saved the agent profile. Check the result, then resume the task to try again."));
-                }
-                if !exhausted
-                    && turn["profile_setup"] != 1
-                    && super::verification::nudge(db, id, &turn, &profile)?
-                {
-                    let system = messages[0]["content"].as_str().unwrap_or("").to_owned();
-                    messages[0]["content"]=json!(format!("{system}\n\nOne verification reminder: no current check is recorded. Run one relevant check, compare it with the request, then finish. Reuse existing output; verify_result is optional. Keep tool mechanics out of the reply."));
-                    db.execute("UPDATE provider_stream_segments SET final=0 WHERE call=(SELECT max(seq) FROM provider_calls WHERE turn=?)",[id])?;
-                    continue;
-                }
                 transaction(db, || {
+                    if !exists(
+                        db,
+                        "SELECT 1 FROM turns WHERE id=? AND status='running' AND paused=0",
+                        [id],
+                    )? {
+                        return Ok(());
+                    }
                     room::finish(db, id, &text)?;
+                    if let Some(judgment) = judgment {
+                        goals::finish(state, db, &turn, judgment)?;
+                    }
                     room::settle(db)?;
                     db.execute(
                         "UPDATE turns SET stopped_at=? WHERE id=? AND status='done'",

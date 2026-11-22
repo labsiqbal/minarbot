@@ -30,3 +30,8 @@ CREATE TABLE IF NOT EXISTS html_reply_context(
     turn TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
     context TEXT NOT NULL CHECK(json_valid(context) AND length(CAST(context AS BLOB))<=4096)
 ) STRICT;
+CREATE TABLE IF NOT EXISTS component_replies(
+    id TEXT PRIMARY KEY,turn TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+    call_id TEXT NOT NULL,payload TEXT NOT NULL CHECK(json_valid(payload)),
+    frame_id TEXT,UNIQUE(turn,call_id)
+) STRICT;

@@ -9,15 +9,19 @@ pub async fn prepare(
     if method != Method::POST
         || !matches!(
             parts,
-            ["api", "agents" | "threads" | "channels", _, "turns"]
-                | [
-                    "api",
-                    "agents" | "threads" | "channels",
-                    _,
-                    "turns",
-                    _,
-                    "edit"
-                ]
+            [
+                "api",
+                "agents" | "threads" | "channels",
+                _,
+                "turns" | "goal"
+            ] | [
+                "api",
+                "agents" | "threads" | "channels",
+                _,
+                "turns",
+                _,
+                "edit"
+            ]
         )
     {
         return Ok(());
@@ -262,6 +266,22 @@ pub fn route(
     v: &Value,
 ) -> Result<(u16, Value)> {
     match p {
+        ["api", kind, owner, "goal"] if *method == Method::GET => {
+            data::conversations::owner(db, kind, owner)?;
+            Ok((200, goals::read(db, &format!("{kind}:{owner}"))?))
+        }
+        ["api", kind, owner, "goal"] if *method == Method::POST => {
+            Ok((202, goals::start(state, db, kind, owner, v)?))
+        }
+        ["api", kind, owner, "goal", "stop"] if *method == Method::POST => {
+            Ok((200, goals::stop(state, db, &format!("{kind}:{owner}"), v)?))
+        }
+        ["api", kind, owner, "loop"] if *method == Method::POST => {
+            let (agent, thread, channel) = conversation(db, kind, owner, v)?;
+            let project =
+                crate::automation::loop_project(db, thread.as_deref(), channel.as_deref())?;
+            Ok((201, goals::create_loop(state, db, &agent, v, &project)?))
+        }
         ["api", kind, owner, "compaction"] if *method == Method::GET => {
             let scope = if *kind == "channels" {
                 format!("channels:{owner}")
@@ -298,13 +318,23 @@ pub fn route(
         ["api", kind, owner, "turns", turn, "harness-approvals", approval]
             if *method == Method::POST =>
         {
-            scoped(
+            let target = scoped(
                 db,
                 kind,
                 owner,
                 turn,
                 "Approval not found in this conversation.",
             )?;
+            if let Some(form) = one(
+                db,
+                "SELECT * FROM harness_approvals WHERE id=? AND turn=? AND kind='form'",
+                [approval, turn],
+            )? {
+                return Ok((
+                    200,
+                    crate::files::components::decide(state, db, &target, &form, v)?,
+                ));
+            }
             Ok((200, shell::decide(db, turn, approval, v)?))
         }
         ["api", kind, owner, "turns"] if *method == Method::POST => {
@@ -337,7 +367,7 @@ pub fn route(
         _ => Err(error(404, "Route not found.")),
     }
 }
-fn create(
+pub(crate) fn create(
     state: &AppState,
     db: &Connection,
     path: &str,
@@ -356,11 +386,8 @@ fn create(
     } else {
         field(v, "text", 16000)?
     };
-    let text = crate::mcp::secrets::redact(
-        &text,
-        &crate::computer::vault::redactions(state, db)?,
-        false,
-    );
+    let redactions = crate::computer::vault::redactions(state, db)?;
+    let text = crate::mcp::secrets::redact(&text, &redactions, false);
     let mode = v
         .get("dispatchMode")
         .and_then(Value::as_str)
@@ -571,9 +598,9 @@ fn create(
             )?;
         }
     }
-    let result = one(db, "SELECT * FROM turns WHERE id=?", [id])?.ok_or_else(Failure::storage)?;
-    data::save_receipt(db, "dispatch_commands", id, &request, &result)?;
-    Ok((202, result))
+    let admitted = one(db, "SELECT * FROM turns WHERE id=?", [id])?.ok_or_else(Failure::storage)?;
+    data::save_receipt(db, "dispatch_commands", id, &request, &admitted)?;
+    Ok((202, admitted))
 }
 #[allow(clippy::too_many_arguments)]
 fn control(
