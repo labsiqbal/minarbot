@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,6 +16,7 @@ const binary = resolve(process.env.MINARBOT_RUST_BINARY ?? join(root, 'target/de
 const screenshots = process.env.MINARBOT_APPEARANCE_SCREENSHOTS;
 const samples = Number(process.env.MINARBOT_APPEARANCE_BENCH ?? 0);
 const route = '/settings/appearance';
+const general = '/settings/general';
 const key = 'minarbot-presentation-v1';
 assert(Number.isSafeInteger(samples) && samples >= 0);
 const wasmName = (await readdir(join(dist, '_leptos/assets'))).find(name => name.endsWith('.wasm'));
@@ -23,7 +25,7 @@ const wasm = '/_leptos/assets/' + wasmName;
 const data = await mkdtemp(join(tmpdir(), 'minarbot-appearance-'));
 let server, browser;
 
-async function startup(client, port = 0) {
+async function startup(client, port = 0, config = {}) {
   server = spawn(binary, ['--test-config'], {
     env: { ...process.env, MINARBOT_TEST_SERVER: 'rust' },
     stdio: ['pipe', 'pipe', 'inherit'],
@@ -38,9 +40,9 @@ async function startup(client, port = 0) {
     server.once('exit', code => reject(new Error('Minarbot stopped before readiness (' + code + ')')));
   });
   server.stdin.end(JSON.stringify({
-    database: join(data, 'state.sqlite'), dist, port, appearanceClient: client,
+    database: join(data, 'state.sqlite'), dist, port, appearanceClient: client, ...config,
   }));
-  return Promise.race([ready, wait(15000, undefined, { ref: false }).then(() => {
+  return Promise.race([ready, wait(60000, undefined, { ref: false }).then(() => {
     throw new Error('Minarbot did not report readiness');
   })]);
 }
@@ -141,6 +143,7 @@ async function exercise(page, origin, client) {
     await radio(page, 'Light').click();
     const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
     assert.deepEqual(saved, { version: 1, colorTheme: 'github', theme: 'light', textSize: 'large' });
+    await page.waitForFunction(() => getComputedStyle(document.documentElement).fontSize === '18px');
     const tokens = await page.locator('html').evaluate(element => {
       const style = getComputedStyle(element);
       return ['--color-bg-chrome', '--color-text-secondary', '--color-border-focus', 'font-size']
@@ -163,12 +166,15 @@ async function exercise(page, origin, client) {
 async function rollout(page, origin) {
   await page.goto(origin + '/settings/general?from=%2Froutines');
   const url = origin + route + '?from=%2Froutines';
+  const documentStart = await page.evaluate(() => performance.timeOrigin);
   await button(page, 'Appearance').click();
   await page.waitForURL(url);
   await ready(page, 'leptos');
   assert.equal(await page.locator('#root').count(), 0);
+  assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
   await page.goBack({ waitUntil: 'commit' });
   await panel(page).getByRole('heading', { name: 'General' }).waitFor();
+  assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
   await page.goForward({ waitUntil: 'commit' });
   await ready(page, 'leptos');
   await page.keyboard.press('Escape');
@@ -189,6 +195,14 @@ async function rollout(page, origin) {
   await page.waitForURL(origin + '/workflows');
   await page.getByRole('heading', { name: 'Workflows', exact: true }).waitFor();
   await page.waitForFunction(() => document.activeElement?.classList.contains('sidebar-settings'));
+  await open(page, origin, 'leptos', url.slice(origin.length));
+  await page.goto(origin + general + '?ui=react');
+  await panel(page).getByRole('heading', { name: 'General' }).waitFor();
+  await button(page, 'Appearance').click();
+  await ready(page, 'react');
+  assert.equal(new URL(page.url()).searchParams.get('ui'), 'react');
+  await page.reload({ waitUntil: 'commit' });
+  await ready(page, 'react');
   await open(page, origin, 'leptos', url.slice(origin.length));
   const [response] = await Promise.all([
     page.waitForResponse(response => response.url().startsWith(origin + '/settings/vault')),
@@ -259,10 +273,112 @@ async function headers(origin) {
     assert.equal(blocked.status, 404);
     assert.equal(blocked.headers.get('content-security-policy').includes('wasm-unsafe-eval'), false);
   }
-  const other = await fetch(origin + '/settings/general');
-  assert.equal(other.headers.get('content-security-policy').includes('wasm-unsafe-eval'), false);
+  const generalResponse = await fetch(origin + general);
+  assert.equal(generalResponse.headers.get('content-security-policy').includes('wasm-unsafe-eval'), true);
+  assert.match(await generalResponse.text(), /Open standard General/);
+  for (const path of ['/settings/general?ui=react', '/settings/vault']) {
+    const other = await fetch(origin + path);
+    assert.equal(other.headers.get('content-security-policy').includes('wasm-unsafe-eval'), false);
+  }
   const outside = await fetch(origin + route + '?from=' + encodeURIComponent('//example.invalid'));
   assert.match(await outside.text(), /data-return-to="\/"/);
+}
+
+async function generalParity(context, origin, client) {
+  const page = await context.newPage();
+  const errors = [], consoleErrors = [], calls = [];
+  const focus = () => page.waitForFunction(() => document.activeElement?.textContent === 'General');
+  const archive = () => panel(page).getByRole('switch', { name: 'Auto-archive agent deliveries' });
+  const search = () => panel(page).getByRole('textbox', { name: 'SearXNG URL' });
+  const waitArchive = value => page.waitForFunction(value => {
+    const control = document.querySelector('[role="switch"][aria-label="Auto-archive agent deliveries"]');
+    return control && !control.disabled && control.getAttribute('aria-checked') === value;
+  }, value);
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', msg => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/conversations/settings' || path.startsWith('/api/settings/web-search')) calls.push([request.method(), path]);
+  });
+  // Hold the initial read so the disabled state can be checked in both clients.
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const chats = '**/api/conversations/settings';
+  const initial = async route => {
+    await pending;
+    if (!page.isClosed()) await route.continue();
+  };
+  await page.route(chats, initial);
+  try {
+    const response = await page.goto(origin + general, { waitUntil: 'commit' });
+    assert.equal(response.status(), 200);
+    assert.equal((await response.headerValue('content-security-policy')).includes("'wasm-unsafe-eval'"), client === 'leptos');
+    await focus();
+    assert.equal(await archive().isDisabled(), true);
+    release();
+    await waitArchive('true');
+    await page.unroute(chats, initial);
+    await archive().press('Space');
+    await waitArchive('false');
+    await search().waitFor();
+    assert.equal(await button(page, 'Save').isDisabled(), true);
+    assert.equal(await button(page, 'Test').isDisabled(), true);
+    await search().fill('https://example.invalid/search');
+    await search().press('/');
+    assert.equal(await search().evaluate(element => element === document.activeElement), true);
+    await search().fill('https://example.invalid/search');
+    // Fixture response keeps this test offline while checking the original test endpoint and payload.
+    await page.route('**/api/settings/web-search/test', route => {
+      const data = route.request().postDataJSON();
+      assert.equal(data.url, 'https://example.invalid/search');
+      assert.match(data.id, /^[a-f0-9-]{36}$/i);
+      return route.fulfill({ json: { count: 2 } });
+    });
+    await button(page, 'Test').press('Enter');
+    await panel(page).getByRole('status').filter({ hasText: '2 results' }).waitFor();
+    const saved = panel(page).getByRole('status').filter({ hasText: 'Web search settings saved.' });
+    await button(page, 'Save').press('Enter');
+    await saved.waitFor();
+    await page.evaluate(key => localStorage.setItem(key, JSON.stringify({ version: 1, theme: 'light', textSize: 'standard' })), key);
+    await page.reload({ waitUntil: 'commit' });
+    await focus();
+    await waitArchive('false');
+    await archive().press('Space');
+    await waitArchive('true');
+    await search().waitFor();
+    assert.equal(await search().inputValue(), 'https://example.invalid/search');
+    await search().fill('');
+    await button(page, 'Save').press('Enter');
+    await saved.waitFor();
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'light');
+    assert.equal(await page.locator('html').getAttribute('data-color-theme'), 'minarbot');
+    if (screenshots) {
+      for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['narrow', { width: 430, height: 850 }]]) {
+        await page.setViewportSize(viewport);
+        for (const mode of ['Dark', 'Light']) {
+          await button(page, 'Appearance').click();
+          await ready(page, client);
+          await radio(page, mode).click();
+          await button(page, 'General').click();
+          await focus();
+          await search().waitFor();
+          await waitArchive('true');
+          await page.evaluate(() => document.fonts.ready);
+          await page.screenshot({ path: join(screenshots, `general-${client}-${label}-${mode.toLowerCase()}.png`) });
+        }
+      }
+    }
+    assert.deepEqual(consoleErrors, []);
+    await page.route(chats, route => route.fulfill({ status: 503, json: { error: 'Fixture load failure' } }));
+    await page.reload({ waitUntil: 'commit' });
+    await panel(page).getByRole('alert').filter({ hasText: 'Conversation settings could not be loaded' }).waitFor();
+    assert.equal(await archive().isDisabled(), true);
+    assert.deepEqual(errors, []);
+    assert(consoleErrors.every(message => !/content security policy|unreachable|webassembly/i.test(message)));
+    return [...new Set(calls.map(row => row.join(' ')))].sort();
+  } finally { await page.close(); release(); }
 }
 
 function stats(list) {
@@ -278,10 +394,12 @@ async function sample(page, fromClick = false) {
     const start = fromClick
       ? Number(sessionStorage.getItem('appearance-bench-start')) - performance.timeOrigin
       : 0;
+    const ready = performance.getEntriesByName('appearance-heading-focus').at(-1)?.startTime;
+    if (ready === undefined || ready < start) throw new Error('Appearance heading did not receive focus');
     return {
-      milliseconds: performance.now() - start,
+      milliseconds: ready - start,
       transferredBytes: performance.getEntries()
-        .filter(entry => entry.startTime >= start && new URL(entry.name, location.href).origin === location.origin)
+        .filter(entry => entry.startTime >= start && entry.responseEnd <= ready && new URL(entry.name, location.href).origin === location.origin)
         .reduce((total, entry) => total + (entry.transferSize ?? 0), 0),
     };
   }, fromClick);
@@ -291,6 +409,11 @@ async function benchmark(origin, client) {
   for (let index = 0; index < samples; index += 1) {
     const context = await browser.newContext();
     try {
+      await context.addInitScript(() => document.addEventListener('focusin', event => {
+        if (event.target instanceof HTMLHeadingElement && event.target.textContent === 'Appearance') {
+          performance.mark('appearance-heading-focus');
+        }
+      }));
       const page = await context.newPage();
       await open(page, origin, client);
       cold.push(await sample(page));
@@ -317,6 +440,129 @@ async function benchmark(origin, client) {
   ]));
 }
 
+async function setupAndDirectory(origin, client) {
+  const context = await browser.newContext({ reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  const heading = name => page.getByRole('heading', { name, level: 1, exact: true });
+  const setup = page.locator('.first-run').getByRole('heading', { name: 'Set up Minarbot', level: 1 });
+  const project = 'Directory fixture';
+  const id = randomUUID();
+  const projectPath = `/projects/${id}`;
+  const post = async (path, body) => {
+    const response = await context.request.post(origin + path, { headers: { Origin: origin }, data: body });
+    assert.equal(response.ok(), true, `${path} returned ${response.status()}`);
+    return response.json();
+  };
+  const capture = async (routeName, location, ready) => {
+    if (!screenshots) return;
+    for (const [width, height] of [[1440, 900], [430, 850]]) {
+      await page.setViewportSize({ width, height });
+      for (const theme of ['dark', 'light']) {
+        await page.emulateMedia({ colorScheme: theme });
+        await page.goto(origin + location);
+        await page.evaluate(({ key, theme }) => localStorage.setItem(key, JSON.stringify({
+          version: 1, colorTheme: 'minarbot', theme, textSize: 'standard',
+        })), { key, theme });
+        await page.reload();
+        await ready();
+        await page.evaluate(() => document.fonts.ready);
+        await page.screenshot({ path: join(screenshots, `${routeName}-${client}-${width}-${theme}.png`), animations: 'disabled' });
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      }
+    }
+  };
+  try {
+    await page.goto(origin);
+    await setup.waitFor();
+    assert.equal(await setup.evaluate(element => document.activeElement === element), true);
+    await page.getByRole('button', { name: 'Check again', exact: true }).waitFor();
+    assert.equal(await page.locator('#leptos-root .first-run').count(), client === 'leptos' ? 1 : 0);
+    await capture('setup', '/', async () => {
+      await setup.waitFor();
+      await page.getByRole('button', { name: 'Check again', exact: true }).waitFor();
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await post('/api/projects', { id, name: project, members: [] });
+    await page.reload();
+    const nav = page.getByRole('navigation', { name: 'Projects', exact: true });
+    if (await nav.isHidden()) await page.getByRole('tab', { name: /^Agents/ }).press('ArrowRight');
+    const projectEntry = nav.getByText(project, { exact: true });
+    await projectEntry.click();
+    await page.waitForURL(origin + projectPath);
+    await heading(project).waitFor();
+    await page.getByText('No members yet', { exact: true }).waitFor();
+    await page.getByText('No conversations', { exact: true }).waitFor();
+    assert.equal(await page.locator('#leptos-root .project-home').count(), client === 'leptos' ? 1 : 0);
+    await page.goBack();
+    await setup.waitFor();
+    await page.goForward();
+    await heading(project).waitFor();
+    await page.reload();
+    await heading(project).waitFor();
+    await capture('project', projectPath, () => heading(project).waitFor());
+    const agent = await post('/api/agents', {
+      id: randomUUID(), name: 'Directory agent', model: 'fixture', instructions: 'Test only.', runtime: 'api',
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.reload();
+    await heading(project).waitFor();
+    await page.getByRole('tab', { name: /^Projects/ }).press('ArrowLeft');
+    const sidebar = page.getByRole('complementary', { name: 'Workspace navigation' });
+    const find = page.getByRole('searchbox', { name: 'Search agents' }).or(page.getByRole('textbox', { name: 'Search agents' }));
+    await find.fill('Directory agent');
+    await sidebar.getByText('Directory agent', { exact: true }).click();
+    await page.waitForURL(origin + `/agents/${agent.id}`);
+    await page.getByRole('main', { name: 'Conversation Directory agent' }).waitFor();
+    assert.equal(await page.locator('#leptos-root').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+}
+
+async function pairing(client) {
+  const origin = await startup(client, 0, { testRemotePairing: true });
+  const context = await browser.newContext();
+  try {
+    const issued = await context.request.post(origin + '/api/device-pairing/code', { headers: { Origin: origin }, data: {} });
+    assert.equal(issued.ok(), true);
+    const { code } = await issued.json();
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    const pairingForm = page.getByRole('heading', { name: 'Pair this device', exact: true });
+    for (const [width, height] of [[1440, 900], [430, 850]]) {
+      await page.setViewportSize({ width, height });
+      for (const theme of ['dark', 'light']) {
+        await page.emulateMedia({ colorScheme: theme });
+        await page.goto(origin + '/pair');
+        if (client === 'leptos') await page.locator('#leptos-root form').waitFor();
+        await pairingForm.waitFor();
+        if (screenshots) await page.screenshot({ path: join(screenshots, `pairing-${client}-${width}-${theme}.png`) });
+      }
+    }
+    await page.keyboard.press('Tab');
+    assert.equal(await page.getByRole('textbox', { name: 'Pairing code', exact: true }).evaluate(element => element === document.activeElement), true);
+    await page.keyboard.type(code);
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('Parity browser');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForURL(origin + '/');
+    assert.equal(await pairingForm.count(), 0);
+    const devices = await context.request.get(origin + '/api/device-pairing');
+    const result = await devices.json();
+    assert.equal(result.devices.find(device => device.id === result.current)?.name, 'Parity browser');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); await stop(); }
+}
+
 try {
   if (screenshots) await mkdir(screenshots, { recursive: true });
   browser = await chromium.launch();
@@ -325,10 +571,13 @@ try {
   page.setDefaultTimeout(12000);
   let origin = await startup();
   const port = Number(new URL(origin).port);
+  const reactCalls = await generalParity(context, origin, 'react');
   const reactTokens = await exercise(page, origin, 'react');
   const react = samples && await benchmark(origin, 'react');
   await stop();
   origin = await startup('leptos', port);
+  const leptosCalls = await generalParity(context, origin, 'leptos');
+  assert.deepEqual(leptosCalls, reactCalls);
   const leptosTokens = await exercise(page, origin, 'leptos');
   assert.deepEqual(leptosTokens, reactTokens);
   await headers(origin);
@@ -342,8 +591,19 @@ try {
   const value = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
   assert.deepEqual(value, { version: 1, colorTheme: 'github', theme: 'light', textSize: 'large' });
   await context.close();
-  if (samples) console.log(JSON.stringify({ chromium: browser.version(), samples, unit: 'ms', react, leptos }, null, 2));
-  console.log('Appearance parity passed (React and Leptos, focus, tokens, gzip/CSP, failed WASM, and selector rollback).');
+  if (samples) {
+    console.log(JSON.stringify({ chromium: browser.version(), samples, unit: 'ms', react, leptos }, null, 2));
+    if (samples >= 20) assert(leptos.warmNavigation.tti.p95 <= react.warmNavigation.tti.p95 * 1.1, 'Leptos warm settings navigation exceeds React p95 by over 10%');
+  }
+  console.log('Preferences parity passed (React and Leptos, API, focus, tokens, browser history, gzip/CSP, failed WASM, and selector rollback).');
+  for (const client of ['react', 'leptos']) {
+    await stop();
+    origin = await startup(client, 0, { database: join(data, `${client}.sqlite`) });
+    await setupAndDirectory(origin, client);
+    await stop();
+    await pairing(client);
+  }
+  console.log('First-run, project navigation and browser pairing passed in both clients.');
 } finally {
   await browser?.close();
   await stop();

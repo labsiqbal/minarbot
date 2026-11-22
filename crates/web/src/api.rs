@@ -1,0 +1,48 @@
+use gloo_net::http::Request;
+use leptos::prelude::window;
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
+
+pub async fn read<T: DeserializeOwned>(path: &str) -> Result<T, String> {
+    let response = Request::get(path)
+        .send()
+        .await
+        .map_err(|_| "Minarbot connection lost. Try again.")?;
+    decode(response).await
+}
+
+pub async fn command<T: DeserializeOwned>(path: &str, mut body: Value) -> Result<T, String> {
+    let id = window()
+        .crypto()
+        .map_err(|_| "Command could not be created. Reload Minarbot and try again.")?
+        .random_uuid();
+    body["id"] = Value::String(id);
+    post(path, &body).await
+}
+
+pub async fn post<T: DeserializeOwned>(path: &str, body: &impl Serialize) -> Result<T, String> {
+    let response = Request::post(path)
+        .json(body)
+        .map_err(|error| error.to_string())?
+        .send()
+        .await
+        .map_err(|_| "Minarbot connection lost. Try again.")?;
+    decode(response).await
+}
+
+async fn decode<T: DeserializeOwned>(response: gloo_net::http::Response) -> Result<T, String> {
+    if !response.ok() {
+        let status = response.status();
+        if let Ok(body) = response.json::<Value>().await {
+            let error = &body["error"];
+            if let Some(message) = error.as_str().or_else(|| error["message"].as_str()) {
+                return Err(message.into());
+            }
+        }
+        return Err(format!("HTTP {status}"));
+    }
+    response
+        .json()
+        .await
+        .map_err(|_| "Minarbot returned an invalid response. Try again.".into())
+}
