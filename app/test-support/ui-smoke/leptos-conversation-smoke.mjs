@@ -74,6 +74,10 @@ try {
   assert.equal(response.status(), 200);
   assert.match(await response.headerValue('content-security-policy'), /wasm-unsafe-eval/);
   await input.fill('Replay fixture');
+  const modules = await page.evaluate(() => performance.getEntriesByType('resource')
+    .map(entry => new URL(entry.name).pathname).filter(path => path.endsWith('.wasm')));
+  assert.equal(modules.length, 1);
+  assert.match(modules[0], /^\/_leptos\/assets\/conversation\.[a-f0-9]{16}\.wasm$/);
   await page.reload();
   assert.equal(await input.inputValue(), 'Replay fixture');
   let original, replay;
@@ -217,6 +221,43 @@ try {
   console.log('Computer: noVNC canvas, exact control replay, clipboard roundtrip, focus return and socket teardown passed');
 
   const samples = Number(process.env.MINARBOT_CONVERSATION_BENCH ?? 0);
+  assert(Number.isSafeInteger(samples) && samples >= 0);
+  const cold = { react: [], leptos: [] };
+  for (let i = 0; i < samples; i++) {
+    for (const client of i % 2 === 0 ? ['react', 'leptos'] : ['leptos', 'react']) {
+      const fresh = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+      try {
+        await fresh.addInitScript(() => {
+          const observer = new MutationObserver(() => {
+            const input = document.querySelector('textarea[placeholder="Message Conversation fixture"]');
+            if (!input || input.disabled || input.readOnly || !input.getClientRects().length) return;
+            performance.mark('composer-ready');
+            observer.disconnect();
+          });
+          observer.observe(document, { attributes: true, childList: true, subtree: true });
+        });
+        const bench = await fresh.newPage();
+        await bench.goto(origin + path + '?ui=' + client, { waitUntil: 'commit' });
+        await bench.waitForFunction(() => performance.getEntriesByName('composer-ready').length === 1);
+        cold[client].push(await bench.evaluate(() => {
+          const ready = performance.getEntriesByName('composer-ready')[0];
+          const bytes = performance.getEntries()
+            .filter(entry => entry.responseEnd <= ready.startTime && new URL(entry.name, location.href).origin === location.origin)
+            .reduce((total, entry) => total + (entry.transferSize ?? 0), 0);
+          return { milliseconds: ready.startTime, transferredBytes: bytes };
+        }));
+      } finally { await fresh.close(); }
+    }
+  }
+  function timingsSummary(timings) {
+    timings.sort((a, b) => a - b);
+    const middle = Math.floor(timings.length / 2);
+    return {
+      samples: timings.length,
+      median: (timings[middle] + timings[Math.floor((timings.length - 1) / 2)]) / 2,
+      p95: timings[Math.ceil(timings.length * 0.95) - 1],
+    };
+  }
   const statistics = {};
   for (const client of samples ? ['react', 'leptos'] : []) {
     const bench = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
@@ -243,12 +284,19 @@ try {
       return timings;
     }, { key: 'minarbot:draft:' + agent, samples });
     await bench.close();
-    timings.sort((a, b) => a - b);
-    if (timings.length) statistics[client] = { samples, median: timings[Math.ceil(samples / 2) - 1], p95: timings[Math.ceil(samples * 0.95) - 1] };
+    statistics[client] = timingsSummary(timings);
   }
   assert.deepEqual(errors, []);
   if (samples) {
+    const coldStart = Object.fromEntries(Object.entries(cold).map(([client, runs]) => [client, {
+      tti: timingsSummary(runs.map(run => run.milliseconds)),
+      transferredBytes: timingsSummary(runs.map(run => run.transferredBytes)),
+    }]));
+    console.log('Cold conversation TTI (ms)', JSON.stringify(coldStart));
     console.log('Warm composer latency (ms)', JSON.stringify(statistics));
+    if (samples >= 20) {
+      assert(coldStart.leptos.tti.p95 <= coldStart.react.tti.p95 * 1.2, 'Cold Leptos conversation p95 exceeds the 20% budget');
+    }
     assert(statistics.leptos.p95 <= statistics.react.p95 * 1.1, 'Warm Leptos composer p95 exceeds the 10% budget');
   }
   console.log('Conversation pilot passed');

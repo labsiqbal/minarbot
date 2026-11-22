@@ -8,6 +8,7 @@ js-sys 0.3.107 and wasm-bindgen-futures 0.4.80 - MIT OR Apache-2.0 - https://git
 serde and serde_json - MIT OR Apache-2.0 - https://github.com/serde-rs/serde and https://github.com/serde-rs/json
 Marked 18.2.0 - MIT - https://github.com/markedjs/marked
 noVNC 1.7.0 - MPL-2.0 - https://github.com/novnc/noVNC
+Binaryen 133 - Apache-2.0 - https://github.com/WebAssembly/binaryen/releases/tag/version_133
 
 Cargo.lock records exact package versions and registry checksums.
 Shared CSS, palettes, icons and Inter use the same sources as the React build.

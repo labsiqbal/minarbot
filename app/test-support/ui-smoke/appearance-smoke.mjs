@@ -19,7 +19,7 @@ const route = '/settings/appearance';
 const general = '/settings/general';
 const key = 'minarbot-presentation-v1';
 assert(Number.isSafeInteger(samples) && samples >= 0);
-const wasmName = (await readdir(join(dist, '_leptos/assets'))).find(name => name.endsWith('.wasm'));
+const wasmName = (await readdir(join(dist, '_leptos/assets'))).find(name => /^appearance\..*\.wasm$/.test(name));
 assert.match(wasmName ?? '', /^appearance\.[a-f0-9]{16}\.wasm$/);
 const wasm = '/_leptos/assets/' + wasmName;
 const data = await mkdtemp(join(tmpdir(), 'minarbot-appearance-'));
@@ -93,6 +93,11 @@ async function exercise(page, origin, client) {
   page.on('console', recordConsole);
   try {
     await open(page, origin, client);
+    if (client === 'leptos') {
+      const modules = await page.evaluate(() => performance.getEntriesByType('resource')
+        .map(entry => new URL(entry.name).pathname).filter(path => path.endsWith('.wasm')));
+      assert.deepEqual(modules, [wasm]);
+    }
     assert.equal(await panel(page).getByRole('group', { name: 'Color theme', exact: true }).getByRole('button').count(), 6);
     assert.equal(await panel(page).getByRole('radiogroup', { name: 'Mode', exact: true }).getByRole('radio').count(), 3);
     assert.equal(await panel(page).getByRole('radiogroup', { name: 'Text size', exact: true }).getByRole('radio').count(), 4);
@@ -622,7 +627,10 @@ try {
   await context.close();
   if (samples) {
     console.log(JSON.stringify({ chromium: browser.version(), samples, unit: 'ms', react, leptos }, null, 2));
-    if (samples >= 20) assert(leptos.warmNavigation.tti.p95 <= react.warmNavigation.tti.p95 * 1.1, 'Leptos warm settings navigation exceeds React p95 by over 10%');
+    if (samples >= 20) {
+      assert(leptos.cold.tti.p95 <= react.cold.tti.p95 * 1.2, 'Leptos cold settings start exceeds React p95 by over 20%');
+      assert(leptos.warmNavigation.tti.p95 <= react.warmNavigation.tti.p95 * 1.1, 'Leptos warm settings navigation exceeds React p95 by over 10%');
+    }
   }
   console.log('Preferences parity passed (React and Leptos, API, focus, tokens, browser history, gzip/CSP, failed WASM, and selector rollback).');
   for (const client of ['react', 'leptos']) {
