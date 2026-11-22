@@ -123,6 +123,10 @@ impl BrowserAccess {
             .map(Option::flatten)
     }
 
+    pub(crate) fn paired(&self, db: &Connection, now: i64) -> Result<bool> {
+        Ok(self.device(db, now, false)?.is_some())
+    }
+
     fn admitted(&self, db: &Connection, now: i64, seen: bool) -> Result<bool> {
         Ok(self.local || !store::required(db)? || self.device(db, now, seen)?.is_some())
     }
@@ -298,6 +302,12 @@ struct RevokeDevice {
     id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IssueDevice {
+    origin: Option<String>,
+}
+
 async fn manage(
     state: &AppState,
     request: Request,
@@ -357,7 +367,26 @@ async fn manage(
                 json!({ "required": input.required }),
             ))
         }
-        (ISSUE, Method::POST, _) => {
+        (ISSUE, Method::POST, Some(body)) => {
+            let input: IssueDevice = if body.is_empty() {
+                IssueDevice { origin: None }
+            } else {
+                serde_json::from_slice(&body).map_err(invalid)?
+            };
+            let target = match input.origin.as_deref() {
+                Some(requested)
+                    if can_require
+                        && state
+                            .config
+                            .allowed_origins
+                            .iter()
+                            .any(|origin| origin == requested) =>
+                {
+                    Some(requested)
+                }
+                Some(_) => return Err(forbidden()),
+                None => target,
+            };
             let target = target.ok_or_else(|| {
                 Failure::new(
                     400,

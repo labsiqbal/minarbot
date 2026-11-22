@@ -7,6 +7,7 @@ import { usePolling } from './hooks/usePolling';
 import { copyText } from './ui/clipboard';
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Copy, Ellipsis, Monitor, Plus } from 'lucide-react';
+import { machineInstallCommand, type MachineInstall } from './machine-install';
 import type { Environment, PairedMachine, PeerAgentSummary } from '../shared/machines';
 import { ActionMenu, Alert, Badge, Button, Card, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, SkeletonRows, Switch, Textarea, Tooltip, useConfirm } from './ui/kit';
 import { Markdown } from './Markdown';
@@ -55,7 +56,7 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   const [origin, setOrigin] = useState(''), [code, setCode] = useState('');
   const [pairingCode, setPairingCode] = useState<{ code: string; expiresAt: number } | null>(null), [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const [setup, setSetup] = useState<'install' | 'pair' | 'code' | null>(null), [detail, setDetail] = useState<string | null>(null), [install, setInstall] = useState<{ source: string; token: string; expiresAt: number } | null>(null), [installError, setInstallError] = useState(''), [installBusy, setInstallBusy] = useState(false), [copied, setCopied] = useState(false);
+  const [setup, setSetup] = useState<'install' | 'pair' | 'code' | null>(null), [detail, setDetail] = useState<string | null>(null), [install, setInstall] = useState<MachineInstall | null>(null), [installError, setInstallError] = useState(''), [installBusy, setInstallBusy] = useState(false), [copied, setCopied] = useState(false);
   const addTrigger = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null), pendingAdd = useRef<{ id: string; origin: string; code: string } | null>(null);
   const confirm = useConfirm();
@@ -72,7 +73,7 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   function closeInstall(open: boolean) { setSetup(open ? 'install' : null); if (!open) { installFlight.current++; setInstall(null); setInstallError(''); setInstallBusy(false); setCopied(false); } }
   async function createInstall() {
     const flight = ++installFlight.current; setInstallBusy(true); setInstallError(''); setCopied(false);
-    try { const value = await request<{ source: string; token: string; expiresAt: number }>('/api/install/tokens', { id: crypto.randomUUID() }); if (flight === installFlight.current) { setInstall(value); setNow(Date.now()); } }
+    try { const value = await request<MachineInstall>('/api/install/tokens', { id: crypto.randomUUID() }); if (flight === installFlight.current) { setInstall(value); setNow(Date.now()); } }
     catch (error) { if (flight === installFlight.current) setInstallError(message(error)); }
     finally { if (flight === installFlight.current) setInstallBusy(false); }
   }
@@ -83,8 +84,7 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   }
   const remaining = pairingCode ? Math.max(0, Math.ceil((pairingCode.expiresAt - now) / 1000)) : 0;
   const installRemaining = install ? Math.max(0, Math.ceil((install.expiresAt - now) / 1000)) : 0;
-  const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-  const installCommand = install && installRemaining ? `curl -fsSL ${shellQuote(install.source + '/api/install/script')} | sh -s -- --source ${shellQuote(install.source)} --token ${shellQuote(install.token)}` : '';
+  const installCommand = install && installRemaining ? machineInstallCommand(install) : '';
   const peer = machines?.find(machine => machine.id === detail);
   function closeSetup(open: boolean) { if (!open && !busy) { setSetup(null); setPairingCode(null); setCopied(false); } }
   function openSetup(flow: 'install' | 'pair' | 'code') { requestAnimationFrame(() => { addTrigger.current?.focus(); if (flow === 'install') closeInstall(true); else setSetup(flow); }); }

@@ -662,6 +662,9 @@ async fn canonical_request(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> db::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some(mcp::guide_infra::ASKPASS_COMMAND) {
+        return mcp::guide_infra::askpass();
+    }
     if std::env::args().nth(1).as_deref() == Some("codegraph") {
         return mcp::codegraph::codegraph_command(&std::env::args().skip(2).collect::<Vec<_>>());
     }

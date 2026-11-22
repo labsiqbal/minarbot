@@ -1,7 +1,12 @@
 import { useId, useRef, useState } from 'react';
 import type { Agent, FirstRunConnection } from './AgentProfileDialog';
 import { useFirstRunConnections } from './FirstRun';
-import { Alert, Badge, Button, Dialog, Field, Select } from './ui/kit';
+import { Alert, Badge, Button, Dialog, Field, Select, Textarea } from './ui/kit';
+import { copyText } from './ui/clipboard';
+import { useExpiry } from './hooks/useExpiry';
+import { usePolling } from './hooks/usePolling';
+import { machineInstallCommand, type MachineInstall } from './machine-install';
+import type { PairedMachine } from '../shared/machines';
 import { parseRoute, routePath } from './navigation';
 import screens from './guide-screens.json';
 import './guide.css';
@@ -17,10 +22,16 @@ const titles: Record<string, string> = {
   resume_routine: 'Resume routine',
   connect_app: 'Connect app',
   set_connected_app_access: 'Change app access',
+  add_guide_machine: 'Add machine',
+  install_guide_vps: 'Install on VPS',
+  configure_guide_remote_access: 'Configure remote access',
+  setup_guide_computer: 'Set up Computer',
 };
 const labels: Record<string, string> = {
   agent: 'Agent ID', id: 'Routine ID', currentName: 'Current name', providerAccount: 'Provider', reportTo: 'Report to',
   toolBudget: 'Tool steps per task', backupModel: 'Fallback model', confirmRuntime: 'Switch runtime',
+  hostKey: 'SSH host key', vaultEntry: 'Vault entry',
+  port: 'SSH port', servicePort: 'Minarbot port', restartRequired: 'Restart required',
 };
 const statusLabels: Record<string, string> = {
   pending: 'Ready for review', applied: 'Applied', applying: 'Applying…', cancelled: 'Cancelled',
@@ -39,23 +50,65 @@ function fieldValue(value: unknown) {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 }
 
+function ScreenLink({ id, pairingOrigin }: { id: keyof typeof screens; pairingOrigin?: string }) {
+  const screen = screens[id], route = parseRoute(screen.path);
+  const current = parseRoute(window.location.pathname + window.location.search);
+  const href = new URL(route.settings ? routePath({ ...current, settings: route.settings }) : screen.path, window.location.origin);
+  if (pairingOrigin) href.searchParams.set('pairingOrigin', pairingOrigin);
+  return <a className="k-link" href={href.pathname + href.search}>Open {screen.title}</a>;
+}
+
+function InstallCommand({ install, origin, name, request }: { install: MachineInstall; origin: string; name: string; request: Request }) {
+  const expired = useExpiry(install.expiresAt);
+  const [online, setOnline] = useState(false), [copied, setCopied] = useState(false), [copyError, setCopyError] = useState('');
+  usePolling(async signal => {
+    const { machines } = await request<{ machines: PairedMachine[] }>('/api/machines');
+    if (!signal.aborted) setOnline(machines.some(machine => machine.origin === origin && machine.pairingState === 'paired' && machine.status === 'online'));
+  }, { interval: 5000, enabled: !online && !expired });
+  const command = machineInstallCommand(install, name, origin);
+  return <>
+    <span role="status">{online ? 'Machine paired and online.' : expired ? 'Install command expired.' : 'Waiting for the machine to pair.'}</span>
+    {!online && !expired && <>
+      <Field label="Run on the new machine"><Textarea readOnly value={command} rows={3} spellCheck={false} autoComplete="off" /></Field>
+      <div className="k-row-actions"><Button size="sm" onClick={async () => {
+        try { await copyText(command); setCopied(true); setCopyError(''); }
+        catch { setCopyError('Select the command to copy it.'); }
+      }}>{copied ? 'Copied' : 'Copy command'}</Button></div>
+      {copyError && <Alert tone="error">{copyError}</Alert>}
+    </>}
+    <ScreenLink id="settings.machines" />
+  </>;
+}
+
+async function createGuideInstall(request: Request, id: string): Promise<MachineInstall> {
+  const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+  const token = 'bsi_' + encode(crypto.getRandomValues(new Uint8Array(32)));
+  const digest = encode(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))));
+  return { ...await request<Omit<MachineInstall, 'token'>>('/api/install/tokens', { id, digest }), token };
+}
+
 function GuideChange({ proposal, request, onChanged, disabled }: { proposal: Change; request: Request; onChanged: () => void; disabled: boolean }) {
   const heading = useRef<HTMLHeadingElement>(null), label = useId(), flight = useRef(false);
   const [status, setStatus] = useState(''), [error, setError] = useState(''), [link, setLink] = useState('');
+  const [install, setInstall] = useState<MachineInstall>();
+  const [notice, setNotice] = useState('');
   const current = status || proposal.status;
-  const title = titles[proposal.change.tool] ?? 'Proposed change';
+  const tool = proposal.change.tool;
+  const title = titles[tool] ?? 'Proposed change';
   const fields = [
-    ...Object.entries(proposal.change.target ?? {}).map(([key, value]) => [key === 'name' ? 'currentName' : key, value] as const),
-    ...Object.entries(proposal.change.settings),
+    ...Object.entries(proposal.change.target ?? {}).map(([key, value]) => [key === 'name' && tool !== 'add_guide_machine' ? 'currentName' : key, value] as const),
+    ...Object.entries(proposal.change.settings).filter(([key]) => key !== 'vaultRevision'),
   ];
   async function review(action: 'apply' | 'cancel') {
     if (flight.current || current !== 'pending' || disabled) return;
     flight.current = true;
     setError(''); setStatus('applying');
     try {
-      const result = await request<{ status: string; redirect_url?: string }>(`/api/guide/changes/${proposal.id}`, { action, change: proposal.change });
+      const result = await request<{ status: string; redirect_url?: string; installRequest?: string; message?: string }>(`/api/guide/changes/${proposal.id}`, { action, change: proposal.change });
       setStatus(result.status);
       setLink(result.redirect_url ?? '');
+      setNotice(result.message ?? '');
+      if (result.installRequest) setInstall(await createGuideInstall(request, result.installRequest));
       heading.current?.focus();
     } catch (error) {
       setStatus('');
@@ -70,10 +123,17 @@ function GuideChange({ proposal, request, onChanged, disabled }: { proposal: Cha
       <h3 ref={heading} tabIndex={-1} id={label}>{title}</h3>
       <span role="status"><Badge tone={current === 'pending' ? 'warn' : 'neutral'}>{statusLabels[current] ?? current}</Badge></span>
     </header>
-    <dl className="guide-change__fields">{fields.map(([key, value]) => <div key={key}>
+    {!!fields.length && <dl className="guide-change__fields">{fields.map(([key, value]) => <div key={key}>
       <dt>{labels[key] ?? key.charAt(0).toUpperCase() + key.slice(1)}</dt><dd>{key === 'runtime' && value === 'api' ? 'API' : key === 'backupModel' && value === '' ? 'Clear fallback model' : fieldValue(value)}</dd>
-    </div>)}</dl>
+    </div>)}</dl>}
     {error && <Alert tone="error">{error}</Alert>}
+    {notice && <span role="status">{notice}</span>}
+    {current === 'applied' && <>
+      {install ? <InstallCommand install={install} origin={String(proposal.change.target?.origin)} name={String(proposal.change.target?.name)} request={request} />
+        : (tool === 'add_guide_machine' || tool === 'install_guide_vps') && <ScreenLink id="settings.machines" />}
+      {tool === 'configure_guide_remote_access' && <ScreenLink id="settings.devices" pairingOrigin={String(proposal.change.target?.origin)} />}
+      {tool === 'setup_guide_computer' && <ScreenLink id="settings.computer" />}
+    </>}
     {link && <a className="k-link" href={link} target="_blank" rel="noopener noreferrer">Finish app sign-in</a>}
     {current === 'pending' && <footer className="k-row-actions">
       <Button disabled={disabled} onClick={() => void review('cancel')}>Cancel</Button>
@@ -87,11 +147,7 @@ export function GuideTurnActions({ actions, request, onChanged, disabled }: { ac
     {actions.changes.map(change => <GuideChange key={change.id} proposal={change} request={request} onChanged={onChanged} disabled={disabled} />)}
     {!!actions.screens.length && <div className="k-row-actions guide-screen-links">{actions.screens.map(id => {
       if (!Object.hasOwn(screens, id)) return null;
-      const screen = screens[id as keyof typeof screens], route = parseRoute(screen.path);
-      if (route.notFound) return null;
-      const current = parseRoute(window.location.pathname + window.location.search);
-      const href = route.settings ? routePath({ ...current, settings: route.settings }) : screen.path;
-      return <a key={id} className="k-link" href={href}>Open {screen.title}</a>;
+      return <ScreenLink key={id} id={id as keyof typeof screens} />;
     })}</div>}
   </>;
 }
