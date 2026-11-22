@@ -79,8 +79,8 @@ test('scoped auto-recall, history, reflection and standing answer refresh', asyn
   const scope = '/api/agents/' + agent, memory = scope + '/memory';
   try {
     for (const id of [agent, other]) await request('/api/agents', { id, name: 'Fixture', instructions: 'Answer.', runtime: 'api', model: 'fixture' });
-    const note = await request<{ id: string; revision: number }>(memory, { id: randomUUID(), entry: randomUUID(), revision: 0, text: 'Orchid tags live in the north cabinet.', essential: false, remove: false });
-    await request(`/api/agents/${other}/memory`, { id: randomUUID(), entry: randomUUID(), revision: 0, text: 'Orchid: foreign note', essential: false, remove: false });
+    const note = await request<{ id: string; revision: number }>(memory, { id: randomUUID(), entry: randomUUID(), revision: 0, text: 'Orchid tags live in the north cabinet.', essential: false, remove: false, automatic: true });
+    await request(`/api/agents/${other}/memory`, { id: randomUUID(), entry: randomUUID(), revision: 0, text: 'Orchid: foreign note', essential: false, remove: false, automatic: true });
     const thread = await request<{ id: string }>(scope + '/threads', { id: randomUUID(), name: 'Past chat' });
     const prior = await run('/api/threads/' + thread.id, 'aquamarine marker in an earlier conversation');
     const recall = await run(scope, 'Orchid cabinet?');

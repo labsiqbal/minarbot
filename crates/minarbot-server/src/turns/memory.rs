@@ -206,6 +206,7 @@ fn evidence(
             }
         } else if search == Search::Automatic
             && (unit.metadata["essential"] == 1
+                || unit.metadata["selection_locked"] == 1
                 || exists(
                     db,
                     "SELECT 1 FROM memory_unit_controls WHERE unit=? AND essential=1",

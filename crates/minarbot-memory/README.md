@@ -100,7 +100,7 @@ extraction stages.
 
 ## Turn memory and standing questions
 
-Minarbot adds relevant saved notes and learned memory to interactive local turns across API models, Codex, Claude Code, and ACP. Automatic lookup uses the SQLite keyword index so starting a turn never waits for model weights or another LLM call. The inserted reference block fits within 512 UTF-8 bytes, a conservative token upper bound for byte-level tokenizers. Pinned entries keep the existing 8 KiB budget. Run inspection reports the automatic lookup budget used and how many entries were included.
+Minarbot adds relevant learned memory and automatically managed notes to interactive local turns across API models, Codex, Claude Code, and ACP. Automatic lookup uses the SQLite keyword index so starting a turn never waits for model weights or another LLM call. The inserted reference block fits within 512 UTF-8 bytes, a conservative token upper bound for byte-level tokenizers. Pinned entries keep the existing 8 KiB budget. Run inspection reports the automatic lookup budget used and how many entries were included.
 
 - `recall` searches durable notes, facts, and observations in the current bank.
 - `reflect` answers a question using up to three searches with the agent's memory model. It returns only cited evidence IDs and their sources. A matching fresh standing answer can be returned directly.
