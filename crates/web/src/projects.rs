@@ -260,6 +260,11 @@ pub fn page(id: String, error_icon: String) -> impl IntoView {
 
 fn overview(project: Project, error_icon: String) -> impl IntoView {
     let agents = directory();
+    let icons = use_context::<shell::Icons>().unwrap_or_default();
+    let plus = StoredValue::new(icons.plus);
+    let hash = StoredValue::new(icons.hash);
+    let chevron = StoredValue::new(icons.chevron);
+    let folder_icon = StoredValue::new(icons.folder);
     document().set_title(&format!("{} · Minarbot", project.name));
     let edit_name = RwSignal::new(project.name.clone());
     let edit_description = RwSignal::new(project.description.clone());
@@ -459,11 +464,12 @@ fn overview(project: Project, error_icon: String) -> impl IntoView {
                 </div>
             </div>
 
-            <nav class="k-tabs__list" aria-label="Project sections">
+            <div class="k-tabs"><nav class="k-tabs__list" aria-label="Project sections">
                 <a class="k-tabs__tab" href=project_url aria-current="page" data-state="active">"Overview"</a>
                 {[( "calendar", "Calendar"), ("apps", "Connected apps"), ("environment", "Environment"), ("mcp", "MCP")].into_iter()
                     .map(|(tab, label)| view! { <a class="k-tabs__tab" href=format!("{react_url}&projectTab={tab}")>{label}</a> }).collect_view()}
             </nav>
+            <div class="k-tabs__panel">
             <form class="k-stack" hidden=move || !editing.get() on:submit=save>
                 <section class="k-section">
                     <div class="k-section__head"><h2 class="k-section__title">"Project details"</h2></div>
@@ -537,12 +543,13 @@ fn overview(project: Project, error_icon: String) -> impl IntoView {
             </section>
             <section class="k-section" hidden=editing>
                 <div class="k-section__head"><h2 class="k-section__title">"Folders"</h2>
-                    <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked on:click=move |_| edit(true)>"Add folder"</button></div>
+                    <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked on:click=move |_| edit(true)>
+                        <span class="appearance-icon" inner_html=plus.get_value()></span>"Add folder"</button></div>
                 {project.with_value(|project| if project.folders.is_empty() {
                     view! { <p class="k-field__hint">"No folders"</p> }.into_any()
                 } else {
                     view! { <div class="k-card">{project.folders.iter().enumerate().map(|(index, path)| view! {
-                        <div class="k-row"><div class="k-row__main"><span class="k-row__text">
+                        <div class="k-row"><div class="k-row__main"><span class="k-row__leading" inner_html=folder_icon.get_value()></span><span class="k-row__text">
                             <span class="k-row__title project-path">{path.clone()}</span>
                             <span class="k-row__meta">{if index == 0 { "Default folder for sections" } else { "Available to project sections and conversations" }}</span>
                         </span></div></div>
@@ -560,12 +567,14 @@ fn overview(project: Project, error_icon: String) -> impl IntoView {
             </span></div></div>
             <section class="k-section">
                 <div class="k-section__head"><h2 class="k-section__title">"Sections"</h2>
-                    <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked on:click=move |_| show("sections")>"New section"</button></div>
+                    <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked on:click=move |_| show("sections")>
+                        <span class="appearance-icon" inner_html=plus.get_value()></span>"New section"</button></div>
                 <div class="k-card">{project.with_value(|project| project.sections.iter().map(|section| view! {
-                    <div class="k-row"><a class="k-row__main" href=format!("/rooms/{}", section.id)><span class="k-row__text">
+                    <div class="k-row is-clickable"><a class="k-row__main" href=format!("/rooms/{}", section.id)>
+                        <span class="k-row__leading" inner_html=hash.get_value()></span><span class="k-row__text">
                         <span class="k-row__title">{section.name.clone()}</span>
                         {section.archived.then(|| view! { <span class="k-row__meta">"Archived"</span> })}
-                    </span></a></div>
+                    </span><span class="k-row__chev" inner_html=chevron.get_value()></span></a></div>
                 }).collect_view())}</div>
             </section>
             <section class="k-section">
@@ -574,7 +583,7 @@ fn overview(project: Project, error_icon: String) -> impl IntoView {
                         if project.with_value(|project| project.members.is_empty()) {
                             edit(false);
                         } else { show("thread"); }
-                    }>"New conversation"</button></div>
+                    }><span class="appearance-icon" inner_html=plus.get_value()></span>"New conversation"</button></div>
                 {move || project.with_value(|project| if project.threads.is_empty() {
                     view! { <p class="k-field__hint">"No conversations"</p> }.into_any()
                 } else {
@@ -585,6 +594,7 @@ fn overview(project: Project, error_icon: String) -> impl IntoView {
                     }).collect_view()}</div> }.into_any()
                 })}
             </section>
+            </div></div>
             <dialog class="k-dialog bs-root project-dialog" aria-labelledby="project-dialog-title" node_ref=dialog>
                 <div class="k-dialog__head"><h2 id="project-dialog-title" class="k-dialog__title">{label}</h2></div>
                 <form class="k-dialog__body k-stack" id="project-action" on:submit=submit_form>

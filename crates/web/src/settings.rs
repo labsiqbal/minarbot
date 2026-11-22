@@ -106,8 +106,7 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
     let main = NodeRef::<leptos::html::Main>::new();
     Effect::new(move |_| {
         let _ = route.get();
-        if let Some(main) = main.get() {
-            main.set_scroll_top(0);
+        if main.get().is_some() {
             focus_heading();
         }
     });
@@ -225,14 +224,17 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                 on:click=move |_| return_to.with_value(|path| close(path))
                 inner_html=config.close_icon>
             </button>
-            <main class="app-settings__main" node_ref=main>
-                <div class="app-settings__page legacy app-settings__page--preferences">
-                    {move || match route.get() {
-                        SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
-                        SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
-                    }}
-                </div>
-            </main>
+            {move || {
+                let page = match route.get() {
+                    SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
+                    SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
+                };
+                view! {
+                    <main class="app-settings__main" node_ref=main>
+                        <div class="app-settings__page legacy app-settings__page--preferences">{page}</div>
+                    </main>
+                }
+            }}
         </dialog>
     }
 }
