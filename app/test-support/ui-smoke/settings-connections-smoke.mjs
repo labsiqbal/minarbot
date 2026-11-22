@@ -138,7 +138,7 @@ async function focused(page, locator, client) {
 }
 
 async function exercise(page, slug) {
-  const button = name => page.getByRole('button', { name, exact: true });
+  const button = name => page.getByRole('button', { name, exact: true, disabled: false });
   const dialog = name => page.getByRole('dialog', { name, exact: true });
   switch (slug) {
     case 'providers': {
@@ -213,7 +213,7 @@ async function exercise(page, slug) {
     case 'email':
       await page.getByRole('textbox', { name: 'Receiving domain' }).fill('agents.example.test');
       await button('Save domain').press('Enter');
-      await page.getByRole('button', { name: 'Generate secret', exact: true, disabled: false }).press('Enter');
+      await button('Generate secret').press('Enter');
       const secret = dialog('Save endpoint secret');
       await secret.waitFor();
       assert.equal(await page.locator('[data-private-token]').inputValue(), proof);
@@ -289,7 +289,12 @@ try {
         }
       }
       await page.setViewportSize({ width: 1440, height: 900 });
-      await exercise(page, slug);
+      try {
+        await exercise(page, slug);
+      } catch (error) {
+        assert.deepEqual(errors, [], client + ' ' + slug + ' console');
+        throw new Error(client + ' ' + slug + ' interaction failed', { cause: error });
+      }
       receipts[client][slug] = fixture.posts;
       assert.deepEqual(await page.evaluate(() => window.settingsCsp), [], client + ' ' + slug + ' CSP');
       assert.deepEqual(errors, [], client + ' ' + slug + ' console');
