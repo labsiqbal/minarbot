@@ -12,18 +12,41 @@ macro_rules! stack_guard {
 }
 
 mod buffers;
+#[cfg(any(feature = "c", feature = "cpp"))]
+mod ccpp;
+#[cfg(feature = "csharp")]
+mod csharp;
+#[cfg(feature = "dart")]
+mod dart;
 mod docstring;
 mod generated;
 mod go;
 mod ids;
+#[cfg(feature = "java")]
+mod java;
+#[cfg(feature = "kotlin")]
+mod kotlin;
 mod langs;
+#[cfg(any(feature = "lua", feature = "luau"))]
+mod lua;
+#[cfg(feature = "php")]
+mod php;
+mod preparse;
 mod python;
 mod query;
 mod resolution;
+#[cfg(feature = "r")]
+mod rlang;
+#[cfg(feature = "ruby")]
+mod ruby;
 mod rustlang;
+#[cfg(feature = "scala")]
+mod scala;
 mod scan;
 mod stack;
 mod store;
+#[cfg(feature = "swift")]
+mod swift;
 mod textutil;
 mod tsjs;
 

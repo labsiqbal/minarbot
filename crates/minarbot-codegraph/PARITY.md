@@ -29,8 +29,8 @@ their files and incident edges from the clean-file comparison.
 ## Reproduce
 
 ```sh
-~/.cache/minarbot-cargo-slot.sh cargo build --locked --release -p minarbot-codegraph --example index
-python3 crates/minarbot-codegraph/parity/run.py target/release/examples/index
+~/.cache/minarbot-cargo-slot.sh cargo build --locked --release -p minarbot-codegraph --all-features --example index
+~/.cache/minarbot-node-slot.sh python3 crates/minarbot-codegraph/parity/run.py target/release/examples/index
 ```
 
 The harness uses Git, Python 3.10+, bubblewrap, and the installed CodeGraph
@@ -38,8 +38,9 @@ The harness uses Git, Python 3.10+, bubblewrap, and the installed CodeGraph
 and runs Node one-shot indexing with a read-only repository, writable
 disposable index directory, and network disabled. Databases are read with
 SQLite in read-only mode. Pass `--artifacts /tmp/codegraph-parity` to keep
-sorted natural-key dumps, error records, and Node logs. Any clean-file
-difference yields a nonzero exit.
+sorted natural-key dumps, error records, and Node logs. Pass `--repo NAME` to
+select one corpus, or repeat it to select several. Graph differences yield a
+nonzero exit.
 
 Node natural keys use path, kind, qualified name, line, and column. Compared
 records retain names, spans, flags, signatures, docstrings, and other stable
@@ -138,8 +139,8 @@ native run over the native index measures extraction and resolution effects.
 Use CodeGraph 1.6.2 sources at `6560052`, Elasticsearch v8.17.0
 (`2b6a7fed`, sparse paths `server/src/main/java` and `libs/core/src/main/java`),
 and a disposable Minarbot checkout. Elasticsearch exercises query parity
-through the Node-built database because Java is outside the native indexer's
-five MVP grammars.
+through the Node-built database. Phase 3 ran before the native Java grammar
+was added.
 
 ```sh
 ~/.cache/minarbot-cargo-slot.sh cargo build --locked -p minarbot-server
@@ -189,3 +190,158 @@ when substituting the native extraction and resolution.
   The eight-file budget drops the three expected request and shard symbols
   on the shared Node database. That matters for tracing the flow. Naming
   `ShardSearchRequest` anchors a follow-up query.
+
+## Phase 4 extraction parity
+
+The complete run covered the five MVP corpora and the 13 additional language
+corpora. The MVP results match the extraction and resolution baselines above.
+For each new corpus the harness compares only its named language while each
+engine indexes the whole checkout to retain cross-file context. Full commit
+IDs and tags are pinned in [run.py](parity/run.py).
+
+Totals are Node/Rust. Differences are Node-only/Rust-only. Files with reported
+errors in either engine and their incident edges are excluded from clean rows.
+
+| Language | Repository | Clean files | Nodes | Extraction edges | Error files | File, node, edge diffs |
+|---|---|---:|---:|---:|---:|---|
+| Java | JUnit 4 `05fe2a6` | 470/471 | 10,921/10,927 | 10,692/10,697 | 0/0 | 0/1, 0/6, 0/5 |
+| C | cJSON `acc7623` | 26/66 | 513/956 | 505/958 | 0/33 | 0/40, 0/443, 0/453 |
+| C++ | fmt `1239137` | 43/43 | 934/934 | 893/893 | 0/27 | 0/0, 0/0, 0/0 |
+| C# | Dapper `360367c` | 141/141 | 3,432/3,432 | 3,355/3,355 | 0/11 | 0/0, 0/0, 0/0 |
+| Ruby | Sinatra `7b50a1b` | 147/147 | 1,798/1,798 | 1,724/1,724 | 0/0 | 0/0, 0/0, 0/0 |
+| PHP | Monolog `aef6ee7` | 216/216 | 3,072/3,072 | 2,935/2,935 | 0/0 | 0/0, 0/0, 0/0 |
+| Swift | Swift Argument Parser `41982a3` | 119/119 | 2,562/2,562 | 2,477/2,477 | 0/27 | 0/0, 0/0, 0/0 |
+| Kotlin | kotlinx-cli `85737e0` | 20/20 | 355/355 | 355/355 | 0/1 | 0/0, 0/0, 0/0 |
+| R | glue `48688f8` | 24/24 | 87/87 | 63/63 | 0/0 | 0/0, 0/0, 0/0 |
+| Lua | luassert `8d8dc8a` | 37/37 | 643/643 | 606/606 | 0/0 | 0/0, 0/0, 0/0 |
+| Luau | Lune `010cd36` | 184/184 | 1,452/1,452 | 1,268/1,268 | 0/2 | 0/0, 0/0, 0/0 |
+| Scala | scalaj-http `afd7379` | 10/10 | 307/307 | 304/304 | 0/0 | 0/0, 0/0, 0/0 |
+| Dart | Dart args `5c83bc9` | 25/25 | 336/336 | 326/326 | 0/0 | 0/0, 0/0, 0/0 |
+
+Extraction records agree across all shared clean files. The Java-only file is
+JUnit 4's `src/main/java/org/junit/runners/JUnit4.java`. The extra C files are
+tracked sources from cJSON's bundled Unity test code. Minarbot flags native
+parser recovery explicitly. Node can recover through WASM without recording
+a file error. The clean count excludes that recovery output. Dart's same-ID
+re-emissions keep the upstream last value and a single SQLite and FTS row.
+
+All 1,462 shared clean files across the 13 new corpora match on extraction.
+
+## Phase 4 resolution parity
+
+The projection covers the six edge kinds from Phase 2 and excludes edges
+incident to framework route nodes. The harness completed all repos and
+exited 1 on the reported differences.
+
+| Language | Resolved edges | Unresolved refs | Resolved diff | Unresolved diff |
+|---|---:|---:|---:|---:|
+| Java | 11,540/11,221 | 8,847/8,533 | 4,353/4,034 | 1,226/912 |
+| C | 68/595 | 210/192 | 6/533 | 64/46 |
+| C++ | 709/647 | 1,923/1,811 | 243/181 | 1,161/1,049 |
+| C# | 2,237/2,879 | 7,119/6,427 | 776/1,418 | 879/187 |
+| Ruby | 922/1,166 | 2,561/2,247 | 248/492 | 447/133 |
+| PHP | 4,603/4,779 | 5,202/5,026 | 1,201/1,377 | 213/37 |
+| Swift | 2,349/2,648 | 2,838/2,465 | 550/849 | 420/47 |
+| Kotlin | 584/504 | 553/614 | 85/5 | 4/65 |
+| R | 395/395 | 922/922 | 0/0 | 0/0 |
+| Lua | 534/774 | 2,831/2,591 | 1/241 | 241/1 |
+| Luau | 954/976 | 2,037/2,016 | 28/50 | 23/2 |
+| Scala | 378/386 | 998/989 | 75/83 | 16/7 |
+| Dart | 1,344/1,348 | 1,300/1,296 | 89/93 | 12/8 |
+
+- **Java and Kotlin** - Qualified imports, inherited methods, overload and
+  receiver ranking, and Node's interface-dispatch synthesis account for the
+  main gaps. Node also synthesizes expect/actual dispatch in Kotlin.
+- **C and C++** - Most C edges unique to Rust have an endpoint in the extra
+  Unity sources. Include confidence and macro and standard-library references
+  account for shared-corpus differences. C++ also differs on template and
+  receiver lookup.
+- **C#** - Most differences involve overloads and constructor, attribute, and
+  generic type references. Node adds interface call edges.
+- **Ruby and PHP** - Require and include paths, inheritance, aliases and
+  receiver heuristics differ. Top-level Ruby requires can map to a lib file
+  before Node's synthesized path reference resolves.
+- **Swift** - Protocol/extension ranking and calls through inferred receivers
+  account for retargets. Node also synthesizes interface dispatch.
+- **R** - Extraction, resolution metadata and failed rows agree.
+- **Lua and Luau** - Require path and local table-member lookup differ.
+  Minarbot links relative Luau requires to module files. Lua's extra matches
+  include locally bound functions and callable table values.
+- **Scala** - Receiver and member ranking cause both metadata and target
+  differences. Scala Parser Combinators was replaced as the Scala corpus
+  after CodeGraph 1.6.2 failed to resolve its symbolic operator references.
+- **Dart** - Constructor chains and import paths account for the differences,
+  including self-package URI lookup in Node.
+
+### Framework synthesis
+
+[Framework integration test](tests/frameworks.rs) covers named and inline
+Express handlers, NestJS controller prefixes, Django URL patterns, Flask
+decorators, React Router routes, Next App Router page and handler files, and
+navigation edges. Reindexing removes obsolete routes and navigation edges in
+the same transaction. Framework logic resolves static declarations, paths and
+handler bindings. Gaps include computed React Router paths, nonliteral
+navigation destinations and advanced NestJS bootstrap and routing options.
+
+Route and incident-edge counts below include recovered files. The comparison
+uses file, name, line, and edge kind, with counts ordered Node/Rust/common.
+Flask emits one route per declared HTTP method. Differences in Express include
+chained registrations and inline and mounted handler bindings.
+
+| Repository | Routes | Incident edges |
+|---|---:|---:|
+| Express | 302/299/296 | 24/15/7 |
+| Flask | 303/368/303 | 297/341/295 |
+| Excalidraw | 2/2/2 | 4/4/4 |
+
+## Phase 4 binary size
+
+Measured on x86_64 Linux with Rust 1.95.0 using the release `index` example
+and `CARGO_PROFILE_RELEASE_STRIP=symbols`. Each single-feature build starts
+with `--no-default-features`. The reported delta includes the walker, parser,
+scanner, and any code linked for that feature. The linked default and
+all-language sizes are measured directly.
+
+| Build | Bytes | Delta from no grammars |
+|---|---:|---:|
+| No grammars | 6,084,336 | 0 |
+| Five MVP grammars | 11,742,480 | 5,658,144 |
+| Seven default grammars | 13,128,848 | 7,044,512 |
+| All languages | 38,931,088 | 32,846,752 |
+
+| Feature | Bytes | Delta from no grammars |
+|---|---:|---:|
+| `rust` | 7,444,784 | 1,360,448 |
+| `typescript` | 9,252,368 | 3,168,032 |
+| `javascript` | 6,796,720 | 712,384 |
+| `python` | 6,778,000 | 693,664 |
+| `go` | 6,528,624 | 444,288 |
+| `java` | 6,745,360 | 661,024 |
+| `c` | 7,069,296 | 984,960 |
+| `cpp` | 10,023,088 | 3,938,752 |
+| `csharp` | 11,620,432 | 5,536,096 |
+| `ruby` | 8,376,528 | 2,292,192 |
+| `php` | 7,532,528 | 1,448,192 |
+| `swift` | 10,006,960 | 3,922,624 |
+| `kotlin` | 10,360,816 | 4,276,480 |
+| `r` | 6,710,608 | 626,272 |
+| `lua` | 6,497,968 | 413,632 |
+| `luau` | 6,393,712 | 309,376 |
+| `scala` | 10,221,616 | 4,137,280 |
+| `dart` | 7,318,608 | 1,234,272 |
+
+Java and C join the defaults to cover common JVM and systems repositories.
+Together they add 1,386,368 bytes to the five-language build. Opting into all
+remaining grammars adds 25,802,240 bytes beyond the new default. Keep the
+existing five plus Java and C as a compact build with broad language coverage.
+The server's `codegraph-all-languages` feature opts into the full set.
+
+To measure a single feature, substitute its name for `java` and run the same
+build and file-size command. Omit both feature flags for the default or use
+the `all-languages` feature for the complete set.
+
+```sh
+CARGO_PROFILE_RELEASE_STRIP=symbols ~/.cache/minarbot-cargo-slot.sh cargo build \
+  --locked --release -p minarbot-codegraph --example index --no-default-features --features java
+stat -c %s target/release/examples/index
+```

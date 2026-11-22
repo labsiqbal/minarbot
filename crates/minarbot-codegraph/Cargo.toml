@@ -6,12 +6,27 @@ license = "Apache-2.0 AND MIT"
 publish = false
 
 [features]
-default = ["rust", "typescript", "javascript", "python", "go"]
+default = ["rust", "typescript", "javascript", "python", "go", "java", "c"]
 rust = ["dep:tree-sitter-rust"]
 typescript = ["dep:tree-sitter-typescript"]
 javascript = ["dep:tree-sitter-javascript"]
 python = ["dep:tree-sitter-python"]
 go = ["dep:tree-sitter-go"]
+
+java = ["dep:tree-sitter-java"]
+c = ["dep:tree-sitter-c"]
+cpp = ["dep:tree-sitter-cpp"]
+csharp = ["dep:tree-sitter-c-sharp"]
+ruby = ["dep:tree-sitter-ruby"]
+php = ["dep:tree-sitter-php"]
+swift = ["dep:tree-sitter-swift"]
+r = ["dep:tree-sitter-r"]
+luau = ["dep:tree-sitter-luau"]
+kotlin = ["dep:cc", "dep:tree-sitter-language"]
+lua = ["dep:tree-sitter-lua"]
+scala = ["dep:tree-sitter-scala"]
+dart = ["dep:cc", "dep:tree-sitter-language"]
+all-languages = ["rust", "typescript", "javascript", "python", "go", "java", "c", "cpp", "csharp", "ruby", "php", "swift", "kotlin", "r", "lua", "luau", "scala", "dart"]
 
 [dependencies]
 globset = "0.4"
@@ -29,6 +44,22 @@ tree-sitter-javascript = { version = "=0.25.0", optional = true }
 tree-sitter-python = { version = "=0.23.6", optional = true }
 tree-sitter-rust = { version = "=0.24.2", optional = true }
 tree-sitter-typescript = { version = "=0.23.2", optional = true }
+
+tree-sitter-java = { version = "=0.23.5", optional = true }
+tree-sitter-c = { version = "=0.24.2", optional = true }
+tree-sitter-cpp = { version = "=0.23.4", optional = true }
+tree-sitter-c-sharp = { version = "=0.23.5", optional = true }
+tree-sitter-ruby = { version = "=0.23.1", optional = true }
+tree-sitter-php = { version = "=0.24.2", optional = true }
+tree-sitter-swift = { version = "=0.7.3", optional = true }
+tree-sitter-r = { version = "=1.2.0", optional = true }
+tree-sitter-luau = { version = "=1.2.0", optional = true }
+tree-sitter-lua = { version = "=0.4.1", optional = true }
+tree-sitter-scala = { version = "=0.26.2", optional = true }
+tree-sitter-language = { version = "=0.1.9", optional = true }
+
+[build-dependencies]
+cc = { version = "1", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -50,6 +50,14 @@ pub(crate) fn insert_file(
         json!([{ "message": issue.message, "filePath": issue.path, "code": issue.code, "severity": "warning" }]).to_string()
     });
     let graph = &source.graph;
+    // Upstream keeps the last emission of the same identity. Insert it once
+    // so an implicit SQLite replace cannot leave a stale FTS row.
+    let last_occurrence: HashMap<_, _> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (node.id.as_str(), position))
+        .collect();
     db.prepare_cached(
         "INSERT INTO files (path, content_hash, language, size, modified_at, indexed_at,
                             node_count, errors, generated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -57,11 +65,11 @@ pub(crate) fn insert_file(
     .execute(params![
         file.path,
         source.hash,
-        file.language,
+        source.language,
         source.size,
         source.modified_at,
         now,
-        graph.nodes.len(),
+        last_occurrence.len(),
         errors,
         source.generated
     ])?;
@@ -75,7 +83,10 @@ pub(crate) fn insert_file(
     let mut insert_segment = db
         .prepare_cached("INSERT OR IGNORE INTO name_segment_vocab (segment, name) VALUES (?, ?)")?;
     let mut seen_names = HashSet::new();
-    for node in &graph.nodes {
+    for (position, node) in graph.nodes.iter().enumerate() {
+        if last_occurrence[node.id.as_str()] != position {
+            continue;
+        }
         let [exported, asynchronous, static_member, abstract_member] = node.flags.0;
         insert_node.execute(params![
             node.id,
@@ -83,7 +94,7 @@ pub(crate) fn insert_file(
             node.name,
             node.qualified_name,
             file.path,
-            file.language,
+            source.language,
             node.start_line,
             node.end_line,
             node.start_column,
@@ -135,7 +146,7 @@ pub(crate) fn insert_file(
             reference.column,
             json_list(&reference.candidates),
             file.path,
-            file.language,
+            source.language,
         ])?;
     }
     Ok(())

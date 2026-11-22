@@ -21,7 +21,22 @@ REPOS = [
     ("cobra", "spf13/cobra", "v1.9.1", "40b5bc1437a564fc795d388b23835e84f54cd1d1"),
     ("excalidraw", "excalidraw/excalidraw", "v0.18.0", "817d8c553c3389650f8b4503984a6d4a5d2f0c11"),
 ]
-LANGUAGES = {"rust", "typescript", "tsx", "javascript", "jsx", "python", "go"}
+MVP = {"rust", "typescript", "tsx", "javascript", "jsx", "python", "go"}
+LANGUAGE_REPOS = [
+    ("junit4", "junit-team/junit4", "r4.13.2", "05fe2a64f59127c02135be22f416e91260d6ede6", "java"),
+    ("cjson", "DaveGamble/cJSON", "v1.7.18", "acc76239bee01d8e9c858ae2cab296704e52d916", "c"),
+    ("fmt", "fmtlib/fmt", "11.1.4", "123913715afeb8a437e6388b4473fcc4753e1c9a", "cpp"),
+    ("dapper", "DapperLib/Dapper", "2.1.35", "360367ca5475425944fb390433cb0f1817ad2dcb", "csharp"),
+    ("sinatra", "sinatra/sinatra", "v4.1.1", "7b50a1bbb5324838908dfaa00ec53ad322673a29", "ruby"),
+    ("monolog", "Seldaek/monolog", "3.8.1", "aef6ee73a77a66e404dd6540934a9ef1b3c855b4", "php"),
+    ("swift-argument-parser", "apple/swift-argument-parser", "1.5.0", "41982a3656a71c768319979febd796c6fd111d5c", "swift"),
+    ("kotlinx-cli", "Kotlin/kotlinx-cli", "v0.3.6", "85737e0e4c97fccea5df1867bffdb545d2a9a75d", "kotlin"),
+    ("glue", "tidyverse/glue", "v1.8.0", "48688f8f720a8f043b0f989b518a42bc32c410f0", "r"),
+    ("luassert", "lunarmodules/luassert", "v1.9.0", "8d8dc8a54cc468048a128a867f6449a6c3fdd11a", "lua"),
+    ("lune", "lune-org/lune", "v0.8.9", "010cd36375b467c85292ec87c922ee5806d79581", "luau"),
+    ("scalaj-http", "scalaj/scalaj-http", "2.4.2", "afd73791ec53d38937a78e2b3ebce927e3ddcba1", "scala"),
+    ("args", "dart-lang/args", "v2.5.0", "5c83bc9785d6c32ffe6824ba79fadcc51fbcd1c1", "dart"),
+]
 RESOLVED_KINDS = {"calls", "imports", "extends", "implements", "references", "instantiates"}
 NATURAL = ("file_path", "kind", "qualified_name", "start_line", "start_column")
 NODE_COLUMNS = (
@@ -91,11 +106,11 @@ def stable_json(source):
     return json.dumps(json.loads(source), sort_keys=True) if source is not None else None
 
 
-def snapshot(connection, blocked):
+def snapshot(connection, blocked, languages):
     files = {
         row["path"]: (row["language"], row["generated"]) for row in connection.execute(
             "SELECT path, language, generated FROM files"
-        ) if row["language"] in LANGUAGES and row["path"] not in blocked
+        ) if row["language"] in languages and row["path"] not in blocked
     }
     nodes = {}
     downstream_nodes = set()
@@ -148,11 +163,11 @@ def snapshot(connection, blocked):
     )
 
 
-def errors(connection):
+def errors(connection, languages):
     return {
         row["path"]: json.loads(row["errors"]) for row in connection.execute(
             "SELECT path, language, errors FROM files WHERE errors IS NOT NULL"
-        ) if row["language"] in LANGUAGES and json.loads(row["errors"])
+        ) if row["language"] in languages and json.loads(row["errors"])
     }
 
 
@@ -192,12 +207,12 @@ def edge_differences(left, right):
     return reasons
 
 
-def compare(name, node_db, rust_db, artifacts):
+def compare(name, node_db, rust_db, artifacts, languages=MVP):
     with open_db(node_db) as node, open_db(rust_db) as rust:
-        node_errors, rust_errors = errors(node), errors(rust)
+        node_errors, rust_errors = errors(node, languages), errors(rust, languages)
         blocked = node_errors.keys() | rust_errors.keys()
-        left, downstream_nodes, downstream_edges = snapshot(node, blocked)
-        right, _, _ = snapshot(rust, blocked)
+        left, downstream_nodes, downstream_edges = snapshot(node, blocked, languages)
+        right, _, _ = snapshot(rust, blocked, languages)
     if artifacts:
         dump(artifacts / f"{name}-node.jsonl", left)
         dump(artifacts / f"{name}-rust.jsonl", right)
@@ -237,6 +252,9 @@ def main():
     parser.add_argument("index", type=Path, help="built example index executable")
     parser.add_argument("--node", type=Path, default=Path("/home/iqbal/.npm-global/bin/codegraph"))
     parser.add_argument("--artifacts", type=Path, help="save natural-key dumps, errors and CLI logs")
+    repos = [(*repo, None) for repo in REPOS] + LANGUAGE_REPOS
+    parser.add_argument("--repo", action="append", choices=[row[0] for row in repos],
+                        help="compare only this pinned repository (repeatable)")
     args = parser.parse_args()
     binary, cli = args.index.resolve(strict=True), args.node.absolute()
     artifacts = args.artifacts.resolve() if args.artifacts else None
@@ -245,13 +263,15 @@ def main():
     rows, notes = [], []
     with tempfile.TemporaryDirectory(prefix="minarbot-codegraph-parity-", dir="/tmp") as temp:
         scratch = Path(temp)
-        for name, repo, tag, commit in REPOS:
+        for name, repo, tag, commit, language in repos:
+            if args.repo and name not in args.repo:
+                continue
             print(f"Indexing {repo} {commit}", file=sys.stderr, flush=True)
             root = prepare(scratch, name, repo, tag, commit)
             node_db = upstream(root, cli, artifacts)
             rust_db = scratch / f"{name}.db"
             command([binary, root, rust_db], cwd=root)
-            row, details, blocked, downstream_nodes, downstream_edges = compare(name, node_db, rust_db, artifacts)
+            row, details, blocked, downstream_nodes, downstream_edges = compare(name, node_db, rust_db, artifacts, {language} if language else MVP)
             rows.append(row)
             notes.append((name, details, sorted(blocked), downstream_nodes, downstream_edges))
     print("| Repository | Files | Nodes | Extraction edges | Resolved edges | Unresolved refs | Files with errors | File diff | Node diff | Extraction diff | Resolved diff | Unresolved diff |")

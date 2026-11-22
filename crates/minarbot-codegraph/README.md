@@ -22,17 +22,31 @@ walker applies local `.gitignore` rules. Both paths exclude dependency,
 build, and index directories by default. Generated files remain searchable
 and carry their classification in `files.generated`.
 
-Rust, TypeScript/TSX, JavaScript/JSX, Python, and Go are enabled by default.
-Disable default features and select `rust`, `typescript`, `javascript`,
-`python`, and/or `go` to build a smaller indexer. Sync reconciles the
+Default builds enable Rust, TypeScript/TSX, JavaScript/JSX, Python, Go, Java,
+and C. Additional Cargo features enable C++ (`cpp`), C# (`csharp`), Ruby,
+PHP, Swift, Kotlin, R, Lua, Luau, Scala, and Dart. Select `all-languages`
+for every native grammar. Use `--no-default-features` and individual
+language features for a smaller standalone indexer. Sync reconciles the
 database to the enabled languages.
 
+The server builds with the default grammars. Build it with
+`--features codegraph-all-languages` to enable all native grammars for every
+runtime. C++ includes CUDA and Metal sources. VB.NET and WASM-only inputs
+are outside the native index. Kotlin and Dart compile the pinned parser and
+scanner through `cc`.
+
 Resolution follows local import paths, named and default bindings, barrel
-exports, JSONC `tsconfig` and `jsconfig` aliases, Go module paths, and Cargo
-workspace crate names. The name matcher uses scope, receiver types and
+exports, JSONC `tsconfig` and `jsconfig` aliases, Go module paths, Cargo
+workspace crate names, JVM qualified names, and local C/C++, PHP, Ruby, Dart,
+and Lua/Luau imports. The name matcher uses scope, receiver types and
 inheritance edges before applying the ambiguity ceiling to heuristic matches.
 Function-as-value references persist as `references` edges with `fnRef`
 metadata. Dispatch heuristics record their provenance.
+
+Framework synthesis adds HTTP routes and handler edges for Express, NestJS,
+Django, and Flask. React Router and Next.js pages link to their components
+and navigation sites. CodeGraph rebuilds framework routes transactionally
+when indexed sources change.
 
 An unresolved reference stays in `unresolved_refs` with its status and name
 tail. Changed definitions trigger a retry. When an indexed target disappears,
