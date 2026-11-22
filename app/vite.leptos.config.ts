@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Plug, Plus, Receipt, RefreshCw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Pencil, Plug, Plus, Receipt, RefreshCw, RotateCcw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
 import { CircleDot, ListTodo, Siren } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -74,6 +74,7 @@ const appearanceConfig: Plugin = {
           attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
           chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),
           copy: svg(Copy, 14), fork: svg(GitFork, 14),
+          restore: svg(RotateCcw, 14), edit: svg(Pencil, 14), listen: svg(Volume2, 14), up: svg(ChevronUp, 16),
           inspect: svg(Wrench, 14), close: svg(X),
           chats: svg(MessageSquare, 14), files: svg(Files, 14), file: svg(FileText, 16), filter: svg(Filter, 15),
           settings: svg(Settings, 16),

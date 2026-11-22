@@ -184,7 +184,8 @@ pub(crate) fn WorkspaceShell(
     let summaries = RwSignal::new(Vec::<Summary>::new());
     let machines = RwSignal::new(None::<Result<Machines, String>>);
     let projects_tab = RwSignal::new(
-        base_path.starts_with("/projects/") || preference(TAB).as_deref() == Some("projects"),
+        (base_path.starts_with("/projects/") || base_path.starts_with("/rooms/"))
+            || preference(TAB).as_deref() == Some("projects"),
     );
     let collapsed = RwSignal::new(preference(COLLAPSED).as_deref() == Some("1"));
     let narrow = || {
@@ -310,7 +311,28 @@ pub(crate) fn WorkspaceShell(
     on_cleanup(move || keys.remove());
     let base_path = StoredValue::new(base_path);
     let automation = use_context::<AutomationNavigation>();
+    #[cfg(feature = "conversation")]
+    let conversation = use_context::<crate::conversation::Navigation>();
+    #[cfg(feature = "conversation")]
+    if let Some(navigation) = conversation {
+        Effect::new(move |previous: Option<String>| {
+            let path = navigation.0.get();
+            if previous.as_ref().is_some_and(|previous| previous != &path) {
+                narrow_open.set(false);
+                if path.starts_with("/rooms/") {
+                    projects_tab.set(true);
+                }
+            }
+            path
+        });
+    }
     let route_path = move || {
+        #[cfg(feature = "conversation")]
+        if let Some(navigation) = conversation {
+            return navigation
+                .0
+                .with(|route| route.split('?').next().unwrap_or_default().to_owned());
+        }
         automation
             .map(|nav| nav.0.get())
             .unwrap_or_else(|| base_path.get_value())
@@ -428,7 +450,7 @@ pub(crate) fn WorkspaceShell(
         let summaries = summaries.get();
         let items = directory.agents.into_iter().chain(directory.guide).filter_map(|agent| {
             let path = format!("/agents/{}", agent.id);
-            let current = base_path.with_value(|base| base == &path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/')));
+            let current = { let base = route_path(); base == path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/')) };
             let summary = summaries.iter().find(|row| row.agent == agent.id);
             let detail = summary.filter(|row| !row.preview.is_empty()).map(|row| plain_preview(&row.preview)).unwrap_or_else(|| agent.role.clone());
             if agent.hidden && !current || !format!("{} {}", agent.name, detail).to_lowercase().contains(&query) {
@@ -445,7 +467,7 @@ pub(crate) fn WorkspaceShell(
             let avatar = (agent.avatar_revision > 0).then(|| format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision));
             let initial = agent.name.chars().next().map(|initial| initial.to_uppercase().to_string());
             Some(view! {
-                <a class="bot-row" class:is-selected=current href=if conversation_navigation { format!("{path}?ui=leptos") } else { path } aria-current=current.then_some("page")>
+                <a class="bot-row" class:is-selected=current href=path aria-current=current.then_some("page")>
                     <span class="bot-row__avatar" aria-hidden="true"><span class="avatar bs-avatar">
                         {if let Some(src) = avatar { view! { <img src=src alt="" /> }.into_any() } else { initial.into_any() }}
                     </span><span class=format!("status-dot {dot}")></span></span>
@@ -473,7 +495,7 @@ pub(crate) fn WorkspaceShell(
                     let links = machine.agents.iter().filter_map(|agent| {
                         if !format!("{} {}", agent.name, agent.role).to_lowercase().contains(&query) { return None; }
                         let path = format!("/machines/{}/agents/{}", machine.id, agent.id);
-                        let current = base_path.with_value(|base| base == &path);
+                        let current = route_path() == path;
                         Some(view! {
                             <a class="bot-row" class:is-selected=current href=path aria-current=current.then_some("page")
                                 aria-label=format!("{} on {}", agent.name, machine.name)>
@@ -509,14 +531,14 @@ pub(crate) fn WorkspaceShell(
                     let name_matches = format!("{} {}", project.name, project.description).to_lowercase().contains(&query);
                     let sections = project.sections.iter().filter(|section| !section.archived && (name_matches || section.name.to_lowercase().contains(&query))).map(|section| {
                         let path = format!("/rooms/{}", section.id);
-                        let current = base_path.with_value(|base| base == &path);
-                        let href = if conversation_navigation { format!("{path}?ui=leptos") } else { path };
+                        let current = route_path() == path;
+                        let href = path;
                         view! { <div class="project-navigation__section"><a class="project-navigation__room" href=href aria-current=current.then_some("page")
                             aria-label=format!("# {} in {}", section.name, project.name)><span class="appearance-icon" inner_html=section_icon.get_value()></span><span>{section.name.clone()}</span></a></div> }
                     }).collect_view();
                     if !name_matches && sections.is_empty() { return None; }
                     let path = format!("/projects/{}", project.id);
-                    let current = base_path.with_value(|base| base == &path);
+                    let current = route_path() == path;
                     let key = StoredValue::new(format!("minarbot:sidebar-project:{}", project.id));
                     let expanded = RwSignal::new(key.with_value(|key| preference(key).as_deref() != Some("closed")));
                     let searching = !query.is_empty();
@@ -617,7 +639,7 @@ pub(crate) fn WorkspaceShell(
     let monitor = icons.monitor.clone();
     let create_menu = NodeRef::<leptos::html::Details>::new();
     let conversation_creation =
-        conversation_navigation && base_path.with_value(|path| path.starts_with("/agents/"));
+        move || conversation_navigation && route_path().starts_with("/agents/");
     let plus = icons.plus.clone();
     let tabs = [("Agents", "agents", false), ("Projects", "projects", true)]
         .into_iter()
@@ -653,7 +675,7 @@ pub(crate) fn WorkspaceShell(
                         <details class="sidebar-create" node_ref=create_menu>
                             <summary class="k-icon-btn" aria-label="Create new" title="Create new"><span class="appearance-icon" inner_html=plus></span></summary>
                             <div class="k-pop k-menu">
-                                <button type="button" class="k-menu__item" hidden=!conversation_creation on:click=move |_| {
+                                <button type="button" class="k-menu__item" hidden=move || !conversation_creation() on:click=move |_| {
                                     if let Some(menu) = create_menu.get_untracked() { menu.set_open(false); }
                                     if let Ok(event) = web_sys::Event::new("minarbot:new-conversation") {
                                         let _ = window().dispatch_event(&event);
@@ -724,7 +746,7 @@ pub(crate) fn WorkspaceShell(
                     <form class="quick-switcher__search" on:submit=move |event| {
                         event.prevent_default();
                         if let Some(path) = switch_matches.with_untracked(|rows| rows.first().map(|row| row.2.clone())) {
-                            let href = if conversation_navigation { format!("{path}?ui=leptos") } else { path };
+                            let href = path;
                             let _ = window().location().assign(&href);
                         }
                     }>
@@ -737,7 +759,7 @@ pub(crate) fn WorkspaceShell(
                     </form>
                     <nav class="quick-switcher__list" aria-label="Destinations">
                         {move || switch_matches.get().into_iter().map(|(name, group, path)| {
-                            let href = if conversation_navigation { format!("{path}?ui=leptos") } else { path };
+                            let href = path;
                             view! { <a class="quick-switcher__item" href=href><span>{name}<small>{group}</small></span></a> }
                         }).collect_view()}
                         <p class="quick-switcher__empty" role="status" hidden=move || !switch_matches.with(Vec::is_empty)>"No results"</p>

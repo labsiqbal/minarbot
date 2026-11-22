@@ -1,3 +1,8 @@
+import { createSpeechPlayer, voiceKey } from '../shared/speech';
+import { speechPreferenceStore } from '../shared/speech-preference';
+import { messageRanges } from './ui/messageFindRanges';
+import { forwardWheelToTimeline } from './ui/timelineMinimapWheel';
+import { resolveTimelineMinimapPreview } from './ui/timelineMinimapItems';
 import { marked, type Tokens } from 'marked';
 import { markdownLink } from './markdown-link';
 import { splitMarkdownBlocks } from './ui/markdownStreamBlocks';
@@ -188,5 +193,81 @@ function record(state: (value: string) => void, file: (value: File) => void, err
 
 const messageTime = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-export const browserAdapter = { record, messageTime, markdown, markdownBlocks, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
+function findMatches(viewport: HTMLElement, query: string) {
+  const ranges = messageRanges(viewport, query);
+  if ('highlights' in CSS) {
+    const highlights = new Highlight();
+    for (const range of ranges) highlights.add(range);
+    CSS.highlights.set('message-find', highlights);
+  }
+  return ranges;
+}
+
+function selectMatch(viewport: HTMLElement, range: Range | undefined, scroll: boolean) {
+  if ('highlights' in CSS) CSS.highlights.set('message-find-current', new Highlight(...(range ? [range] : [])));
+  if (scroll && range) {
+    const top = parseFloat(getComputedStyle(viewport).scrollPaddingTop);
+    viewport.scrollTop += range.getBoundingClientRect().top - viewport.getBoundingClientRect().top - top - 16;
+  }
+}
+
+function clearMatches() {
+  if ('highlights' in CSS) {
+    CSS.highlights.delete('message-find');
+    CSS.highlights.delete('message-find-current');
+  }
+}
+
+function bindTimelineWheel(rail: HTMLElement, viewport: HTMLElement, navigate: () => void) {
+  const handler = (event: WheelEvent) => {
+    if (event.defaultPrevented || event.ctrlKey || !event.deltaY) return;
+    navigate();
+    forwardWheelToTimeline(event, viewport);
+  };
+  rail.addEventListener('wheel', handler, { passive: false });
+  return () => rail.removeEventListener('wheel', handler);
+}
+
+function minimapPreview(text: string) {
+  return resolveTimelineMinimapPreview({ id: '', rowIndex: 0, userText: null, assistantText: text })?.assistantText ?? '';
+}
+
+function speechPlayback(listener: (enabled: boolean, owner: string, playing: boolean, error: string) => void) {
+  const engine = 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window ? window.speechSynthesis : null;
+  if (!engine) return null;
+  const player = createSpeechPlayer(engine, text => new SpeechSynthesisUtterance(text));
+  const report = () => {
+    const state = player.getSnapshot();
+    listener(speechPreferenceStore.getSnapshot().enabled, state.owner, state.playing, state.error);
+  };
+  const update = player.subscribe(report);
+  const preference = speechPreferenceStore.subscribe(() => { player.stop(); report(); });
+  const hide = () => player.stop();
+  window.addEventListener('pagehide', hide);
+  report();
+  return {
+    play(owner: string, text: string) {
+      const active = player.getSnapshot();
+      if (active.owner === owner && active.playing) { player.stop(owner); return; }
+      const selected = speechPreferenceStore.getSnapshot();
+      if (!selected.enabled) return;
+      try {
+        if (!engine.getVoices().some(voice => voice.localService && voiceKey(voice) === selected.voice)) {
+          listener(true, owner, false, 'Pick a voice in Settings > General.');
+          return;
+        }
+        player.play(owner, text, selected.voice);
+      } catch { listener(true, owner, false, 'Voice unavailable. Pick a voice in Settings > General.'); }
+    },
+    stop(owner: string) { player.stop(owner); },
+    dispose() {
+      update();
+      preference();
+      window.removeEventListener('pagehide', hide);
+      player.stop();
+    },
+  };
+}
+
+export const browserAdapter = { findMatches, selectMatch, clearMatches, minimapPreview, bindTimelineWheel, speechPlayback, record, messageTime, markdown, markdownBlocks, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
   writeClipboard: copyText };

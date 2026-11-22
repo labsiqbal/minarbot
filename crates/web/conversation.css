@@ -1,3 +1,5 @@
+@import "../../app/src/ui/source-control.css";
+@import "../../app/src/SpeechPlayback.css";
 @import "./appearance.css";
 @import "../../app/src/ui/details.css";
 @import "../../app/src/right-panel.css";
@@ -79,3 +81,14 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .message-error > .appearance-icon > svg { flex: none; align-self: flex-start; margin-top: 5px; }
 
 .conversation-panel > .right-panel__header { padding-inline-end: 12px; }
+
+
+.event-reveal { align-self: flex-start; }
+.chat-search-results { padding-inline-start: 20px; overflow-wrap: anywhere; }
+.chat-action-tooltip { position: relative; display: inline-flex; }
+.chat-action-tooltip > .k-tooltip { position: absolute; left: 50%; bottom: calc(100% + 6px); translate: -50% 0; display: none; white-space: nowrap; pointer-events: none; }
+.chat-action-tooltip:is(:hover, :focus-within) > .k-tooltip { display: block; }
+.room-addressed-member { position: relative; min-width: 0; }
+.room-addressed-member__options { position: absolute; inset: auto auto calc(100% + 4px) 0; max-height: 240px; overflow-y: auto; }
+.room-addressed-member__options > button { width: 100%; }
+.room-addressed-member__options > button:is(:focus, :hover) { background: var(--color-bg-hover); }

@@ -182,7 +182,13 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
     let icons = use_context::<Icons>().unwrap_or_default();
     let label = chat.config.with_value(|c| {
         if c.channel {
-            format!("Message #{}", c.name)
+            format!(
+                "Message #{}",
+                c.room
+                    .as_ref()
+                    .and_then(|room| room.section_name.as_deref())
+                    .unwrap_or(&c.name)
+            )
         } else {
             format!(
                 "Message {}",
@@ -303,7 +309,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
             }
         });
     });
-    let stop = RwSignal::new(false);
+    let channel = chat.config.with_value(|config| config.channel);
     let active = Memo::new(move |_| chat.target().map(|run| run.id));
     let value = move || {
         chat.pending
@@ -350,13 +356,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                 <p class="composer__note" hidden=move || !chat.config.with_value(|c| c.archived)>"Archived"</p>
                 <p class="composer__note" hidden=move || chat.config.with_value(|c| c.archived) || chat.can_send()><a class="k-link" href="/settings/providers">"Connect a provider"</a></p>
                 {goal_chip(chat)}
-                <details class="conversation-queue" hidden=move || rows.with(|rows| !rows.iter().any(|turn| turn.status == "queued"))>
-                    <summary>"Queued messages"</summary>
-                    {move || rows.with(|rows| rows.iter().filter(|turn| turn.status == "queued").map(|turn| {
-                        let id = turn.id.clone();
-                        view! { <button type="button" class="panel-row" on:click=move |_| chat.inspect(id.clone())>{turn.text.clone()}</button> }
-                    }).collect_view())}
-                </details>
+                {queue::queued_runs(chat, rows)}
                 <Show when=move || chat.context.with(Option::is_some)>
                 <div class="k-inline">
                     <span role="status">"Reply context attached"</span>
@@ -426,14 +426,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                                 <span class="appearance-icon" inner_html=icons.attach></span>
                             </button>
                         </span>
-                        <select class="k-input" aria-label="Addressed member" hidden=move || !chat.config.with_value(|c| c.channel) || chat.active.with(Vec::is_empty)
-                            disabled=move || chat.locked() on:change=move |event| chat.addressed.set(event_target_value(&event))>
-                            <option value="">"Everyone"</option>
-                            {move || chat.active.get().into_iter().map(|run| {
-                                let name = chat.config.with_value(|c| c.members.iter().find(|m| m.id == run.agent).map(|m| m.name.clone())).unwrap_or(run.agent);
-                                view! { <option value=run.id>{name}</option> }
-                            }).collect_view()}
-                        </select>
+                        {channel.then(|| rooms::addressed_member(chat, icons.chevron.clone()))}
                         <div class="composer__right">
                             <span class="composer__retry" hidden=move || chat.busy.get() || chat.pending.with(Option::is_none)>"Retry send"</span>
                             {recording_control(chat, recording, uploading)}
@@ -444,13 +437,9 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                                 <span class="step__spin" aria-hidden="true" hidden=move || !chat.busy.get()></span>
                                 <span class="appearance-icon" inner_html=icons.send hidden=chat.busy></span>
                             </button>
-                            <button type="button" class="composer__cta composer__cta--stop" aria-label="Stop" title="Stop"
-                                hidden=move || active.with(Option::is_none) || chat.config.with_value(|c| c.archived)
-                                disabled=stop on:click=move |_| {
-                                    if let Some(id) = active.get_untracked().filter(|id| protocol::id(id)) {
-                                        mutate(format!("{}/turns/{id}/cancel", chat.base()), json!({}), stop, chat.error);
-                                    }
-                                }><span class="appearance-icon" inner_html=icons.stop></span></button>
+                            {if channel { rooms::stop(chat, rows, icons.stop.clone()).into_any() } else {
+                                view! { <For each=move || active.get() key=String::clone children=move |id| queue::cancel_button(chat, id, true) /> }.into_any()
+                            }}
                         </div>
                     </div>
                 </form>
@@ -466,6 +455,9 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                 </form>
             </dialog>
             {mode_form(chat, mode_dialog, mode, prompt, interval, mode_pending)}
+            <p class="composer__foot" hidden=move || chat.focus.with(String::is_empty) && chat.before().is_none()>
+                {move || if chat.focus.with(String::is_empty) { "Older messages · 100 per page" } else if channel { "Task family shown" } else { "Selected message shown" }}
+            </p>
         </footer>
     }
 }
@@ -633,7 +625,7 @@ pub fn mutate(path: String, body: Value, busy: RwSignal<bool>, error: RwSignal<S
     mutate_then(path, body, busy, error, || {});
 }
 
-fn mutate_then(
+pub(super) fn mutate_then(
     path: String,
     mut body: Value,
     busy: RwSignal<bool>,
@@ -693,11 +685,11 @@ fn mutate_then(
     });
 }
 
-pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
+pub fn turn_controls(chat: Chat, row: RwSignal<Turn>, skip: bool) -> impl IntoView {
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let confirm = NodeRef::<leptos::html::Dialog>::new();
-    let action = RwSignal::new("");
+    let cancel = NodeRef::<leptos::html::Dialog>::new();
     let scope = StoredValue::new(format!(
         "{}/turns/{}",
         chat.base(),
@@ -712,6 +704,8 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
         row.with(|turn| {
             turn.active()
                 && !turn.waiting_for_answer()
+                && turn.computer_wait.is_none()
+                && turn.dispatch_mode.as_deref() != Some("steer")
                 && turn.paused == 0
                 && !turn.approvals.iter().any(|approval| {
                     matches!(approval["state"].as_str(), Some("approval" | "ready"))
@@ -721,6 +715,9 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let resumable = move || {
         row.with(|turn| {
             !turn.needs_you()
+                && turn.computer_wait.is_none()
+                && !matches!(turn.status.as_str(), "done" | "cancelled")
+                && turn.dispatch_mode.as_deref() != Some("steer")
                 && (turn.paused != 0 || matches!(turn.status.as_str(), "failed" | "interrupted"))
         })
     };
@@ -734,6 +731,22 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
             )
         })
     };
+    let recover = move || {
+        let base = scope.get_value();
+        ["pause", "resume", "reassign", "cancel"]
+            .into_iter()
+            .find_map(|action| {
+                let path = format!("{base}/{action}");
+                let raw = saved(&format!("minarbot:leptos-action:{path}"))?;
+                let body = serde_json::from_str::<Value>(&raw).ok()?;
+                body["id"].as_str().filter(|id| protocol::id(id))?;
+                Some((path, body))
+            })
+    };
+    let retry = Memo::new(move |_| {
+        busy.track();
+        recover().is_some()
+    });
     let close = move || {
         if let Some(menu) = menu.get_untracked() {
             menu.set_open(false);
@@ -745,46 +758,63 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
         {move || approvals.get().into_iter().map(|a| approval(chat, scope.get_value(), a, false)).collect_view()}
         {move || harness.get().into_iter().map(|a| approval(chat, scope.get_value(), a, true)).collect_view()}
         </div>
-        <div class="turn-controls" role="group" aria-label="Message actions" hidden=move || !finished() && !available() && error.with(String::is_empty)>
+        <div class="turn-controls" role="group" aria-label="Message actions" hidden=move || !finished() && !available() && !retry.get() && error.with(String::is_empty)>
             {answer_actions(chat, row)}
-            <button type="button" class="k-btn k-btn--sm k-btn--ghost" hidden=move || !available() || !resumable() disabled=busy
-                on:click=move |_| { action.set("resume"); dialog_open(confirm); }>
+            {message_actions::checkpoint(chat, row)}
+            {message_actions::listen(row)}
+            <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=busy hidden=move || !retry.get()
+                on:click=move |_| { if let Some((path, body)) = recover() { mutate_then(path, body, busy, error, move || chat.refresh()); } }>"Retry control"</button>
+            <button type="button" class="k-btn k-btn--sm k-btn--ghost" hidden=move || !available() || !resumable() || retry.get() disabled=busy
+                on:click=move |_| dialog_open(confirm)>
                 {move || if row.with(|turn| turn.status == "failed") { "Retry" } else { "Resume" }}
             </button>
-            <details class="chat-pilot-menu turn-task-controls" node_ref=menu hidden=move || !available()
-                on:keydown=move |event| { if event.key() == "Escape" { close(); } }>
-                <summary class=move || if resumable() { "k-icon-btn" } else { "k-btn k-btn--sm k-btn--ghost" }
-                    aria-label=move || if resumable() { "Recovery actions" } else { "Task actions" }>
-                    <span hidden=resumable>"Task actions"</span>
-                    <span class="appearance-icon" hidden=resumable inner_html=icons.chevron></span>
-                    <span class="appearance-icon" hidden=move || !resumable() inner_html=icons.more></span>
+            <details class="chat-pilot-menu turn-task-controls" node_ref=menu hidden=move || !available() || retry.get()
+                on:keydown=move |event| {
+                    if event.key() == "Escape" {
+                        event.prevent_default(); close();
+                        if let Some(summary) = menu.get_untracked().and_then(|menu| menu.query_selector("summary").ok().flatten())
+                            .and_then(|summary| summary.dyn_into::<web_sys::HtmlElement>().ok()) { let _ = summary.focus(); }
+                    }
+                }>
+                <summary class=move || if resumable() || skip { "k-icon-btn" } else { "k-btn k-btn--sm k-btn--ghost" }
+                    aria-label=move || if resumable() { "Recovery actions" } else if skip { "Work log actions" } else { "Task actions" }>
+                    <span hidden=move || skip || resumable()>"Task actions"</span>
+                    <span class="appearance-icon" hidden=move || skip || resumable() inner_html=icons.chevron></span>
+                    <span class="appearance-icon" hidden=move || !skip && !resumable() inner_html=icons.more></span>
                 </summary>
-                <div class="k-pop task-actions">
-                    <button type="button" class="k-menu__item" disabled=busy hidden=move || !available()
-                        on:click=move |_| { close(); action.set("cancel"); dialog_open(confirm); }>
-                        {move || if resumable() { "Dismiss" } else { "Stop" }}
-                    </button>
-                    <button type="button" class="k-menu__item" disabled=busy hidden=move || !active()
+                <div class="k-pop task-actions" role="menu">
+                    <button type="button" class="k-menu__item" role="menuitem" disabled=busy hidden=move || !available() || !skip && !resumable()
                         on:click=move |_| {
                             close();
-                            mutate(format!("{}/pause", scope.get_value()), json!({"revision": row.with_untracked(|turn| turn.revision)}), busy, error);
+                            mutate_then(format!("{}/cancel", scope.get_value()), json!({ "revision": row.with_untracked(|turn| turn.revision), "acknowledgeUncertain": false }), busy, error, move || chat.refresh());
+                        }>
+                        {move || if resumable() { "Dismiss" } else { "Skip" }}
+                    </button>
+                    <button type="button" class="k-menu__item" role="menuitem" disabled=busy hidden=move || !active()
+                        on:click=move |_| {
+                            close();
+                            mutate_then(format!("{}/pause", scope.get_value()), json!({"revision": row.with_untracked(|turn| turn.revision)}), busy, error, move || chat.refresh());
                         }>"Pause"</button>
                     <button type="button" class="k-menu__item" disabled=busy hidden=move || !resumable()
-                        on:click=move |_| { close(); action.set("resume"); dialog_open(confirm); }>"Resume task"</button>
+                        on:click=move |_| { close(); dialog_open(confirm); }>"Resume task"</button>
                 </div>
             </details>
             {move || (!error.with(String::is_empty)).then(|| view! { <p role="alert" class="message-error">{error}</p> })}
-            <dialog node_ref=confirm class="conversation-dialog" aria-label=move || if action.get() == "resume" { "Resume task?" } else { "Stop this task?" }>
-                <form method="dialog" class="k-stack" on:submit=move |event: leptos::ev::SubmitEvent| {
-                    let value = event.submitter().and_then(|element| element.get_attribute("value"));
-                    if value.as_deref() != Some("confirm") { return }
-                    let action = action.get_untracked();
-                    let body = if action == "resume" { json!({"revision": row.with_untracked(|t| t.revision), "acknowledgeUncertain": true}) } else { json!({}) };
-                    mutate(format!("{}/{action}", scope.get_value()), body, busy, error);
-                }>
-                    <p>{move || if action.get() == "resume" { "Check previous results. Resuming may resend unconfirmed steps." } else { "Steps already sent may have taken effect." }}</p>
-                    <div class="k-row-actions"><button class="k-btn k-btn--sm k-btn--secondary" formnovalidate>"Cancel"</button>
-                        <button class="k-btn k-btn--sm k-btn--primary" value="confirm">{move || if action.get() == "resume" { "Resume task" } else { "Stop task" }}</button></div>
+            {resume_dialog(chat, row, scope, confirm, busy, error)}
+            <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=busy
+                hidden=move || skip || chat.config.with_value(|config| config.archived) || row.with(|turn| turn.status != "queued" || chat.queued(turn))
+                on:click=move |_| dialog_open(cancel)>
+                {move || row.with(|turn| if turn.waiting_for.is_some() { "Cancel task and delegation" } else if turn.paused != 0 || turn.needs_you() { "Cancel task" } else { "Cancel queued task" })}
+            </button>
+            <dialog class="conversation-dialog" node_ref=cancel aria-label="Stop this task?">
+                <form method="dialog" class="k-stack">
+                    <p>"Steps already sent may have taken effect."</p>
+                    <div class="k-row-actions">
+                        <button type="submit" class="k-btn k-btn--secondary">"Cancel"</button>
+                        <button type="submit" class="k-btn k-btn--danger" on:click=move |_| {
+                            mutate_then(format!("{}/cancel", scope.get_value()), json!({}), busy, error, move || chat.refresh());
+                        }>"Stop task"</button>
+                    </div>
                 </form>
             </dialog>
         </div>
@@ -1037,6 +1067,72 @@ pub(super) fn edit_dialog(
                     </button>
                 </div>
             </form>
+        </dialog>
+    }
+}
+
+fn resume_dialog(
+    chat: Chat,
+    row: RwSignal<Turn>,
+    scope: StoredValue<String>,
+    dialog: NodeRef<leptos::html::Dialog>,
+    busy: RwSignal<bool>,
+    error: RwSignal<String>,
+) -> impl IntoView {
+    let checked = RwSignal::new(false);
+    let recipient = RwSignal::new(String::new());
+    let members = chat.config.with_value(|config| config.members.clone());
+    let has_members = !members.is_empty();
+    let disabled =
+        move || !checked.get() || busy.get() || chat.config.with_value(|config| config.archived);
+    let submit = move |kind: &str| {
+        if disabled() {
+            return;
+        }
+        let mut command = json!({"revision": row.with_untracked(|turn| turn.revision), "acknowledgeUncertain": true});
+        if kind == "reassign" {
+            let id = recipient.get_untracked();
+            if !protocol::id(&id) {
+                return;
+            }
+            command["recipient"] = json!(id);
+        }
+        mutate_then(
+            format!("{}/{kind}", scope.get_value()),
+            command,
+            busy,
+            error,
+            move || {
+                if let Some(dialog) = dialog.get_untracked() {
+                    dialog.close();
+                }
+                chat.refresh();
+            },
+        );
+    };
+    view! {
+        <dialog node_ref=dialog aria-label="Resume or reassign" class="k-dialog k-dialog--md workspace-dialog"
+            on:close=move |_| { checked.set(false); recipient.set(String::new()); }
+            on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
+            <div class="k-dialog__head"><h2 class="k-dialog__title">"Resume or reassign"</h2></div>
+            <div class="k-dialog__body k-stack">
+                <p class="k-field__hint">"Check previous results and effects in the provider. Resuming may resend steps that are not confirmed yet."</p>
+                <label class="k-check"><input type="checkbox" prop:checked=checked disabled=busy on:change=move |event| checked.set(event_target_checked(&event)) />
+                    "I have checked previous results and effects"</label>
+                <div><button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=disabled on:click=move |_| submit("resume")>"Resume task"</button></div>
+                <div class="k-stack" hidden=move || !has_members || row.with(|turn| turn.approvals.iter().any(|approval| approval["state"] == "ready"))>
+                    <label class="k-field"><span class="k-field__label">"New owner"</span>
+                        <select class="k-input" prop:value=recipient disabled=busy on:change=move |event| recipient.set(event_target_value(&event))>
+                            <option value="">"Select agent"</option>
+                            {members.into_iter().map(|member| view! { <option value=member.id>{member.name}</option> }).collect_view()}
+                        </select>
+                    </label>
+                    <div><button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || disabled() || recipient.with(String::is_empty)
+                        on:click=move |_| submit("reassign")>"Reassign task"</button></div>
+                </div>
+                <p class="k-field__error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
+            </div>
+            <div class="k-dialog__foot"><form method="dialog"><button type="submit" class="k-btn k-btn--secondary" disabled=busy>"Cancel"</button></form></div>
         </dialog>
     }
 }

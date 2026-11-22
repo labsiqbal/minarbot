@@ -169,6 +169,8 @@ pub fn mount_conversation() -> Result<(), JsValue> {
     mount_to(root, move || {
         let colors = StoredValue::new(config.colors);
         provide_context(config.conversation_icons);
+        let search = window().location().search().unwrap_or_default();
+        provide_context(conversation::Navigation(RwSignal::new(format!("{path}{search}"))));
         view! {
             <shell::WorkspaceShell base_path=path colors=colors icons=config.workspace_icons conversation_navigation=true>
                 {conversation::standalone()}

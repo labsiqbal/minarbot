@@ -43,9 +43,10 @@ when `MINARBOT_APPEARANCE_CLIENT=leptos`. First-run setup, project overview,
 the Rust-rendered `/pair` form, `/routines`, `/workflows`, `/calendar`, and the
 project Calendar tab also use Leptos. The three automation routes share a mounted
 workspace shell and load the `workflows` bundle. The project Calendar link loads
-the same bundle. Setup and Settings use `appearance`, and the #63 agent, named
-conversation and room pilot uses `conversation` when its URL includes
-`?ui=leptos`. Settings return links and browser history retain the selected route.
+the same bundle. Setup and Settings use `appearance`. After setup, `/`, agent
+Main chat, named and project conversations, and rooms use `conversation`.
+Conversation links reuse the shell and browser history. Settings return links
+retain the selected route. Add `?ui=react` to open the React client.
 React remains the default for the staged rollout in #67.
 
 ## React inventory for #67
@@ -56,7 +57,6 @@ issue.
 
 | Issue group | React screens and dialogs | React sources |
 | --- | --- | --- |
-| Conversation routing and remaining chat controls | Post-setup `/`, agent Main chat, named and project conversations, and rooms use React on ordinary links. The explicit #63 pilot covers the core transcript, composer, rich replies, queue, approvals, Goals/Loops, chat list and Computer panel. Still on the React path are timeline minimap, historical paging and task-family navigation, speech playback, chat history search across conversations, fork history/origin, checkpoint restore, signed event connection, room management and the remaining dispatch controls. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `ui/AgentConversation.tsx`, `ui/ChatPrimitives.tsx`, `ui/MessageFind.tsx`, `ui/TimelineMinimap.tsx`, `ui/TurnActivity.tsx`, `ui/RunControls.tsx`, `SourceControl.tsx`, `SpeechPlayback.tsx`, `EventConnection.tsx` |
 | Agent lifecycle and profile | New agent, Draft with AI, full Profile, Model and Advanced tabs, avatar and look editor, availability/hidden agent restore and deletion, model/provider/runtime and access controls, working folder and Computer settings, Sites and template import/export. The #63 pilot has a basic profile form. | `App.tsx`, `AgentProfileDialog.tsx`, `AgentActions.tsx`, `AgentSidebar.tsx`, `AgentAvatar.tsx`, `AgentVisibility.tsx`, `AgentFolderSettings.tsx`, `AgentComputerSettings.tsx`, `SitesPanel.tsx`, `AgentTemplateImport.tsx` |
 | Memory and history summary | Agent and section Memory, including Notes, Learned and Standing questions, search, source links, edit, pin, forget and undo. History summary and compaction controls from chat and profile. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
 | Workspace search and Needs you | Quick switcher search over conversations, hidden agents and remote agents, plus restore and create actions. Needs you routes pending questions/approvals to exact conversations and focuses their input. Leptos has basic directory search, a quick switcher, keyboard help and sidebar badges. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useQuickSwitcher.ts`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx`, `QuestionCard.tsx`, `ApprovalCard.tsx`, `HarnessApprovalCard.tsx`, `HelpPage.tsx` |
@@ -73,6 +73,11 @@ restores the run and focuses the step link. The embedded step conversation in
 React's workflow panel remains listed under Agent management.
 
 ## Verify
+
+Run `node --experimental-strip-types app/test-support/ui-smoke/conversation-controls-parity-smoke.mjs <output-directory>`
+after packaging Leptos, with `MINARBOT_RUST_BINARY` pointing at the built server.
+The smoke compares navigation, message history, and chat controls in both
+themes at desktop and narrow widths against the same disposable server.
 
 Install the UI smoke dependencies under `app/test-support/ui-smoke` and install the pinned Playwright Chromium. Run `node app/test-support/ui-smoke/appearance-smoke.mjs` with `MINARBOT_RUST_BINARY` pointing at the built server. It restarts a disposable loopback server on the same origin to verify both selectors, General API and keyboard parity, appearance persistence, and rollback.
 

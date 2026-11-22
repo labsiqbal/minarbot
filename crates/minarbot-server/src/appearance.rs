@@ -15,10 +15,16 @@ pub const CONVERSATION_DOCUMENT: &str = "_leptos/conversation.html";
 
 pub fn conversation_route(path: &str, query: &str) -> bool {
     crate::navigation(path)
-        && (path.starts_with("/rooms/")
+        && (path == "/"
+            || path.starts_with("/rooms/")
             || path.starts_with("/agents/") && !path.ends_with("/inbox"))
-        && form_urlencoded::parse(query.as_bytes())
-            .any(|(key, value)| key == "ui" && value == "leptos")
+        && !form_urlencoded::parse(query.as_bytes())
+            .any(|(key, _)| matches!(key.as_ref(), "result" | "computer"))
+        && (!path
+            .strip_prefix("/agents/")
+            .is_some_and(|id| id.eq_ignore_ascii_case(crate::mcp::guide::ID))
+            || form_urlencoded::parse(query.as_bytes())
+                .any(|(key, value)| key == "ui" && value == "leptos"))
 }
 
 pub fn conversation_document(html: &str, path: &str, query: &str) -> String {

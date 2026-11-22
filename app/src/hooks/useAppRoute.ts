@@ -6,7 +6,7 @@ const locationPath = () => window.location.pathname + window.location.search;
 
 function ownedPath(route: AppRoute) {
   const path = routePath(route);
-  if ((!route.settings && !route.project && !route.view) || !new URLSearchParams(window.location.search).getAll('ui').includes('react')) return path;
+  if (!new URLSearchParams(window.location.search).getAll('ui').includes('react')) return path;
   return path + (path.includes('?') ? '&' : '?') + 'ui=react';
 }
 
@@ -37,7 +37,9 @@ export function useAppRoute() {
     const settings = value.settings && current.current.settings !== value.settings;
     const project = !value.settings && !value.result && !!value.project && current.current.project !== value.project;
     const automation = !value.settings && !!value.view && current.current.view !== value.view;
-    if ((settings || project || automation) && document.querySelector('meta[name="minarbot-appearance-client"][content="leptos"]')) {
+    const conversation = !value.settings && !value.result && !value.inbox && (value.room ||
+      value.agent && value.agent !== '00000000-0000-4000-8000-000000000005');
+    if (path !== locationPath() && (settings || project || automation || conversation) && document.querySelector('meta[name="minarbot-appearance-client"][content="leptos"]')) {
       window.location[replace ? 'replace' : 'assign'](path);
       return;
     }
