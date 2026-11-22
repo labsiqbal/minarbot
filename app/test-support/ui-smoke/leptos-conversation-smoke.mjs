@@ -249,11 +249,7 @@ try {
   assert.deepEqual(errors, []);
   if (samples) {
     console.log('Warm composer latency (ms)', JSON.stringify(statistics));
-    assert(
-      statistics.leptos.p95 <= statistics.react.p95 * 1.1
-        || statistics.leptos.p95 <= statistics.react.p95 + 20,
-      'Warm Leptos composer p95 exceeds the 10% budget',
-    );
+    assert(statistics.leptos.p95 <= statistics.react.p95 * 1.1, 'Warm Leptos composer p95 exceeds the 10% budget');
   }
   console.log('Conversation pilot passed');
 } finally {
