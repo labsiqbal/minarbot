@@ -88,8 +88,10 @@
 .connection-select .k-select__chev { position: absolute; right: 9px; top: 50%; translate: 0 -50%; pointer-events: none; }
 .connection-select .k-select__chev svg { width: 14px; height: 14px; }
 .connection-checkbox { accent-color: var(--color-brand); }
-.connection-disclosure > summary { list-style: none; }
+.legacy .connection-disclosure > summary { display: inline-flex; list-style: none; }
+.connection-disclosure > summary::before { content: none; }
 .connection-disclosure > summary::-webkit-details-marker { display: none; }
+.connection-disclosure .k-collapsible__chev svg { width: 15px; height: 15px; }
 .connection-disclosure[open] > summary .k-collapsible__chev { transform: rotate(180deg); }
 .connection-menu { margin: 0; inset: 0 auto auto 0; color: var(--color-ink); }
 .connection-menu > button { border: 0; background: transparent; width: 100%; text-align: left; }

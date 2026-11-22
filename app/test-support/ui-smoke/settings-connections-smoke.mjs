@@ -242,7 +242,7 @@ async function exercise(page, slug) {
     case 'craft-anything': {
       const access = page.getByRole('switch', { name: 'Craft Anything access for Fixture agent' });
       await access.press('Space');
-      await page.locator('[role=switch][aria-label="Craft Anything access for Fixture agent"][aria-checked=true]').waitFor();
+      await access.and(page.locator('[aria-checked=true]')).locator('.k-switch__thumb[data-state=checked]').waitFor();
       break;
     }
   }
