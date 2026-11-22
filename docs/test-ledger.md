@@ -101,7 +101,13 @@ reruns on the pinned `df79baf` baseline used the same production source.
 | `routine-tools.test.ts` | Loopback provider could not be reached. | 1 passed. |
 | `rust-routes.test.ts` | History search route absent from frozen inventory. | Same failure. |
 | `schema.test.ts` | Canonical and local schema inventories differ from fixtures. | Same 2 failures, 1 passed. |
-| `updates.test.ts` | Native trial lost its launcher socket. | Earlier main run cancelled the same case at its deadline. |
+| `updates.test.ts` | Native trial lost its launcher socket with `ENOENT`. | Same `ENOENT`. The isolated branch rerun also failed with `ENOENT` and passed the other six cases. |
+
+The native update diagnostic logged `Permission denied (os error 13)` for the
+intentionally non-executable candidate, then `Invalid update snapshot.` and
+`Snapshot restore failed. Server remains stopped.` The launcher suite passes
+with its synthetic database. The production-database rollback case remains in
+Node and needs a launcher or snapshot follow-up.
 
 ### Batch A - server HTTP, auth, storage, automation, harness, connectors
 
