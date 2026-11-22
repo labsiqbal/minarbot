@@ -65,13 +65,14 @@ async function verifyCraft(downloadRelease: boolean) {
     await request(path, { id: turn, text: 'Check Craft Anything.' }, 202);
     await waitForTurn(row => row.status === 'running');
     const session = app.mcpServer.mintAgentSession({ agent, turn, scopes: ['orchestration'], ttlMs: 180_000 });
-    async function rpc(method: string, params: object = {}) {
+    async function rpc(method: string, params: object = {}, expected = 200) {
       const response = await fetch(app.origin + '/mcp', {
         method: 'POST', headers: { ...headers, Authorization: `Bearer ${session.token}` },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
       });
-      assert.equal(response.status, 200, await response.clone().text());
-      return (await response.json()).result;
+      assert.equal(response.status, expected, await response.clone().text());
+      const payload = await response.json();
+      return expected === 200 ? payload.result : payload;
     }
     const exposed = async () => (await rpc('tools/list')).tools.map((item: { name: string }) => item.name);
     const list = (args: object) => rpc('tools/call', { name: 'list_craft_tools', arguments: args });
@@ -90,7 +91,8 @@ async function verifyCraft(downloadRelease: boolean) {
     assert.deepEqual((await request(settings + '/grant', { agent, enabled: true })).agents, [agent]);
     assert((await exposed()).includes('list_craft_tools'));
     assert((await exposed()).includes('call_craft_tool'));
-    assert.match(JSON.stringify(await list({ deep: true })), /Confirm ownership or permission/);
+    assert.equal((await rpc('tools/call', { name: 'list_craft_tools', arguments: { deep: true } }, 403)).error,
+      'MCP authorization failed.');
     const input = { file_path: 'draft.txt' };
     for (const decision of ['deny', 'allow']) {
       const pending = call('core_action_approve', { tool_name: 'Write', input });
