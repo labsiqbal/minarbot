@@ -274,12 +274,15 @@ async fn static_ui(
     let leptos_document = state.config.dist.join(appearance::DOCUMENT);
     let pilot = spa
         && state.config.appearance_client == config::AppearanceClient::Leptos
+        && !appearance::react_override(query)
         && tokio::fs::try_exists(&leptos_document)
             .await
             .unwrap_or(false);
-    let leptos_page = pilot && path == appearance::ROUTE && !appearance::react_override(query);
+    let leptos_page = pilot
+        .then(|| appearance::SettingsRoute::from_path(path))
+        .flatten();
     let file = state.config.dist.join(if spa {
-        if leptos_page {
+        if leptos_page.is_some() {
             appearance::DOCUMENT
         } else {
             "index.html"
@@ -310,8 +313,9 @@ async fn static_ui(
         });
     };
     let mut policy = None;
-    if leptos_page {
-        bytes = appearance::document(&String::from_utf8_lossy(&bytes), query).into_bytes();
+    if let Some(route) = leptos_page {
+        bytes = appearance::document(&String::from_utf8_lossy(&bytes), path, route.title(), query)
+            .into_bytes();
         policy = Some(POLICY.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'"));
     } else if spa {
         let html = String::from_utf8_lossy(&bytes);
@@ -416,6 +420,7 @@ fn navigation(path: &str) -> bool {
             "machines",
             "devices",
             "computer",
+            "craft-anything",
             "updates",
             "usage",
             "data",

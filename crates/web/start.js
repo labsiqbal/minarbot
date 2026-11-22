@@ -1,6 +1,7 @@
 import init, { mount_appearance } from './appearance.js';
 
 const status = document.getElementById('appearance-startup');
+const title = document.querySelector('#appearance-fallback h1').textContent;
 let ready = false;
 
 for (const cache of ['default', 'reload']) {
@@ -11,7 +12,7 @@ for (const cache of ['default', 'reload']) {
     ready = true;
     break;
   } catch {
-    status.textContent = 'Retrying Appearance…';
+    status.textContent = `Retrying ${title}…`;
   }
 }
 
@@ -24,4 +25,4 @@ if (ready) {
     ready = false;
   }
 }
-if (!ready) status.textContent = 'Appearance could not load. Open standard Appearance to continue.';
+if (!ready) status.textContent = `${title} could not load. Open standard ${title} to continue.`;
