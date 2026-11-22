@@ -105,9 +105,9 @@ reruns on the pinned `df79baf` baseline used the same production source.
 
 The native update diagnostic logged `Permission denied (os error 13)` for the
 intentionally non-executable candidate, then `Invalid update snapshot.` and
-`Snapshot restore failed. Server remains stopped.` The launcher suite passes
-with its synthetic database. The production-database rollback case remains in
-Node and needs a launcher or snapshot follow-up.
+`Snapshot restore failed. Server remains stopped.` The synthetic launcher
+tests passed. #68 fixed the bundled SQLite read-only FTS5 check and moved
+production-database rollback coverage to Rust.
 
 ### Batch A - server HTTP, auth, storage, automation, harness, connectors
 
@@ -143,7 +143,7 @@ The Rust cases above use `crates/minarbot-server/tests/support/server.rs` and `s
 
 ### Batch B - launcher
 
-Rust integration file `crates/minarbot-launcher/tests/launcher.rs` covers eight cases from `app/launcher.test.ts` and five from `app/updates.test.ts`.
+Rust integration file `crates/minarbot-launcher/tests/launcher.rs` covers eight cases from `app/launcher.test.ts` and six from `app/updates.test.ts`.
 
 | Node case | Rust case | Matched assertions |
 | --- | --- | --- |
@@ -160,6 +160,7 @@ Rust integration file `crates/minarbot-launcher/tests/launcher.rs` covers eight 
 | `updates.test.ts` - launcher exit candidate rolls back release and original DB snapshot | `exited_candidate_rolls_back` | Candidate exits after writing damage, reselects original release and restores original data. |
 | `updates.test.ts` - launcher refuse candidate rolls back release and original DB snapshot | `refused_candidate_rolls_back_with_diagnostic` | Startup refusal restores data/current and preserves the full data-marker error. |
 | `updates.test.ts` - interrupted trial recovers immutable snapshot before restarting previous release | `interrupted_trial_restores_snapshot_before_relaunch` | Verifies damage while trial runs, SIGKILL, closed listener and restored snapshot on restart. |
+| `updates.test.ts` - Rust launcher trials native Rust server, commits over socket, and rolls back failed health | `native_trial_commits_and_restores_feature_data` | Checks native socket commit, clean foreign keys and restored feature data after a failed trial. Workspace tests build both binaries. |
 
 ### Retained Node coverage and reasons
 
@@ -169,7 +170,7 @@ Rust integration file `crates/minarbot-launcher/tests/launcher.rs` covers eight 
 | `rust-data.test.ts` | 3 | Full seeded read snapshots, FK rollback and external cleanup, canonical project ownership and receipts. |
 | `automation-migrations.test.ts` | 3 | Legacy elapsed interval bytes, canonical schedule binding and frozen receipt/sync compatibility. |
 | `rust-data-gaps.test.ts` | 5 | Cross-language invitation ciphertext, sync cursors, decoded pixels, UTF-16 ranges and checkpoint binding grants. |
-| `updates.test.ts` | 7 | xtask release construction, peer archive/hash and token custody, real production server in launcher trials. The real release build case remains opt-in via `MINARBOT_UPDATE_IT=1`. |
+| `updates.test.ts` | 6 | xtask release construction, peer archive/hash and token custody, and server trial admission gates. The real release build case remains opt-in via `MINARBOT_UPDATE_IT=1`. |
 | `install.test.ts` | 6 | Signed installer handoff, token hashing and expiry, pairing admission and shell install rollback. |
 | `rust-harness.test.ts` | 3 | Gemini mise trust on execution, ACP/Pi model and approval messages, MCP stdio and warm p95. |
 | `rust-connectors.test.ts` | 13 | Composio approval/revocation and uncertain writes. Slack/Telegram journal recovery, WebSocket/polling, uploads, workflow delivery and receipts. |

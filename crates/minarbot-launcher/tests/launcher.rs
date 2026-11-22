@@ -119,7 +119,7 @@ impl Fixture {
         files::durable(&self.config, &serde_json::to_vec(&self.settings)?)
     }
 
-    fn publish(&self, version: &str, mode: &str) -> Result<Release> {
+    fn release(&self, version: &str) -> Result<Release> {
         let id = format!("{version}-12345678");
         let path = self.releases.join(&id);
         fs::create_dir_all(path.join("bin"))?;
@@ -127,17 +127,21 @@ impl Fixture {
             path.join("package.json"),
             serde_json::to_vec(&json!({"version":version,"type":"module"}))?,
         )?;
-        compile(
-            "contract.rs",
-            &path.join("bin/minarbot-server"),
-            version,
-            mode,
-        )?;
-        let release = Release {
+        Ok(Release {
             id,
             version: version.into(),
             path,
-        };
+        })
+    }
+
+    fn publish(&self, version: &str, mode: &str) -> Result<Release> {
+        let release = self.release(version)?;
+        compile(
+            "contract.rs",
+            &release.path.join("bin/minarbot-server"),
+            version,
+            mode,
+        )?;
         release.seal()?;
         Ok(release)
     }
@@ -616,6 +620,158 @@ async fn exited_candidate_rolls_back() -> Result<()> {
 #[tokio::test]
 async fn refused_candidate_rolls_back_with_diagnostic() -> Result<()> {
     assert_candidate_rolls_back("refuse").await
+}
+
+async fn apply_native(f: &Fixture, release: &Release) -> Result<String> {
+    let mut feed = files::json(&release.path.join("release.json"))?;
+    feed["commit"] = json!("1234567812345678123456781234567812345678");
+    feed["created"] = json!("2026-01-01T00:00:00Z");
+    feed["node"] = json!("fixture");
+    feed["notes"] = json!("Native launcher trial");
+    fs::create_dir_all(f.releases.join("feed"))?;
+    fs::write(
+        f.releases.join("feed/latest.json"),
+        serde_json::to_vec(&feed)?,
+    )?;
+    let id = Uuid::new_v4().to_string();
+    let origin = format!("http://127.0.0.1:{}", f.port);
+    let response = f
+        .client
+        .post(format!("{origin}/api/updates/apply"))
+        .header("Origin", &origin)
+        .timeout(WAIT)
+        .json(&json!({"id":id,"version":release.version,"source":"Local feed"}))
+        .send()
+        .await?;
+    let status = response.status();
+    let body: Value = response.json().await?;
+    assert_eq!(status, reqwest::StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body, json!({"accepted":true,"id":id}));
+    Ok(id)
+}
+
+fn assert_foreign_keys(db: &Connection) -> Result<()> {
+    let mut check = db.prepare("PRAGMA foreign_key_check")?;
+    let mut rows = check.query([])?;
+    if let Some(row) = rows.next()? {
+        return Err(format!(
+            "FK violation in {} at row {:?} referencing {}",
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<i64>>(1)?,
+            row.get::<_, String>(2)?
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn native_trial_commits_and_restores_feature_data() -> Result<()> {
+    // Workspace tests build both binaries. The launcher unit tests cover
+    // FTS5 snapshot validation when only the launcher package is built.
+    let server = Path::new(BIN).with_file_name("minarbot-server");
+    if !server.is_file() {
+        eprintln!("Build minarbot-server or run workspace tests for native trial coverage.");
+        return Ok(());
+    }
+    let f = Fixture::new(false)?;
+    let database = f.data.join(DATABASE_NAME);
+    minarbot_launcher::data_format::mark(&Connection::open(&database)?)?;
+
+    let first = f.release("1.0.0")?;
+    let first_binary = first.path.join("bin/minarbot-server");
+    let strip_debug = if cfg!(target_os = "macos") {
+        "-S"
+    } else {
+        "--strip-debug"
+    };
+    let stripped = std::process::Command::new("strip")
+        .args([strip_debug, "-o"])
+        .arg(&first_binary)
+        .arg(server)
+        .output()?;
+    assert!(
+        stripped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stripped.stderr)
+    );
+    first.seal()?;
+    files::select(&f.releases, "current", &first.id)?;
+    let mut running = f.start(BIN)?;
+    f.ready(&first.version).await?;
+
+    let second = f.release("1.0.1")?;
+    fs::copy(&first_binary, second.path.join("bin/minarbot-server"))?;
+    second.seal()?;
+    let committed = apply_native(&f, &second).await?;
+    let updated = f.outcome("done").await?;
+    assert_eq!(updated["current"], second.id);
+    assert_eq!(updated["lastAttempt"]["id"], committed);
+    let trial = control(&f.socket(), &json!({"type":"trial","id":committed})).await?;
+    assert_eq!(trial["committed"], true);
+    f.ready(&second.version).await?;
+    until(async || {
+        let response = f
+            .client
+            .get(format!("http://127.0.0.1:{}/api/agents", f.port))
+            .send()
+            .await;
+        Ok(response
+            .is_ok_and(|response| response.status().is_success())
+            .then_some(()))
+    })
+    .await?;
+
+    {
+        let mut db = Connection::open(&database)?;
+        db.pragma_update(None, "foreign_keys", true)?;
+        let workload = db.transaction()?;
+        workload.execute_batch(include_str!("fixtures/rollback.sql"))?;
+        assert_foreign_keys(&workload)?;
+        workload.commit()?;
+    }
+    let broken = f.publish("1.0.2", "exit")?;
+    let failed = apply_native(&f, &broken).await?;
+    let rollback = tokio::select! {
+        result = f.outcome("rolled-back") => result?,
+        status = running.wait() => {
+            let mut log = String::new();
+            running.stderr.as_mut().ok_or("missing launcher stderr")?.read_to_string(&mut log).await?;
+            return Err(format!("launcher exited ({})\n{log}", status?).into());
+        }
+    };
+    assert_eq!(rollback["lastAttempt"]["id"], failed);
+    assert_eq!(rollback["lastAttempt"]["snapshotReady"], true);
+    assert_eq!(
+        rollback["lastAttempt"]["reason"],
+        "Candidate exited before becoming healthy."
+    );
+    assert_eq!(rollback["current"], second.id);
+    assert_eq!(
+        files::selection(&f.releases, "current")?,
+        Some(second.id.clone())
+    );
+    f.ready(&second.version).await?;
+    assert_eq!(data_value(&f)?, "preserved");
+    let snapshot = Connection::open_with_flags(
+        f.data.join(".updates").join(failed).join(DATABASE_NAME),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    assert_foreign_keys(&snapshot)?;
+    assert_eq!(
+        snapshot.pragma_query_value(None, "integrity_check", |row| row.get::<_, String>(0))?,
+        "ok"
+    );
+    let restored = Connection::open(&database)?;
+    assert_foreign_keys(&restored)?;
+    let indexed_notes: i64 = restored.query_row(
+        "SELECT count(*) FROM memory_fts WHERE memory_fts MATCH 'recallable'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(indexed_notes, 1);
+    assert!(terminate(running, Signal::SIGTERM).await?.success());
+    Ok(())
 }
 
 #[tokio::test]
