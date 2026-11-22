@@ -31,7 +31,7 @@ jobs:
         run: npm ci
       - working-directory: app
         run: npm run lint && npm run build
-      - run: node --experimental-strip-types scripts/build-leptos-appearance.mjs
+      - run: cargo xtask leptos
       - working-directory: app/test-support/ui-smoke
         run: |
           npm ci

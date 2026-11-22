@@ -9,10 +9,10 @@ Both clients use `minarbot-presentation-v1` in the browser's local storage. The 
 From the repository root, install the app dependencies and run its normal build. Then run:
 
 ```sh
-node --experimental-strip-types scripts/build-leptos-appearance.mjs
+cargo xtask leptos
 ```
 
-The command builds the separate Cargo workspace with the Rust toolchain pinned in `rust-toolchain.toml`. It validates the pinned wasm-bindgen CLI archive against its upstream digest, uses the app's Vite CSS transforms and publishes the generated files to `app/dist/_leptos`. The release archive includes it with the React dist. For the Rust release tooling port, invoke this command after the React build, passing an alternate dist directory as its sole argument if needed. On a shared NUC, set `MINARBOT_CARGO_SLOT` to the shared Cargo slot script.
+The command builds the separate Cargo workspace with the Rust toolchain pinned in `rust-toolchain.toml`. It validates the pinned wasm-bindgen CLI archive against its upstream digest, uses the app's Vite CSS transforms and publishes the generated files to `app/dist/_leptos`. CI and the local release gate build Appearance after the React build. Release packaging includes both clients.
 
 Sources for tokens, kit styles, palette CSS and settings navigation live under `app/src`. Runtime theme and text size changes run in Rust. The JavaScript module loads the Wasm with two bounded fetch attempts. The HTML exposes the React fallback and return link throughout startup.
 

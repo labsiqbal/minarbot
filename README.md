@@ -132,11 +132,11 @@ cargo xtask release --releases ~/.local/share/minarbot-build/releases \
   --issues 58 --desktop --no-image --notes "User-facing release notes"
 ```
 
-Release runs app lint, build and tests, Cargo format, Clippy, tests and the locked release build, then the resource and production environment gates. Use `--no-github` for the local feed. Omit `--no-image` and set `MINARBOT_GHCR_USER` and `MINARBOT_GHCR_TOKEN` to publish the Computer image with the release.
+Release runs app lint, the React and Leptos builds, and app tests. It runs Cargo format, Clippy, tests and the locked release build before the resource and production environment gates. Use `--no-github` for the local feed. Omit `--no-image` and set `MINARBOT_GHCR_USER` and `MINARBOT_GHCR_TOKEN` to publish the Computer image with the release.
 
 Retry a completed local build with `cargo xtask release --github-only <release-id> --releases <directory>`. CI packages runtimes with `--pack-ci <binary-directory> --output <directory> --notes <notes>` and uploads a draft with `--draft-ci <directory> --notes <notes>`. Finalize that draft using `cargo xtask release --sign-ci <version>`. Signing uses `--signing-key`, `MINARBOT_RELEASE_SIGNING_KEY`, or the default `~/.config/minarbot-release/signing-ed25519.pem`.
 
-For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after building `app/dist` and `target/release`. This stages the release and unsigned manifest locally. Pass `--desktop` for the AppImage and updater metadata. `--issues` reads issue comments and checks their branch tips.
+For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after building `app/dist`, running `cargo xtask leptos`, and building `target/release`. This stages the release and unsigned manifest locally. Pass `--desktop` for the AppImage and updater metadata. `--issues` reads issue comments and checks their branch tips.
 
 Use `cargo xtask install-smoke target/debug` to exercise the installer against a local fixture. Check a served build with `cargo xtask check-served <origin> --present <text> --expect-version <version>`.
 
