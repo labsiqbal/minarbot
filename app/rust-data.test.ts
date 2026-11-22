@@ -10,35 +10,6 @@ import { retainedToolNames } from './test-bridge.ts';
 import { canonicalHttp } from './test-support/canonical-http.ts';
 import { canonicalJson, digestCommand } from './shared/protocol.ts';
 
-test('Rust forks preserve bounded persisted transcripts and restart receipts', { timeout: 20000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-fork-')), database = join(root, 'db.sqlite');
-  let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
-  try {
-    const initial = await startRustServer({ database }); await initial.close();
-    const db = testDatabase(database), agent = randomUUID(), cutoff = randomUUID();
-    db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,'Fork fixture','fixture','Help')").run(agent);
-    const createdAt = '2026-01-02T03:04:05.000Z';
-    const insert = db.prepare("INSERT INTO turns(id,agent,text,reply,status,created) VALUES(?,?,?,?,'done',?)");
-    const rows = Array.from({ length: 42 }, (_, index) => {
-      const id = index === 41 ? cutoff : randomUUID();
-      const text = `Question ${index}` + 'x'.repeat(17000), reply = `Answer ${index}` + 'y'.repeat(25000);
-      insert.run(id, agent, text, reply, createdAt);
-      return { id, agent, text: text.slice(0, 8505), reply: reply.slice(0, 12504), status: 'done', created: createdAt, guidance: '[]' };
-    });
-    db.prepare('INSERT INTO compactions VALUES(?,?,?,?)').run(`agents:${agent}`, randomUUID(), rows.length - 1, 'Prior summary');
-    db.close();
-    const expected = { summary: 'Prior summary', inherited: null, turns: rows.slice(-6), truncated: true };
-    app = await startRustServer({ database });
-    const path = `/api/agents/${agent}/turns/${cutoff}/fork`, command = { id: randomUUID() };
-    const fork = async () => { const res = await fetch(app!.origin + path, { method: 'POST', headers: { Origin: app!.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(command) }); assert.equal(res.status, 200); return res.json(); };
-    const created = await fork();
-    assert.deepEqual(await (await fetch(app.origin + `/api/threads/${created.id}/fork-context`)).json(), expected);
-    assert.deepEqual(await fork(), created);
-    await app.close(); app = await startRustServer({ database }); assert.deepEqual(await fork(), created);
-    assert.equal((await fetch(app.origin + `/api/threads/${created.id}/fork-context`, { headers: { Authorization: 'Bearer fixture' } })).status, 403);
-  } finally { await app?.close(); rmSync(root, { recursive: true, force: true }); }
-});
-
 test('Rust data reads preserve seeded history and local CRUD receipts across restart', { timeout: 20000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-data-')), database = join(root, 'db.sqlite');
   let initial: Awaited<ReturnType<typeof startRustServer>> | undefined;

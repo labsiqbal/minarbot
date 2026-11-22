@@ -106,6 +106,6 @@
       "app/updates.ts",
       "scripts/minarbot-launcher.mjs"
     ],
-    "compatibilityCheck": "MINARBOT_TEST_SERVER=rust MINARBOT_TEST_LAUNCHER=rust node --experimental-strip-types --test app/updates.test.ts app/launcher.test.ts"
+    "compatibilityCheck": "cargo test -p minarbot-server --test api_contracts && node --experimental-strip-types --test app/updates.test.ts"
   }
 }

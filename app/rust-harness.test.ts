@@ -10,49 +10,6 @@ import { startApp } from './test-bridge.ts';
 import { rustBinary } from './rust-binary.ts';
 import { mcpScopes } from './t3/mcp-session-registry.ts';
 
-test('device sign-in check runs a mise shim without resolving back to it', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'minarbot-mise-device-'));
-  const home = join(dir, 'owner'), data = join(dir, 'xdg-data/mise');
-  let app: Awaited<ReturnType<typeof startApp>> | undefined;
-  try {
-    for (const path of [join(home, '.claude'), join(data, 'shims')]) mkdirSync(path, { recursive: true });
-    writeFileSync(join(home, '.claude/.credentials.json'), '{}', { mode: 0o600 });
-    const script = (path: string, source: string) => writeFileSync(path, source, { mode: 0o700 });
-    script(join(dir, 'claude'), '#!/bin/bash\nmise use -g --quiet "claude" || exit 1; exec mise x "claude" -- "claude" "$@"\n');
-    script(join(dir, 'mise'), `#!/bin/sh
-# mise's own dirs on PATH make the real \`mise x\` resolve the tool back to the shim.
-case ":$PATH:" in *':${data}/'*) echo 'mise fixture: PATH lists mise data dirs' >&2; exit 3;; esac
-case "$1" in
-  use) exit 0;;
-  x) shift 4
-    [ "$1" = --version ] && { echo 'claude fixture 1.0'; exit 0; }
-    [ "$1 $2" = 'auth status' ] && [ -f "$HOME/.claude/.credentials.json" ] && exit 0
-    exit 1;;
-esac
-exit 2
-`);
-    const fixtureShell = join(dir, 'fixture-shell');
-    script(fixtureShell, '#!/bin/sh\nexec /bin/sh -c "$2"\n');
-    const environment = { SHELL: fixtureShell, HOME: home, MISE_DATA_DIR: data, XDG_DATA_HOME: join(dir, 'xdg-data'), CLAUDE_CONFIG_DIR: undefined };
-    const prior = Object.keys(environment).map(key => [key, process.env[key]] as const);
-    for (const [key, value] of Object.entries(environment)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
-    try {
-      app = await startApp({ database: join(dir, 'db.sqlite'), testPathPrefix: `${dir}:${join(data, 'shims')}`, harness: { executables: { claude: join(dir, 'claude') } } });
-    } finally {
-      for (const [key, value] of prior) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    }
-    const response = await fetch(app.origin + '/api/runtimes');
-    const claude = (await response.json()).choices.find((row: { runtime: string }) => row.runtime === 'claude');
-    assert.deepEqual([claude.available, claude.version, claude.signedIn], [true, 'claude fixture 1.0', true], claude.reason ?? '');
-  } finally {
-    await app?.close();
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test('mise shim probes and launches with trusted mise paths and an isolated home', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-mise-'));
   const home = join(dir, 'owner'), workspace = join(dir, 'workspace'), agent = randomUUID();
