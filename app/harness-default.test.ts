@@ -113,7 +113,8 @@ test('provider isolation, account home rotation and MCP shell approval boundarie
     const catalogResponse = await fetch(app.origin + '/mcp', { method: 'POST', headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) });
     const catalog = (await catalogResponse.json()).result.tools.map((tool: { name: string }) => tool.name);
     for (const name of ['run_shell', 'verify_result', 'create_text_file', 'read_workspace_file', 'open_file_in_panel']) assert(catalog.includes(name), name);
-    for (const name of ['create_workspace_file', 'git_status', 'search_memory', 'set_routine_flow']) assert(!catalog.includes(name), name);
+    for (const name of ['recall', 'reflect', 'remember', 'search_history', 'search_memory', 'remember_memory', 'select_memory']) assert(catalog.includes(name), name);
+    for (const name of ['create_workspace_file', 'git_status', 'set_routine_flow']) assert(!catalog.includes(name), name);
     const call = async (name: string, args: Record<string, unknown>) => {
       const response = await fetch(app.origin + '/mcp', { method: 'POST', headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method: 'tools/call', params: { name, arguments: args } }) });
       return (await response.json()).result;
