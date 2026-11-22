@@ -20,7 +20,7 @@ wasm-bindgen = "=0.2.130"
 web-sys = { version = "=0.3.107", features = [
     "Crypto", "History", "HtmlDialogElement", "HtmlInputElement", "Location", "MediaQueryList", "NodeList",
     "Notification", "NotificationPermission", "PopStateEvent", "SpeechSynthesis",
-    "SpeechSynthesisUtterance", "SpeechSynthesisVoice", "Storage", "StorageEvent", "UrlSearchParams",
+    "SpeechSynthesisUtterance", "SpeechSynthesisVoice", "Storage", "StorageEvent", "SubmitEvent", "UrlSearchParams",
 ] }
 
 [profile.release]

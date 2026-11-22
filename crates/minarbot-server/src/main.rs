@@ -279,7 +279,7 @@ async fn static_ui(
             .await
             .unwrap_or(false);
     let leptos_page = pilot
-        .then(|| appearance::SettingsRoute::from_path(path))
+        .then(|| appearance::route_title(state, path, query))
         .flatten();
     let file = state.config.dist.join(if spa {
         if leptos_page.is_some() {
@@ -313,10 +313,10 @@ async fn static_ui(
         });
     };
     let mut policy = None;
-    if let Some(route) = leptos_page {
-        bytes = appearance::document(&String::from_utf8_lossy(&bytes), path, route.title(), query)
-            .into_bytes();
-        policy = Some(POLICY.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'"));
+    if let Some(title) = leptos_page {
+        bytes =
+            appearance::document(&String::from_utf8_lossy(&bytes), path, title, query).into_bytes();
+        policy = Some(appearance::POLICY.to_owned());
     } else if spa {
         let html = String::from_utf8_lossy(&bytes);
         let Some(end) = html.find("</head>") else {

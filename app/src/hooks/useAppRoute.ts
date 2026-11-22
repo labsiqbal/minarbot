@@ -6,7 +6,7 @@ const locationPath = () => window.location.pathname + window.location.search;
 
 function ownedPath(route: AppRoute) {
   const path = routePath(route);
-  if (!route.settings || !new URLSearchParams(window.location.search).getAll('ui').includes('react')) return path;
+  if ((!route.settings && !route.project) || !new URLSearchParams(window.location.search).getAll('ui').includes('react')) return path;
   return path + (path.includes('?') ? '&' : '?') + 'ui=react';
 }
 
@@ -34,8 +34,9 @@ export function useAppRoute() {
   const navigate = (next: SetStateAction<AppRoute>, replace = false) => {
     const value = typeof next === 'function' ? next(current.current) : next;
     const path = ownedPath(value);
-    if ((value.settings === 'appearance' || value.settings === 'general') && current.current.settings !== value.settings
-      && document.querySelector('meta[name="minarbot-appearance-client"][content="leptos"]')) {
+    const preferences = (value.settings === 'appearance' || value.settings === 'general') && current.current.settings !== value.settings;
+    const project = !value.settings && !value.result && !!value.project && current.current.project !== value.project;
+    if ((preferences || project) && document.querySelector('meta[name="minarbot-appearance-client"][content="leptos"]')) {
       window.location[replace ? 'replace' : 'assign'](path);
       return;
     }

@@ -36,8 +36,9 @@ route ownership.
 
 ## Route ownership
 
-The preferences group is the Leptos pilot. The first-run screen, agent and project
-pages, and the following settings still use React: Providers, Engines, Skills,
+The preferences group, first-run screen, project overview, and `/pair` form use
+Leptos when `MINARBOT_APPEARANCE_CLIENT=leptos`. Agent conversation routes and
+project tabs transfer to React, along with the following settings: Providers, Engines, Skills,
 minarbot.com, Connected apps, Email, MCP connections, Vault, Craft Anything,
 Machines, Devices, Computer, Updates, Usage, Shared data, Backup & restore,
 and External access. `/pair` is a Rust-rendered form. The separate canonical hub

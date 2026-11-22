@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -24,7 +25,7 @@ const wasm = '/_leptos/assets/' + wasmName;
 const data = await mkdtemp(join(tmpdir(), 'minarbot-appearance-'));
 let server, browser;
 
-async function startup(client, port = 0) {
+async function startup(client, port = 0, config = {}) {
   server = spawn(binary, ['--test-config'], {
     env: { ...process.env, MINARBOT_TEST_SERVER: 'rust' },
     stdio: ['pipe', 'pipe', 'inherit'],
@@ -39,7 +40,7 @@ async function startup(client, port = 0) {
     server.once('exit', code => reject(new Error('Minarbot stopped before readiness (' + code + ')')));
   });
   server.stdin.end(JSON.stringify({
-    database: join(data, 'state.sqlite'), dist, port, appearanceClient: client,
+    database: join(data, 'state.sqlite'), dist, port, appearanceClient: client, ...config,
   }));
   return Promise.race([ready, wait(15000, undefined, { ref: false }).then(() => {
     throw new Error('Minarbot did not report readiness');
@@ -431,6 +432,117 @@ async function benchmark(origin, client) {
   ]));
 }
 
+async function setupAndDirectory(origin, client) {
+  const context = await browser.newContext({ reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  const heading = name => page.getByRole('heading', { name, level: 1, exact: true });
+  const setup = page.locator('.first-run').getByRole('heading', { name: 'Set up Minarbot', level: 1 });
+  const project = 'Directory fixture';
+  const id = randomUUID();
+  const projectPath = `/projects/${id}`;
+  const post = async (path, body) => {
+    const response = await context.request.post(origin + path, { headers: { Origin: origin }, data: body });
+    assert.equal(response.ok(), true, `${path} returned ${response.status()}`);
+    return response.json();
+  };
+  const capture = async (routeName, location, ready) => {
+    if (!screenshots) return;
+    for (const [width, height] of [[1440, 900], [430, 850]]) {
+      await page.setViewportSize({ width, height });
+      for (const theme of ['dark', 'light']) {
+        await page.emulateMedia({ colorScheme: theme });
+        await page.goto(origin + location);
+        if (routeName !== 'pairing') {
+          await page.evaluate(({ key, theme }) => localStorage.setItem(key, JSON.stringify({
+            version: 1, colorTheme: 'minarbot', theme, textSize: 'standard',
+          })), { key, theme });
+          await page.reload();
+        }
+        await ready();
+        await page.evaluate(() => document.fonts.ready);
+        await page.screenshot({ path: join(screenshots, `${routeName}-${client}-${width}-${theme}.png`), animations: 'disabled' });
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      }
+    }
+  };
+  try {
+    await page.goto(origin);
+    await setup.waitFor();
+    assert.equal(await setup.evaluate(element => document.activeElement === element), true);
+    await page.getByRole('button', { name: 'Check again', exact: true }).waitFor();
+    assert.equal(await page.locator('#leptos-root .first-run').count(), client === 'leptos' ? 1 : 0);
+    await capture('setup', '/', async () => {
+      await setup.waitFor();
+      await page.getByRole('button', { name: 'Check again', exact: true }).waitFor();
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await post('/api/projects', { id, name: project, members: [] });
+    await page.reload();
+    const nav = page.getByRole('navigation', { name: 'Projects', exact: true });
+    if (await nav.isHidden()) await page.getByRole('tab', { name: /^Agents/ }).press('ArrowRight');
+    const projectEntry = nav.getByText(project, { exact: true });
+    await projectEntry.click();
+    await page.waitForURL(origin + projectPath);
+    await heading(project).waitFor();
+    await page.getByText('No members yet', { exact: true }).waitFor();
+    await page.getByText('No conversations', { exact: true }).waitFor();
+    assert.equal(await page.locator('#leptos-root .project-home').count(), client === 'leptos' ? 1 : 0);
+    await page.goBack();
+    await setup.waitFor();
+    await page.goForward();
+    await heading(project).waitFor();
+    await page.reload();
+    await heading(project).waitFor();
+    await capture('project', projectPath, () => heading(project).waitFor());
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+}
+
+async function pairing(client) {
+  const origin = await startup(client, 0, { testRemotePairing: true });
+  const context = await browser.newContext();
+  try {
+    const issued = await context.request.post(origin + '/api/device-pairing/code', { headers: { Origin: origin }, data: {} });
+    assert.equal(issued.ok(), true);
+    const { code } = await issued.json();
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    const pairingForm = page.getByRole('heading', { name: 'Pair this device', exact: true });
+    for (const [width, height] of [[1440, 900], [430, 850]]) {
+      await page.setViewportSize({ width, height });
+      for (const theme of ['dark', 'light']) {
+        await page.emulateMedia({ colorScheme: theme });
+        await page.goto(origin + '/pair');
+        if (client === 'leptos') await page.locator('#leptos-root form').waitFor();
+        await pairingForm.waitFor();
+        if (screenshots) await page.screenshot({ path: join(screenshots, `pairing-${client}-${width}-${theme}.png`) });
+      }
+    }
+    await page.keyboard.press('Tab');
+    assert.equal(await page.getByLabel('Pairing code').evaluate(element => element === document.activeElement), true);
+    await page.keyboard.type(code);
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('Parity browser');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForURL(origin + '/');
+    assert.equal(await pairingForm.count(), 0);
+    const devices = await context.request.get(origin + '/api/device-pairing');
+    const result = await devices.json();
+    assert.equal(result.devices.find(device => device.id === result.current)?.name, 'Parity browser');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); await stop(); }
+}
+
 try {
   if (screenshots) await mkdir(screenshots, { recursive: true });
   browser = await chromium.launch();
@@ -464,6 +576,14 @@ try {
     if (samples >= 20) assert(leptos.warmNavigation.tti.p95 <= react.warmNavigation.tti.p95 * 1.1, 'Leptos warm settings navigation exceeds React p95 by over 10%');
   }
   console.log('Preferences parity passed (React and Leptos, API, focus, tokens, browser history, gzip/CSP, failed WASM, and selector rollback).');
+  for (const client of ['react', 'leptos']) {
+    await stop();
+    origin = await startup(client, 0, { database: join(data, `${client}.sqlite`) });
+    await setupAndDirectory(origin, client);
+    await stop();
+    await pairing(client);
+  }
+  console.log('First-run, project navigation and browser pairing passed in both clients.');
 } finally {
   await browser?.close();
   await stop();
