@@ -15,7 +15,7 @@ fn state(scratch: &Path) -> db::Result<AppState> {
     database.connection.execute_batch(&format!(
         "INSERT INTO agents(id,name,model,instructions) VALUES('{AGENT}','Test','','');
          INSERT INTO threads(id,agent,name) VALUES('thread','{AGENT}','Test');
-         INSERT INTO local_projects(id,name,description,created,updated,channel) VALUES('project','Test','',0,0,'section');
+         INSERT INTO local_projects(id,name,description,created,updated,channel,codegraph_enabled) VALUES('project','Test','',0,0,'section',1);
          INSERT INTO local_project_threads VALUES('thread','project','');
          INSERT INTO local_project_members VALUES('project','{AGENT}',0);
          INSERT INTO turns(id,agent,thread,text,status,created) VALUES('turn','{AGENT}','thread','Test','running','');",
