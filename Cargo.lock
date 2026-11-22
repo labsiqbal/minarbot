@@ -1846,6 +1846,7 @@ dependencies = [
 name = "minarbot-codegraph"
 version = "0.1.0"
 dependencies = [
+ "globset",
  "ignore",
  "libc",
  "rayon",
@@ -1855,6 +1856,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror",
+ "toml_edit",
  "tree-sitter",
  "tree-sitter-go",
  "tree-sitter-javascript",

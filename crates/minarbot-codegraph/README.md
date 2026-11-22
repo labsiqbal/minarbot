@@ -1,9 +1,10 @@
 # Minarbot CodeGraph
 
-Phase 1 provides a SQLite source index. Call `Index::open(project_root, database_path)`
-and `Index::sync()`. Repeat sync to hash visible sources, replace changed
-extractions, and remove deleted files. A file with a parser error retains a
-`files.errors` row so the caller can report it and retry after an edit.
+Call `Index::open(project_root, database_path)` and `Index::sync()` to build a
+SQLite source graph. Sync hashes visible sources, replaces changed extractions,
+removes deleted files, and resolves references in one transaction. A file with
+a parser error retains a `files.errors` row so the caller can report it and
+retry after an edit.
 
 Git supplies tracked paths and unignored worktree files. Outside Git, the
 walker applies local `.gitignore` rules. Both paths exclude dependency,
@@ -15,9 +16,17 @@ Disable default features and select `rust`, `typescript`, `javascript`,
 `python`, and/or `go` to build a smaller indexer. Sync reconciles the
 database to the enabled languages.
 
-The schema includes extraction edges, unresolved references, and FTS5.
-Resolution, framework synthesis, and Minarbot integration land in later
-phases. Use a dedicated database path for the extraction index.
+Resolution follows local import paths, named and default bindings, barrel
+exports, JSONC `tsconfig` and `jsconfig` aliases, Go module paths, and Cargo
+workspace crate names. The name matcher uses scope, receiver types and
+inheritance edges before applying the ambiguity ceiling to heuristic matches.
+Function-as-value references persist as `references` edges with `fnRef`
+metadata. Dispatch heuristics record their provenance.
+
+An unresolved reference stays in `unresolved_refs` with its status and name
+tail. Changed definitions trigger a retry. When an indexed target disappears,
+sync restores the original reference from the edge metadata and resolves it
+again. Use a dedicated database path for the index.
 
 - [Parity and binary size](PARITY.md)
 - [Third-party notices](third-party/NOTICE.md)

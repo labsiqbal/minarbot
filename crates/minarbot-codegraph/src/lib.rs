@@ -18,6 +18,7 @@ mod go;
 mod ids;
 mod langs;
 mod python;
+mod resolution;
 mod rustlang;
 mod scan;
 mod stack;
@@ -117,6 +118,7 @@ impl Index {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut previous = store::file_hashes(&transaction)?;
         let mut stats = SyncStats::default();
+        let mut changes = resolution::Changes::default();
         let now = store::timestamp(std::time::SystemTime::now());
         let paths = scan::discover(&self.root)?;
         // ponytail: bounded batches keep extraction memory independent of repo
@@ -131,13 +133,16 @@ impl Index {
                     scan::Outcome::Missing => continue,
                     scan::Outcome::Unchanged => stats.unchanged += 1,
                     scan::Outcome::Changed(source) => {
-                        if previous.contains_key(&file.path) {
+                        let added = !previous.contains_key(&file.path);
+                        if !added {
+                            changes.removing(&transaction, &file.path)?;
                             store::delete_file(&transaction, &file.path)?;
                             stats.updated += 1;
                         } else {
                             stats.added += 1;
                         }
                         store::insert_file(&transaction, file, &source, now)?;
+                        changes.inserted(&source, added);
                         stats.issues.extend(source.issue);
                     }
                 }
@@ -146,8 +151,10 @@ impl Index {
         }
         stats.deleted = previous.len();
         for path in previous.keys() {
+            changes.removing(&transaction, path)?;
             store::delete_file(&transaction, path)?;
         }
+        resolution::resolve(&transaction, &self.root, &changes)?;
         transaction.commit()?;
         Ok(stats)
     }

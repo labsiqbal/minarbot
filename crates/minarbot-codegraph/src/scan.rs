@@ -360,6 +360,11 @@ pub(crate) fn extract(
     }))
 }
 
+pub(crate) fn read_text(path: &Path) -> Option<String> {
+    let (size, _, bytes) = read_source(path).ok()??;
+    (size <= MAX_BYTES).then(|| String::from_utf8_lossy(&bytes).into_owned())
+}
+
 fn read_source(path: &Path) -> io::Result<Option<(u64, i64, Vec<u8>)>> {
     let result = (|| -> io::Result<_> {
         // Neither Git symlinks nor a file redirected outside the project are sources.

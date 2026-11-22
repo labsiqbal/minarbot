@@ -12,6 +12,7 @@
 //! parity gate fails. Positions are emitted in UTF-16 code units (what
 //! web-tree-sitter reports), see util::col16.
 
+mod commonjs;
 mod extractors;
 mod fnref;
 use crate::textutil as util;
@@ -371,6 +372,7 @@ pub fn extract(file_path: &str, source: &str, language: &str) -> Result<Tables, 
     // End-of-file passes, in the TS extract() order.
     w.flush_fn_ref_candidates();
     w.flush_value_refs(tree.root_node());
+    w.commonjs_imports(tree.root_node());
     w.stack.pop();
 
     Ok(w.tables)
