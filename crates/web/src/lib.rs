@@ -25,6 +25,7 @@ mod shell;
 mod skill_files;
 mod skill_import;
 mod skills;
+mod system;
 mod vault;
 mod voice;
 mod workspace;

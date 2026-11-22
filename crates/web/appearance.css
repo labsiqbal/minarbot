@@ -13,6 +13,11 @@
 @import "../../app/src/ui/agent-email.css";
 @import "../../app/src/whatsapp-settings.css";
 @import "../../app/src/hub/hub.css";
+@import "../../app/src/ui/machines.css";
+@import "../../app/src/ui/updates.css";
+@import "../../app/src/machines-data.css";
+@import "../../app/src/devices.css";
+@import "./system.css";
 @import "../../app/node_modules/@fontsource-variable/inter/index.css";
 @import "../../app/src/ui/quick-switcher.css";
 

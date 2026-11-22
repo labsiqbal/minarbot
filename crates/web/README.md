@@ -37,11 +37,11 @@ route ownership.
 ## Route ownership
 
 General, Appearance, Providers, Engines, Skills, minarbot.com, Connected apps,
-Email, MCP connections, Vault, Craft Anything, first-run setup, project overview,
-and `/pair` use Leptos when `MINARBOT_APPEARANCE_CLIENT=leptos`. Agent conversations,
-project tabs, Machines, Devices, Computer, Updates, Usage, Shared data,
-Backup & restore, and External access transfer to React. `/pair` is a Rust-rendered
-form. The separate canonical hub continues to use its own session and client.
+Email, MCP connections, Vault, Craft Anything, Machines, Devices, Computer,
+Updates, Usage, Shared data, Backup & restore, and External access use Leptos
+when `MINARBOT_APPEARANCE_CLIENT=leptos`. First-run setup, project overview, and
+the Rust-rendered `/pair` form also use Leptos. Agent conversations and project
+tabs transfer to React. The separate canonical hub uses its own session and client.
 
 Conversation and agent/room deep links stay with #63. Routines, workflows and
 calendar stay with #64. Port Memory (#48), Guide infrastructure cards (#54) and
@@ -57,6 +57,16 @@ Run `node app/test-support/ui-smoke/settings-connections-smoke.mjs` to compare
 connection settings on the same server using synthetic API fixtures. The test
 compares mutation paths and redacted payloads. Set `MINARBOT_CONNECTION_SCREENSHOTS`
 to capture both themes at desktop and narrow widths.
+
+Run `node --experimental-strip-types app/test-support/ui-smoke/settings-system-smoke.mjs`
+with the built server for the system settings parity suite. Set
+`MINARBOT_SYSTEM_SCREENSHOTS` to capture both clients at desktop and narrow
+widths in dark and light. Update commands use browser fixtures on the
+disposable server. The persisted journal keys and JSON formats are shared
+with React for updates, table deletion, and access token recovery.
+
+The system settings use `js-sys` (MIT OR Apache-2.0), already pinned through
+wasm-bindgen, directly for browser date and URI formatting.
 
 ## Warm navigation in #62
 

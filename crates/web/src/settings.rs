@@ -18,6 +18,10 @@ pub struct Config {
     pub(crate) error_icon: String,
     #[serde(default)]
     connection_icons: crate::connection_ui::Icons,
+    #[serde(default)]
+    system_icons: crate::system::kit::Icons,
+    #[serde(default)]
+    mcp_scopes: Vec<crate::system::external::Scope>,
 }
 
 #[derive(Deserialize)]
@@ -92,8 +96,13 @@ fn visible(item: &Item, group: &str, query: &str, hub: bool) -> bool {
 pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl IntoView {
     provide_context(config.connection_icons.clone());
     let route = RwSignal::new(route);
+    provide_context(config.system_icons);
+    provide_context(StoredValue::new(config.mcp_scopes));
+    let (confirm, confirmation) = crate::system::kit::confirmation();
+    provide_context(confirm);
     let listener = window_event_listener(leptos::ev::popstate, move |_| {
         if let Some(route_now) = current() {
+            confirm.set(None);
             route.set(route_now);
             document().set_title(&format!("{} · Minarbot", route_now.title()));
         }
@@ -228,7 +237,9 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                 inner_html=config.close_icon>
             </button>
             {move || {
-                let page = match route.get() {
+                let section = route.get();
+                let preferences = matches!(section, SettingsRoute::General | SettingsRoute::Appearance);
+                let page = match section {
                     SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
                     SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
                     SettingsRoute::Providers => crate::providers::panel().into_any(),
@@ -240,13 +251,17 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                     SettingsRoute::ConnectedApps => crate::connected_apps::panel().into_any(),
                     SettingsRoute::Mcp => crate::mcp_connections::panel().into_any(),
                     SettingsRoute::Skills => crate::skills::panel().into_any(),
+                    SettingsRoute::Machines | SettingsRoute::Devices | SettingsRoute::Computer
+                    | SettingsRoute::Updates | SettingsRoute::Usage | SettingsRoute::Data
+                    | SettingsRoute::Backup | SettingsRoute::External => crate::system::panel(section),
                 };
                 view! {
                     <main class="app-settings__main" node_ref=main>
-                        <div class="app-settings__page legacy" class:app-settings__page--preferences=move || matches!(route.get(), SettingsRoute::Appearance | SettingsRoute::General)>{page}</div>
+                        <div class="app-settings__page legacy" class:app-settings__page--preferences=preferences>{page}</div>
                     </main>
                 }
             }}
+            {confirmation}
         </dialog>
     }
 }
