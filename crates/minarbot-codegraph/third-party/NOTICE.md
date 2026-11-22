@@ -25,6 +25,8 @@ Other new direct dependencies:
 |---|---|---|---|
 | ignore | 0.4.34 | Gitignore matching and fallback file walk | [Unlicense OR MIT](https://crates.io/crates/ignore/0.4.34) |
 | rayon | 1.12.0 | Parallel extraction of changed files | [MIT OR Apache-2.0](https://crates.io/crates/rayon/1.12.0) |
+| globset | 0.4.21 | Cargo and package workspace glob matching | [Unlicense OR MIT](https://crates.io/crates/globset/0.4.21) |
+| toml_edit | 0.25.19 | Cargo manifest parsing | [MIT OR Apache-2.0](https://crates.io/crates/toml_edit/0.25.19) |
 
 The crate reuses workspace dependencies for hashing, SQLite with FTS5,
 regex, error types, JSON, and test temporary directories.
