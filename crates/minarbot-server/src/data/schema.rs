@@ -59,22 +59,6 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
             ),
         ] {
             for (name, definition) in cols {
-                if table == "memories"
-                    && name == "selection_locked"
-                    && !all(db, "PRAGMA table_info(memories)")?
-                        .iter()
-                        .any(|column| column["name"] == name)
-                {
-                    // SQLite refuses to add a column while a Phase 1 mirror view
-                    // still references a removed legacy column. Memory init
-                    // recreates these views and triggers after migration.
-                    db.execute_batch(
-                        "DROP TRIGGER IF EXISTS memory_note_insert;
-                         DROP TRIGGER IF EXISTS memory_note_update;
-                         DROP TRIGGER IF EXISTS memory_note_delete;
-                         DROP VIEW IF EXISTS memory_legacy_rows;",
-                    )?;
-                }
                 column(db, table, name, definition)?;
             }
         }
