@@ -56,6 +56,10 @@ struct Summary {
     needs_you: u32,
     #[serde(default)]
     preview: String,
+    #[serde(default)]
+    time: Option<String>,
+    #[serde(default)]
+    status: String,
 }
 
 #[derive(Deserialize)]
@@ -114,6 +118,29 @@ fn preference(key: &str) -> Option<String> {
 fn save_preference(key: &str, value: &str) {
     if let Ok(Some(storage)) = window().local_storage() {
         let _ = storage.set_item(key, value);
+    }
+}
+
+fn plain_preview(text: &str) -> String {
+    // ponytail: strip inline markers; render the full Markdown only in the transcript.
+    text.replace(['*', '_', '~', '`'], "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn relative_time(value: &str) -> String {
+    let age = js_sys::Date::now() - js_sys::Date::parse(value);
+    if !age.is_finite() {
+        return String::new();
+    }
+    let minutes = (age.max(0.0) / 60_000.0).floor() as u64;
+    if minutes < 60 {
+        format!("{}m", minutes.max(1))
+    } else if minutes < 1_440 {
+        format!("{}h", minutes / 60)
+    } else {
+        format!("{}d", minutes / 1_440)
     }
 }
 
@@ -270,7 +297,7 @@ pub(crate) fn WorkspaceShell(
             let path = format!("/agents/{}", agent.id);
             let current = base_path.with_value(|base| base == &path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/')));
             let summary = summaries.iter().find(|row| row.agent == agent.id);
-            let detail = summary.filter(|row| !row.preview.is_empty()).map(|row| row.preview.as_str()).unwrap_or(&agent.role);
+            let detail = summary.filter(|row| !row.preview.is_empty()).map(|row| plain_preview(&row.preview)).unwrap_or_else(|| agent.role.clone());
             if agent.hidden && !current || !format!("{} {}", agent.name, detail).to_lowercase().contains(&query) {
                 return None;
             }
@@ -278,14 +305,20 @@ pub(crate) fn WorkspaceShell(
                 return None;
             }
             let active = summary.map_or(0, |row| row.needs_you);
+            let working = summary.is_some_and(|row| row.status == "running");
+            let status = if active > 0 { "Needs you" } else if working { "Working" } else { "Idle" };
+            let dot = if active > 0 { "is-attention" } else if working { "is-working" } else { "is-idle" };
+            let time = summary.filter(|_| active == 0).and_then(|row| row.time.as_deref());
             let avatar = (agent.avatar_revision > 0).then(|| format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision));
             let initial = agent.name.chars().next().map(|initial| initial.to_uppercase().to_string());
             Some(view! {
                 <a class="bot-row" class:is-selected=current href=if conversation_navigation { format!("{path}?ui=leptos") } else { path } aria-current=current.then_some("page")>
                     <span class="bot-row__avatar" aria-hidden="true"><span class="avatar bs-avatar">
                         {if let Some(src) = avatar { view! { <img src=src alt="" /> }.into_any() } else { initial.into_any() }}
-                    </span></span>
-                    <span class="bot-row__text"><span class="bot-row__name">{agent.name}</span><span class="bot-row__preview">{detail.to_owned()}</span></span>
+                    </span><span class=format!("status-dot {dot}")></span></span>
+                    <span class="sr-only">{status}</span>
+                    <span class="bot-row__text"><span class="bot-row__name">{agent.name}</span><span class="bot-row__preview">{detail}</span></span>
+                    {time.map(|time| view! { <time class="bot-row__time" datetime=time.to_owned()>{relative_time(time)}</time> })}
                     {(active > 0).then(|| view! { <span class="needs-you-badge" aria-label=format!("{active} need you")>{active}</span> })}
                 </a>
             })
@@ -390,7 +423,7 @@ pub(crate) fn WorkspaceShell(
             }
         })
     };
-    let agent_count = move || {
+    let local_agent_count = move || {
         directory.with(|value| {
             value
                 .as_ref()
@@ -403,18 +436,22 @@ pub(crate) fn WorkspaceShell(
                         .filter(|agent| !agent.hidden)
                         .count()
                 })
-        }) + machines.with(|value| {
-            value
-                .as_ref()
-                .and_then(|value| value.as_ref().ok())
-                .map_or(0, |machines| {
-                    machines
-                        .machines
-                        .iter()
-                        .map(|machine| machine.agents.len())
-                        .sum::<usize>()
-                })
         })
+    };
+    let agent_count = move || {
+        local_agent_count()
+            + machines.with(|value| {
+                value
+                    .as_ref()
+                    .and_then(|value| value.as_ref().ok())
+                    .map_or(0, |machines| {
+                        machines
+                            .machines
+                            .iter()
+                            .map(|machine| machine.agents.len())
+                            .sum::<usize>()
+                    })
+            })
     };
     let project_count = move || {
         projects.with(|value| {
@@ -505,8 +542,12 @@ pub(crate) fn WorkspaceShell(
                         <div id="workspace-panel-agents" role="tabpanel" aria-labelledby="workspace-tab-agents" hidden=projects_tab>
                             <nav class="machine-groups" aria-label="Machines">
                                 <details class="machine-group" open>
-                                    <summary class="machine-group__header"><span class="appearance-icon" inner_html=monitor.clone()></span><span class="machine-group__name">"This device"</span></summary>
-                                    <nav class="bot-list" aria-label="Choose agent">{agent_rows}</nav>
+                                    <summary class="machine-group__header">
+                                        <span class="machine-group__chevron" inner_html=chevron_icon.get_value()></span>
+                                        <span class="appearance-icon" inner_html=monitor.clone()></span><span class="machine-group__name">"This device"</span>
+                                        <span class="machine-group__count" aria-label=move || format!("{} agents", local_agent_count())>{local_agent_count}</span>
+                                    </summary>
+                                    <div class="machine-group__content"><nav class="bot-list" aria-label="Choose agent">{agent_rows}</nav></div>
                                 </details>
                                 {remote_rows}
                                 <a class="bot-list__empty" href=machine_settings hidden=move || attention.get() || machines.with(|value|

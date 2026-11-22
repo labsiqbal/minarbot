@@ -45,6 +45,11 @@
 .leptos-workspace .sidebar a, .leptos-workspace a.k-btn { text-decoration: none; }
 .leptos-workspace .sidebar .bs-avatar { width: 36px; height: 36px; font-size: 15px; }
 .leptos-workspace .sidebar .provider-status { margin-right: auto; }
+.leptos-workspace .machine-group__chevron { display: flex; }
+.leptos-workspace .machine-group__chevron svg { width: 14px; height: 14px; }
+.leptos-workspace .machine-group[open] > summary > .machine-group__chevron { transform: rotate(90deg); }
+.leptos-workspace .machine-group__header .lucide-monitor { width: 15px; height: 15px; }
+.leptos-workspace .machine-group__content { padding-block: 4px 12px; }
 .leptos-workspace .project-home a { text-decoration: none; }
 .leptos-workspace #workspace-filters { margin: auto; }
 .leptos-workspace__outlet { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; height: 100%; }
