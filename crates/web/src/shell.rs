@@ -410,7 +410,7 @@ pub(crate) fn WorkspaceShell(
                         .machines
                         .iter()
                         .map(|machine| machine.agents.len())
-                        .sum()
+                        .sum::<usize>()
                 })
         })
     };
