@@ -11,6 +11,15 @@ pub enum SettingsRoute {
     Data,
     Backup,
     External,
+    Providers,
+    Engines,
+    CraftAnything,
+    Vault,
+    Email,
+    Hub,
+    ConnectedApps,
+    Mcp,
+    Skills,
 }
 
 impl SettingsRoute {
@@ -26,6 +35,15 @@ impl SettingsRoute {
             Self::Data => "Shared data",
             Self::Backup => "Backup & restore",
             Self::External => "External access",
+            Self::Providers => "Providers",
+            Self::Engines => "Engines",
+            Self::CraftAnything => "Craft Anything",
+            Self::Vault => "Vault",
+            Self::Email => "Email",
+            Self::Hub => "minarbot.com",
+            Self::ConnectedApps => "Connected apps",
+            Self::Mcp => "MCP connections",
+            Self::Skills => "Skills",
         }
     }
 
@@ -41,6 +59,15 @@ impl SettingsRoute {
             "/settings/data" => Some(Self::Data),
             "/settings/backup" => Some(Self::Backup),
             "/settings/mcp-server" => Some(Self::External),
+            "/settings/providers" => Some(Self::Providers),
+            "/settings/engines" => Some(Self::Engines),
+            "/settings/craft-anything" => Some(Self::CraftAnything),
+            "/settings/vault" => Some(Self::Vault),
+            "/settings/email" => Some(Self::Email),
+            "/settings/hub" => Some(Self::Hub),
+            "/settings/connected-apps" => Some(Self::ConnectedApps),
+            "/settings/mcp" => Some(Self::Mcp),
+            "/settings/skills" => Some(Self::Skills),
             _ => None,
         }
     }

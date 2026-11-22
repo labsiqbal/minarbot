@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { AlertTriangle, ArrowRight, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, Filter, Folder, FolderOpen, Hash, Info, KeyRound, Monitor, PanelLeft, Plug, Plus, Receipt, RefreshCw, Search, Send, Settings, Smartphone, Volume2, Workflow, X, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Filter, Folder, FolderOpen, Hash, Info, KeyRound, Link, MessageCircle, Monitor, Package, PanelLeft, Plug, Plus, Receipt, RefreshCw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Volume2, Workflow, X, type LucideIcon } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -36,6 +36,13 @@ const appearanceConfig: Plugin = {
           arrow: svg(ArrowRight, 13), copy: svg(Copy, 15), check: svg(Check, 15),
           more: svg(Ellipsis), refresh: svg(RefreshCw, 15),
         },
+        connectionIcons: Object.fromEntries(Object.entries({
+          'arrow-left': ArrowLeft, blocks: Blocks, book: BookOpen, bot: Bot,
+          'chevron-down': ChevronDown, 'chevron-left': ChevronLeft, 'chevron-right': ChevronRight,
+          close: X, copy: Copy, ellipsis: Ellipsis, error: CircleAlert, 'external-link': ExternalLink,
+          file: FileText, info: Info, key: KeyRound, link: Link, message: MessageCircle, package: Package, plug: Plug, plus: Plus,
+          search: Search, server: Server, shield: ShieldCheck, warn: AlertTriangle,
+        }).map(([name, icon]) => [name, svg(icon, ['arrow-left', 'external-link', 'plus', 'search'].includes(name) ? 14 : name === 'server' ? 20 : 16)])),
         workspaceIcons: {
           panel: svg(PanelLeft), filter: svg(Filter, 15), settings: svg(Settings),
           routines: svg(CalendarClock), workflows: svg(Workflow), calendar: svg(CalendarDays),

@@ -220,7 +220,8 @@ async function exercise(page, client, route, panel, state, commands) {
       assert.deepEqual(attempts[0], attempts[1]);
       assert.equal(attempts[0].version, release.version);
       uuid(attempts[0].id);
-      // React opens its update modal above the workspace. Reloading with both Radix portals open hides both from assistive technology.
+      // React's update modal sits above workspace.
+      // Reloading with both Radix portals open hides both from assistive technology.
       if (client === 'react') await page.goto(origin + '/routines');
       await page.reload();
       await visible(modal(page, 'Updating 1 machine'));

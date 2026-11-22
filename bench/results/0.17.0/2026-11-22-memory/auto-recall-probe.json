@@ -1,0 +1,105 @@
+{
+  "commit": "c3a455a079d09101eb3e8adf221411ff1a8fc1f1",
+  "note": "Orchid tags live in the north cabinet.",
+  "prompt": "Topic: orchid cabinet. Reply OK only.",
+  "unit": "UTF-8 bytes as an input token upper bound",
+  "reportedUsageExcludesCache": true,
+  "turns": [
+    {
+      "repeat": 1,
+      "automatic": false,
+      "model": "claude-sonnet-4-6",
+      "usage": [
+        {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      ],
+      "recall": {
+        "added_tokens": 0,
+        "units": 0
+      }
+    },
+    {
+      "repeat": 1,
+      "automatic": true,
+      "model": "claude-sonnet-4-6",
+      "usage": [
+        {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      ],
+      "recall": {
+        "added_tokens": 87,
+        "units": 1
+      }
+    },
+    {
+      "repeat": 2,
+      "automatic": false,
+      "model": "claude-sonnet-4-6",
+      "usage": [
+        {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      ],
+      "recall": {
+        "added_tokens": 0,
+        "units": 0
+      }
+    },
+    {
+      "repeat": 2,
+      "automatic": true,
+      "model": "claude-sonnet-4-6",
+      "usage": [
+        {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      ],
+      "recall": {
+        "added_tokens": 87,
+        "units": 1
+      }
+    },
+    {
+      "repeat": 3,
+      "automatic": false,
+      "model": "claude-sonnet-4-6",
+      "usage": [
+        {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      ],
+      "recall": {
+        "added_tokens": 0,
+        "units": 0
+      }
+    },
+    {
+      "repeat": 3,
+      "automatic": true,
+      "model": "claude-sonnet-4-6",
+      "usage": [
+        {
+          "input_tokens": 3,
+          "output_tokens": 4,
+          "total_tokens": 7
+        }
+      ],
+      "recall": {
+        "added_tokens": 87,
+        "units": 1
+      }
+    }
+  ]
+}

@@ -19,6 +19,31 @@ pub(super) fn initialize(db: &Connection) -> crate::db::Result<()> {
     Ok(())
 }
 
+pub(crate) const CONTEXT7_KEY: &str = "context7-api-key";
+
+pub(crate) fn context7_key(state: &AppState, db: &Connection) -> Result<Option<String>> {
+    let bytes: Option<Vec<u8>> = db
+        .query_row(
+            "SELECT e.payload FROM vault_entries e WHERE e.name=? AND e.kind='secret'
+         AND NOT EXISTS(SELECT 1 FROM vault_grants g WHERE g.entry=e.name)",
+            [CONTEXT7_KEY],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(bytes) = bytes else { return Ok(None) };
+    let payload = open(&key(state, db, false)?, CONTEXT7_KEY, bytes)?;
+    Ok(
+        (origin(&payload.url).ok().as_deref() == Some("https://context7.com")
+            && payload.value.starts_with("ctx7sk")
+            && payload.value.len() <= 512
+            && payload
+                .value
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c)))
+        .then_some(payload.value),
+    )
+}
+
 pub(super) fn recover_requests(db: &Connection) -> crate::db::Result<()> {
     db.execute_batch(
         "UPDATE turns SET status='interrupted',paused=0,revision=revision+1,

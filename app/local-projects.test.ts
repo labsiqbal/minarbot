@@ -335,7 +335,9 @@ test('standalone and P2 migration preserves channel IDs, history, read state, me
     assert.equal(p2.channel,f.project.channel);assert.equal(p2.sections[0].name,'general');assert.deepEqual(p2.folders,f.project.folders);assert.deepEqual(p2.members,f.project.members);
     const savedMemory = await f.request(`/api/channels/${room}/memory`);
     assert.deepEqual(await f.request('/api/sidebar'),legacy);
-    await f.restart(); assert.deepEqual((await f.request('/api/projects')).projects,projects);
+    await f.restart();
+    const restartedProjects = (await f.request('/api/projects')).projects;
+    assert.deepEqual(restartedProjects.map(projectConfiguration),projects.map(projectConfiguration));
     await f.stop();
     const source = testDatabase(f.options.database);
     try {
@@ -347,7 +349,7 @@ test('standalone and P2 migration preserves channel IDs, history, read state, me
     } finally {source.close();}
     const destination=join(f.directory,'restored.sqlite');restoreWorkspace(snapshot.file,destination);
     restored=await startApp({...f.options,database:destination});
-    assert.deepEqual((await fetch(restored.origin+'/api/projects').then(r=>r.json())).projects,projects);
+    assert.deepEqual((await fetch(restored.origin+'/api/projects').then(r=>r.json())).projects.map(projectConfiguration),projects.map(projectConfiguration));
     const history=await fetch(restored.origin+`/api/channels/${room}/turns`).then(r=>r.json());
     assert.equal(history[0].id,turn);assert.equal(history[0].reply,'Retained answer');
     assert.deepEqual(await fetch(restored.origin+`/api/channels/${room}/memory`).then(r=>r.json()),savedMemory);

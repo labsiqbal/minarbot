@@ -1,0 +1,45 @@
+[package]
+name = "minarbot-desktop-tauri"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tempfile = "3"
+tokio = { version = "1", features = ["process", "sync", "time", "macros"] }
+url = "2"
+
+[target.'cfg(unix)'.dependencies]
+flate2 = "1"
+minarbot-launcher = { path = "../../crates/minarbot-launcher" }
+nix = { version = "0.31", features = ["process", "signal"] }
+sha2 = "0.10"
+tar = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+webkit2gtk = { version = "2", features = ["v2_40"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.release]
+strip = true

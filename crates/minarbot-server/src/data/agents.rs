@@ -495,6 +495,11 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     if v.get("webAccess").is_some_and(|value| !value.is_boolean()) {
         return Err(error(400, "Web access must be a boolean."));
     }
+    if v.get("libraryDocsAccess")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(error(400, "Library docs access must be a boolean."));
+    }
     let learn = v
         .get("learnFromConversations")
         .map(|value| {
@@ -536,6 +541,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         "backupModel",
         "providerAccount",
         "webAccess",
+        "libraryDocsAccess",
         "goalJudgeModel",
         "learnFromConversations",
         "memoryModel",
@@ -633,7 +639,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     let binding_changed = account.is_some_and(|a| a != saved_binding)
         || selected_runtime != string(&current, "runtime");
     let memory_model = memory_model.or(binding_changed.then_some(""));
-    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),web_access=coalesce(?,web_access),learn_from_conversations=coalesce(?,learn_from_conversations),memory_model=coalesce(?,memory_model),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,v["webAccess"].as_bool(),learn,memory_model,id])?;
+    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),web_access=coalesce(?,web_access),library_docs_access=coalesce(?,library_docs_access),learn_from_conversations=coalesce(?,learn_from_conversations),memory_model=coalesce(?,memory_model),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,v["webAccess"].as_bool(),v["libraryDocsAccess"].as_bool(),learn,memory_model,id])?;
     if account.is_some_and(|a| a != string(&current, "provider_account"))
         && table(db, "model_fallbacks")?
     {

@@ -1,0 +1,288 @@
+{
+  "dataset_revision": "98d7416c24c778c2fee6e6f3006e7a073259d48f",
+  "hindsight_version": "0.9.2",
+  "hindsight_blocked": "HTTP 500 on PUT bank and POST retain (PostgreSQL shared memory exhausted); probe DELETE requests returned 200",
+  "measure": "source session recall and first relevant rank at five retrieved chunks",
+  "cases": [
+    {
+      "id": "e47becba",
+      "type": "single-session-user",
+      "gold": [
+        "answer_280352e9"
+      ],
+      "sessions": 8,
+      "full_sessions": 53,
+      "documents": 87,
+      "ranked_sessions": {
+        "legacy": [],
+        "keyword": [
+          "answer_280352e9",
+          "d94b721b",
+          "answer_280352e9",
+          "d94b721b",
+          "ultrachat_336116"
+        ],
+        "hybrid": [
+          "answer_280352e9",
+          "answer_280352e9",
+          "d94b721b",
+          "sharegpt_DGTCD7D_0",
+          "ultrachat_336116"
+        ]
+      },
+      "metrics": {
+        "legacy": {
+          "found": 0,
+          "total": 1,
+          "first_rank": null
+        },
+        "keyword": {
+          "found": 1,
+          "total": 1,
+          "first_rank": 1
+        },
+        "hybrid": {
+          "found": 1,
+          "total": 1,
+          "first_rank": 1
+        }
+      },
+      "keyword_ms": 0.32,
+      "hybrid_ms": 3119.6
+    },
+    {
+      "id": "7161e7e2",
+      "type": "single-session-assistant",
+      "gold": [
+        "answer_sharegpt_5Lzox6N_0"
+      ],
+      "sessions": 8,
+      "full_sessions": 48,
+      "documents": 119,
+      "ranked_sessions": {
+        "legacy": [],
+        "keyword": [
+          "answer_sharegpt_5Lzox6N_0",
+          "answer_sharegpt_5Lzox6N_0",
+          "answer_sharegpt_5Lzox6N_0",
+          "answer_sharegpt_5Lzox6N_0",
+          "answer_sharegpt_5Lzox6N_0"
+        ],
+        "hybrid": [
+          "answer_sharegpt_5Lzox6N_0",
+          "answer_sharegpt_5Lzox6N_0",
+          "answer_sharegpt_5Lzox6N_0",
+          "answer_sharegpt_5Lzox6N_0",
+          "answer_sharegpt_5Lzox6N_0"
+        ]
+      },
+      "metrics": {
+        "legacy": {
+          "found": 0,
+          "total": 1,
+          "first_rank": null
+        },
+        "keyword": {
+          "found": 1,
+          "total": 1,
+          "first_rank": 1
+        },
+        "hybrid": {
+          "found": 1,
+          "total": 1,
+          "first_rank": 1
+        }
+      },
+      "keyword_ms": 2.26,
+      "hybrid_ms": 3221.74
+    },
+    {
+      "id": "8a2466db",
+      "type": "single-session-preference",
+      "gold": [
+        "answer_edb03329"
+      ],
+      "sessions": 8,
+      "full_sessions": 50,
+      "documents": 124,
+      "ranked_sessions": {
+        "legacy": [],
+        "keyword": [
+          "answer_edb03329",
+          "answer_edb03329",
+          "answer_edb03329",
+          "6a5b5a78",
+          "answer_edb03329"
+        ],
+        "hybrid": [
+          "answer_edb03329",
+          "answer_edb03329",
+          "answer_edb03329",
+          "6a5b5a78",
+          "answer_edb03329"
+        ]
+      },
+      "metrics": {
+        "legacy": {
+          "found": 0,
+          "total": 1,
+          "first_rank": null
+        },
+        "keyword": {
+          "found": 1,
+          "total": 1,
+          "first_rank": 1
+        },
+        "hybrid": {
+          "found": 1,
+          "total": 1,
+          "first_rank": 1
+        }
+      },
+      "keyword_ms": 1.17,
+      "hybrid_ms": 3432.99
+    },
+    {
+      "id": "6a1eabeb",
+      "type": "knowledge-update",
+      "gold": [
+        "answer_a25d4a91_1",
+        "answer_a25d4a91_2"
+      ],
+      "sessions": 9,
+      "full_sessions": 40,
+      "documents": 114,
+      "ranked_sessions": {
+        "legacy": [],
+        "keyword": [
+          "answer_a25d4a91_2",
+          "answer_a25d4a91_2",
+          "answer_a25d4a91_1",
+          "answer_a25d4a91_2",
+          "answer_a25d4a91_2"
+        ],
+        "hybrid": [
+          "answer_a25d4a91_1",
+          "answer_a25d4a91_2",
+          "answer_a25d4a91_2",
+          "answer_a25d4a91_2",
+          "answer_a25d4a91_1"
+        ]
+      },
+      "metrics": {
+        "legacy": {
+          "found": 0,
+          "total": 2,
+          "first_rank": null
+        },
+        "keyword": {
+          "found": 2,
+          "total": 2,
+          "first_rank": 1
+        },
+        "hybrid": {
+          "found": 2,
+          "total": 2,
+          "first_rank": 1
+        }
+      },
+      "keyword_ms": 0.71,
+      "hybrid_ms": 4966.99
+    },
+    {
+      "id": "0a995998",
+      "type": "multi-session",
+      "gold": [
+        "answer_afa9873b_1",
+        "answer_afa9873b_2",
+        "answer_afa9873b_3"
+      ],
+      "sessions": 10,
+      "full_sessions": 44,
+      "documents": 148,
+      "ranked_sessions": {
+        "legacy": [],
+        "keyword": [
+          "answer_afa9873b_1",
+          "answer_afa9873b_1",
+          "answer_afa9873b_2",
+          "answer_afa9873b_3",
+          "answer_afa9873b_3"
+        ],
+        "hybrid": [
+          "answer_afa9873b_1",
+          "answer_afa9873b_1",
+          "answer_afa9873b_1",
+          "answer_afa9873b_2",
+          "answer_afa9873b_3"
+        ]
+      },
+      "metrics": {
+        "legacy": {
+          "found": 0,
+          "total": 3,
+          "first_rank": null
+        },
+        "keyword": {
+          "found": 3,
+          "total": 3,
+          "first_rank": 1
+        },
+        "hybrid": {
+          "found": 3,
+          "total": 3,
+          "first_rank": 1
+        }
+      },
+      "keyword_ms": 1.52,
+      "hybrid_ms": 5416.18
+    },
+    {
+      "id": "gpt4_59149c77",
+      "type": "temporal-reasoning",
+      "gold": [
+        "answer_d00ba6d0_1",
+        "answer_d00ba6d0_2"
+      ],
+      "sessions": 9,
+      "full_sessions": 48,
+      "documents": 121,
+      "ranked_sessions": {
+        "legacy": [],
+        "keyword": [
+          "answer_d00ba6d0_2",
+          "answer_d00ba6d0_2",
+          "9e2c2a6c_2",
+          "answer_d00ba6d0_2",
+          "answer_d00ba6d0_1"
+        ],
+        "hybrid": [
+          "answer_d00ba6d0_2",
+          "answer_d00ba6d0_2",
+          "answer_d00ba6d0_2",
+          "answer_d00ba6d0_1",
+          "9e2c2a6c_2"
+        ]
+      },
+      "metrics": {
+        "legacy": {
+          "found": 0,
+          "total": 2,
+          "first_rank": null
+        },
+        "keyword": {
+          "found": 2,
+          "total": 2,
+          "first_rank": 1
+        },
+        "hybrid": {
+          "found": 2,
+          "total": 2,
+          "first_rank": 1
+        }
+      },
+      "keyword_ms": 534.77,
+      "hybrid_ms": 3330.28
+    }
+  ]
+}

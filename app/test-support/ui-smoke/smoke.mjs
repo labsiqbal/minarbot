@@ -2669,7 +2669,7 @@ try {
       await visible(page.getByRole('menuitem', { name: 'Section memory', exact: true }));
       await hidden(page.getByRole('menuitem', { name: 'Agent memory', exact: true }));
       await page.getByRole('menuitem', { name: 'Section memory', exact: true }).click();
-      await visible(page.getByRole('heading', { name: 'Memory for this section', exact: true }));
+      await visible(page.getByRole('heading', { name: 'Minarbot Memory', exact: true }));
       await page.getByRole('button', { name: 'Back', exact: true }).click();
       await page.waitForFunction(() => document.activeElement?.classList.contains('chat__pill'));
     } finally { await agentChat(); }

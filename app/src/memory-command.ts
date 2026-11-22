@@ -1,13 +1,13 @@
-export type MemoryCommand = { id: string; entry: string; revision: number; text: string; essential: boolean; remove: boolean; automatic?: boolean };
+export type MemoryCommand = { id: string; entry: string; revision: number; text: string; essential: boolean; remove: boolean; automatic?: boolean; restore?: boolean };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export function memoryCommand(value: unknown): MemoryCommand {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid memory change.');
   const v = value as MemoryCommand;
-  if (Object.keys(v).length !== (v.automatic === undefined ? 6 : 7) || Object.keys(v).some(k => !['id', 'entry', 'revision', 'text', 'essential', 'remove', 'automatic'].includes(k)) || (v.automatic !== undefined && typeof v.automatic !== 'boolean') ||
+  if (Object.keys(v).some(k => !['id', 'entry', 'revision', 'text', 'essential', 'remove', 'automatic', 'restore'].includes(k)) || (v.automatic !== undefined && typeof v.automatic !== 'boolean') ||
     typeof v.id !== 'string' || !uuid.test(v.id) || typeof v.entry !== 'string' || !uuid.test(v.entry) || !Number.isSafeInteger(v.revision) || v.revision < 0 ||
-    typeof v.text !== 'string' || v.text.length > 2000 || typeof v.essential !== 'boolean' || typeof v.remove !== 'boolean' ||
-    (v.remove ? v.revision < 1 || v.text !== '' || v.essential : !v.text.trim())) throw new Error('Invalid memory change.');
-  return { id: v.id, entry: v.entry, revision: v.revision, text: v.text, essential: v.essential, remove: v.remove, ...(v.automatic !== undefined ? { automatic: v.automatic } : {}) };
+    typeof v.text !== 'string' || v.text.length > 2000 || typeof v.essential !== 'boolean' || typeof v.remove !== 'boolean' || (v.restore !== undefined && typeof v.restore !== 'boolean') || (v.remove && v.restore) ||
+    ((v.remove || v.restore) ? v.revision < 1 || v.text !== '' || v.essential : !v.text.trim())) throw new Error('Invalid memory change.');
+  return { id: v.id, entry: v.entry, revision: v.revision, text: v.text, essential: v.essential, remove: v.remove, ...(v.restore !== undefined ? { restore: v.restore } : {}), ...(v.automatic !== undefined ? { automatic: v.automatic } : {}) };
 }
 
 export type MemoryEntry = { id: string; text: string; essential: number; revision: number; selection_locked?: number };

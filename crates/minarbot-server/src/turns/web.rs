@@ -150,10 +150,10 @@ fn public_address(address: SocketAddr) -> bool {
     }
 }
 
-#[derive(Default)]
-struct FetchPolicy {
+#[derive(Clone, Copy, Default)]
+pub(super) struct FetchPolicy {
     #[cfg(test)]
-    loopback: Option<SocketAddr>,
+    pub(super) loopback: Option<SocketAddr>,
 }
 
 impl FetchPolicy {
@@ -233,7 +233,7 @@ fn successful(response: Response) -> Result<Response> {
     Ok(response)
 }
 
-async fn body(mut response: Response) -> Result<Vec<u8>> {
+pub(super) async fn body(mut response: Response) -> Result<Vec<u8>> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_BODY as u64)
@@ -288,19 +288,24 @@ pub(crate) async fn pinned_script(raw: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-async fn web_fetch(raw: &str, policy: FetchPolicy) -> Result<Value> {
+pub(super) async fn get(url: &Url, policy: &FetchPolicy, bearer: Option<&str>) -> Result<Response> {
+    let addresses = vetted_addresses(url, policy).await?;
+    let client = client()
+        .dns_resolver(Arc::new(VettedAddresses(addresses)))
+        .build()
+        .map_err(request_error)?;
+    let request = client.get(url.clone()).header(ACCEPT_ENCODING, "identity");
+    let request = match bearer {
+        Some(key) => request.bearer_auth(key),
+        None => request,
+    };
+    request.send().await.map_err(request_error)
+}
+
+async fn fetch(raw: &str, policy: &FetchPolicy) -> Result<(Url, Response)> {
     let mut url = http_url(raw)?;
     for hop in 0..=MAX_REDIRECTS {
-        let addresses = vetted_addresses(&url, &policy).await?;
-        let response = client()
-            .dns_resolver(Arc::new(VettedAddresses(addresses)))
-            .build()
-            .map_err(request_error)?
-            .get(url.clone())
-            .header(ACCEPT_ENCODING, "identity")
-            .send()
-            .await
-            .map_err(request_error)?;
+        let response = get(&url, policy, None).await?;
         if matches!(
             response.status(),
             StatusCode::MOVED_PERMANENTLY
@@ -323,46 +328,61 @@ async fn web_fetch(raw: &str, policy: FetchPolicy) -> Result<Value> {
             url = http_url(next.as_str())?;
             continue;
         }
-        let response = successful(response)?;
-        let content_type = response
-            .headers()
-            .get(CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("")
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
-        let html = matches!(content_type.as_str(), "text/html" | "application/xhtml+xml");
-        let textual = html
-            || content_type.starts_with("text/")
-            || content_type == "application/json"
-            || content_type.starts_with("application/") && content_type.ends_with("+json");
-        if !textual {
-            return Err(error(415, "Web response is not HTML, text or JSON."));
-        }
-        let bytes = body(response).await?;
-        let text = std::str::from_utf8(&bytes)
-            .ok()
-            .filter(|text| {
-                !text
-                    .bytes()
-                    .any(|b| b.is_ascii_control() && !b.is_ascii_whitespace())
-            })
-            .ok_or_else(|| error(415, "Web response must be UTF-8 text."))?;
-        let (title, text) = if html {
-            html_text(text)
-        } else {
-            (String::new(), text.to_owned())
-        };
-        let mut result = json!({"title": bounded(&title, 512), "url": url.as_str(), "text": bounded(&text, MAX_TEXT)});
-        if text.len() > MAX_TEXT {
-            result["note"] = json!("Text truncated to 16000 bytes.");
-        }
-        return Ok(result);
+        return Ok((url, successful(response)?));
     }
     Err(error(502, "Web response exceeded 5 redirects."))
+}
+
+pub(super) async fn fetch_json(url: &Url, policy: &FetchPolicy) -> Result<Value> {
+    let (_, response) = fetch(url.as_str(), policy).await?;
+    serde_json::from_slice(&body(response).await?)
+        .map_err(|_| error(502, "Invalid web JSON response."))
+}
+
+async fn web_fetch(raw: &str, policy: FetchPolicy) -> Result<Value> {
+    fetch_text(raw, policy, MAX_TEXT).await
+}
+
+pub(super) async fn fetch_text(raw: &str, policy: FetchPolicy, limit: usize) -> Result<Value> {
+    let (url, response) = fetch(raw, &policy).await?;
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let html = matches!(content_type.as_str(), "text/html" | "application/xhtml+xml");
+    let textual = html
+        || content_type.starts_with("text/")
+        || content_type == "application/json"
+        || content_type.starts_with("application/") && content_type.ends_with("+json");
+    if !textual {
+        return Err(error(415, "Web response is not HTML, text or JSON."));
+    }
+    let bytes = body(response).await?;
+    let text = std::str::from_utf8(&bytes)
+        .ok()
+        .filter(|text| {
+            !text
+                .bytes()
+                .any(|b| b.is_ascii_control() && !b.is_ascii_whitespace())
+        })
+        .ok_or_else(|| error(415, "Web response must be UTF-8 text."))?;
+    let (title, text) = if html {
+        html_text(text)
+    } else {
+        (String::new(), text.to_owned())
+    };
+    let mut result =
+        json!({"title": bounded(&title, 512), "url": url.as_str(), "text": bounded(&text, limit)});
+    if text.len() > limit {
+        result["note"] = json!(format!("Text truncated to {limit} bytes."));
+    }
+    Ok(result)
 }
 
 fn bounded(text: &str, bytes: usize) -> &str {

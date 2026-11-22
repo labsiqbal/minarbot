@@ -34,9 +34,9 @@ export function useAppRoute() {
   const navigate = (next: SetStateAction<AppRoute>, replace = false) => {
     const value = typeof next === 'function' ? next(current.current) : next;
     const path = ownedPath(value);
-    const preferences = value.settings && ['appearance', 'general', 'machines', 'devices', 'computer', 'updates', 'usage', 'data', 'backup', 'mcp-server'].includes(value.settings) && current.current.settings !== value.settings;
+    const settings = value.settings && current.current.settings !== value.settings;
     const project = !value.settings && !value.result && !!value.project && current.current.project !== value.project;
-    if ((preferences || project) && document.querySelector('meta[name="minarbot-appearance-client"][content="leptos"]')) {
+    if ((settings || project) && document.querySelector('meta[name="minarbot-appearance-client"][content="leptos"]')) {
       window.location[replace ? 'replace' : 'assign'](path);
       return;
     }

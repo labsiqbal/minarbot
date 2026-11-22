@@ -21,7 +21,7 @@ import { AgentTemplateExport, AvatarPicker as LookPicker, MemoryPanel, SitesPane
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
-export type Agent = { builtin?: boolean; workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; goal_judge_model?: string; learn_from_conversations?: 0 | 1; memory_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
+export type Agent = { builtin?: boolean; workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; goal_judge_model?: string; learn_from_conversations?: 0 | 1; memory_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; library_docs_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 
 export type FirstAgentDefaults = { runtime: Runtime; account: string; model: string };
 export type FirstRunConnection = { value: string; label: string; runtime: Runtime; defaults: FirstAgentDefaults };
@@ -50,7 +50,7 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
   useReturnFocus(avatarChange, avatarOpen);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [recovery, setRecovery] = useState(() => { try { return { command: liveProfile ? null : restoreAgentCreation(sessionStorage.getItem(creationKey)), invalid: false }; } catch { return { command: null, invalid: true }; } });
-  const pending = useRef<(AgentCreation & { revision?: number; webAccess?: boolean }) | null>(recovery.command);
+  const pending = useRef<(AgentCreation & { revision?: number; webAccess?: boolean; libraryDocsAccess?: boolean }) | null>(recovery.command);
   const locked = !!pending.current;
   const [avatarName, setAvatarName] = useState(profile?.name ?? recovery.command?.name ?? '');
   const [instructionCount, setInstructionCount] = useState((profile?.instructions ?? recovery.command?.instructions ?? '').length);
@@ -129,12 +129,13 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
   const [learnFromConversations, setLearnFromConversations] = useState(profile?.learn_from_conversations !== 0);
   const [memoryModel, setMemoryModel] = useState(profile?.memory_model ?? '');
   const [webAccess, setWebAccess] = useState(profile?.web_access !== 0);
+  const [libraryDocsAccess, setLibraryDocsAccess] = useState(profile?.library_docs_access !== 0);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
     const followEngineDefault = quick && model === 'default' && usesEngineSignIn(account) && !modelEdited.current;
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision, webAccess, learnFromConversations, memoryModel: memoryModel.trim(), ...(judgeModel !== (profile.goal_judge_model ?? '') ? { goalJudgeModel: judgeModel.trim() } : {}) } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: followEngineDefault ? 'default' : String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision, webAccess, libraryDocsAccess, learnFromConversations, memoryModel: memoryModel.trim(), ...(judgeModel !== (profile.goal_judge_model ?? '') ? { goalJudgeModel: judgeModel.trim() } : {}) } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: followEngineDefault ? 'default' : String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
     if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
       Object.assign(data, { runtime, confirmRuntime: true });
     }
@@ -299,7 +300,10 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
               <RadixTabs.Content tabIndex={-1} forceMount value="profile" hidden={tab !== 'profile'} className="k-tabs__panel">{profileFields}</RadixTabs.Content>
               <RadixTabs.Content tabIndex={-1} forceMount value="model" hidden={tab !== 'model'} className="k-tabs__panel">{modelFields}</RadixTabs.Content>
               <RadixTabs.Content tabIndex={-1} forceMount value="advanced" hidden={tab !== 'advanced'} className="k-tabs__panel">{advancedFields}
-                <Card><Row title="Web access" trailing={<Switch label="Web access" checked={webAccess} onChange={setWebAccess} disabled={locked || busy} />} /></Card>
+                <Card>
+                  <Row title="Web access" trailing={<Switch label="Web access" checked={webAccess} onChange={setWebAccess} disabled={locked || busy} />} />
+                  <Row title="Library docs" trailing={<Switch label="Library docs" checked={webAccess && libraryDocsAccess} onChange={setLibraryDocsAccess} disabled={!webAccess || locked || busy} />} />
+                </Card>
                 <AgentComputerSettings agent={profile.id} request={api} autoFocus={focusComputer && tab === 'advanced'} />
                 <AgentFolderSettings agent={profile.id} request={api} isClientError={isClientError} />
                 <div className="details-list agent-profile__resources">
@@ -318,7 +322,7 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
         {error && <Alert tone="error">{error}</Alert>}
       </div>
     </Dialog>
-    {profile && resource && <Dialog open size="lg" title={resource === 'memory' ? 'Agent memory' : 'Agent sites'} onOpenChange={open => { if (!open) closeResource(); }}>
+    {profile && resource && <Dialog open size="lg" title={resource === 'memory' ? 'Minarbot Memory' : 'Agent sites'} hideHeader={resource === 'memory'} onOpenChange={open => { if (!open) closeResource(); }}>
       <Suspense fallback={<Delayed><p role="status">Loading...</p></Delayed>}>{resource === 'memory' ? <MemoryPanel channel={false} archived={false} path={`/api/agents/${profile.id}/memory`} request={api} onClose={closeResource} /> : <SitesPanel agent={profile.id} request={api} />}</Suspense>
     </Dialog>}
     {profile && onVisibilityChanged && <Dialog open={visibilityOpen} title="Availability" onOpenChange={setVisibilityOpen} footer={<Button onClick={() => setVisibilityOpen(false)}>Done</Button>}><AgentVisibility agent={liveProfile!} request={api} onChanged={onVisibilityChanged} /></Dialog>}

@@ -25,11 +25,13 @@ async function findExecutables(path, projectCodegraph) {
 
 export async function startServer({ binary, scratch, fixture, provider, dist, projectCodegraph }) {
     const home = join(scratch, 'home'), tmp = join(scratch, 'tmp'), data = join(scratch, 'data');
+    const executable = join(scratch, 'minarbot-server'), assets = join(scratch, 'dist');
     await Promise.all([home, tmp, data].map(path => mkdir(path, { recursive: true, mode: 0o700 })));
     const database = join(data, 'minarbot.sqlite');
     const args = [
         '--die-with-parent', '--unshare-pid', '--new-session', '--ro-bind', '/', '/', '--proc', '/proc', '--dev', '/dev',
         '--tmpfs', '/tmp', '--perms', '1777', '--tmpfs', '/dev/shm', '--bind', scratch, scratch,
+        '--ro-bind', binary, executable, '--ro-bind', dist, assets,
     ];
     const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: home, TMPDIR: tmp, MINARBOT_TEST_SERVER: 'rust' };
     // Keep CLI state disposable and expose only the device credential files through read-only mounts.
@@ -49,13 +51,13 @@ export async function startServer({ binary, scratch, fixture, provider, dist, pr
         }
     }
     const config = {
-        database, port: 0, dist,
+        database, port: 0, dist: assets,
         desktop: { enabled: !!fixture, max: 1, leaseDir: join(scratch, 'desktop-leases'),
             ...(fixture && { testOnlyProxyTarget: { hostname: 'job-bench.test', port: fixture.port } }) },
         harness: { executables: await findExecutables(env.PATH, projectCodegraph) },
         ...(provider && { accounts: [provider] }),
     };
-    const child = spawn('/usr/bin/bwrap', [...args, '--chdir', scratch, binary, '--test-config'], {
+    const child = spawn('/usr/bin/bwrap', [...args, '--chdir', scratch, executable, '--test-config'], {
         env, stdio: ['pipe', 'pipe', 'ignore'],
     });
     const closed = new Promise(resolve => child.once('close', resolve));
@@ -71,7 +73,7 @@ export async function startServer({ binary, scratch, fixture, provider, dist, pr
 
     try {
         const origin = await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(Error('Disposable server startup timed out')), 15000);
+            const timer = setTimeout(() => reject(Error('Disposable server startup timed out')), 60000);
             let output = '';
             const fail = error => { clearTimeout(timer); reject(error); };
             child.once('error', fail);

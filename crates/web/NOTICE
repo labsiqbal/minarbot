@@ -8,3 +8,9 @@ serde and serde_json - MIT OR Apache-2.0 - https://github.com/serde-rs/serde and
 
 Cargo.lock records exact package versions and registry checksums.
 Shared CSS, palettes, icons and Inter use the same sources as the React build.
+Base64 0.22 - MIT OR Apache-2.0 - https://github.com/marshallpierce/rust-base64
+crc32fast 1 - MIT OR Apache-2.0 - https://github.com/srijs/rust-crc32fast
+Serde YAML 0.9 - MIT OR Apache-2.0 - https://github.com/dtolnay/serde-yaml
+Zip 7.4.0 - MIT - https://github.com/zip-rs/zip2
+flate2 - MIT OR Apache-2.0 - https://github.com/rust-lang/flate2-rs
+zlib-rs - Zlib - https://github.com/trifectatechfoundation/zlib-rs

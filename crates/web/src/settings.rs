@@ -17,6 +17,8 @@ pub struct Config {
     close_icon: String,
     pub(crate) error_icon: String,
     #[serde(default)]
+    connection_icons: crate::connection_ui::Icons,
+    #[serde(default)]
     system_icons: crate::system::kit::Icons,
     #[serde(default)]
     mcp_scopes: Vec<crate::system::external::Scope>,
@@ -92,6 +94,7 @@ fn visible(item: &Item, group: &str, query: &str, hub: bool) -> bool {
 }
 
 pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl IntoView {
+    provide_context(config.connection_icons.clone());
     let route = RwSignal::new(route);
     provide_context(config.system_icons);
     provide_context(StoredValue::new(config.mcp_scopes));
@@ -239,7 +242,18 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                 let page = match section {
                     SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
                     SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
-                    section => crate::system::panel(section),
+                    SettingsRoute::Providers => crate::providers::panel().into_any(),
+                    SettingsRoute::Engines => crate::engines::panel().into_any(),
+                    SettingsRoute::CraftAnything => crate::craft_anything::panel().into_any(),
+                    SettingsRoute::Vault => crate::vault::panel().into_any(),
+                    SettingsRoute::Email => crate::email::panel().into_any(),
+                    SettingsRoute::Hub => crate::hub_connection::panel().into_any(),
+                    SettingsRoute::ConnectedApps => crate::connected_apps::panel().into_any(),
+                    SettingsRoute::Mcp => crate::mcp_connections::panel().into_any(),
+                    SettingsRoute::Skills => crate::skills::panel().into_any(),
+                    SettingsRoute::Machines | SettingsRoute::Devices | SettingsRoute::Computer
+                    | SettingsRoute::Updates | SettingsRoute::Usage | SettingsRoute::Data
+                    | SettingsRoute::Backup | SettingsRoute::External => crate::system::panel(section),
                 };
                 view! {
                     <main class="app-settings__main" node_ref=main>
@@ -250,6 +264,13 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
             {confirmation}
         </dialog>
     }
+}
+
+pub fn linked_section_url(path: &str) -> String {
+    let from = document()
+        .get_element_by_id("leptos-root")
+        .and_then(|root| root.get_attribute("data-return-to"));
+    section_url(path, from.as_deref().unwrap_or("/"))
 }
 
 pub fn section_url(path: &str, from: &str) -> String {

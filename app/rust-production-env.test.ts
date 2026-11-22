@@ -37,6 +37,7 @@ test('Rust accepts every production environment name', { timeout: 90000 }, async
       COMPOSIO_API_KEY: 'dummy-env-contract', RESEND_API_KEY: 'dummy-mail-key', MINARBOT_MAIL_ENDPOINT: 'http://127.0.0.1:45981/emails', MINARBOT_MAIL_FROM: 'fixture@example.test',
       MINARBOT_HUB_ORIGIN: 'https://127.0.0.1:45982', MINARBOT_HUB_SIGNING_PUBLIC_KEY: hubKey,
       MINARBOT_ORIGIN: 'http://127.0.0.1:45983', MINARBOT_SERVER_URL: 'http://127.0.0.1:45983', MINARBOT_CANONICAL_DB: join(directory, 'canonical.sqlite'),
+      MINARBOT_APPEARANCE_CLIENT: 'leptos',
       CLERK_SECRET_KEY: 'sk_test_fixture', CLERK_PUBLISHABLE_KEY: 'pk_test_fixture', CLERK_ISSUER: 'https://fixture.clerk.accounts.dev', CLERK_AUDIENCE: 'minarbot',
       MINARBOT_TLS_CERT: join(directory, 'cert'), MINARBOT_TLS_KEY: join(directory, 'key'),
     };
@@ -46,8 +47,9 @@ test('Rust accepts every production environment name', { timeout: 90000 }, async
     for (const prefix of ['IMAGE', 'TRANSCRIPTION']) {
       values[`MINARBOT_${prefix}_BASE_URL`] = 'http://127.0.0.1:45985/v1'; values[`MINARBOT_${prefix}_API_KEY`] = 'dummy-media-key'; values[`MINARBOT_${prefix}_MODEL`] = 'fixture';
     }
-    const names = new Set<string>(['MINARBOT_TLS_CERT', 'MINARBOT_TLS_KEY', 'MINARBOT_SERVER_URL', 'MINARBOT_ORIGIN', 'MINARBOT_CANONICAL_DB', 'CLERK_SECRET_KEY', 'CLERK_PUBLISHABLE_KEY', 'CLERK_ISSUER', 'CLERK_AUDIENCE']);
-    const excluded = /(?:\.test\.ts$|-it\.ts$|^rust-|^(?:cli|slack-runner)\.ts$)/;
+    const names = new Set<string>(['MINARBOT_TLS_CERT', 'MINARBOT_TLS_KEY', 'MINARBOT_SERVER_URL', 'MINARBOT_ORIGIN', 'MINARBOT_CANONICAL_DB', 'MINARBOT_APPEARANCE_CLIENT', 'CLERK_SECRET_KEY', 'CLERK_PUBLISHABLE_KEY', 'CLERK_ISSUER', 'CLERK_AUDIENCE']);
+    // Vite config belongs to the build stage. Production startup uses MINARBOT_APPEARANCE_CLIENT.
+    const excluded = /(?:\.test\.ts$|-it\.ts$|^rust-|^vite(?:\.[^.]+)?\.config\.ts$|^(?:cli|slack-runner)\.ts$)/;
     for (const name of readdirSync(import.meta.dirname).filter(name => name.endsWith('.ts') && !excluded.test(name))) {
       const source = readFileSync(join(import.meta.dirname, name), 'utf8');
       for (const match of source.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) names.add(match[1]);

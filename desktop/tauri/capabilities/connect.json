@@ -1,0 +1,6 @@
+{
+  "identifier": "connect",
+  "description": "Submit an origin from the bundled connection screen.",
+  "webviews": ["connect"],
+  "permissions": ["allow-connect-server"]
+}

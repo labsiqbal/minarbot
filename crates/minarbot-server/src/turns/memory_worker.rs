@@ -16,14 +16,19 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
             if pending(&state) {
                 continue;
             }
-            if step(&state).await.is_err() {
+            let result = match step(&state).await {
+                Ok(false) => refresh_question(&state).await,
+                Ok(true) => Ok(()),
+                Err(error) => Err(error),
+            };
+            if result.is_err() {
                 eprintln!("Memory worker storage error");
             }
         }
     })
 }
 
-async fn step(state: &AppState) -> Result<()> {
+async fn step(state: &AppState) -> Result<bool> {
     let (work, secrets) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
@@ -38,7 +43,7 @@ async fn step(state: &AppState) -> Result<()> {
             .pending_work_excluding(crate::config::now(), &disabled)
             .map_err(|_| Failure::storage())?
         else {
-            return Ok(());
+            return Ok(false);
         };
         let turn = string(work.source(), "id");
         if !exists(
@@ -48,6 +53,7 @@ async fn step(state: &AppState) -> Result<()> {
         )? {
             return store
                 .retry_work(&work, crate::config::now())
+                .map(|()| true)
                 .map_err(|_| Failure::storage());
         };
         let secrets = crate::mcp::secrets::project(state, db, None)?;
@@ -74,14 +80,14 @@ async fn step(state: &AppState) -> Result<()> {
     )
     .await;
     if pending(state) {
-        return Ok(());
+        return Ok(true);
     }
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let store = Store::new(&guard.connection);
     if let Ok(provider::Answer::Text(answer)) = result {
         let answer = crate::mcp::secrets::redact(&answer, &secrets, false);
         if store.apply_work(&work, &answer).is_ok() {
-            return Ok(());
+            return Ok(true);
         }
     }
     if exists(
@@ -89,9 +95,75 @@ async fn step(state: &AppState) -> Result<()> {
         "SELECT 1 FROM agents WHERE id=? AND learn_from_conversations=0",
         [string(work.source(), "agent")],
     )? {
-        return Ok(());
+        return Ok(true);
     }
     store
         .retry_work(&work, crate::config::now())
+        .map(|()| true)
         .map_err(|_| Failure::storage())
+}
+
+async fn refresh_question(state: &AppState) -> Result<()> {
+    let now = state.config.now();
+    let row = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        one(
+            &guard.connection,
+            "SELECT m.bank,m.id,m.revision,m.question,coalesce(g.generation,0) AS generation,
+                    (SELECT t.id FROM memory_learning_candidates r JOIN turns t ON t.id=r.id
+                     JOIN memory_history_scope scope ON scope.id=t.id
+                     WHERE scope.bank=m.bank ORDER BY t.seq DESC LIMIT 1) AS turn
+             FROM memory_mental_models m LEFT JOIN memory_bank_generations g ON g.bank=m.bank
+             WHERE m.removed=0 AND m.generation<>coalesce(g.generation,0) AND m.retry_at<=?
+               AND turn IS NOT NULL ORDER BY m.retry_at,m.id LIMIT 1",
+            [now],
+        )?
+    };
+    let Some(row) = row else { return Ok(()) };
+    let bank = string(&row, "bank");
+    let turn = string(&row, "turn");
+    let id = string(&row, "id");
+    let revision = row["revision"].as_i64().ok_or_else(Failure::storage)?;
+    let generation = row["generation"].as_i64().ok_or_else(Failure::storage)?;
+    let answer = super::memory::reflect(
+        state,
+        turn,
+        bank,
+        string(&row, "question"),
+        6,
+        "memory_refresh",
+    )
+    .await;
+    if pending(state) {
+        return Ok(());
+    }
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    let retry_at = now.saturating_add(60_000);
+    if let Ok(answer) = answer {
+        db.execute(
+            "UPDATE memory_mental_models SET answer=?,evidence=?,generation=?,retry_at=?
+             WHERE bank=? AND id=? AND revision=? AND removed=0 AND ?=coalesce(
+                 (SELECT generation FROM memory_bank_generations WHERE bank=?),0)
+             AND EXISTS(SELECT 1 FROM memory_learning_candidates WHERE id=?)",
+            params![
+                answer.answer,
+                json!(answer.evidence).to_string(),
+                generation,
+                retry_at,
+                bank,
+                id,
+                revision,
+                generation,
+                bank,
+                turn
+            ],
+        )?;
+    } else {
+        db.execute(
+            "UPDATE memory_mental_models SET retry_at=? WHERE bank=? AND id=? AND revision=?",
+            params![retry_at, bank, id, revision],
+        )?;
+    }
+    Ok(())
 }
