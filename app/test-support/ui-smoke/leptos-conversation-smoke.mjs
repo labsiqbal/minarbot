@@ -218,18 +218,22 @@ try {
 
   const samples = Number(process.env.MINARBOT_CONVERSATION_BENCH ?? 0);
   const statistics = {};
-  for (const client of ['react', 'leptos']) {
+  for (const client of samples ? ['react', 'leptos'] : []) {
     const timings = [];
-    await page.goto(origin + path + '?ui=' + client);
-    const role = page.getByRole('textbox', { name: 'Message Conversation fixture' });
+    const bench = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    bench.on('pageerror', error => errors.push(error.message));
+    await bench.goto(origin + path + '?ui=' + client);
+    const role = bench.getByRole('textbox', { name: 'Message Conversation fixture' });
     await role.waitFor();
     for (let i = 0; i < samples; i++) {
       const started = performance.now();
       await role.fill('Latency receipt ' + i);
-      await page.waitForFunction((key) => sessionStorage.getItem(key)?.startsWith('Latency receipt '), 'minarbot:draft:' + agent);
+      await bench.waitForFunction(({ key, draft }) => sessionStorage.getItem(key) === draft,
+        { key: 'minarbot:draft:' + agent, draft: 'Latency receipt ' + i });
       timings.push(performance.now() - started);
       await role.fill('');
     }
+    await bench.close();
     timings.sort((a, b) => a - b);
     if (timings.length) statistics[client] = { samples, median: timings[Math.ceil(samples / 2) - 1], p95: timings[Math.ceil(samples * 0.95) - 1] };
   }

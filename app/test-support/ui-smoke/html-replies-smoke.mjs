@@ -217,7 +217,7 @@ try {
     { ...valid, data: { channel, method: 'link', value: 'javascript:void(0)' } },
   ]) assert.equal(readHtmlReplyMessage(bad, frame, channel, renderId), undefined);
   await inner.getByRole('button', { name: 'Draft comparison' }).press('Enter');
-  await page.waitForFunction(text => document.querySelector('textarea')?.value === text, draft);
+  await page.waitForFunction(text => document.getElementById('message')?.value === text, draft);
   await page.getByText('Reply context attached').waitFor();
   assert.equal((await api(path)).length, 1, 'Bridge action only drafts');
   await composer.press('Enter');
