@@ -13,7 +13,8 @@ type ProviderCall = {
   seq: number; model: string; status: string; created: string; finished: string | null;
   duration_ms: number | null; input_tokens: number | null; output_tokens: number | null; total_tokens: number | null;
 };
-type Inspection = { status: string; error: string | null; tools: Tool[]; harness: NativeTool[]; providers: ProviderCall[]; engineStderr: string | null };
+type Judgment = { turn: string; met: number; reason: string; number: number };
+type Inspection = { status: string; error: string | null; judgments?: Judgment[]; tools: Tool[]; harness: NativeTool[]; providers: ProviderCall[]; engineStderr: string | null };
 type Step = ReturnType<typeof mergeRunSteps<Tool, NativeTool>>[number];
 const clock = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' });
 
@@ -89,6 +90,14 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
     {!data && !error && <SkeletonRows count={3} />}
     {data && <>
       {data.error && <InspectText label="Run error" text={data.error} />}
+      {!!data.judgments?.length && <section className="run-inspector__providers" aria-label="Goal judge">
+        <h3>Goal judge</h3>
+        <ul className="run-inspector__list">{data.judgments.map(judgment => <li key={judgment.turn}><details>
+          <summary><ChevronRight size={14} aria-hidden /><span>Turn {judgment.number}</span><span className="run-inspector__state" data-state={judgment.met ? 'Done' : undefined}>{judgment.met ? 'Met' : 'More work'}</span></summary>
+          <div className="run-inspector__details"><p>{judgment.reason}</p></div>
+        </details></li>)}</ul>
+      </section>}
+
       {steps.length > 0 && <ul className="run-inspector__list" aria-label="Steps">{steps.map(step => <StepDetails key={step.id} step={step} state={toolState(step, data.status)} selected={selected?.id === step.id ? target : null} />)}</ul>}
       {data.providers.length > 0 && <section className="run-inspector__providers" aria-labelledby="run-provider-calls">
         <h3 id="run-provider-calls">Provider calls</h3>
@@ -104,7 +113,7 @@ export function RunInspector({ target, request }: { target: RunTarget; request: 
         </details></li>)}</ul>
       </section>}
       {data.engineStderr && <InspectText label="Engine stderr" text={data.engineStderr} />}
-      {!steps.length && !data.providers.length && !data.error && !data.engineStderr && <p role="status">No run details</p>}
+      {!steps.length && !data.providers.length && !data.error && !data.engineStderr && !data.judgments?.length && <p role="status">No run details</p>}
     </>}
   </div>;
 }

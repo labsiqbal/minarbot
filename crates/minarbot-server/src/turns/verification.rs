@@ -162,6 +162,42 @@ fn evidence(db: &Connection, turn: &str, kind: &str) -> Result<bool> {
         _=>Ok(exists(db,"SELECT 1 FROM verification_artifacts WHERE turn=? AND kind='file-check' AND stamp=?",[turn,&stamp(db,turn)?])? || exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name') IN ('read_attachment','read_workspace_file') AND json_type(result,'$.text')='text' AND after_output=(SELECT count(*) FROM generated_files WHERE turn=?)",[turn,turn])?),
     }
 }
+pub fn goal_evidence(db: &Connection, turn: &str, secrets: &[String]) -> Result<Vec<Value>> {
+    capture(db, turn)?;
+    let stamp = stamp(db, turn)?;
+    let receipts=all(db,"SELECT v.kind,v.source,coalesce(j.call,s.arguments,'') AS check_input,
+        coalesce(j.result,s.result,'') AS check_output,f.name,f.digest
+        FROM verification_artifacts v
+        LEFT JOIN flow_tool_calls j ON j.turn=v.turn AND v.source IN('check:'||j.call_id,'screenshot:'||j.call_id)
+        LEFT JOIN turn_step_diagnostics s ON s.turn=v.turn AND v.source='check:'||s.id
+        LEFT JOIN files f ON f.id=v.file
+        WHERE v.turn=? AND v.stamp=? ORDER BY v.rowid DESC LIMIT 8",[turn,&stamp])?;
+    let mut items=receipts.into_iter().map(|row| {
+        let input=history::slice(string(&row,"check_input"),0,600);
+        let output=history::slice(string(&row,"check_output"),0,3500);
+        json!({"kind":row["kind"],"input":super::diagnostics::text(&input,secrets),
+            "output":super::diagnostics::text(&output,secrets),"file":row["name"],"digest":row["digest"]})
+    }).collect::<Vec<_>>();
+    for row in all(db,"SELECT json_extract(call,'$.function.name') AS kind,substr(result,1,3500) AS output
+        FROM flow_tool_calls WHERE turn=? AND json_extract(call,'$.function.name')
+        IN('read_routine','read_workspace_file','read_attachment') AND json_type(result,'$.error') IS NULL
+        AND after_output=(SELECT count(*) FROM generated_files WHERE turn=?)
+        ORDER BY seq DESC LIMIT 4",[turn,turn])? {
+        items.push(json!({"kind":row["kind"],"output":super::diagnostics::text(string(&row,"output"),secrets)}));
+    }
+    if let Some(row) = one(
+        db,
+        "SELECT review,kind FROM turn_verification WHERE turn=? AND stamp=? AND review IS NOT NULL",
+        [turn, &stamp],
+    )? {
+        items.push(json!({"kind":row["kind"],"review":super::diagnostics::text(string(&row,"review"),secrets)}));
+    }
+    for (index, item) in items.iter_mut().enumerate() {
+        item["id"] = json!(format!("check-{}", index + 1));
+    }
+    Ok(items)
+}
+
 pub fn review(db: &Connection, turn: &Value, args: &Value) -> Result<Value> {
     if !closed(args, &["kind", "review"])
         || !["code", "ui", "file", "routine"].contains(&string(args, "kind"))

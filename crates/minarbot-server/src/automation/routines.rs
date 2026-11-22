@@ -1,4 +1,5 @@
 use super::*;
+use crate::data::exists;
 
 pub fn read(db: &Connection, id: &str) -> Result<Value> {
     one(db,"SELECT * FROM routines WHERE id=? AND id NOT IN(SELECT routine FROM local_routine_deletions)",[id])?.ok_or_else(||error(404,"Routine not found."))
@@ -30,7 +31,25 @@ fn present(db: &Connection, mut r: Value) -> Result<Value> {
     } else {
         Value::Null
     };
+    if let Some(loop_row)=one(db,"SELECT l.max_runs,l.until_condition,l.reason,(SELECT count(*) FROM routine_runs WHERE routine=l.routine) AS runs
+         FROM routine_loops l WHERE l.routine=?",[string(&r,"id")])? {
+        r["loop"]=loop_row;
+    }
     Ok(r)
+}
+fn loop_limit(db: &Connection, routine: &str) -> Result<bool> {
+    exists(
+        db,
+        "SELECT 1 FROM routine_loops l WHERE l.routine=? AND (l.reason IS NOT NULL OR
+        (SELECT count(*) FROM routine_runs WHERE routine=l.routine)>=l.max_runs)",
+        [routine],
+    )
+}
+fn settle_limit(db: &Connection, routine: &str, turn: &str) -> Result<()> {
+    if loop_limit(db, routine)? {
+        super::finish_loop(db, routine, turn, "Run limit reached.")?;
+    }
+    Ok(())
 }
 pub fn busy(db: &Connection, id: &str) -> Result<bool> {
     data::exists(db,"SELECT 1 FROM routine_runs JOIN turns ON turns.id=routine_runs.turn WHERE routine=? AND(status IN('queued','running') OR paused=1) UNION ALL SELECT 1 FROM flow_runs JOIN flow_steps USING(root_turn) WHERE routine=? AND flow_steps.status IN('waiting','queued') LIMIT 1",[id,id])
@@ -134,6 +153,12 @@ pub fn enqueue_routine(
     if data::agents::hidden(db, string(r, "agent"))? {
         return Err(error(409, "Restore the agent before running routines."));
     }
+    if loop_limit(db, string(r, "id"))? {
+        return Err(error(
+            409,
+            "This loop has finished. Start a new loop to run it again.",
+        ));
+    }
     if busy(db, string(r, "id"))? {
         return Err(error(
             409,
@@ -177,6 +202,7 @@ pub fn enqueue_routine(
         params![string(r, "id"), turn, source],
     )?;
     snapshot(db, r, &turn, &thread)?;
+    settle_limit(db, string(r, "id"), &turn)?;
     Ok(json!({"turn":turn,"thread":thread}))
 }
 #[allow(clippy::too_many_arguments)]
@@ -265,6 +291,15 @@ pub fn route(
         }
         if owner.is_none()&&!integer(&v["revision"],1,9007199254740991){return Err(error(400,"Invalid routine revision."));}
         if current.as_ref().is_some_and(|r|r["revision"]!=v["revision"]){return Err(error(409,"Routine changed. Reload before saving."));}
+        if current.is_some() {
+            if v["enabled"]==true && loop_limit(db,p[2])? {
+                return Err(error(409,"This loop has finished. Start a new loop to run it again."));
+            }
+            if v.get("trigger").is_some_and(|t|t!="schedule") && exists(db,"SELECT 1 FROM routine_loops WHERE routine=?",[p[2]])? {
+                return Err(error(400,"Loops require a repeating schedule."));
+            }
+        }
+
         let agent=owner.unwrap_or_else(||current.as_ref().map(|r|string(r,"agent")).unwrap_or(""));
         let project=v.get("project").cloned().unwrap_or_else(||current.as_ref().map(|r|r["project"].clone()).unwrap_or(Value::Null));
         let report=v["reportTo"].as_str().or_else(||current.as_ref().and_then(|r|r["report_to"].as_str())).unwrap_or(if v.get("schedule").is_some(){"direct"}else{"run"});binding(db,agent,&project,report)?;
@@ -330,16 +365,16 @@ pub fn route(
     Err(error(404, "Route not found."))
 }
 pub fn tick(state: &AppState, db: &Connection) -> Result<()> {
-    if !data::providers::accounts(state)?
+    let configured = data::providers::accounts(state)?
         .iter()
-        .any(|a| !a.base.is_empty())
-    {
-        return Ok(());
-    }
+        .any(|a| !a.base.is_empty());
     let now = state.config.now();
     let mut admitted = 0;
-    for r in all(db,"SELECT * FROM routines r WHERE enabled=1 AND trigger='schedule' AND next_at<=? AND id NOT IN(SELECT routine FROM local_routine_deletions) AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=r.agent AND v.hidden=1) ORDER BY next_at",[now])? {
+    for r in all(db,"SELECT r.*,l.routine IS NOT NULL AS is_loop FROM routines r LEFT JOIN routine_loops l ON l.routine=r.id WHERE enabled=1 AND trigger='schedule' AND next_at<=? AND r.id NOT IN(SELECT routine FROM local_routine_deletions) AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=r.agent AND v.hidden=1) ORDER BY next_at",[now])? {
         if admitted==10 {break;}
+        if r["is_loop"]==1 {
+            if loop_limit(db,string(&r,"id"))? || crate::turns::admission::ready(state,db,string(&r,"agent")).is_err() {continue;}
+        } else if !configured {continue;}
         if busy(db,string(&r,"id"))? || db.query_row("SELECT count(*) FROM turns WHERE agent=? AND status IN('queued','running')",[string(&r,"agent")],|r|r.get::<_,i64>(0))? >=100 {continue;}
         if binding(db,string(&r,"agent"),&r["project"],string(&r,"report_to")).is_err(){continue;}
         let at=r["next_at"].as_i64().ok_or_else(Failure::storage)?;
@@ -353,6 +388,7 @@ pub fn tick(state: &AppState, db: &Connection) -> Result<()> {
         let (turn,thread)=enqueue(state,db,string(&r,"agent"),&format!("{} · {}",string(&r,"name"),iso(db,now)?),string(&r,"prompt"))?;
         db.execute("INSERT INTO routine_runs(routine,scheduled_at,turn,missed) VALUES(?,?,?,?)",params![string(&r,"id"),at,turn,missed])?;snapshot(db,&r,&turn,&thread)?;
         db.execute("UPDATE routines SET next_at=?,enabled=?,revision=revision+1 WHERE id=?",params![next.unwrap_or(at),i64::from(next.is_some()),string(&r,"id")])?;
+        settle_limit(db,string(&r,"id"),&turn)?;
         admitted+=1;
     }
     Ok(())

@@ -139,6 +139,9 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         _ => false,
     });
     specs.extend(crate::automation::tools(db, turn)?);
+    if super::goals::offer_tools(state, db, turn)? {
+        specs.extend(super::goals::specs());
+    }
     if crate::connectors::mailbox::available(state, db, turn)? {
         specs.extend(crate::connectors::mailbox::specs()?);
     }
@@ -643,6 +646,7 @@ pub(super) fn dispatch(
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
         | "cancel_task" | "interrupt_agent" => super::messaging::run(state, db, turn, call, args),
         "verify_result" => super::verification::review(db, turn, args),
+        "set_goal" | "set_loop" => super::goals::tool(state, db, turn, name, args),
         "edit_profile" | "set_avatar" | "list_sites" | "publish_site" | "delete_site" => {
             super::profile::execute(state, db, turn, name, args, avatar)
         }

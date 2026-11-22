@@ -9,6 +9,7 @@ mod coordination;
 pub(crate) mod diagnostics;
 mod dispatch;
 pub(crate) mod execution;
+pub(crate) mod goals;
 pub(crate) mod harness;
 mod history;
 pub(crate) use crate::media::images as media;
@@ -125,6 +126,7 @@ pub fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch("UPDATE compaction_attempts SET status='interrupted' WHERE status='pending';UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE state='approval';UPDATE transcriptions SET status='uncertain' WHERE status='pending';")?;
     db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'", [])?;
     db.execute("UPDATE provider_calls SET status='interrupted',finished=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='pending'", [])?;
+    goals::initialize(db)?;
     Ok(())
 }
 
@@ -207,6 +209,7 @@ fn maintain(state: &AppState) -> Result<()> {
     waits::expire(db, state.config.now())?;
     messaging::settle(state, db)?;
     coordination::settle(db)?;
+    transaction(db, || goals::maintain(state, db))?;
     Ok(())
 }
 
@@ -470,6 +473,11 @@ pub(crate) fn refresh_routing(db: &Connection) -> Result<()> {
 pub fn handles(path: &str, method: &Method) -> bool {
     let p: Vec<_> = path.split('/').skip(1).collect();
     matches!(p.as_slice(), ["api", "turn-waits", _])
+        || matches!(
+            p.as_slice(),
+            ["api", "agents" | "threads" | "channels", _, "goal" | "loop"]
+                | ["api", "agents" | "threads" | "channels", _, "goal", "stop"]
+        )
         || matches!(p.as_slice(),["api","agents"|"threads"|"channels",_,"turns"] if *method==Method::POST)
         || matches!(p.as_slice(),["api","channels",_,"discussions",_,"stop"] if *method==Method::POST)
         || matches!(p.as_slice(),["api","agents"|"threads"|"channels",_,"compaction"] if *method==Method::GET)
@@ -512,6 +520,18 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     let p: Vec<_> = path.split('/').skip(1).collect();
     let method = request.method().clone();
     let q = data::query(&request);
+    let goal_route = matches!(p.get(3), Some(&("goal" | "loop")));
+    if goal_route
+        && (state.auth.is_some()
+            || !q.is_empty()
+            || request.headers().contains_key("authorization")
+            || request.headers().contains_key("origin") && !data::origin(state, request.headers()))
+    {
+        return Err(error(
+            403,
+            "Goal and loop controls require the local owner in Minarbot.",
+        ));
+    }
     let room_stop = matches!(
         p.as_slice(),
         ["api", "channels", _, "discussions", _, "stop"]
@@ -587,7 +607,16 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     Ok(crate::json_response(status, value))
 }
 pub fn routes() -> Router<AppState> {
-    Router::new()
+    let mut routes = Router::new();
+    for kind in ["agents", "threads", "channels"] {
+        for action in ["goal", "goal/stop", "loop"] {
+            routes = routes.route(
+                &format!("/api/{kind}/{{id}}/{action}"),
+                any(crate::dispatch),
+            );
+        }
+    }
+    routes
         .route("/api/turn-waits/{id}", any(crate::dispatch))
         .route("/api/turn-waits/{id}/events", any(crate::dispatch))
         .route("/api/agents/{id}/compaction", any(crate::dispatch))
@@ -684,7 +713,7 @@ pub(crate) fn enqueue_automation(
     id: &str,
     text: &str,
 ) -> Result<()> {
-    admission::account(state, db, agent)?;
+    admission::ready(state, db, agent)?;
     db.execute(
         "INSERT INTO turns(id,agent,thread,text,status,created) VALUES(?,?,?,?,'queued',?)",
         params![id, agent, thread, text, iso(db, state.config.now())?],
