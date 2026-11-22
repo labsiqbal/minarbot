@@ -143,6 +143,7 @@ async function exercise(page, origin, client) {
     await radio(page, 'Light').click();
     const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
     assert.deepEqual(saved, { version: 1, colorTheme: 'github', theme: 'light', textSize: 'large' });
+    await page.waitForFunction(() => getComputedStyle(document.documentElement).fontSize === '18px');
     const tokens = await page.locator('html').evaluate(element => {
       const style = getComputedStyle(element);
       return ['--color-bg-chrome', '--color-text-secondary', '--color-border-focus', 'font-size']
@@ -547,7 +548,7 @@ async function pairing(client) {
       }
     }
     await page.keyboard.press('Tab');
-    assert.equal(await page.getByLabel('Pairing code').evaluate(element => element === document.activeElement), true);
+    assert.equal(await page.getByRole('textbox', { name: 'Pairing code', exact: true }).evaluate(element => element === document.activeElement), true);
     await page.keyboard.type(code);
     await page.keyboard.press('Tab');
     await page.keyboard.type('Parity browser');
