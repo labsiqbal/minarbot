@@ -210,7 +210,9 @@ async function exercise(page, client, route, panel, state, commands) {
       assert.deepEqual(posts('/api/updates/apply'), []);
       await button(panel, 'Update now').click();
       await button(plan, 'Update').click();
-      await visible(panel.getByRole('progressbar', { name: 'Download progress' }));
+      const progress = modal(page, 'Updating 1 machine');
+      await visible(exact(progress, 'Downloading 37%'));
+      assert.equal(await page.locator('progress[aria-label="Download progress"]').getAttribute('value'), '37');
       const attempts = posts('/api/updates/apply');
       assert.deepEqual(attempts[0], attempts[1]);
       assert.equal(attempts[0].version, release.version);
