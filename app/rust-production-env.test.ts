@@ -6,9 +6,9 @@ import { request } from 'node:https';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { rustBinary } from './rust-binary.ts';
+import { freePort, stop } from './test-support/test-process.ts';
 
 const root = resolve(import.meta.dirname, '..');
-const { freePort, stop } = await import(new URL('../scripts/production-env-gate.mjs', import.meta.url).href);
 
 test('Rust runtime source contains no unfinished port markers', () => {
   const source = join(root, 'crates/minarbot-server/src');

@@ -6,13 +6,13 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { rustBinary } from './rust-binary.ts';
 import { fileURLToPath } from 'node:url';
-
-const { stageRuntime } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
+import { xtask } from './test-support/release.ts';
 
 test('release stages Rust runtime inputs and T3 notices without Node source', () => {
   const stage = mkdtempSync(join(tmpdir(), 'minarbot-runtime-'));
   try {
-    stageRuntime(fileURLToPath(new URL('./', import.meta.url)), stage);
+    const staged = spawnSync(xtask(), ['stage-runtime', fileURLToPath(new URL('./', import.meta.url)), stage], { encoding: 'utf8' });
+    assert.equal(staged.status, 0, staged.stderr);
     assert.deepEqual(readdirSync(join(stage, 'app')), ['shared-data-worker.py']);
     assert.deepEqual(readFileSync(join(stage, 'app/shared-data-worker.py')), readFileSync(new URL('./shared-data-worker.py', import.meta.url)));
     assert.deepEqual(readdirSync(join(stage, 't3')).sort(), ['NOTICE', 'provenance.json']);

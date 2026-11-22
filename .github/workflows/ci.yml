@@ -34,9 +34,10 @@ jobs:
       - working-directory: app
         env:
           NODE_OPTIONS: --max-old-space-size=2048
+          MINARBOT_XTASK_BINARY: ${{ github.workspace }}/target/debug/xtask
           MINARBOT_RUST_BINARY: ${{ github.workspace }}/target/debug/minarbot-server
           MINARBOT_RUST_LAUNCHER_BINARY: ${{ github.workspace }}/target/debug/minarbot-launcher
         run: npm test
-      - run: node scripts/install-smoke.mjs target/debug
+      - run: cargo xtask install-smoke target/debug
       - working-directory: desktop
         run: npm test
