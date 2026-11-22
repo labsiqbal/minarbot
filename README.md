@@ -136,7 +136,7 @@ Release runs app lint, the React and Leptos builds, and app tests. It runs Cargo
 
 Retry a completed local build with `cargo xtask release --github-only <release-id> --releases <directory>`. CI packages runtimes with `--pack-ci <binary-directory> --output <directory> --notes <notes>` and uploads a draft with `--draft-ci <directory> --notes <notes>`. Finalize that draft using `cargo xtask release --sign-ci <version>`. Signing uses `--signing-key`, `MINARBOT_RELEASE_SIGNING_KEY`, or the default `~/.config/minarbot-release/signing-ed25519.pem`.
 
-For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after building `app/dist`, running `cargo xtask leptos`, and building `target/release`. This stages the release and unsigned manifest locally. Pass `--desktop` for the AppImage and updater metadata. `--issues` reads issue comments and checks their branch tips.
+For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after building `app/dist`, running `cargo xtask leptos`, and building `target/release`. This stages the release and unsigned manifest locally. Pass `--desktop` for Electron and Tauri AppImages and their updater metadata. See the [Tauri pilot](desktop/tauri/README.md) for build prerequisites, signing and the packaged acceptance matrix. `--issues` reads issue comments and checks their branch tips.
 
 Use `cargo xtask install-smoke target/debug` to exercise the installer against a local fixture. Check a served build with `cargo xtask check-served <origin> --present <text> --expect-version <version>`.
 

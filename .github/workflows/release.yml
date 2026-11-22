@@ -6,6 +6,10 @@ on:
         description: User-facing release notes
         required: true
         type: string
+      tauri_pilot:
+        description: Include the signed Tauri desktop pilot alongside Electron
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -48,6 +52,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev
+          if [ "${{ inputs.tauri_pilot }}" = true ]; then
+            sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev patchelf
+          fi
       - name: Build runtime
         run: |
           npm --prefix app ci
@@ -69,16 +76,27 @@ jobs:
         env:
           CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          MINARBOT_TAURI_UPDATER_PUBKEY: ${{ vars.MINARBOT_TAURI_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           version=$(node -p "require('./app/package.json').version")
           npm --prefix desktop ci
-          npm --prefix desktop run build -- "$version" "$PWD/desktop-output"
+          mode=()
+          if [ "${{ inputs.tauri_pilot }}" != true ]; then mode+=(--legacy-only); fi
+          cargo xtask desktop --runtime "artifacts/minarbot-$version-${{ matrix.platform }}.tar.gz" --output desktop-output "${mode[@]}"
       - name: Check macOS app signature
         if: runner.os == 'macOS'
         run: |
           app=$(find desktop-output -name Minarbot.app -type d -print -quit)
           test -n "$app"
           codesign --verify --deep --strict "$app"
+          if [ "${{ inputs.tauri_pilot }}" = true ]; then
+            volume=$(mktemp -d)
+            hdiutil attach -nobrowse -mountpoint "$volume" desktop-output/Minarbot-Tauri-*.dmg
+            trap 'hdiutil detach "$volume"' EXIT
+            codesign --verify --deep --strict "$volume/Minarbot Tauri.app"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}
@@ -86,6 +104,8 @@ jobs:
             desktop-output/*.AppImage
             desktop-output/*.dmg
             desktop-output/latest-linux*.yml
+            desktop-output/Minarbot-Tauri-*.sig
+            desktop-output/tauri-latest-*.json
           if-no-files-found: error
           compression-level: 0
 
@@ -108,12 +128,17 @@ jobs:
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          MINARBOT_TAURI_UPDATER_PUBKEY: ${{ vars.MINARBOT_TAURI_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $version = node -p "require('./app/package.json').version"
-          $env:MINARBOT_LINUX_ARCHIVE = (Get-Item "runtime/minarbot-$version-linux-x86_64.tar.gz").FullName
           npm --prefix desktop ci
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm --prefix desktop run build -- $version "$PWD/desktop-output"
+          $mode = @()
+          if ('${{ inputs.tauri_pilot }}' -ne 'true') { $mode += '--legacy-only' }
+          cargo xtask desktop --runtime "runtime/minarbot-$version-linux-x86_64.tar.gz" --output desktop-output @mode
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-windows-x64
@@ -121,6 +146,8 @@ jobs:
             desktop-output/*.exe
             desktop-output/*.blockmap
             desktop-output/latest.yml
+            desktop-output/Minarbot-Tauri-*.sig
+            desktop-output/tauri-latest-*.json
           if-no-files-found: error
           compression-level: 0
 

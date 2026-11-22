@@ -1,0 +1,25 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111113; color: #f5f5f7; -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+main { width: min(420px, calc(100vw - 64px)); padding-block: 40px; }
+h1 { margin: 24px 0 10px; font-size: 22px; font-weight: 600; letter-spacing: -.02em; text-wrap: balance; }
+p { color: #b5b5bf; line-height: 1.6; font-size: 14px; text-wrap: pretty; }
+form { margin-top: 28px; }
+label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; }
+input { width: 100%; min-height: 44px; padding: 12px 14px; border: 1px solid #52525b; border-radius: 10px; background: #1c1c20; color: #f5f5f7; font: inherit; font-size: 14px; caret-color: #a5a9ff; }
+input::placeholder { color: #a5a5b0; }
+button { width: 100%; min-height: 44px; margin-top: 20px; padding: 12px; border: 0; border-radius: 24px; background: #a5a9ff; color: #14182a; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+button:hover { background: #8c91ee; }
+button:disabled { opacity: .65; cursor: wait; }
+input:focus-visible, button:focus-visible { outline: 2px solid #a5a9ff; outline-offset: 3px; }
+#error { min-height: 24px; margin: 12px 0; color: #ffa6b5; }
+::selection { background: #4f55d9; color: #fff; }
+#status:empty, #error:empty { min-height: 0; margin: 0; }
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light; background: #f8f8fa; color: #191922; }
+  p { color: #50505d; }
+  input { background: #fff; color: #191922; border-color: #777786; caret-color: #4148a9; }
+  input::placeholder { color: #656575; }
+  input:focus-visible, button:focus-visible { outline-color: #4148a9; }
+  #error { color: #9f1239; }
+}

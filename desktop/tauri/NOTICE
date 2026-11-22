@@ -1,0 +1,2 @@
+Minarbot Tauri desktop includes Tauri 2 and its plugin crates under Apache-2.0 OR MIT licenses.
+The native webview uses WebKitGTK on Linux, WKWebView on macOS, and WebView2 on Windows.

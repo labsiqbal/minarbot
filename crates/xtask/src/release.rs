@@ -47,6 +47,8 @@ pub struct Ready {
     pub release: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub desktop: Option<[String; 2]>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tauri: BTreeMap<String, String>,
 }
 
 pub fn valid_version(version: &str) -> bool {
@@ -350,29 +352,24 @@ pub fn desktop_assets(directory: &Path, version: &str) -> Result<[PathBuf; 2]> {
 
 fn build_desktop(
     root: &Path,
+    runtime: &Path,
     directory: &Path,
     version: &str,
     dry_run: bool,
-) -> Result<[String; 2]> {
+) -> Result<([String; 2], BTreeMap<String, String>)> {
     files::mkdir(directory)?;
     let stage = private_stage(".desktop-", directory)?;
-    let mut command = Command::new("node");
-    command
-        .current_dir(root)
-        .arg(root.join("desktop/scripts/build.mjs"))
-        .arg(version)
-        .arg(stage.path());
-    if dry_run {
-        command
-            .env_remove("CSC_LINK")
-            .env_remove("CSC_KEY_PASSWORD")
-            .env_remove("WIN_CSC_LINK")
-            .env_remove("WIN_CSC_KEY_PASSWORD")
-            .env("CSC_IDENTITY_AUTO_DISCOVERY", "false");
-    }
-    run(&mut command)?;
+    let archive_path = stage.path().join("runtime.tar.gz");
+    archive(runtime, &archive_path)?;
+    let tauri_names = desktop::release(root, &archive_path, stage.path(), version, dry_run)?;
     let [image, yaml] = desktop_assets(stage.path(), version)?;
     let hashes = [sha256(&image)?, sha256(&yaml)?];
+    let mut tauri = BTreeMap::new();
+    for name in tauri_names {
+        let file = stage.path().join(&name);
+        tauri.insert(name.clone(), sha256(&file)?);
+        fs::rename(file, directory.join(name))?;
+    }
     for file in [image, yaml] {
         fs::rename(
             &file,
@@ -380,7 +377,7 @@ fn build_desktop(
         )?;
     }
     files::sync_dir(directory)?;
-    Ok(hashes)
+    Ok((hashes, tauri))
 }
 
 fn metadata(path: &Path, info: &Info, pretty: bool) -> Result<()> {
@@ -711,10 +708,17 @@ pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
             b"Prebuilt inputs. Publication is disabled.\n",
         )?;
     }
-    let desktop = if flags.contains_key("--desktop") {
-        Some(build_desktop(root, &directory, &info.version, dry_run)?)
+    let (desktop, tauri) = if flags.contains_key("--desktop") {
+        let (legacy, tauri) = build_desktop(
+            root,
+            &releases.join(&info.id),
+            &directory,
+            &info.version,
+            dry_run,
+        )?;
+        (Some(legacy), tauri)
     } else {
-        None
+        (None, BTreeMap::new())
     };
     if (!allow_dirty || dry_run) && notes.is_some_and(|notes| !notes.trim().is_empty()) {
         if !allow_dirty {
@@ -724,6 +728,7 @@ pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
         let ready = Ready {
             release: sha256(&releases.join(&info.id).join("release.json"))?,
             desktop,
+            tauri,
         };
         durable(
             &directory.join("ready.json"),

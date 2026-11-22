@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Connect to Minarbot</title>
+  <link rel="stylesheet" href="connect.css">
+</head>
+<body>
+  <main>
+    <img src="icon.svg" width="48" height="48" alt="">
+    <h1>Connect to your server</h1>
+    <form>
+      <label for="server-url">Server URL</label>
+      <input id="server-url" name="url" type="url" placeholder="https://nuc.example.test:4317" autocomplete="url" aria-describedby="error" required autofocus>
+      <button type="submit">Connect</button>
+      <p id="status" role="status"></p>
+      <p id="error" role="alert"></p>
+    </form>
+  </main>
+  <script type="module" src="connect.js"></script>
+</body>
+</html>
