@@ -15,6 +15,7 @@ pub struct Query<'a> {
     pub after: Option<i64>,
     pub before: Option<i64>,
     pub history_only: bool,
+    pub durable_only: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -28,7 +29,8 @@ const CANDIDATES: usize = 64;
 const RRF_K: usize = 60;
 const FILTERS: &str = "
     u.bank=?1 AND u.removed=0 AND (?2 IS NULL OR u.occurred_at>=?2)
-    AND (?3 IS NULL OR u.occurred_at<=?3) AND (NOT ?4 OR u.origin IN ('prompt','reply'))";
+    AND (?3 IS NULL OR u.occurred_at<=?3) AND (NOT ?4 OR u.origin IN ('prompt','reply'))
+    AND (NOT ?5 OR u.origin IN ('retained','legacy'))";
 
 impl Store<'_> {
     /// BM25-only search, available offline while model-backed indexing catches up.
@@ -170,12 +172,19 @@ fn lexical(db: &Connection, q: &Query<'_>) -> Result<Vec<i64>> {
     }
     let sql = format!(
         "SELECT u.id FROM memory_fts JOIN memory_units u ON u.id=memory_fts.rowid
-        WHERE {FILTERS} AND memory_fts MATCH ?5 ORDER BY bm25(memory_fts),u.id LIMIT {CANDIDATES}"
+        WHERE {FILTERS} AND memory_fts MATCH ?6 ORDER BY bm25(memory_fts),u.id LIMIT {CANDIDATES}"
     );
     ids(
         db,
         &sql,
-        params![q.bank, q.after, q.before, q.history_only, query],
+        params![
+            q.bank,
+            q.after,
+            q.before,
+            q.history_only,
+            q.durable_only,
+            query
+        ],
     )
 }
 
@@ -184,7 +193,13 @@ fn vectors(db: &Connection, q: &Query<'_>, vector: &[f32; DIMENSIONS]) -> Result
         "SELECT u.id,u.embedding FROM memory_units u
         WHERE {FILTERS} AND u.embedding IS NOT NULL"
     ))?;
-    let mut rows = stmt.query(params![q.bank, q.after, q.before, q.history_only])?;
+    let mut rows = stmt.query(params![
+        q.bank,
+        q.after,
+        q.before,
+        q.history_only,
+        q.durable_only
+    ])?;
     let mut scored = Vec::new();
     while let Some(row) = rows.next()? {
         // Exact cosine on unit vectors, scoped before scoring. Avoid a platform SQLite extension.
@@ -213,7 +228,7 @@ fn graph(db: &Connection, q: &Query<'_>, seeds: &[i64]) -> Result<Vec<i64>> {
     }
     // UNION deduplicates at each depth. Cap expansion and never traverse a removed or foreign unit.
     let sql = format!("WITH RECURSIVE walk(id,depth) AS (
-        SELECT value,0 FROM json_each(?5)
+        SELECT value,0 FROM json_each(?6)
         UNION
         SELECT l.target,walk.depth+1 FROM walk JOIN memory_links l ON l.bank=?1 AND l.source=walk.id
           JOIN memory_units u ON u.id=l.target WHERE walk.depth<2 AND {FILTERS}
@@ -225,7 +240,7 @@ fn graph(db: &Connection, q: &Query<'_>, seeds: &[i64]) -> Result<Vec<i64>> {
           JOIN memory_unit_entities b ON b.bank=a.bank AND b.entity=a.entity AND b.unit<>a.unit
           JOIN memory_units u ON u.id=b.unit WHERE walk.depth<2 AND {FILTERS}
         LIMIT 512
-    ) SELECT id FROM walk WHERE depth>0 AND id NOT IN (SELECT value FROM json_each(?5))
+    ) SELECT id FROM walk WHERE depth>0 AND id NOT IN (SELECT value FROM json_each(?6))
       GROUP BY id ORDER BY min(depth),id LIMIT {CANDIDATES}");
     ids(
         db,
@@ -235,6 +250,7 @@ fn graph(db: &Connection, q: &Query<'_>, seeds: &[i64]) -> Result<Vec<i64>> {
             q.after,
             q.before,
             q.history_only,
+            q.durable_only,
             serde_json::to_string(seeds)?
         ],
     )
@@ -250,7 +266,7 @@ fn temporal(db: &Connection, q: &Query<'_>) -> Result<Vec<i64>> {
             "SELECT u.id FROM memory_units u WHERE {FILTERS}
         ORDER BY u.occurred_at DESC,u.id LIMIT {CANDIDATES}"
         ),
-        params![q.bank, q.after, q.before, q.history_only],
+        params![q.bank, q.after, q.before, q.history_only, q.durable_only],
     )
 }
 

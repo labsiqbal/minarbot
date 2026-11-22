@@ -86,6 +86,13 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
     specs.retain(|t| {
         [
             "verify_result",
+            "recall",
+            "reflect",
+            "remember",
+            "search_history",
+            "search_memory",
+            "remember_memory",
+            "select_memory",
             "create_text_file",
             "read_attachment",
             "read_workspace_file",

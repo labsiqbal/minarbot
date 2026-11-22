@@ -55,8 +55,17 @@ function safeCheckerError(error) {
 
 function observations(db) {
     const turns = db.prepare('SELECT id, agent, channel, thread, status, paused, reply FROM turns ORDER BY seq').all();
-    const calls = db.prepare('SELECT model, total_tokens FROM provider_calls ORDER BY seq').all();
+    const calls = db.prepare('SELECT turn, model, phase, input_tokens, output_tokens, total_tokens FROM provider_calls ORDER BY seq').all();
     const n = query => db.prepare(query).get().n;
+    const hasRecall = n("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='memory_recall_metrics'");
+    const recall = hasRecall ? db.prepare('SELECT added_tokens,units FROM memory_recall_metrics WHERE turn=?') : null;
+    const turnUsage = turns.map(turn => {
+        const context = recall?.get(turn.id);
+        const usage = calls.filter(call => call.turn === turn.id).map(({ phase, input_tokens, output_tokens, total_tokens }) => ({
+            phase, inputTokens: input_tokens, outputTokens: output_tokens, tokens: total_tokens,
+        }));
+        return { autoRecallTokenUpperBound: context?.added_tokens ?? 0, autoRecalledUnits: context?.units ?? 0, usage };
+    });
     const interventions = {
         approvals: n(`SELECT (SELECT count(*) FROM harness_approvals)
             + (SELECT count(*) FROM composio_calls WHERE decision IS NOT NULL OR state='approval') AS n`),
@@ -67,7 +76,7 @@ function observations(db) {
     const knownTokens = calls.reduce((sum, call) => sum + (call.total_tokens ?? 0), 0);
     const unknownUsage = calls.filter(call => call.total_tokens === null).length;
     return {
-        turns, interventions,
+        turns, turnUsage, interventions,
         interventionCount: Object.values(interventions).reduce((sum, count) => sum + count, 0),
         knownTokens, tokens: calls.length && !unknownUsage ? knownTokens : null, unknownUsage,
         providerCalls: calls.length, models: [...new Set(calls.map(call => call.model))],
@@ -185,6 +194,7 @@ async function attempt(runtime, task, count, server, signal) {
             }
             const final = observations(db);
             row.turns = final.turns.length;
+            row.turnUsage = final.turnUsage;
             row.tokens = final.tokens;
             row.knownTokens = final.knownTokens;
             row.providerCalls = final.providerCalls;

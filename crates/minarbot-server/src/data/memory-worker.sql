@@ -21,6 +21,13 @@ CREATE VIEW IF NOT EXISTS memory_learning_ready AS
 SELECT c.id,c.agent,c.model FROM memory_learning_candidates c
 JOIN memory_learning_turns e ON e.turn=c.id AND e.agent=c.agent;
 
+CREATE TABLE IF NOT EXISTS memory_recall_metrics (
+    turn TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
+    bank TEXT NOT NULL,
+    added_tokens INTEGER NOT NULL CHECK(added_tokens >= 0),
+    units INTEGER NOT NULL CHECK(units >= 0)
+) STRICT;
+
 CREATE TRIGGER IF NOT EXISTS memory_learning_raw AFTER INSERT ON memory_units
 WHEN NEW.origin IN ('prompt','reply')
   AND EXISTS(SELECT 1 FROM memory_learning_ready

@@ -530,7 +530,8 @@ async fn execute(
             "Coding runtime requires an installed executable on PATH.",
         )
     })?;
-    let judging = phase == turns::goals::JUDGE;
+    let memory = phase.starts_with("memory_");
+    let judging = phase == turns::goals::JUDGE || memory;
     let workspace = &binding.directory;
     let mcp_url = crate::mcp::url(state);
     let native_model = if ["codex", "claude"].contains(&runtime)
@@ -547,7 +548,9 @@ async fn execute(
         .map(|v| string(&v, "model").to_owned())
         .unwrap_or_default()
     };
-    let instructions = if judging {
+    let instructions = if memory {
+        "Complete the memory request in JSON. Use no tools.".into()
+    } else if judging {
         "Evaluate supplied evidence and return the requested JSON. Use no tools.".into()
     } else {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -720,9 +723,14 @@ async fn execute(
         process: Some({
             // Serialize the final state check and spawn with Stop.
             let db = state.database.lock().map_err(|_| Failure::storage())?;
-            launch_turn(&db.connection, turn_id, || {
-                Process::launch(executable, &args, workspace, &env)
-            })?
+            if memory {
+                turns::memory::completion_agent(&db.connection, turn_id, phase)?;
+                Process::launch(executable, &args, workspace, &env)?
+            } else {
+                launch_turn(&db.connection, turn_id, || {
+                    Process::launch(executable, &args, workspace, &env)
+                })?
+            }
         }),
         notification: None,
         config: &state.config.harness,
@@ -860,7 +868,7 @@ async fn execute(
         session = saved
             .clone()
             .unwrap_or_else(|| string(&setup, "sessionId").into());
-        if !session.is_empty() && session.len() <= 256 {
+        if !memory && !session.is_empty() && session.len() <= 256 {
             let mut params = json!({"sessionId":session});
             if runtime == "grok" {
                 params["_meta"] = json!({"cancelTrigger":"ctrl_c"});
@@ -956,7 +964,7 @@ async fn execute(
                 let p = &value["params"];
                 if value.get("id").is_some() && value.get("method").is_some() {
                     if judging {
-                        return Err(error(502, "Goal judge attempted to use a tool."));
+                        return Err(error(502, "Private completion attempted to use a tool."));
                     }
                     if ![
                         "mcpServer/elicitation/request",
@@ -1354,7 +1362,7 @@ async fn execute(
                 let p = &value["params"];
                 if value.get("id").is_some() {
                     if judging {
-                        return Err(error(502, "Goal judge attempted to use a tool."));
+                        return Err(error(502, "Private completion attempted to use a tool."));
                     }
                     if p["sessionId"] != session {
                         process.send(json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32602,"message":"Request unavailable in this Minarbot session."}})).await?;
@@ -1464,7 +1472,7 @@ async fn execute(
     let reply = snapshot.finish()?;
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     db.connection.execute("UPDATE provider_calls SET status='received',finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=? AND status='pending'",rusqlite::params![data::iso(&db.connection,state.config.now())?,usage[0],usage[1],usage[0].zip(usage[1]).map(|(a,b)|a+b),call])?;
-    if state.auth.is_none() {
+    if state.auth.is_none() && !memory {
         turns::goals::account_unmetered(
             &db.connection,
             string(turn, "id"),
@@ -1508,7 +1516,8 @@ pub async fn run(
     messages: &[Value],
     phase: &str,
 ) -> Result<String> {
-    let judging = phase == turns::goals::JUDGE;
+    let memory = phase.starts_with("memory_");
+    let judging = phase == turns::goals::JUDGE || memory;
     let judge_home = judging
         .then(process::ProbeHome::new)
         .transpose()
@@ -1516,10 +1525,13 @@ pub async fn run(
     let (turn, profile, binding, account, login, device) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
+        if memory {
+            turns::memory::completion_agent(db, turn_id, phase)?;
+        }
         let turn = one(
             db,
-            "SELECT * FROM turns WHERE id=? AND status IN('queued','running') AND paused=0",
-            [turn_id],
+            "SELECT * FROM turns WHERE id=? AND (? OR status IN('queued','running') AND paused=0)",
+            rusqlite::params![turn_id, memory],
         )?
         .ok_or_else(|| error(409, "Task has stopped."))?;
         let profile = agents::read(db, string(&turn, "agent"))?;
@@ -1592,7 +1604,13 @@ pub async fn run(
         .unwrap_or("direct");
     let key = json!([
         turn["agent"],
-        if judging { "goal-judge" } else { conversation },
+        if memory {
+            "memory"
+        } else if judging {
+            "goal-judge"
+        } else {
+            conversation
+        },
         runtime,
         (!judging).then_some(&binding.directory)
     ])
@@ -1716,11 +1734,15 @@ pub async fn run(
     };
     let call = {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
-        if db.connection.execute("UPDATE turns SET status='running',started_at=coalesce(started_at,?) WHERE id=? AND status IN('queued','running') AND paused=0",rusqlite::params![data::iso(&db.connection,state.config.now())?,turn_id])? == 0 {
+        if memory {
+            turns::memory::completion_agent(&db.connection, turn_id, phase)?;
+        } else if db.connection.execute("UPDATE turns SET status='running',started_at=coalesce(started_at,?) WHERE id=? AND status IN('queued','running') AND paused=0",rusqlite::params![data::iso(&db.connection,state.config.now())?,turn_id])? == 0 {
             return Err(process::stopped());
         }
         db.connection.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES(?,?,?,'local-harness',?,? ,?,'','pending',?)",rusqlite::params![turn_id,turn["agent"].as_str(),if model.is_empty(){label(runtime)}else{model},if phase=="routing"{"routing"}else{"completion"},phase,runtime,data::iso(&db.connection,state.config.now())?])?;
-        state.events.turn(&db.connection, turn_id)?;
+        if !memory {
+            state.events.turn(&db.connection, turn_id)?;
+        }
         db.connection.last_insert_rowid()
     };
     let external = if !judging && state.config.harness.test_harness_bridge.is_some() {
@@ -1818,7 +1840,12 @@ pub async fn run(
     };
     // Dropping execute flushes partial output and schedules the ACP cancel. The turn worker
     // awaits that cleanup before releasing its slot.
-    let result = if let Some(ms) = state.config.data.timeout {
+    let result = if memory {
+        let ms = state.config.data.timeout.unwrap_or(90_000).min(90_000);
+        tokio::time::timeout(Duration::from_millis(ms), operation(None))
+            .await
+            .unwrap_or_else(|_| Err(error(502, "Memory engine timed out.")))
+    } else if let Some(ms) = state.config.data.timeout {
         tokio::time::timeout(Duration::from_millis(ms), operation(None)).await.map_err(|_|error(502,"Coding harness timed out. Check workspace changes before retrying; this turn was not replayed."))?
     } else {
         let active = config::ActiveClock::new(state, turn_id)?;
@@ -1828,6 +1855,13 @@ pub async fn run(
             result = operation(Some(active.clock.clone())) => result,
         }
     };
+    if memory && result.is_err() {
+        let db = state.database.lock().map_err(|_| Failure::storage())?;
+        db.connection.execute(
+            "UPDATE provider_calls SET status='failed',finished=? WHERE seq=? AND status='pending'",
+            rusqlite::params![data::iso(&db.connection, state.config.now())?, call],
+        )?;
+    }
     if let Some(lease) = lease.as_mut().filter(|lease| lease.external) {
         bridge(state, "revoke", json!({"id":lease.id})).await?;
         lease.external = false;

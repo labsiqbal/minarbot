@@ -321,6 +321,13 @@ pub fn handles(path: &str) -> bool {
             | ["api", "threads", _, "edit" | "delete" | "fork-context"]
             | ["api", "channels", _, "memory" | "edit" | "read"]
             | ["api", "agents" | "channels", _, "history", "search"]
+            | [
+                "api",
+                "agents" | "channels",
+                _,
+                "memory",
+                "knowledge" | "questions"
+            ]
             | ["api", "channels", _, "turns"]
             | [
                 "api",
@@ -571,6 +578,16 @@ fn route(
         ["api", kind, id, "memory"] if ["agents", "channels"].contains(kind) => {
             memory::route(db, kind, id, v, q, get)?
         }
+        ["api", kind @ ("agents" | "channels"), id, "memory", view @ ("knowledge" | "questions")] =>
+        {
+            if state.auth.is_some()
+                || headers.contains_key("authorization")
+                || headers.contains_key("origin") && !origin(state, headers)
+            {
+                return Err(error(403, "Memory requires the local owner in Minarbot."));
+            }
+            memory::knowledge::route(db, kind, id, *view == "questions", v, q, get)?
+        }
         ["api", kind, id, "panel"] => {
             if headers.contains_key("authorization")
                 || headers.contains_key("origin") && !origin(state, headers)
@@ -728,6 +745,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/{id}/template", any(crate::dispatch))
         .route("/api/agents/{id}/memory", any(crate::dispatch))
         .route("/api/channels/{id}/memory", any(crate::dispatch))
+        .route("/api/agents/{id}/memory/knowledge", any(crate::dispatch))
+        .route("/api/channels/{id}/memory/knowledge", any(crate::dispatch))
+        .route("/api/agents/{id}/memory/questions", any(crate::dispatch))
+        .route("/api/channels/{id}/memory/questions", any(crate::dispatch))
         .route("/api/agents/{id}/history/search", any(crate::dispatch))
         .route("/api/channels/{id}/history/search", any(crate::dispatch))
         .route("/api/agents/{id}/threads", any(crate::dispatch))

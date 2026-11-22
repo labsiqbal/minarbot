@@ -1,0 +1,19 @@
+.memory-view { padding-block: 12px; }
+.memory-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+.memory-toolbar > .k-field:first-child { flex: 1 1 14rem; }
+.memory-list { margin: 0; padding: 0; list-style: none; }
+.memory-list > li + li { border-top: 1px solid var(--line); }
+.memory-text, .memory-answer { white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-answer { display: block; font-weight: 400; }
+.memory-sources {
+  padding: 0 12px 8px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.memory-sources summary { cursor: pointer; min-height: 24px; width: fit-content; }
+.memory-sources ul { padding-inline-start: 16px; margin-block: 4px; }

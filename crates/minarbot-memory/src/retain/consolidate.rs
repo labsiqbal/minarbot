@@ -46,7 +46,7 @@ impl Batch {
         let facts = db
             .prepare(&format!(
                 "SELECT {COLUMNS} FROM memory_facts f JOIN memory_units u ON u.id=f.unit
-             WHERE f.raw=? AND f.offset=? AND f.consolidated=0 AND f.ready_at<=? AND f.attempts=?
+             WHERE f.raw=? AND f.offset=? AND u.removed=0 AND f.consolidated=0 AND f.ready_at<=? AND f.attempts=?
              ORDER BY f.unit LIMIT {MAX_FACTS}"
             ))?
             .query_map(
@@ -60,6 +60,7 @@ impl Batch {
             "SELECT {COLUMNS} FROM memory_fts JOIN memory_observations o ON o.unit=memory_fts.rowid
              JOIN memory_units u ON u.id=o.unit
              WHERE o.bank=? AND o.agent=? AND memory_fts MATCH ?
+             AND NOT EXISTS(SELECT 1 FROM memory_unit_controls c WHERE c.unit=o.unit AND (c.edited=1 OR c.essential=1))
              ORDER BY bm25(memory_fts),u.id DESC LIMIT 3"
         ))?;
         // ponytail: use FTS candidates offline. Add vector candidates if lexical recall misses paraphrases.
@@ -114,8 +115,9 @@ impl Batch {
     pub(super) fn current(&self, db: &Connection, attempts: i64) -> Result<bool> {
         for fact in &self.facts {
             if !db.query_row(
-                "SELECT EXISTS(SELECT 1 FROM memory_facts WHERE unit=? AND consolidated=0 AND attempts=?)",
-                params![fact.id,attempts], |r| r.get::<_, bool>(0),
+                "SELECT EXISTS(SELECT 1 FROM memory_facts f JOIN memory_units u ON u.id=f.unit
+                 WHERE f.unit=? AND f.consolidated=0 AND f.attempts=? AND u.removed=0 AND u.text=?)",
+                params![fact.id,attempts,fact.text], |r| r.get::<_, bool>(0),
             )? {
                 return Ok(false);
             }
@@ -136,7 +138,8 @@ impl Batch {
     pub(super) fn apply(&self, db: &Connection, source: &Source, answer: &str) -> Result<()> {
         for observation in &self.candidates {
             if !db.query_row(
-                "SELECT EXISTS(SELECT 1 FROM memory_units WHERE id=? AND text=? AND mentioned_at IS ?)",
+                "SELECT EXISTS(SELECT 1 FROM memory_units WHERE id=? AND removed=0 AND text=? AND mentioned_at IS ?
+                 AND NOT EXISTS(SELECT 1 FROM memory_unit_controls c WHERE c.unit=memory_units.id AND (c.edited=1 OR c.essential=1)))",
                 params![observation.id,observation.text,observation.mentioned],
                 |r| r.get::<_, bool>(0),
             )? {

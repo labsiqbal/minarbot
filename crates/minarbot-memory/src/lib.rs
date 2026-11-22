@@ -5,10 +5,12 @@
 
 mod models;
 mod recall;
+mod reflect;
 mod retain;
 
 pub use models::LocalModels;
 pub use recall::{Hit, Query};
+pub use reflect::{reflect, Evidence, Reflection};
 pub use retain::Work;
 
 use rusqlite::{params, Connection};
@@ -65,7 +67,8 @@ pub struct Unit {
 pub fn initialize(db: &Connection) -> rusqlite::Result<()> {
     db.execute_batch(concat!(
         include_str!("schema.sql"),
-        include_str!("retain.sql")
+        include_str!("retain.sql"),
+        include_str!("reflect.sql")
     ))
 }
 
