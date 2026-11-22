@@ -255,7 +255,7 @@ fn current() -> Option<SettingsRoute> {
 
 pub fn focus_heading() {
     if let Some(heading) = document()
-        .query_selector(".app-settings__page h1")
+        .query_selector("#appearance-dialog .app-settings__page h1")
         .ok()
         .flatten()
         .and_then(|element| element.dyn_into::<HtmlElement>().ok())
