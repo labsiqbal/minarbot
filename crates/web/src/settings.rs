@@ -15,7 +15,7 @@ pub struct Config {
     groups: Vec<Group>,
     search_icon: String,
     close_icon: String,
-    error_icon: String,
+    pub(crate) error_icon: String,
     #[serde(default)]
     system_icons: crate::system::kit::Icons,
     #[serde(default)]

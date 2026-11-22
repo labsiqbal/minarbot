@@ -68,7 +68,10 @@ function indexLabel(index: LocalProject['codegraphIndex']) {
   }
 }
 export function ProjectHome({project,agents,state,request,onChat,onThread,onReport,onDeleted}:{project:LocalProject;agents:Agent[];state:ProjectState;request:Request;onChat:(channel:string)=>void;onThread:(agent:string,thread:string)=>void;onReport:(agent:string,destination:string,turn:string)=>void;onDeleted:()=>void}) {
-  const [tab,setTab]=useState('overview');
+  const [tab,setTab]=useState(() => {
+    const tab = new URLSearchParams(window.location.search).get('projectTab');
+    return tab && ['calendar', 'apps', 'environment', 'mcp'].includes(tab) ? tab : 'overview';
+  });
   const scopedRequest=useCallback<Request>((path,body)=>request(path==='/api/connected-apps/key'?path:path.replace(/^\/api\//,`/api/projects/${project.id}/`),body),[project.id,request]);
   const memberAgents=agents.filter(agent=>project.members.some(member=>member.agent===agent.id));
   const [members,setMembers]=useState(project.members),[editing,setEditing]=useState(false),[name,setName]=useState(project.name),[description,setDescription]=useState(project.description);

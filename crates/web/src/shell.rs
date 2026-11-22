@@ -18,6 +18,10 @@ pub(crate) struct Agent {
     pub role: String,
     #[serde(default)]
     pub hidden: bool,
+    #[serde(default)]
+    pub runnable: bool,
+    #[serde(default)]
+    pub revision: u64,
 }
 
 #[derive(Clone, Deserialize)]

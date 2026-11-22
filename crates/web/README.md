@@ -37,11 +37,11 @@ route ownership.
 ## Route ownership
 
 Leptos owns General, Appearance, Machines, Devices, Computer, Updates, Usage,
-Shared data, Backup & restore, and External access when selected. Computer
-viewer links open the existing viewer document.
-The first-run screen, agent and project pages, and the following settings still
-use React: Providers, Engines, Skills, minarbot.com, Connected apps, Email,
-MCP connections, Vault, and Craft Anything. `/pair` is a Rust-rendered form. The separate canonical hub
+Shared data, Backup & restore, and External access when selected. First-run,
+project overview, and `/pair` also use Leptos. Agent conversation routes and
+project tabs transfer to React, along with Providers, Engines, Skills,
+minarbot.com, Connected apps, Email, MCP connections, Vault, and Craft Anything.
+The separate canonical hub
 continues to use its own session and client.
 
 Conversation and agent/room deep links stay with #63. Routines, workflows and
