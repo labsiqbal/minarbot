@@ -220,6 +220,9 @@ fn ProviderForm(
             return;
         }
         let mut body = json!({ "id": id, "provider": TYPES[kind.get_untracked()].0, "name": name.get_untracked(), "baseURL": url.get_untracked(), "apiKey": key.get_untracked() });
+        if !save {
+            models.set(None);
+        }
         error.set(String::new());
         busy.set(true);
         leptos::task::spawn_local(async move {
@@ -526,17 +529,6 @@ pub fn page(error_icon: String) -> impl IntoView {
                             <ErrorAlert message=error icon=error_icon />
                             <p role="alert" hidden=move || pending.with(Result::is_ok)>"Recovery data could not be read."</p>
                             <div class="k-row-actions">
-                                <button type="button" class="k-btn k-btn--md k-btn--ghost" hidden=move || pending.with(Result::is_ok)
-                                    on:click=move |_| {
-                                        if let Ok(Some(storage)) = window().session_storage() {
-                                            if storage.remove_item(RECOVERY).is_ok() {
-                                                pending.set(Ok(None));
-                                                error.set(String::new());
-                                            }
-                                        }
-                                    }>
-                                    "Clear recovery"
-                                </button>
                                 <button type="submit" class="k-btn k-btn--md k-btn--primary" disabled=move || busy.get() || pending.with(Result::is_err)>
                                     {move || if retry_creation() { "Retry creation" } else { "Create agent" }}
                                 </button>
@@ -547,7 +539,7 @@ pub fn page(error_icon: String) -> impl IntoView {
                                                 if storage.remove_item(RECOVERY).is_ok() { pending.set(Ok(None)); }
                                             }
                                         }
-                                    }>"Discard recovery"</button>
+                                    }>{move || if pending.with(Result::is_err) { "Discard recovery data" } else { "Discard recovery" }}</button>
                             </div>
                         </form>
                     </div></div>
