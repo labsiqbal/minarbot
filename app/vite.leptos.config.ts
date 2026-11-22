@@ -27,6 +27,8 @@ const appearanceConfig: Plugin = {
         routines: svg(CalendarClock), workflows: svg(Workflow), calendar: svg(CalendarDays),
         search: svg(Search, 15), quickSearch: svg(Search, 16), book: svg(BookOpen, 16), info: svg(Info, 14), voice: svg(Volume2),
         monitor: svg(Monitor), plug: svg(Plug, 15), plus: svg(Plus, 15), send: svg(Send, 15), check: svg(Check, 15),
+        message: svg(MessageSquare), close: svg(X),
+        settingsChoices: settingsGroups.flatMap(({ items }) => items.map(({ id, label, icon }) => ({ id, label, svg: svg(icon) }))),
         folder: svg(Folder), folderOpen: svg(FolderOpen), hash: svg(Hash), chevron: svg(ChevronRight),
       },
     };
@@ -70,6 +72,7 @@ const appearanceConfig: Plugin = {
       },
       conversation: {
         ...shell,
+        systemIcons,
         conversationIcons: {
           attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
           chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),

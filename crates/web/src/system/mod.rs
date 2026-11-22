@@ -5,7 +5,7 @@ mod devices;
 pub(crate) mod external;
 pub(crate) mod kit;
 mod machines;
-mod updates;
+pub(crate) mod updates;
 mod usage;
 
 use crate::{api, routes::SettingsRoute};
@@ -20,7 +20,7 @@ pub fn panel(route: SettingsRoute) -> AnyView {
         SettingsRoute::Machines => machines::panel().into_any(),
         SettingsRoute::Devices => devices::panel().into_any(),
         SettingsRoute::Computer => computer::panel().into_any(),
-        SettingsRoute::Updates => updates::panel().into_any(),
+        SettingsRoute::Updates => updates::panel(),
         SettingsRoute::Usage => usage::panel().into_any(),
         SettingsRoute::Data => data::panel().into_any(),
         SettingsRoute::Backup => backup::panel().into_any(),
@@ -68,6 +68,15 @@ impl<T: Clone + PartialEq + DeserializeOwned + Send + Sync + 'static> Query<T> {
         interval: u64,
         busy: RwSignal<bool>,
     ) -> Self {
+        Self::paced(path, interval, busy, || 0)
+    }
+
+    fn paced(
+        path: impl Fn() -> String + Copy + Send + Sync + 'static,
+        tick: u64,
+        busy: RwSignal<bool>,
+        interval: impl Fn() -> u64 + Copy + Send + Sync + 'static,
+    ) -> Self {
         let query = Self {
             value: RwSignal::new(None),
             error: RwSignal::new(String::new()),
@@ -76,6 +85,7 @@ impl<T: Clone + PartialEq + DeserializeOwned + Send + Sync + 'static> Query<T> {
         };
         let generation = RwSignal::new(0_u32);
         let running = RwSignal::new(false);
+        let started = StoredValue::new(0.0);
         let value = query.value;
         let error = query.error;
         let fresh = query.fresh;
@@ -85,9 +95,14 @@ impl<T: Clone + PartialEq + DeserializeOwned + Send + Sync + 'static> Query<T> {
                 generation.update(|current| *current = current.wrapping_add(1));
                 running.set(false);
             }
-            if busy.get_untracked() || running.get_untracked() {
+            let now = js_sys::Date::now();
+            if busy.get_untracked()
+                || running.get_untracked()
+                || (!invalidate && now - started.get_value() < untrack(interval) as f64)
+            {
                 return;
             }
+            started.set_value(now);
             let active = generation.get_untracked();
             let path = untrack(path);
             running.set(true);
@@ -124,7 +139,7 @@ impl<T: Clone + PartialEq + DeserializeOwned + Send + Sync + 'static> Query<T> {
             }
             refresh(true);
         });
-        poll(interval, move || refresh(false));
+        poll(tick, move || refresh(false));
         query
     }
 

@@ -1,3 +1,4 @@
+@import "../../app/src/guide.css";
 @import "./appearance.css";
 @import "../../app/src/ui/details.css";
 @import "../../app/src/right-panel.css";
@@ -79,3 +80,9 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .message-error > .appearance-icon > svg { flex: none; align-self: flex-start; margin-top: 5px; }
 
 .conversation-panel > .right-panel__header { padding-inline-end: 12px; }
+
+
+.question-card-body { padding: 12px; }
+.question-card-body :is(h3, p, .k-check__label) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-card-note { margin: 0; overflow-wrap: anywhere; }
+.turn-request { scroll-margin-block-start: 12px; }

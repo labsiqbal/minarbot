@@ -48,12 +48,12 @@ struct Login {
 }
 
 #[derive(Clone, PartialEq)]
-struct Connection {
-    value: String,
-    label: String,
-    runtime: String,
-    account: String,
-    model: String,
+pub(crate) struct Connection {
+    pub(crate) value: String,
+    pub(crate) label: String,
+    pub(crate) runtime: String,
+    pub(crate) account: String,
+    pub(crate) model: String,
 }
 
 fn provider_connection(provider: Provider, codex: bool) -> Connection {
@@ -71,7 +71,7 @@ fn provider_connection(provider: Provider, codex: bool) -> Connection {
     }
 }
 
-async fn connections() -> Result<(Vec<Connection>, Option<String>, bool), String> {
+pub(crate) async fn connections() -> Result<(Vec<Connection>, Option<String>, bool), String> {
     let providers: Vec<Provider> = api::read(PROVIDERS).await?;
     let logins: Vec<Login> = api::read("/api/engine-logins").await?;
     let runtimes = api::read::<Runtimes>("/api/runtimes").await?.choices;

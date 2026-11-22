@@ -1,4 +1,6 @@
 mod controls;
+mod guide;
+mod input;
 mod panels;
 mod protocol;
 mod queue;
@@ -149,6 +151,8 @@ struct Turn {
     components: Vec<Value>,
     #[serde(rename = "agentMessages", default)]
     exchanges: Vec<Value>,
+    #[serde(default)]
+    guide: Option<guide::Actions>,
     #[serde(rename = "receivedAgentReplies", default)]
     received: Vec<Value>,
     room: Option<Value>,
@@ -316,12 +320,15 @@ struct Chat {
     active: RwSignal<Vec<Dispatch>>,
     addressed: RwSignal<String>,
     focus: RwSignal<String>,
+    focus_card: StoredValue<String>,
     query: RwSignal<String>,
     before: RwSignal<Option<u64>>,
     tab: RwSignal<&'static str>,
     details: RwSignal<bool>,
     run: RwSignal<String>,
     new_thread: RwSignal<bool>,
+    guide_connection: RwSignal<bool>,
+    guide_ready: RwSignal<Option<bool>>,
 }
 
 impl Chat {
@@ -340,6 +347,9 @@ impl Chat {
             .filter(|id| protocol::id(id))
             .unwrap_or_default();
         let _ = remove(&focus_key);
+        let card_key = key("focus-card");
+        let focus_card = saved(&card_key).unwrap_or_default();
+        let _ = remove(&card_key);
         let files = saved(&key("attachments"))
             .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
             .filter(|files| files.len() <= MAX_FILES && files.iter().all(|id| protocol::id(id)))
@@ -361,12 +371,15 @@ impl Chat {
             active: RwSignal::new(Vec::new()),
             addressed: RwSignal::new(String::new()),
             focus: RwSignal::new(focus),
+            focus_card: StoredValue::new(focus_card),
             query: RwSignal::new(String::new()),
             before: RwSignal::new(None),
             tab: RwSignal::new("chats"),
             details: RwSignal::new(restore_details()),
             run: RwSignal::new(String::new()),
             new_thread: RwSignal::new(false),
+            guide_connection: RwSignal::new(false),
+            guide_ready: RwSignal::new(None),
             config: StoredValue::new(config),
         }
     }
@@ -398,6 +411,9 @@ impl Chat {
     }
 
     fn can_send(self) -> bool {
+        if let Some(ready) = self.guide_ready.get() {
+            return ready;
+        }
         self.config.with_value(|config| {
             if config.channel {
                 if let Some(target) = self.target() {
@@ -1173,6 +1189,7 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
     let menu = NodeRef::<leptos::html::Details>::new();
     let trigger = NodeRef::<leptos::html::Summary>::new();
     let title = config.name.clone();
+    let builtin = config.agent.as_ref().is_some_and(|agent| agent.builtin);
     let toggle_details = move || chat.set_details(!chat.details.get_untracked());
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
         if !(event.ctrl_key() || event.meta_key())
@@ -1208,6 +1225,12 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
                     <span class="appearance-icon chat__pill-chev" inner_html=icons.chevron></span>
                 </summary>
                 <nav class="k-pop chat-pilot-menu__items" aria-label=format!("Menu {title}")>
+                    {builtin.then(|| view! {
+                        <button type="button" class="k-menu__item" on:click=move |_| {
+                            if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                            chat.guide_connection.set(true);
+                        }>"AI connection"</button>
+                    })}
                     <button type="button" class="k-menu__item" on:click=move |_| {
                         if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                         searching.set(true);
@@ -1235,6 +1258,7 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
 /// Key this component by conversation scope when changing routes.
 pub fn shell(config: ConversationConfig) -> impl IntoView {
     let chat = Chat::new(config.clone());
+    let guide = config.agent.clone().filter(|agent| agent.builtin);
     let snapshots = StoredValue::new(HashMap::new());
     subscribe(chat, snapshots);
     polling(chat, snapshots);
@@ -1254,6 +1278,27 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         },
     );
     on_cleanup(move || create.remove());
+    let new_chat = window_event_listener(leptos::ev::keydown, move |event| {
+        if (event.ctrl_key() || event.meta_key())
+            && event.shift_key()
+            && event.key().eq_ignore_ascii_case("o")
+            && document()
+                .query_selector("dialog:modal")
+                .ok()
+                .flatten()
+                .is_none()
+            && chat.config.with_value(|config| {
+                config
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| !agent.builtin && !agent.hidden)
+            })
+        {
+            event.prevent_default();
+            chat.new_thread.set(true);
+        }
+    });
+    on_cleanup(move || new_chat.remove());
     let filter = RwSignal::new(String::new());
     let searching = RwSignal::new(false);
     let search_input = NodeRef::<leptos::html::Input>::new();
@@ -1303,11 +1348,14 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
             request_animation_frame(move || {
                 if !focus.is_empty() {
                     if let Some(target) = document()
-                        .get_element_by_id(&format!("turn-{focus}"))
+                        .get_element_by_id(&chat.focus_card.get_value())
+                        .or_else(|| document().get_element_by_id(&format!("turn-{focus}")))
                         .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
                     {
                         target.scroll_into_view();
-                        let _ = target.focus();
+                        let options = web_sys::FocusOptions::new();
+                        options.set_prevent_scroll(true);
+                        let _ = target.focus_with_options(&options);
                         follow.set(false);
                     }
                 } else if let Some(node) = timeline.get_untracked() {
@@ -1356,7 +1404,16 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                     <div class="transcript__col" node_ref=content>
                         <p role="status" hidden=move || chat.turns.with(Option::is_some)>"Loading conversation…"</p>
                         <p class="message-error" role="alert" hidden=move || chat.read_error.with(String::is_empty)>{chat.read_error}</p>
-                        <p class="message-muted" hidden=move || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty()))>
+                        {guide.as_ref().map(|agent| {
+                            let name = agent.name.clone();
+                            view! { <div class="empty-chat" hidden=move || !chat.query.with(String::is_empty) || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty()))>
+                                {avatar(Some(agent.clone()), &name, false, 64)}
+                                <div class="empty-chat__title">{name}</div>
+                                <div class="empty-chat__sub">"What work do you want to set up?"</div>
+                            </div> }
+                        })}
+                        <p class="message-muted" hidden=move || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty()))
+                            || (chat.query.with(String::is_empty) && chat.config.with_value(|config| config.agent.as_ref().is_some_and(|agent| agent.builtin)))>
                             {move || if chat.query.with(String::is_empty) { "No messages yet" } else { "No matching messages" }}
                         </p>
                         <button type="button" class="k-btn k-btn--sm k-btn--ghost" hidden=move || rows.with(|rows| rows.len() < 100)
@@ -1381,6 +1438,14 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                 </section>
                 </div>
                 {controls::composer(chat, rows)}
+                {guide.map(|agent| guide::connection(agent, chat.guide_connection, move |agent| {
+                    chat.guide_ready.try_set(Some(agent.runnable));
+                    request_animation_frame(move || {
+                        if let Ok(Some(input)) = document().query_selector(".composer__input") {
+                            if let Ok(input) = input.dyn_into::<web_sys::HtmlElement>() { let _ = input.focus(); }
+                        }
+                    });
+                }))}
                 {header(chat, config, searching)}
             </main>
             {panels::right_panel(chat)}
