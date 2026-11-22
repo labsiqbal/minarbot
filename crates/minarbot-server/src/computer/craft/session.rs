@@ -219,9 +219,8 @@ impl Mcp {
                     use std::os::fd::AsRawFd;
                     let directory = crate::files::workspace::open_directory(path)
                         .map_err(|_| error(403, "Project folder is unavailable."))?;
-                    let pinned =
-                        format!("/proc/{}/fd/{}", std::process::id(), directory.as_raw_fd());
-                    command.arg("--ro-bind").arg(pinned).arg("/target");
+                    command.current_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()));
+                    command.arg("--ro-bind").arg(".").arg("/target");
                     Ok::<_, Failure>(directory)
                 })
                 .transpose()?
