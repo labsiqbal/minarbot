@@ -205,9 +205,9 @@ pub fn maintain(state: &AppState, db: &Connection) -> Result<()> {
             let reason = g["error"].as_str().unwrap_or("Turn ended before the goal was judged.");
             terminal(db,string(&g,"id"),if status=="cancelled"{"stopped"}else if status=="failed"{"failed"}else{"interrupted"},reason)?;
         } else if g["unavailable"] == 1 {
-            cancel(state,db,&g,"stopped","Conversation or agent is unavailable.")?;
+            transaction(db, || cancel(state,db,&g,"stopped","Conversation or agent is unavailable."))?;
         } else if g["deadline"].as_i64().is_some_and(|deadline|now>=deadline) {
-            cancel(state,db,&g,"wall_limit","Wall time limit reached.")?;
+            transaction(db, || cancel(state,db,&g,"wall_limit","Wall time limit reached."))?;
         }
     }
     Ok(())

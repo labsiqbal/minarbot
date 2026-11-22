@@ -175,6 +175,23 @@ fn goals_stop_at_time_and_token_limits_and_recover_interrupted_work() -> TestRes
 }
 
 #[test]
+fn idle_goal_maintenance_does_not_wake_the_scheduler() -> TestResult {
+    let fixture = Fixture::open()?;
+    let guard = fixture.state.database.lock().map_err(|_| "Database lock")?;
+    let db = &guard.connection;
+    fixture.start(db, 20, 250_000)?;
+    let commits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = commits.clone();
+    db.commit_hook(Some(move || {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        false
+    }));
+    checked(maintain(&fixture.state, db))?;
+    assert_eq!(commits.load(std::sync::atomic::Ordering::Relaxed), 0);
+    Ok(())
+}
+
+#[test]
 fn goal_reports_approval_pause_and_stop_cancels_the_current_turn() -> TestResult {
     let fixture = Fixture::open()?;
     let guard = fixture.state.database.lock().map_err(|_| "Database lock")?;

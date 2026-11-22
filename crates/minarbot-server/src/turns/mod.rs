@@ -209,7 +209,7 @@ fn maintain(state: &AppState) -> Result<()> {
     waits::expire(db, state.config.now())?;
     messaging::settle(state, db)?;
     coordination::settle(db)?;
-    transaction(db, || goals::maintain(state, db))?;
+    goals::maintain(state, db)?;
     Ok(())
 }
 
