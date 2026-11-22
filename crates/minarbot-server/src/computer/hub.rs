@@ -1860,11 +1860,8 @@ async fn tick(state: &AppState) -> Result<()> {
         let frame: Value =
             serde_json::from_str(text(&row, "frame")).map_err(|_| Failure::storage())?;
         let turn = text(&row, "turn_id");
-        if authorize(state, &frame, true).is_err() {
-            cancel(state, turn)?;
-            continue;
-        }
-        if let Err(e) = flush(state, turn).await {
+        if let Err(e) = publish_turn(state, &row, &frame, turn).await {
+            // Revocation can arrive while a partial or final result is in flight.
             if [
                 "local_policy_denied",
                 "authority_denied",
@@ -1878,57 +1875,63 @@ async fn tick(state: &AppState) -> Result<()> {
             }
             return Err(e);
         }
-        let status = db(state, |db| {
-            one(db, "SELECT status,reply FROM turns WHERE id=?", [turn])
-        })?;
-        let Some(status) = status else { continue };
-        let partial = db(state, |db| {
-            Ok(one(
-                db,
-                "SELECT s.text FROM provider_stream_segments s JOIN provider_calls p ON p.seq=s.call WHERE p.turn=? AND s.kind='text' ORDER BY p.seq DESC,s.ordinal DESC LIMIT 1",
-                [turn],
-            )?
-            .map(|v| text(&v, "text").to_owned()))
-        })
-        .unwrap_or(None);
-        if let Some(partial) = partial.filter(|p| !p.is_empty() && *p != row["published"]) {
-            let text = partial
-                .chars()
-                .rev()
-                .take(8000)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect::<String>();
-            emit(state, &frame, "turn.partial", json!({"text":text})).await?;
-            db(state, |db| {
-                db.execute(
-                    "UPDATE hub_link_turns SET published=? WHERE turn_id=?",
-                    params![partial, turn],
-                )?;
-                Ok(())
-            })?;
-        }
-        if ["done", "failed", "interrupted", "cancelled"].contains(&text(&status, "status")) {
-            let (kind, payload) = if status["status"] == "done" {
-                (
-                    "turn.final",
-                    json!({"text":if text(&status,"reply").is_empty(){"Completed.".into()}else{text(&status,"reply").chars().take(16000).collect::<String>()}}),
-                )
-            } else {
-                ("turn.failed", json!({"code":"local_turn_failed"}))
-            };
-            emit(state, &frame, kind, payload).await?;
-            db(state, |db| {
-                db.execute(
-                    "UPDATE hub_link_turns SET state='done' WHERE turn_id=?",
-                    [turn],
-                )?;
-                Ok(())
-            })?;
-        }
     }
     snapshot(state)
+}
+
+async fn publish_turn(state: &AppState, row: &Value, frame: &Value, turn: &str) -> Result<()> {
+    authorize(state, frame, true)?;
+    flush(state, turn).await?;
+    let status = db(state, |db| {
+        one(db, "SELECT status,reply FROM turns WHERE id=?", [turn])
+    })?;
+    let Some(status) = status else { return Ok(()) };
+    let partial = db(state, |db| {
+        Ok(one(
+            db,
+            "SELECT s.text FROM provider_stream_segments s JOIN provider_calls p ON p.seq=s.call WHERE p.turn=? AND s.kind='text' ORDER BY p.seq DESC,s.ordinal DESC LIMIT 1",
+            [turn],
+        )?
+        .map(|v| text(&v, "text").to_owned()))
+    })
+    .unwrap_or(None);
+    if let Some(partial) = partial.filter(|p| !p.is_empty() && *p != row["published"]) {
+        let text = partial
+            .chars()
+            .rev()
+            .take(8000)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>();
+        emit(state, frame, "turn.partial", json!({"text":text})).await?;
+        db(state, |db| {
+            db.execute(
+                "UPDATE hub_link_turns SET published=? WHERE turn_id=?",
+                params![partial, turn],
+            )?;
+            Ok(())
+        })?;
+    }
+    if ["done", "failed", "interrupted", "cancelled"].contains(&text(&status, "status")) {
+        let (kind, payload) = if status["status"] == "done" {
+            (
+                "turn.final",
+                json!({"text":if text(&status,"reply").is_empty(){"Completed.".into()}else{text(&status,"reply").chars().take(16000).collect::<String>()}}),
+            )
+        } else {
+            ("turn.failed", json!({"code":"local_turn_failed"}))
+        };
+        emit(state, frame, kind, payload).await?;
+        db(state, |db| {
+            db.execute(
+                "UPDATE hub_link_turns SET state='done' WHERE turn_id=?",
+                [turn],
+            )?;
+            Ok(())
+        })?;
+    }
+    Ok(())
 }
 async fn connection(state: &AppState) -> Result<()> {
     use futures_util::{SinkExt, StreamExt};

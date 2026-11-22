@@ -68,7 +68,7 @@ const retainedData = `SELECT a.*, c.request, t.reply, t.status, p.enabled, o.age
   WHERE a.id='fixture-agent'`;
 
 for (const mode of ['canonical', 'local'] as const) {
-  test(`fresh ${mode} startup adds memory schema to 85373b3 and reopens its data unchanged`, async () => {
+  test(`fresh ${mode} startup extends the 85373b3 schema and reopens its data unchanged`, async () => {
     const directory = mkdtempSync(join(tmpdir(), 'minarbot-schema-'));
     const old = join(directory, 'pre-collapse.sqlite');
     const fresh = join(directory, 'fresh.sqlite');
@@ -77,7 +77,19 @@ for (const mode of ['canonical', 'local'] as const) {
       expected.exec(fixture(mode));
       const frozen = snapshot(expected);
       const frozenLedger = mode === 'canonical' ? expected.prepare(ledger).all() : [];
-      if (mode === 'local') expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8'));
+      if (mode === 'local') {
+        expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8'));
+        expected.exec(`CREATE TABLE craft_grants(agent TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE) STRICT;
+          CREATE TABLE craft_deep(project TEXT PRIMARY KEY REFERENCES local_projects(id) ON DELETE CASCADE) STRICT;
+          CREATE TABLE install_token_targets(
+            token BLOB PRIMARY KEY REFERENCES install_tokens(digest) ON DELETE CASCADE,
+            origin TEXT NOT NULL
+          ) STRICT;`);
+      }
+      expected.exec(`CREATE TABLE pairing_code_targets(id TEXT PRIMARY KEY REFERENCES pairing_codes(id) ON DELETE CASCADE,origin TEXT NOT NULL) STRICT;
+        CREATE TABLE mcp_apps(id TEXT PRIMARY KEY,turn TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,connection TEXT NOT NULL REFERENCES mcp_connections(id) ON DELETE CASCADE,revision INTEGER NOT NULL,title TEXT NOT NULL,html TEXT NOT NULL,bootstrap TEXT NOT NULL) STRICT;
+        CREATE INDEX mcp_apps_turn ON mcp_apps(turn);
+        CREATE TABLE mcp_app_approvals(app TEXT PRIMARY KEY REFERENCES mcp_apps(id) ON DELETE CASCADE,id TEXT NOT NULL,digest TEXT NOT NULL,expires INTEGER NOT NULL) STRICT;`);
       expected.exec(readFileSync(new URL('../crates/minarbot-server/src/files/schema.sql', import.meta.url), 'utf8'));
       expected.exec('ALTER TABLE agents ADD COLUMN library_docs_access INTEGER NOT NULL DEFAULT 1 CHECK(library_docs_access IN(0,1))');
       expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/library_docs/schema.sql', import.meta.url), 'utf8'));
