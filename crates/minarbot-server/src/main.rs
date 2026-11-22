@@ -316,7 +316,7 @@ async fn static_ui(
     if let Some(route) = leptos_page {
         bytes = appearance::document(&String::from_utf8_lossy(&bytes), path, route.title(), query)
             .into_bytes();
-        policy = Some(POLICY.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'"));
+        policy = Some(appearance::POLICY.to_owned());
     } else if spa {
         let html = String::from_utf8_lossy(&bytes);
         let Some(end) = html.find("</head>") else {

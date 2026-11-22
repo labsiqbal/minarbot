@@ -3,6 +3,7 @@
 mod api;
 mod appearance;
 mod general;
+mod pairing;
 mod routes;
 mod settings;
 mod shell;
@@ -21,6 +22,14 @@ pub fn mount_appearance() -> Result<(), JsValue> {
             .ok_or_else(|| JsValue::from_str("Appearance document is incomplete"))
     };
     let root = element("leptos-root")?.dyn_into::<HtmlElement>()?;
+    if root.has_attribute("data-pairing") {
+        let error = document
+            .query_selector("#appearance-fallback [role=alert]")?
+            .and_then(|alert| alert.text_content())
+            .unwrap_or_default();
+        mount_to(root, move || pairing::page(error)).forget();
+        return Ok(());
+    }
     let return_to = root
         .get_attribute("data-return-to")
         .unwrap_or_else(|| "/".into());
