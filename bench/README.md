@@ -24,6 +24,12 @@ Requires Linux, Node matching `app/package.json`, `bwrap`, Git, and Chrome for H
 
 Research inputs use frozen source extracts, so checkers verify exact claims and attributed URLs without live web calls. Submitted outputs are checked through no-network `bwrap` sandboxes. Only live runs consume provider usage. Use `--results /path/to/output` for development receipts.
 
+For CodeGraph comparisons, add `--project-codegraph` to run seeded coding
+tasks in project conversations. Both binaries get the same prompt, seed, and
+checker. For a pre-native baseline, put CodeGraph 1.6.2 on PATH so the runner
+can enable the project's external engine. The native server uses its built-in
+engine even when that CLI is installed.
+
 ## Memory comparison
 
 The reduced LongMemEval-S benchmark uses six fixed question IDs, one from each question type. For each it retains the gold sessions and seven distractors selected by a stable hash. Both engines receive the same timestamped message chunks. The legacy comparison uses its case-insensitive substring query on the same chunks. The output measures distinct gold sessions retrieved and the first relevant rank among five returned chunks. It does not measure generated-answer accuracy.

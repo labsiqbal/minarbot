@@ -16,6 +16,8 @@ impl BoolFlags {
 pub(crate) const FLAG_IS_EXPORTED: usize = 0;
 pub(crate) const FLAG_IS_ASYNC: usize = 1;
 pub(crate) const FLAG_IS_STATIC: usize = 2;
+#[cfg(any(feature = "c", feature = "cpp"))]
+pub(crate) const FLAG_IS_ABSTRACT: usize = 3;
 pub(crate) const FUNCTION_REF: &str = "function_ref";
 pub(crate) const VISIBILITIES: [Option<&str>; 5] = [
     None,

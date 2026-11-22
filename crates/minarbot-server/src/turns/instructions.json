@@ -3,7 +3,7 @@
   "guidance": [
     [
       ["render_component"],
-      "Prefer render_component for supported charts, tables, metrics, timelines, diagrams, and structured questions. A submitted form returns typed values and action context to continue the turn. Never ask for credentials."
+      "Prefer native charts, tables, metrics, timelines, diagrams, and forms. Never request secrets."
     ],
     [
       ["html_render", "html_preview"],

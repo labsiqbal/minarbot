@@ -26,7 +26,7 @@ impl Resolver<'_> {
         if self.named(name).is_empty()
             && self.named(part).is_empty()
             && !is_js
-            && lang != "python"
+            && !matches!(lang, "python" | "java" | "kotlin")
             && !name.contains("::")
             && !importing
         {
@@ -37,7 +37,13 @@ impl Resolver<'_> {
             return None;
         }
         let site = module.at(reference.line, reference.column);
-        let receiver = receiver_of(name, site, call);
+        let receiver = receiver_of(name, site, call).or_else(|| {
+            if matches!(lang, "lua" | "luau") {
+                name.rsplit_once(':').map(|(receiver, _)| receiver)
+            } else {
+                None
+            }
+        });
         let chain_receiver = (receiver.is_none() && call && matches!(lang, "rust" | "go"))
             .then(|| rust_go_receiver(reference, &module))
             .flatten();
@@ -142,16 +148,21 @@ impl Resolver<'_> {
                     || (receiver.is_none()
                         || matches!(receiver, Some("self" | "Self" | "this" | "cls")))
             });
-        [framework, import, result]
-            .into_iter()
-            .flatten()
-            .reduce(|best, next| {
-                if next.confidence > best.confidence {
-                    next
-                } else {
-                    best
-                }
-            })
+        [
+            framework,
+            self.framework_match(reference, &module),
+            import,
+            result,
+        ]
+        .into_iter()
+        .flatten()
+        .reduce(|best, next| {
+            if next.confidence > best.confidence {
+                next
+            } else {
+                best
+            }
+        })
     }
 
     fn destructured_call(&mut self, reference: &Reference, module: &Module) -> Option<Match> {
@@ -237,7 +248,9 @@ impl Resolver<'_> {
     fn target_kind(&self, reference: &Reference, mut hit: Match) -> Option<Match> {
         let n = &self.symbols[hit.target];
         if !family(&reference.language, &n.language)
-            || reference.kind == "imports" && member(&n.kind)
+            || reference.kind == "imports"
+                && member(&n.kind)
+                && !matches!(reference.language.as_str(), "java" | "kotlin")
         {
             return None;
         }
@@ -271,6 +284,57 @@ impl Resolver<'_> {
                 || ["console.", "Math.", "JSON."]
                     .iter()
                     .any(|prefix| name.starts_with(prefix));
+        }
+        if matches!(reference.language.as_str(), "lua" | "luau") && reference.kind == "calls" {
+            let global = matches!(
+                name,
+                "assert"
+                    | "collectgarbage"
+                    | "dofile"
+                    | "error"
+                    | "getmetatable"
+                    | "ipairs"
+                    | "load"
+                    | "loadfile"
+                    | "next"
+                    | "pairs"
+                    | "pcall"
+                    | "print"
+                    | "rawequal"
+                    | "rawget"
+                    | "rawlen"
+                    | "rawset"
+                    | "require"
+                    | "select"
+                    | "setmetatable"
+                    | "tonumber"
+                    | "tostring"
+                    | "type"
+                    | "typeof"
+                    | "xpcall"
+            );
+            let standard_module = name.split_once('.').is_some_and(|(module, _)| {
+                matches!(
+                    module,
+                    "string" | "table" | "math" | "coroutine" | "debug" | "utf8" | "io" | "os"
+                )
+            });
+            if global || standard_module {
+                let binding = name.split('.').next().unwrap_or(name);
+                return self.named(binding).iter().all(|&id| {
+                    let symbol = &self.symbols[id];
+                    symbol.file != reference.file || symbol.kind == "import"
+                });
+            }
+        }
+        if matches!(reference.language.as_str(), "c" | "cpp")
+            && reference.kind == "calls"
+            && (C_BUILT_INS.contains(&name) || name.starts_with("std::"))
+        {
+            return self
+                .named(name)
+                .iter()
+                .all(|&id| self.symbols[id].file != reference.file);
         }
         if reference.language == "go" {
             return GO_BUILT_INS.contains(&name)
@@ -394,6 +458,15 @@ impl Resolver<'_> {
         {
             return None;
         }
+        let implicit_owner = (bare
+            && matches!(
+                lang,
+                "java" | "kotlin" | "csharp" | "cpp" | "ruby" | "php" | "swift" | "scala" | "dart"
+            ))
+        .then(|| self.origin(reference))
+        .flatten()
+        .filter(|n| n.kind == "method")
+        .and_then(Symbol::owner);
         let mut candidates = Vec::new();
         for &id in self.named(name) {
             let n = &self.symbols[id];
@@ -401,7 +474,11 @@ impl Resolver<'_> {
                 || !family(lang, &n.language)
                 || (inheritance(&reference.kind) && !type_kind(&n.kind))
                 || (importing && member(&n.kind))
-                || (bare && member(&n.kind))
+                || (bare
+                    && member(&n.kind)
+                    && (implicit_owner.is_none()
+                        || n.owner() != implicit_owner
+                        || n.file != reference.file))
                 || (lang == "rust" && !self.rust_in_scope(n, reference, module))
                 || !self.lexical(n, reference)
             {

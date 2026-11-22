@@ -70,7 +70,9 @@ fn canonical_snapshot_preserves_authority_and_is_immutable() -> Result<()> {
             CREATE TABLE accounts(id TEXT PRIMARY KEY); INSERT INTO accounts VALUES('owner');
             CREATE TABLE projects(account TEXT); INSERT INTO projects VALUES('owner');
             CREATE TABLE minarbot_backup_authority(generation TEXT NOT NULL) STRICT;
-            INSERT INTO minarbot_backup_authority VALUES('legacy-generation');")?;
+            INSERT INTO minarbot_backup_authority VALUES('legacy-generation');
+            CREATE VIRTUAL TABLE memory_fts USING fts5(text, content='');
+            INSERT INTO memory_fts(rowid,text) VALUES(1,'Preserved memory');")?;
         drop(db);
         backup::run("snapshot", &source, &target)?;
         let snapshot = Connection::open(&target)?;
@@ -99,6 +101,14 @@ fn canonical_snapshot_preserves_authority_and_is_immutable() -> Result<()> {
                 .get::<_, String>(0))?,
             "generation-one"
         );
+        assert_eq!(
+            restored.query_row(
+                "SELECT count(*) FROM memory_fts WHERE memory_fts MATCH 'preserved'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )?,
+            1
+        );
         Ok(())
     })
 }
@@ -125,6 +135,7 @@ fn invalid_restore_and_missing_canonical_owner_preserve_source() -> Result<()> {
         Ok(())
     })
 }
+
 #[test]
 fn startup_error_keeps_only_the_servers_error_line() -> Result<()> {
     assert_eq!(

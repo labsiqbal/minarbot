@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, symlink } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +14,7 @@ const turns = [
   ['I need a Researcher that cites sources.', 'Review the Researcher profile and select Apply.', 'create_agent'],
   ['Add an on-demand Source review routine.', 'Review the manual routine and select Apply.', 'create_routine'],
   ['How do I change AI providers?', 'Open Providers in Settings and add a provider account.', 'open_guide_screen'],
+  ['Add my test machine.', 'Review the machine and select Apply.', 'add_guide_machine'],
 ];
 let agentId = '';
 let guidePrompt = false;
@@ -35,6 +36,7 @@ const provider = createServer(async (req, res) => {
     create_agent: { requestId: randomUUID(), name: 'Researcher', model, instructions: 'Cite primary sources and flag gaps.' },
     create_routine: { requestId: randomUUID(), agent: agentId, name: 'Source review', prompt: 'Check the sources in the latest brief.', trigger: 'manual', enabled: true },
     open_guide_screen: { screen: 'settings.providers' },
+    add_guide_machine: { requestId: randomUUID(), name: 'Test machine', origin: 'https://machine.example' },
   };
   const calls = tool && last.role !== 'tool' ? [{ id: randomUUID(), type: 'function', function: { name: tool, arguments: JSON.stringify(args[tool]) } }] : null;
   res.end(JSON.stringify({ choices: [{ finish_reason: calls ? 'tool_calls' : 'stop', message: { content: calls ? null : reply ?? 'Fixture reply', ...(calls && { tool_calls: calls }) } }] }));
@@ -43,12 +45,16 @@ const provider = createServer(async (req, res) => {
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 let app, browser;
 try {
+  const releasesDir = join(work, 'releases');
+  await mkdir(join(releasesDir, '0.17.0-8523c26b'), { recursive: true });
+  await symlink('0.17.0-8523c26b', join(releasesDir, 'current'));
   app = await startRustServer({
     database: join(work, 'state.sqlite'),
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),
     baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
     apiKey: 'fixture-key',
     defaultModel: model,
+    updates: { releasesDir },
     harness: { executables: Object.fromEntries(
       ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro'].map(runtime => [runtime, join(work, runtime)]),
     ) },
@@ -124,12 +130,30 @@ try {
   await page.getByRole('link', { name: 'Open Providers', exact: true }).click();
   await page.waitForURL(url => url.pathname === '/settings/providers');
   await page.getByRole('heading', { name: 'Providers', exact: true }).waitFor();
+  await page.goBack();
+  await send(4);
+  const machineChange = page.getByRole('article', { name: 'Add machine', exact: true });
+  await machineChange.getByRole('button', { name: 'Apply', exact: true }).waitFor();
+  await machineChange.scrollIntoViewIfNeeded();
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+    await page.screenshot({ path: join(work, 'guide-infra-' + theme + '.png'), animations: 'disabled' });
+  }
+  const installReceipt = page.waitForResponse(response => response.url().endsWith('/api/install/tokens') && response.request().method() === 'POST');
+  await machineChange.getByRole('button', { name: 'Apply', exact: true }).press('Enter');
+  const issued = await installReceipt;
+  assert.equal(issued.status(), 201);
+  assert(!/\bbsi_/.test(await issued.text()), 'Install credential leaked in response');
+  await machineChange.getByRole('status').filter({ hasText: 'Waiting for the machine to pair.' }).waitFor();
+  const command = await machineChange.getByRole('textbox', { name: 'Run on the new machine' }).inputValue();
+  assert(command.includes('--name \'Test machine\'') && /\bbsi_[A-Za-z0-9_-]{43}\b/.test(command), 'Install command invalid');
+  assert(!/\bbsi_[A-Za-z0-9_-]{43}\b/.test(JSON.stringify(await api(path))), 'Install credential leaked in transcript');
   assert(guidePrompt);
   assert(toolIsolation);
   await api(`/api/agents/${guide.id}/visibility`, { id: randomUUID(), revision: 0, hidden: true });
   assert.equal((await api('/api/agents')).guide.hidden, true);
   await api(`/api/agents/${guide.id}/delete`, { id: randomUUID() }, 409);
-  console.log(`PASS: fresh guide setup, agent and routine Apply/Cancel, tamper/replay rejection, help navigation, hide/delete. Screenshots: ${work}`);
+  console.log(`PASS: Guide setup, approval, private install command, pairing status, help and hide/delete. Screenshots: ${work}`);
 } finally {
   await browser?.close();
   await app?.close();

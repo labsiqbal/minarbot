@@ -18,6 +18,8 @@ use toml_edit::DocumentMut;
 pub(super) struct Config {
     pub(super) rust_manifest: bool,
     pub(super) express: bool,
+    pub(super) django: bool,
+    pub(super) flask: bool,
     pub(super) go_module: Option<String>,
     pub(super) crates: HashMap<String, String>,
     pub(super) cargo_roots: HashSet<String>,
@@ -43,6 +45,16 @@ impl Config {
             go_module: go_module(root),
             ..Self::default()
         };
+        config.django = root.join("manage.py").is_file();
+        for name in ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"] {
+            if let Some(text) = read_text(&root.join(name)) {
+                let words = text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+                for word in words {
+                    config.django |= word.eq_ignore_ascii_case("django");
+                    config.flask |= word.eq_ignore_ascii_case("flask");
+                }
+            }
+        }
         let cargo = manifest(root, "Cargo.toml");
         config.rust_manifest = cargo.is_some();
         let cargo_members = cargo
@@ -117,6 +129,34 @@ impl Config {
             .cargo_dependencies
             .retain(|name| !config.cargo_roots.contains(name));
         config
+    }
+
+    pub(super) fn depends_on(&self, file: &str, matches: impl Fn(&str) -> bool) -> bool {
+        let mut dir = dirname(file);
+        loop {
+            if let Some(pkg) = self.manifests.get(dir) {
+                let own = pkg
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(&matches);
+                let declares = [
+                    "dependencies",
+                    "devDependencies",
+                    "peerDependencies",
+                    "optionalDependencies",
+                ]
+                .into_iter()
+                .filter_map(|key| pkg.get(key).and_then(Value::as_object))
+                .any(|deps| deps.keys().any(|name| matches(name)));
+                if own || declares {
+                    return true;
+                }
+            }
+            if dir.is_empty() {
+                return false;
+            }
+            dir = dirname(dir);
+        }
     }
 
     pub(super) fn alias_paths(&self, root: &Path, file: &str, name: &str) -> Vec<String> {

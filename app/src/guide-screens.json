@@ -7,6 +7,9 @@
   "settings.appearance": {"title": "Appearance", "path": "/settings/appearance"},
   "settings.skills": {"title": "Skills", "path": "/settings/skills"},
   "settings.machines": {"title": "Machines", "path": "/settings/machines"},
+  "settings.devices": {"title": "Devices", "path": "/settings/devices"},
+  "settings.computer": {"title": "Computer", "path": "/settings/computer"},
+  "settings.vault": {"title": "Vault", "path": "/settings/vault"},
   "settings.backup": {"title": "Backup", "path": "/settings/backup"},
   "routines": {"title": "Routines", "path": "/routines"},
   "workflows": {"title": "Workflows", "path": "/workflows"}

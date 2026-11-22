@@ -906,8 +906,9 @@ async fn redeem(s: &AppState, v: &Value) -> Result<Value> {
     let now = now(s).await?;
     tx(s, |db| {
         let changed = db.execute(
-            "UPDATE pairing_codes SET used=1 WHERE digest=? AND expires>? AND used=0",
-            params![hash(&json!(code)), now],
+            "UPDATE pairing_codes SET used=1 WHERE digest=? AND expires>? AND used=0
+             AND NOT EXISTS(SELECT 1 FROM pairing_code_targets WHERE id=pairing_codes.id AND origin<>?)",
+            params![hash(&json!(code)), now, text(&peer, "origin")],
         )?;
         if changed!=1 || one(db,"SELECT 1 FROM paired_machines WHERE environment_id=? UNION ALL SELECT 1 FROM peer_pairing_pending WHERE environment_id=?",params![text(&peer,"id"),text(&peer,"id")])?.is_some(){return Err(invalid());}
         Ok(())

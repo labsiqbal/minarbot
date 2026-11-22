@@ -123,7 +123,7 @@ fn open(key: &LessSafeKey, name: &str, mut bytes: Vec<u8>) -> Result<Payload> {
     serde_json::from_slice(plain).map_err(|_| Failure::storage())
 }
 
-pub(super) fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     (1..=64).contains(&name.len())
         && name
             .bytes()
@@ -210,7 +210,7 @@ pub(super) fn placeholder(name: &str, field: &str) -> String {
     format!("{{{{vault:{name}.{field}}}}}")
 }
 
-pub(super) fn resolve(
+pub(crate) fn resolve(
     state: &AppState,
     db: &Connection,
     agent: &str,

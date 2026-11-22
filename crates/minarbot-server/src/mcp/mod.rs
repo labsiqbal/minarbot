@@ -5,6 +5,7 @@ mod connections;
 pub(crate) mod execution;
 mod features;
 pub(crate) mod guide;
+pub(crate) mod guide_infra;
 mod registry;
 pub(crate) mod secrets;
 mod server;

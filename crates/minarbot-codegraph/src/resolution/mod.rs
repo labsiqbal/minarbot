@@ -3,6 +3,7 @@
 
 mod builtins;
 mod config;
+mod frameworks;
 mod imports;
 mod matcher;
 mod synthesis;
@@ -381,13 +382,17 @@ pub(crate) fn resolve(db: &Connection, root: &Path, changes: &Changes) -> rusqli
     changes.retry(db)?;
     if !changes.changed
         && !db.query_row(
-            "SELECT EXISTS (SELECT 1 FROM unresolved_refs WHERE status = 'pending')",
+            "SELECT EXISTS (SELECT 1 FROM unresolved_refs WHERE status = 'pending')
+                    OR NOT EXISTS (SELECT 1 FROM project_metadata WHERE key = 'minarbot_framework_synthesis' AND value = '1')",
             [],
             |row| row.get::<_, bool>(0),
         )?
     {
         return Ok(());
     }
+    // Replace derived routes before loading the name index. Cascades remove
+    // obsolete handler and navigation edges in this transaction.
+    db.execute("DELETE FROM nodes WHERE kind = 'route'", [])?;
     let mut resolver = Resolver::load(db, root)?;
     let mut statement = db.prepare_cached(
         "SELECT id, from_node_id, reference_name, reference_kind, line, col, file_path, language, candidates
@@ -439,7 +444,15 @@ pub(crate) fn resolve(db: &Connection, root: &Path, changes: &Changes) -> rusqli
             }
         }
     }
-    synthesis::refresh(db, &mut resolver)
+    synthesis::refresh(db, &mut resolver)?;
+    frameworks::refresh(db, &mut resolver)?;
+    db.execute(
+        "INSERT INTO project_metadata (key,value,updated_at)
+         VALUES ('minarbot_framework_synthesis','1',?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+        [crate::store::timestamp(std::time::SystemTime::now())],
+    )?;
+    Ok(())
 }
 
 fn tail(name: &str) -> &str {
@@ -451,7 +464,10 @@ fn js(language: &str) -> bool {
 }
 
 fn family(a: &str, b: &str) -> bool {
-    a == b || (js(a) && js(b))
+    a == b
+        || (js(a) && js(b))
+        || (matches!(a, "c" | "cpp") && matches!(b, "c" | "cpp"))
+        || (matches!(a, "lua" | "luau") && matches!(b, "lua" | "luau"))
 }
 
 fn inheritance(kind: &str) -> bool {

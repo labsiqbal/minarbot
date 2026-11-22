@@ -91,6 +91,7 @@ pub(crate) struct FilePath {
 }
 
 pub(crate) struct Source {
+    pub language: &'static str,
     pub hash: String,
     pub size: u64,
     pub modified_at: i64,
@@ -316,13 +317,18 @@ pub(crate) fn extract(
         return Ok(Outcome::Missing);
     };
     let text = String::from_utf8_lossy(&bytes);
+    let Some(language) = langs::detect_source(&path, file.language, &text) else {
+        return Ok(Outcome::Missing);
+    };
     let oversized = size > MAX_BYTES;
     let hash = if oversized {
         format!("{:x}", Sha256::digest(format!("codegraph:oversize:{size}")))
     } else {
         format!("{:x}", Sha256::digest(text.as_bytes()))
     };
-    if previous.is_some_and(|(before, language)| before == &hash && language == file.language) {
+    if previous
+        .is_some_and(|(before, previous_language)| before == &hash && previous_language == language)
+    {
         return Ok(Outcome::Unchanged);
     }
 
@@ -335,18 +341,50 @@ pub(crate) fn extract(
             )),
         )
     } else {
-        let result = stack::run_guarded(|| match file.language {
-            "go" => crate::go::extract(&file.path, &text),
-            "rust" => crate::rustlang::extract(&file.path, &text),
-            "python" => crate::python::extract(&file.path, &text),
-            language => crate::tsjs::extract(&file.path, &text, language),
+        let prepared = crate::preparse::prepare(&text, &file.path, language);
+        let result = stack::run_guarded(|| match language {
+            "go" => crate::go::extract(&file.path, &prepared).map(|graph| (graph, false)),
+            "rust" => crate::rustlang::extract(&file.path, &prepared).map(|graph| (graph, false)),
+            "python" => crate::python::extract(&file.path, &prepared).map(|graph| (graph, false)),
+            #[cfg(any(feature = "c", feature = "cpp"))]
+            "c" | "cpp" => crate::ccpp::extract(&file.path, &prepared, language),
+            #[cfg(feature = "csharp")]
+            "csharp" => crate::csharp::extract(&file.path, &prepared),
+            #[cfg(feature = "dart")]
+            "dart" => crate::dart::extract(&file.path, &prepared),
+            #[cfg(feature = "java")]
+            "java" => crate::java::extract(&file.path, &prepared),
+            #[cfg(feature = "kotlin")]
+            "kotlin" => crate::kotlin::extract(&file.path, &prepared),
+            #[cfg(any(feature = "lua", feature = "luau"))]
+            "lua" | "luau" => crate::lua::extract(&file.path, &prepared, language),
+            #[cfg(feature = "php")]
+            "php" => crate::php::extract(&file.path, &prepared),
+            #[cfg(feature = "r")]
+            "r" => crate::rlang::extract(&file.path, &prepared),
+            #[cfg(feature = "ruby")]
+            "ruby" => crate::ruby::extract(&file.path, &prepared),
+            #[cfg(feature = "scala")]
+            "scala" => crate::scala::extract(&file.path, &prepared),
+            #[cfg(feature = "swift")]
+            "swift" => crate::swift::extract(&file.path, &prepared),
+            language => crate::tsjs::extract(&file.path, &prepared, language),
         });
         match result {
-            Ok(graph) => (graph, None),
+            Ok((graph, recovered)) => (
+                graph,
+                recovered.then(|| {
+                    (
+                        "parse_recovered",
+                        "Partial extraction after parser recovery".to_owned(),
+                    )
+                }),
+            ),
             Err(error) => (Tables::default(), Some(("parse_error", error))),
         }
     };
     Ok(Outcome::Changed(Source {
+        language,
         hash,
         size,
         modified_at,

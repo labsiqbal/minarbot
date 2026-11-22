@@ -3,7 +3,7 @@ set -eu
 umask 077
 
 command -v python3 >/dev/null 2>&1 || { echo 'Python 3 is required.' >&2; exit 1; }
-exec python3 - "$@" <<'PY'
+exec python3 - "$@" 3<&0 <<'PY'
 import argparse
 import base64
 import contextlib
@@ -211,7 +211,10 @@ def local_install(root, config, args, system, arch, base):
         env = config.parent / 'launcher.env'
         if not env.exists():
             require(not env.is_symlink(), 'Invalid launcher.env symlink.')
-            write_private(env, b'# Optional literal environment values for Minarbot.\n')
+            values = '# Optional literal environment values for Minarbot.\n'
+            if args.public_origin:
+                values += 'MINARBOT_ALLOWED_ORIGINS=' + args.public_origin + '\n'
+            write_private(env, values.encode())
         private_file(env)
         if config.exists():
             private_file(config)
@@ -298,6 +301,8 @@ def pair(local, args):
     environment = json.loads(curl(local + '/api/environment'))
     require(urlsplit(args.source).scheme != 'https' or urlsplit(environment['origin']).scheme == 'https',
             "Set this machine's reachable HTTPS address in MINARBOT_ALLOWED_ORIGINS before pairing.")
+    require(not args.public_origin or args.public_origin == environment['origin'],
+            'The running Minarbot uses a different HTTPS origin. Check launcher.env before pairing.')
     name = args.name or platform.node()
     curl(local + '/api/environment', body={'id': str(uuid4()), 'name': name}, origin=local)
     reply = json.loads(curl(args.source + '/api/install/pairing-code', body={}, token=args.token))
@@ -311,18 +316,29 @@ def main():
     parser = argparse.ArgumentParser(description='Install Minarbot and optionally pair with another machine.')
     parser.add_argument('--source')
     parser.add_argument('--token')
+    parser.add_argument('--token-stdin', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--name')
     parser.add_argument('--port', type=int)
+    parser.add_argument('--public-origin')
     parser.add_argument('--no-open', action='store_true')
     parser.add_argument('--serve', action='store_true', help=argparse.SUPPRESS)  # Legacy copied commands.
     parser.add_argument('--wsl', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--tag', help=argparse.SUPPRESS)
     parser.add_argument('--archive', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.token_stdin:
+        require(args.token is None, 'Choose one install token input.')
+        with os.fdopen(3, encoding='ascii') as stream:
+            args.token = stream.read(49).rstrip('\n')
+    else:
+        os.close(3)
     require(bool(args.source) == bool(args.token), 'Pass both --source and --token to pair.')
     if args.source:
         require(valid_origin(args.source), 'Source must be an exact HTTPS origin (HTTP only on loopback).')
         require(re.fullmatch(r'bsi_[A-Za-z0-9_-]{43}', args.token), 'Install token is invalid.')
+    require(not args.public_origin or valid_origin(args.public_origin)
+            and args.public_origin.startswith('https://') and ',' not in args.public_origin,
+            'Public origin must be an exact HTTPS origin.')
     require(args.port is None or 1 <= args.port <= 65535, 'Invalid port.')
     require(args.tag is None or re.fullmatch('v' + VERSION, args.tag), 'Invalid release tag.')
     require(args.archive is None or (args.tag and args.wsl), 'Embedded archive requires WSL and a release tag.')

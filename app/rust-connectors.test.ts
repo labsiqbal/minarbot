@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
-import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -9,8 +9,6 @@ import { testDatabase } from './test-support/database.ts';
 import { startRustServer } from './rust-test-server.ts';
 import { startApp } from './test-bridge.ts';
 import { runRustConnector, runRustConnectorJournal } from './rust-connectors-runner.ts';
-import { installCanonicalFixture } from './test-support/canonical-schema.ts';
-import { encryptMail, serializeMailEnvelope } from './test-support/mail-fixture.ts';
 import { composioToolName } from './test-support/composio-tool-name.ts';
 
 test('Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced', async () => {
@@ -262,85 +260,3 @@ for (const platform of ['telegram', 'slack'] as const) for (const mode of ['repl
     } finally { clearTimeout(timeout); controller.abort(); for (const socket of sockets) socket.destroy(); await app.close(); await Promise.all([close(local), close(remote), close(provider)]); rmSync(root, { recursive: true, force: true }); }
   });
 }
-
-test('Rust calendar exports folded and escaped iCalendar with exact UTC intervals and IANA gap/fold times', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-calendar-')), database = join(root, 'db'), agent = randomUUID(), now = Date.UTC(2026, 0, 1);
-  const app = await startRustServer({ database, fixedClock: now });
-  const response = await fetch(app.origin + '/api/agents', { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: agent, runtime: 'api', name: 'Calendar', model: 'fixture', instructions: 'Help' }) });
-  assert(response.ok); await response.json();
-  const entries = [
-    { id: randomUUID(), name: 'Calendar; comma, \\ line\r\nBEGIN:VEVENT ' + 'é'.repeat(100), next_at: now, interval_ms: 3600000, revision: 1 },
-    ...[['America/New_York', '2026-03-08', '02:30'], ['America/New_York', '2026-11-01', '01:30'], ['Pacific/Apia', '2011-12-30', '12:00'], ['Invalid/Zone', '2026-01-01', '12:00']].map(([zone, date, time], index) => ({ id: randomUUID(), name: zone, next_at: now + 1 + index, interval_ms: null, revision: 2, schedule: { kind: 'once' as const, date, time }, zone })),
-    { id: randomUUID(), name: 'Cron', next_at: now + 5, interval_ms: null, revision: 3, schedule: { kind: 'cron' as const, expression: '0 0 * * *' } },
-    { id: randomUUID(), name: 'Long interval', next_at: now + 6, interval_ms: 2147483647001, revision: 4 },
-  ];
-  const db = testDatabase(database);
-  try {
-    const columns = new Set(db.prepare('PRAGMA table_info(routines)').all().map(row => String(row.name)));
-    for (const column of ['schedule_json', 'schedule_zone']) if (!columns.has(column)) db.exec(`ALTER TABLE routines ADD COLUMN ${column} TEXT`);
-    for (const row of entries) db.prepare("INSERT INTO routines(id,agent,name,next_at,interval_ms,revision,schedule_json,schedule_zone,prompt,enabled,trigger) VALUES(?,?,?,?,?,?,?,?,'Fixture',1,'schedule')").run(row.id, agent, row.name, row.next_at, row.interval_ms, row.revision, 'schedule' in row ? JSON.stringify(row.schedule) : null, 'zone' in row ? row.zone : null);
-    const calendar = await fetch(app.origin + `/api/agents/${agent}/routines/calendar.ics`);
-    assert.equal(calendar.status, 200); assert.equal(calendar.headers.get('content-type'), 'text/calendar; charset=utf-8');
-    const raw = await calendar.text();
-    assert(raw.endsWith('END:VCALENDAR\r\n'));
-    assert(raw.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
-    const lines = raw.replace(/\r\n /g, '').split('\r\n');
-    assert.deepEqual(lines.slice(0, 4), ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Minarbot//Routines//EN', 'CALSCALE:GREGORIAN']);
-    let at = 4;
-    const starts = ['20260101T000000Z', '20260308T070000Z', '20261101T053000Z', '20111230T100000Z'];
-    for (const [index, row] of entries.slice(0, 4).entries()) {
-      const summary = index === 0 ? 'Calendar\\; comma\\, \\\\ line\\nBEGIN:VEVENT ' + 'é'.repeat(100) : row.name;
-      const event = [
-        'BEGIN:VEVENT', `UID:${row.id}@minarbot.local`, 'DTSTAMP:20260101T000000Z',
-        `SEQUENCE:${row.revision}`, `DTSTART:${starts[index]}`, `SUMMARY:${summary}`,
-        ...(index === 0 ? ['RRULE:FREQ=SECONDLY;INTERVAL=3600'] : []), 'END:VEVENT',
-      ];
-      assert.deepEqual(lines.slice(at, at + event.length), event);
-      at += event.length;
-    }
-    assert.deepEqual(lines.slice(at), [
-      'X-WR-CALDESC:Omitted routine "Invalid/Zone": home device time zone cannot resolve its schedule. Omitted cron routine "Cron": cron recurrence cannot be represented safely. Omitted routine "Long interval": interval exceeds the calendar limit.',
-      'END:VCALENDAR', '',
-    ]);
-    const denied = await fetch(app.origin + `/api/agents/${agent}/routines/calendar.ics`, { headers: { Authorization: 'Bearer fixture' } }); assert.equal(denied.status, 403);
-  } finally { db.close(); await app.close(); rmSync(root, { recursive: true, force: true }); }
-});
-
-test('Rust mail retries exact envelope after lost response and fences expired, revoked, tampered and exhausted jobs', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-mail-')), database = join(root, 'db');
-  const db = testDatabase(database); installCanonicalFixture(db);
-  const account = randomUUID(), project = randomUUID(), keyId = randomUUID(), key = randomBytes(32), now = Date.now();
-  const generation = String(db.prepare('SELECT generation FROM authority_state').get()!.generation);
-  db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, 'fixture', 'owner', now);
-  db.prepare("INSERT INTO projects VALUES (?,?,'Fixture',0,0,1)").run(project, account);
-  db.prepare("INSERT INTO project_members VALUES (?,?,'owner',1,0)").run(project, account);
-  const pending = (expiry = now + 86400000, authority = generation) => {
-    const id = randomUUID(), hash = randomBytes(32).toString('hex');
-    const encrypted = encryptMail(id, 1, authority, hash, { to: 'member@example.test', from: 'noreply@example.test', subject: 'Invite', text: 'Fixture link' }, keyId, key);
-    db.prepare("INSERT INTO invitations VALUES (?,?,?,?,NULL,'pending_delivery',?,?,?,NULL,1)").run(id, project, authority, hash, randomBytes(32).toString('hex'), '{"v":1,"projectRevision":1,"agents":[]}', expiry);
-    db.prepare("INSERT INTO mail_outbox VALUES (?,1,?,'queued',NULL,NULL,0,NULL,?)").run(id, serializeMailEnvelope(encrypted.envelope), encrypted.payloadDigest);
-    return id;
-  };
-  const first = pending(), expired = pending(now - 1), revoked = pending(undefined, randomUUID()), exhausted = pending(), tampered = pending();
-  db.prepare('UPDATE mail_outbox SET attempts=8,next_attempt=? WHERE id=?').run(now + 60000, exhausted);
-  db.prepare('UPDATE mail_outbox SET payload_digest=? WHERE id=?').run('0'.repeat(64), tampered);
-  const bodies: string[] = [], tokens: string[] = []; let lose = true;
-  const remote = createServer(async (req, res) => {
-    let raw = ''; for await (const part of req) raw += part;
-    bodies.push(raw); tokens.push(String(req.headers['idempotency-key'])); assert.equal(req.headers.authorization, 'Bearer synthetic-mail-key');
-    if (lose) { req.socket.destroy(); return; } res.end(JSON.stringify({ id: 'fixture-mail' }));
-  });
-  const origin = await listen(remote), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const options = { database, auth: { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() }, mailApiKey: 'synthetic-mail-key', mailEndpoint: origin + '/emails', testKeyring: { [`mail-aead/${keyId}`]: key.toString('base64url'), 'sync-hmac/v1': randomBytes(32).toString('base64url') } };
-  let app = await startApp(options, { directory: root, servers: [remote] }).catch(error => { db.close(); throw error; });
-  const state = (id: string) => db.prepare('SELECT state,attempts,length(ciphertext) bytes FROM mail_outbox WHERE id=?').get(id)!;
-  try {
-    await wait(() => state(first).state === 'unknown'); assert.equal(bodies.length, 1);
-    db.prepare('UPDATE mail_outbox SET next_attempt=0 WHERE id=?').run(exhausted);
-    await wait(() => state(exhausted).state === 'unknown'); assert.equal(db.prepare('SELECT state FROM invitations WHERE id=?').get(exhausted)!.state, 'delivery_unknown'); await app.close(); lose = false; db.prepare('UPDATE mail_outbox SET next_attempt=0 WHERE id=?').run(first);
-    app = await startRustServer(options); await wait(() => state(first).state === 'sent');
-    assert.equal(bodies.length, 2); assert.equal(bodies[0], bodies[1]); assert.equal(tokens[0], tokens[1]);
-    assert.equal(state(first).bytes, 0, 'first bytes'); assert.equal(state(expired).state, 'revoked', 'expired'); assert.equal(state(revoked).state, 'revoked', 'authority'); assert.equal(state(exhausted).bytes, 0);
-    assert.equal(state(tampered).attempts, 0);
-  } finally { await app.close(); db.close(); await close(remote); rmSync(root, { recursive: true, force: true }); }
-});

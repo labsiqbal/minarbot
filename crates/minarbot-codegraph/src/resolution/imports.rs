@@ -56,6 +56,18 @@ impl Module {
             module.extract_python();
         } else if language == "go" {
             module.extract_go();
+        } else if matches!(language, "java" | "kotlin") {
+            for cap in re!(r"(?m)^[ \t]*import[ \t]+(?:static[ \t]+)?([\w.$]+)(?:[ \t]+as[ \t]+(\w+))?[ \t]*;?[ \t]*$")
+                .captures_iter(&module.text)
+            {
+                let source = &cap[1];
+                let name = source.rsplit('.').next().unwrap_or(source);
+                module.imports.push(Import::new(
+                    cap.get(2).map_or(name, |alias| alias.as_str()),
+                    name,
+                    source,
+                ));
+            }
         } else if language == "rust" {
             for capture in re!(r"(?:^|[;{}\s])use\s+([^;]{1,2000});").captures_iter(&module.text) {
                 rust_use_tree(capture[1].trim(), "", &mut module.rust_uses, 0);
@@ -333,6 +345,12 @@ fn rust_use_tree(tree: &str, prefix: &str, uses: &mut Vec<Import>, depth: usize)
 
 impl Resolver<'_> {
     pub(super) fn import_path(&self, name: &str, from: &str, language: &str) -> Option<String> {
+        if matches!(
+            language,
+            "c" | "cpp" | "lua" | "luau" | "ruby" | "php" | "dart"
+        ) {
+            return self.native_import_path(name, from, language);
+        }
         let extensions: &[&str] = match language {
             "typescript" => &[
                 ".ts",
@@ -429,6 +447,127 @@ impl Resolver<'_> {
                         }
                     }
                 }
+            }
+        }
+        None
+    }
+
+    fn native_import_path(&self, name: &str, from: &str, language: &str) -> Option<String> {
+        if name.is_empty() || name.starts_with('/') {
+            return None;
+        }
+        let dir = self.root.join(dirname(from));
+        let direct = |base: &Path, path: &str| {
+            let path = relative(self.root, &base.join(path))?;
+            (path != from
+                && self
+                    .file_node(&path)
+                    .is_some_and(|id| family(language, &self.symbols[id].language)))
+            .then_some(path)
+        };
+        let suffix = |path: &str| {
+            let name = path.rsplit('/').next()?;
+            self.named(name)
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    let node = &self.symbols[id];
+                    node.kind == "file"
+                        && node.file != from
+                        && family(language, &node.language)
+                        && (node.file == path
+                            || node
+                                .file
+                                .strip_suffix(path)
+                                .is_some_and(|s| s.ends_with('/')))
+                })
+                .max_by_key(|&id| {
+                    self.symbols[id]
+                        .file
+                        .split('/')
+                        .zip(from.split('/'))
+                        .take_while(|(a, b)| a == b)
+                        .count()
+                })
+                .map(|id| self.symbols[id].file.clone())
+        };
+        match language {
+            "c" | "cpp" => direct(&dir, name)
+                .or_else(|| direct(self.root, name))
+                .or_else(|| suffix(name)),
+            "ruby" => {
+                let base = name.strip_suffix(".rb").unwrap_or(name);
+                let path = format!("{base}.rb");
+                direct(self.root, &path)
+                    .or_else(|| direct(&dir, &path))
+                    .or_else(|| direct(&self.root.join("lib"), &path))
+            }
+            "php" if name.contains(['/', '.']) => {
+                direct(&dir, name).or_else(|| direct(&dir, &format!("{name}.php")))
+            }
+            "dart" => direct(&dir, name),
+            "lua" | "luau" => {
+                if name.starts_with('.') {
+                    if let Some(path) = direct(&dir, name) {
+                        return Some(path);
+                    }
+                    return ["lua", "luau"]
+                        .into_iter()
+                        .find_map(|ext| direct(&dir, &format!("{name}.{ext}")));
+                }
+                let name = name.replace('.', "/");
+                [
+                    format!("{name}.lua"),
+                    format!("{name}.luau"),
+                    format!("{name}/init.lua"),
+                    format!("{name}/init.luau"),
+                ]
+                .iter()
+                .find_map(|path| suffix(path))
+            }
+            _ => None,
+        }
+    }
+
+    fn jvm_import(
+        &self,
+        fqn: &str,
+        from: &str,
+        language: &str,
+        member: Option<&str>,
+    ) -> Option<usize> {
+        let parts = fqn.split('.').take(33).collect::<Vec<_>>();
+        if !(2..=32).contains(&parts.len()) || parts.last() == Some(&"*") {
+            return None;
+        }
+        for split in (1..parts.len()).rev() {
+            let mut qualified = format!(
+                "{}::{}",
+                parts[..split].join("."),
+                parts[split..].join("::")
+            );
+            if let Some(member) = member {
+                qualified.push_str("::");
+                qualified.push_str(member);
+            }
+            let hit = self
+                .qualified(&qualified)
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    let node = &self.symbols[id];
+                    node.kind != "import" && family(language, &node.language)
+                })
+                .max_by_key(|&id| {
+                    self.symbols[id]
+                        .file
+                        .split('/')
+                        .zip(from.split('/'))
+                        .take_while(|(a, b)| a == b)
+                        .count()
+                });
+            if hit.is_some() {
+                return hit;
             }
         }
         None
@@ -549,6 +688,40 @@ impl Resolver<'_> {
         let name = reference.name.as_str();
         let from = reference.file.as_str();
         let importing = reference.kind == "imports";
+        if matches!(language, "java" | "kotlin") {
+            if importing {
+                return self
+                    .jvm_import(name, from, language, None)
+                    .map(|id| Match::new(id, 0.95, "import"));
+            }
+            let (root, member) = name
+                .split_once('.')
+                .map_or((name, None), |(root, member)| (root, Some(member)));
+            return module
+                .imports
+                .iter()
+                .filter(|imp| imp.local == root)
+                .find_map(|imp| {
+                    self.jvm_import(&imp.source, from, language, member)
+                        .map(|id| Match::new(id, 0.9, "import"))
+                });
+        }
+        if importing
+            && matches!(
+                language,
+                "c" | "cpp" | "lua" | "luau" | "ruby" | "php" | "dart"
+            )
+        {
+            let path = self.native_import_path(name, from, language)?;
+            let confidence = if matches!(language, "c" | "cpp") && dirname(&path) == dirname(from) {
+                0.92
+            } else {
+                0.9
+            };
+            return self
+                .file_node(&path)
+                .map(|id| Match::new(id, confidence, "import"));
+        }
         if importing
             && (js(language) && js_path_specifier(name)
                 || (language == "python" && name.contains('.') && !name.starts_with('.')))

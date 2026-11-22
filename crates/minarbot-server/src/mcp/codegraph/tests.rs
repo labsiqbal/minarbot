@@ -1,45 +1,12 @@
 use super::*;
 use crate::{db, harness::process::ProbeHome};
-use std::{os::unix::fs::PermissionsExt, sync::Arc};
+use std::sync::Arc;
 
 const AGENT: &str = "00112233-4455-4677-8899-aabbccddeeff";
-const CLI: &str = r#"#!/bin/sh
-set -eu
-test "$CODEGRAPH_TELEMETRY" = 0
-test "$DO_NOT_TRACK" = 1
-test ! -e outside.ts
-test -r fixture.ts
-test ! -w fixture.ts
-case "$1" in
-  init)
-    test "$2" = --yes
-    printf 'init\n' > .codegraph/codegraph.db
-    ;;
-  sync)
-    printf 'sync\n' >> .codegraph/codegraph.db
-    ;;
-  serve)
-    while read -r request; do
-      case "$request" in
-        *'"method":"initialize"'*)
-          printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}}}}'
-          ;;
-        *'"method":"tools/list"'*)
-          printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"codegraph_explore","description":"Explore code","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"projectPath":{"type":"string"}},"required":["query"]}}]}}'
-          ;;
-        *'"method":"tools/call"'*)
-          printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"fixtureSymbol"}]}}'
-          ;;
-      esac
-    done
-    ;;
-esac
-"#;
 
-fn state(scratch: &Path, cli: &Path) -> db::Result<AppState> {
+fn state(scratch: &Path) -> db::Result<AppState> {
     let config: crate::Config = serde_json::from_value(json!({
-        "database":scratch.join("state.sqlite"),
-        "harness":{"executables":{"codegraph":cli}}
+        "database":scratch.join("state.sqlite")
     }))?;
     let database = db::open(&config.database, false, 0)?;
     crate::files::init(&database.connection)?;
@@ -48,7 +15,7 @@ fn state(scratch: &Path, cli: &Path) -> db::Result<AppState> {
     database.connection.execute_batch(&format!(
         "INSERT INTO agents(id,name,model,instructions) VALUES('{AGENT}','Test','','');
          INSERT INTO threads(id,agent,name) VALUES('thread','{AGENT}','Test');
-         INSERT INTO local_projects(id,name,description,created,updated,channel) VALUES('project','Test','',0,0,'section');
+         INSERT INTO local_projects(id,name,description,created,updated,channel,codegraph_enabled) VALUES('project','Test','',0,0,'section',1);
          INSERT INTO local_project_threads VALUES('thread','project','');
          INSERT INTO local_project_members VALUES('project','{AGENT}',0);
          INSERT INTO turns(id,agent,thread,text,status,created) VALUES('turn','{AGENT}','thread','Test','running','');",
@@ -84,170 +51,128 @@ fn configs(server: Option<&Server>) -> [Value; 3] {
     ]
 }
 
-#[tokio::test]
-async fn config_and_bridge_follow_project_access() -> db::Result<()> {
+#[test]
+fn configuration_follows_project_access() -> db::Result<()> {
     let scratch = ProbeHome::new()?;
-    let cli = scratch.0.join("codegraph");
     let root = scratch.0.join("project");
     fs::create_dir(&root)?;
+    let state = state(&scratch.0)?;
+    let turn = json!({"id":"turn","agent":AGENT,"thread":"thread"});
+    let db = state
+        .database
+        .lock()
+        .map_err(|_| "Database lock poisoned")?;
+    let db = &db.connection;
+    let selected = || project(&state, db, &turn).map_err(|e| e.message);
+    assert!(project(&state, db, &json!({"agent":AGENT}))
+        .map_err(|e| e.message)?
+        .is_none());
+    assert!(configs(None).iter().all(Value::is_null));
+    let project = selected()?;
+    db.execute("UPDATE local_projects SET codegraph_enabled=0", [])?;
+    assert!(selected()?.is_none());
+    let Some(project) = project else {
+        return Ok(());
+    };
+    assert!(!root.join(".codegraph").exists());
+    fs::create_dir_all(&project.cache)?;
+    let server = project.launch("stdio").map_err(|e| e.message)?;
+    let [claude, codex, acp] = configs(Some(&server));
+    assert_eq!(claude["type"], "stdio");
+    assert_eq!(acp["name"], "codegraph");
+    for config in [claude, codex, acp] {
+        assert_eq!(config["command"], SHELL);
+        let args = config["args"]
+            .as_array()
+            .ok_or("Missing CodeGraph arguments")?;
+        assert!(args.ends_with(&[
+            json!("codegraph"),
+            json!("stdio"),
+            json!(PROJECT),
+            json!(DATABASE)
+        ]));
+        assert!(args
+            .windows(3)
+            .any(|part| part == [json!("--ro-bind-fd"), json!("4"), json!("/index")]));
+    }
+    db.execute("UPDATE local_projects SET codegraph_enabled=1", [])?;
+    db.execute("DELETE FROM local_project_members", [])?;
+    assert!(selected().is_err_and(|e| e.contains("not a project member")));
+    Ok(())
+}
+
+#[test]
+fn native_stdio_indexes_syncs_and_deduplicates_by_connection() -> db::Result<()> {
+    let scratch = ProbeHome::new()?;
+    let root = scratch.0.join("project");
+    fs::create_dir(&root)?;
+    let file = root.join("fixture.ts");
+    fs::write(&file, "export function fixtureSymbol() { return 1; }\n")?;
     fs::write(
-        root.join("fixture.ts"),
-        "export function fixtureSymbol() {}\n",
+        root.join("view.tsx"),
+        "export function FixtureView() { return <span>Members & folders</span>; }\n",
     )?;
     fs::write(
         scratch.0.join("outside.ts"),
         "export function outsideSymbol() {}\n",
     )?;
     std::os::unix::fs::symlink(scratch.0.join("outside.ts"), root.join("outside.ts"))?;
-    let state = state(&scratch.0, &cli)?;
-    let turn = json!({"id":"turn","agent":AGENT,"thread":"thread"});
-    let selected = || -> Result<Option<Project>> {
-        let db = state.database.lock().map_err(|_| Failure::storage())?;
-        project(&state, &db.connection, &turn)
+    let path = scratch.0.join("graph.db");
+    let mut index = minarbot_codegraph::Index::open(&root, &path)?;
+    let sync = index.sync()?;
+    assert!(sync
+        .issues
+        .iter()
+        .any(|issue| issue.code == "parse_recovered"));
+    let request =
+        |method, params: Value| json!({"jsonrpc":"2.0","id":1,"method":method,"params":params});
+    let call = |name, args| request("tools/call", json!({"name":name,"arguments":args}));
+    let run = |messages: &[Value]| -> db::Result<Vec<Value>> {
+        let input = messages
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let reader = minarbot_codegraph::Index::open_read_only(&root, &path)?;
+        let mut output = Vec::new();
+        exchange(input.as_bytes(), &mut output, &reader)?;
+        std::io::BufReader::new(output.as_slice())
+            .lines()
+            .map(|line| Ok(serde_json::from_str(&line?)?))
+            .collect::<db::Result<_>>()
     };
-    let enable = || -> db::Result<()> {
-        let db = state
-            .database
-            .lock()
-            .map_err(|_| "Database lock poisoned")?;
-        db.connection
-            .execute("UPDATE local_projects SET codegraph_enabled=1", [])?;
-        Ok(())
+    let explore = |symbol| call("codegraph_explore", json!({"query":symbol}));
+    let responses = run(&[
+        request("initialize", json!({"protocolVersion":"2025-03-26"})),
+        request("tools/list", json!({})),
+        call(
+            "codegraph_explore",
+            json!({"query":"fixtureSymbol","projectPath":scratch.0}),
+        ),
+        explore("fixtureSymbol"),
+        explore("fixtureSymbol"),
+        call("codegraph_node", json!({"file":"outside.ts"})),
+    ])?;
+    assert_eq!(responses[0]["result"]["protocolVersion"], "2025-03-26");
+    assert_eq!(
+        responses[1]["result"]["tools"].as_array().map(Vec::len),
+        Some(8)
+    );
+    assert_eq!(responses[2]["result"]["isError"], true);
+    let text = |response: &Value| {
+        response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
     };
-    fs::write(&cli, CLI)?;
-    fs::set_permissions(&cli, fs::Permissions::from_mode(0o700))?;
-    assert!(available(&state));
-    assert!(selected().map_err(|e| e.message)?.is_none());
-    enable()?;
-    let hidden = scratch.0.join("missing-codegraph");
-    fs::rename(&cli, &hidden)?;
-    assert!(!available(&state));
-    assert!(selected().map_err(|e| e.message)?.is_none());
-    assert!(configs(None).iter().all(Value::is_null));
-    fs::rename(hidden, &cli)?;
-    {
-        let db = state
-            .database
-            .lock()
-            .map_err(|_| "Database lock poisoned")?;
-        assert!(project(&state, &db.connection, &json!({"agent":AGENT}))
-            .map_err(|e| e.message)?
-            .is_none());
-    }
-    assert!(!root.join(INDEX).exists());
-    let project = selected()
-        .map_err(|e| e.message)?
-        .ok_or("Project unavailable")?;
-    // Configuration can be checked on hosts where user namespaces are unavailable.
-    if !Command::new(BWRAP)
-        .args([
-            "--unshare-all",
-            "--ro-bind",
-            "/usr",
-            "/usr",
-            "--symlink",
-            "usr/lib64",
-            "/lib64",
-            "/usr/bin/true",
-        ])
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .is_ok_and(|status| status.success())
-    {
-        return Ok(());
-    }
-    let server = project.prepare().await.map_err(|e| e.message)?;
-    let [claude, codex, acp] = configs(Some(&server));
-    assert_eq!(claude["type"], "stdio");
-    assert_eq!(codex["command"], SHELL);
-    assert_eq!(acp["name"], "codegraph");
-    for config in [claude, codex, acp] {
-        assert_eq!(config["command"], SHELL);
-        assert!(config["args"]
-            .as_array()
-            .is_some_and(|args| args.ends_with(&[
-                json!("serve"),
-                json!("--mcp"),
-                json!("--no-watch"),
-                json!("--path"),
-                json!(PROJECT),
-            ])));
-    }
-    let index = root.join(INDEX).join("codegraph.db");
-    assert_eq!(fs::read_to_string(&index)?, "init\n");
-    assert!(!scratch.0.join(INDEX).exists());
-    let mut bridge = Bridge::open(project).await.map_err(|e| e.message)?;
-    assert_eq!(fs::read_to_string(&index)?, "init\nsync\n");
-    let specs = bridge.specs().collect::<Vec<_>>();
-    assert_eq!(specs[0]["function"]["name"], "codegraph_explore");
-    assert!(specs[0]["function"]["parameters"]["properties"]
-        .get("projectPath")
-        .is_none());
-    let call = |args: Value| json!({"id":"tool","function":{"name":"codegraph_explore","arguments":args.to_string()}});
-    let denied = bridge
-        .call(
-            &state,
-            &turn,
-            &call(json!({"query":"outsideSymbol","projectPath":scratch.0})),
-        )
-        .await;
-    assert!(denied.is_err_and(|e| e.status == 400));
-    let result = bridge
-        .call(&state, &turn, &call(json!({"query":"fixtureSymbol"})))
-        .await
-        .map_err(|e| e.message)?;
-    assert_eq!(result["content"][0]["text"], "fixtureSymbol");
-    {
-        let db = state
-            .database
-            .lock()
-            .map_err(|_| "Database lock poisoned")?;
-        db.connection
-            .execute("DELETE FROM local_project_members", [])?;
-    }
-    assert!(selected().is_err_and(|e| e.status == 403));
-    let denied = bridge
-        .call(&state, &turn, &call(json!({"query":"fixtureSymbol"})))
-        .await;
-    assert!(denied.is_err_and(|e| e.status == 403));
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore = "requires installed CodeGraph and bubblewrap"]
-async fn real_codegraph_indexes_and_syncs_a_tiny_project() -> db::Result<()> {
-    let scratch = ProbeHome::new()?;
-    let cli = std::env::split_paths(&std::env::var_os("PATH").ok_or("PATH is unset")?)
-        .map(|dir| dir.join("codegraph"))
-        .find(|cli| cli.is_file())
-        .ok_or("Install CodeGraph on PATH")?;
-    let directory = scratch.0.join("project");
-    fs::create_dir(&directory)?;
-    let source = directory.join("fixture.ts");
-    fs::write(&source, "export function firstFixture() { return 1; }\n")?;
-    for symbol in ["firstFixture", "updatedFixture"] {
-        let mut bridge = Bridge::open(Project {
-            cli: cli.canonicalize()?,
-            directory: directory.clone(),
-        })
-        .await
-        .map_err(|e| e.message)?;
-        assert!(bridge
-            .specs()
-            .any(|spec| spec["function"]["name"] == "codegraph_explore"));
-        let response = bridge
-            .rpc(
-                "tools/call",
-                json!({"name":"codegraph_explore","arguments":{"query":symbol}}),
-            )
-            .await
-            .map_err(|e| e.message)?;
-        assert!(
-            response.to_string().contains(&format!("function {symbol}")),
-            "{response}"
-        );
-        fs::write(&source, "export function updatedFixture() { return 2; }\n")?;
-    }
+    assert!(text(&responses[3]).contains("1\texport function fixtureSymbol() { return 1; }"));
+    assert!(text(&responses[4]).contains("Previously shown source"));
+    assert!(!text(&responses[4]).contains("export function"));
+    assert!(text(&responses[5]).contains("No indexed file"));
+    assert!(text(&run(&[explore("FixtureView")])?[0]).contains("function FixtureView"));
+    assert!(text(&run(&[explore("fixtureSymbol")])?[0]).contains("return 1"));
+    fs::write(&file, "export function updatedFixture() { return 2; }\n")?;
+    index.sync()?;
+    assert!(text(&run(&[explore("updatedFixture")])?[0]).contains("return 2"));
     Ok(())
 }

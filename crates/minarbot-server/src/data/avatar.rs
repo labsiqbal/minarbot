@@ -107,7 +107,7 @@ fn normalize(bytes: &[u8], deadline: std::time::Instant) -> Result<Vec<u8>, Fail
             }
             transform.transform(src, dst).map_err(|_| failed())?;
         }
-        rgba.as_mut().copy_from_slice(&output);
+        rgba.copy_from_slice(&output);
         image = if image.has_alpha() {
             image::DynamicImage::ImageRgba8(rgba)
         } else {
