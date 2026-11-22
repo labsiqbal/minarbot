@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Plug, Plus, Receipt, RefreshCw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
-import { CircleDot, ListTodo, Siren } from 'lucide-react';
+import { CircleDot, FileDiff, GitBranch, Globe, ListTodo, Siren, WrapText } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -80,6 +80,8 @@ const appearanceConfig: Plugin = {
           computer: svg(Monitor, 14), members: svg(Users, 14),
           shield: svg(ShieldCheck, 18), more: svg(Ellipsis, 16), external: svg(ExternalLink, 14),
           folder: svg(Folder), next: svg(ChevronRight, 14), alert: svg(CircleAlert, 14),
+          back: svg(ArrowLeft, 15), download: svg(Download, 15), globe: svg(Globe, 14), diff: svg(FileDiff, 14),
+          branch: svg(GitBranch, 14), wrap: svg(WrapText, 15),
         },
       },
     };

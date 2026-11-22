@@ -166,6 +166,22 @@ pub fn mount_conversation() -> Result<(), JsValue> {
         .and_then(|raw| serde_json::from_str::<Config>(&raw).ok())
         .ok_or_else(|| JsValue::from_str("Conversation configuration is invalid"))?;
     let path = window().location().pathname()?;
+    if path == "/"
+        && window()
+            .location()
+            .search()
+            .ok()
+            .and_then(|query| web_sys::UrlSearchParams::new_with_str(&query).ok())
+            .is_some_and(|query| query.has("computer"))
+    {
+        mount_to(root, move || {
+            appearance::initialize(StoredValue::new(config.colors));
+            provide_context(config.conversation_icons);
+            conversation::computer_window()
+        })
+        .forget();
+        return Ok(());
+    }
     mount_to(root, move || {
         let colors = StoredValue::new(config.colors);
         provide_context(config.conversation_icons);

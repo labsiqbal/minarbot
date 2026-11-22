@@ -1,7 +1,10 @@
+mod changes;
 mod controls;
+mod files;
 mod panels;
 mod protocol;
 mod queue;
+mod results;
 mod routes;
 
 use std::{collections::HashMap, time::Duration};
@@ -9,11 +12,12 @@ use std::{collections::HashMap, time::Duration};
 use gloo_net::http::{Request, Response};
 use leptos::{leptos_dom::helpers::set_timeout, prelude::*};
 use protocol::{Command, Partial, ReplyContext, MAX_FILES, MAX_MESSAGE};
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use wasm_bindgen::{closure::Closure, prelude::wasm_bindgen, JsCast};
 use web_sys::{EventSource, MessageEvent, Storage};
 
+pub(crate) use panels::computer_window;
 pub use routes::{standalone, Agent, Thread};
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -42,6 +46,12 @@ pub(crate) struct Icons {
     pub folder: String,
     pub next: String,
     pub alert: String,
+    pub back: String,
+    pub download: String,
+    pub globe: String,
+    pub diff: String,
+    pub branch: String,
+    pub wrap: String,
 }
 
 #[derive(Clone, Debug)]
@@ -90,7 +100,7 @@ struct ProviderCall {
     finished: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 struct FileRef {
     id: String,
     name: String,
@@ -100,6 +110,18 @@ struct FileRef {
     image: bool,
     #[serde(default)]
     deleted: bool,
+    thread: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+struct PanelFileRequest {
+    seq: u64,
+    id: String,
+    name: String,
+    #[serde(rename = "openedAt")]
+    opened_at: String,
+    #[serde(default)]
+    deleted: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -122,6 +144,9 @@ struct Turn {
     #[serde(default)]
     paused: u8,
     agent_name: Option<String>,
+    agent: Option<String>,
+    #[serde(rename = "computerWait")]
+    computer_wait: Option<panels::ComputerWait>,
     parent: Option<String>,
     reply: Option<String>,
     error: Option<String>,
@@ -131,6 +156,8 @@ struct Turn {
     editing: bool,
     #[serde(default)]
     files: Vec<FileRef>,
+    #[serde(rename = "panelFile")]
+    panel_file: Option<PanelFileRequest>,
     #[serde(rename = "generatedFiles", default)]
     generated: Vec<FileRef>,
     #[serde(default)]
@@ -163,7 +190,8 @@ impl Turn {
 
     fn needs_you(&self) -> bool {
         self.active()
-            && (self.questions.iter().any(|q| q["answer"].is_null())
+            && (self.computer_wait.is_some()
+                || self.questions.iter().any(|q| q["answer"].is_null())
                 || self
                     .approvals
                     .iter()
@@ -320,6 +348,9 @@ struct Chat {
     before: RwSignal<Option<u64>>,
     tab: RwSignal<&'static str>,
     details: RwSignal<bool>,
+    result: RwSignal<Option<results::ResultTarget>>,
+    panel_upload: RwSignal<bool>,
+    workspace: RwSignal<bool>,
     run: RwSignal<String>,
     new_thread: RwSignal<bool>,
 }
@@ -344,6 +375,20 @@ impl Chat {
             .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
             .filter(|files| files.len() <= MAX_FILES && files.iter().all(|id| protocol::id(id)))
             .unwrap_or_default();
+        let result = results::current().ok().flatten();
+        let stored_tab = window()
+            .local_storage()
+            .ok()
+            .flatten()
+            .and_then(|storage| storage.get_item(&key("right-panel")).ok().flatten())
+            .and_then(|raw| serde_json::from_str::<String>(&raw).ok());
+        let tab = match stored_tab.as_deref() {
+            Some("files") => "files",
+            Some("diff") => "diff",
+            Some("preview") => "preview",
+            Some("computer" | "browser") => "computer",
+            _ => "chats",
+        };
         Self {
             draft: RwSignal::new(saved(&key("draft")).unwrap_or_default()),
             files: RwSignal::new(files),
@@ -363,8 +408,11 @@ impl Chat {
             focus: RwSignal::new(focus),
             query: RwSignal::new(String::new()),
             before: RwSignal::new(None),
-            tab: RwSignal::new("chats"),
-            details: RwSignal::new(restore_details()),
+            tab: RwSignal::new(tab),
+            details: RwSignal::new(result.is_some() || restore_details()),
+            result: RwSignal::new(result),
+            panel_upload: RwSignal::new(false),
+            workspace: RwSignal::new(false),
             run: RwSignal::new(String::new()),
             new_thread: RwSignal::new(false),
             config: StoredValue::new(config),
@@ -382,6 +430,7 @@ impl Chat {
 
     fn locked(self) -> bool {
         self.blocked.get()
+            || self.panel_upload.get()
             || self.busy.get()
             || self.pending.get().is_some()
             || self.config.with_value(|config| config.archived)
@@ -534,6 +583,9 @@ impl Chat {
     }
 
     fn set_details(self, open: bool) {
+        if !open {
+            results::clear(self);
+        }
         if let Ok(Some(storage)) = window().local_storage() {
             let _ = storage.set_item("minarbot:details-open", if open { "1" } else { "0" });
         }
@@ -542,8 +594,18 @@ impl Chat {
 
     fn inspect(self, turn: String) {
         self.run.set(turn);
-        self.tab.set("run");
+        self.select_tab("run");
         self.set_details(true);
+    }
+
+    fn select_tab(self, tab: &'static str) {
+        self.tab.set(tab);
+        results::clear(self);
+        if tab != "run" {
+            if let Ok(Some(storage)) = window().local_storage() {
+                let _ = storage.set_item(&self.key("right-panel"), &format!("\"{tab}\""));
+            }
+        }
     }
 
     fn send_from_app(self, text: &str) {
@@ -796,7 +858,7 @@ fn subscribe(chat: Chat, snapshots: StoredValue<HashMap<String, Partial>>) {
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = MinarbotConversation)]
-    fn markdown(text: &str, scope: &str) -> String;
+    fn markdown(text: &str, scope: &str, files: Option<String>) -> String;
 
     #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = messageTime)]
     fn message_time(value: &str) -> String;
@@ -809,7 +871,7 @@ extern "C" {
 }
 
 fn body(text: String, base: String) -> impl IntoView {
-    view! { <div class="markdown" inner_html=markdown(&text, &base)></div> }
+    view! { <div class="markdown" inner_html=markdown(&text, &base, None)></div> }
 }
 
 fn activity_label(turn: &Turn, now: f64) -> String {
@@ -951,7 +1013,6 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
     });
     let base = chat.base();
     let text_base = base.clone();
-    let rich_base = base.clone();
     let label = move || {
         if row.with(Turn::streaming) {
             "Streaming answer"
@@ -964,6 +1025,17 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
     let inspect = move |_| chat.inspect(inspect_id.clone());
     let inspect_icon = StoredValue::new(icons.inspect.clone());
     let inspect = Callback::new(inspect);
+    let computer_wait = Memo::new(move |_| {
+        row.with(|turn| {
+            let wait = turn.computer_wait.clone()?;
+            let agent = turn.agent.clone()?;
+            let name = turn
+                .agent_name
+                .clone()
+                .unwrap_or_else(|| chat.config.with_value(|config| config.name.clone()));
+            Some((wait, agent, name))
+        })
+    });
     let answer = Memo::new(move |_| {
         row.with(|turn| {
             turn.reply
@@ -977,8 +1049,12 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                 .unwrap_or_default()
         })
     });
+    let outputs = Memo::new(move |_| row.with(|turn| turn.generated.clone()));
     let blocks = Memo::new(move |_| {
         answer.with(|text| {
+            if !outputs.with(Vec::is_empty) {
+                return vec![(0, text.clone())];
+            }
             markdown_blocks(text)
                 .iter()
                 .enumerate()
@@ -1034,7 +1110,6 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
     });
     let prompt =
         Memo::new(move |_| row.with(|turn| turn.parent.is_none().then(|| turn.text.clone())));
-    let outputs = Memo::new(move |_| row.with(|turn| turn.generated.clone()));
     view! {
         <article class="turn-block" class:is-latest=move || latest.get() id=format!("turn-{id}") tabindex="0">
             <div class="human-message" tabindex="-1" aria-label="Your message"
@@ -1096,13 +1171,16 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                             <span class="appearance-icon" inner_html=inspect_icon.get_value()></span>
                         </button>
                     </div>
-                    <div class="message-body" hidden=move || answer.with(String::is_empty) && row.with(|turn| turn.html.is_empty() && turn.apps.is_empty() && turn.components.is_empty() && turn.error.is_none() && turn.dispatch_label.is_none() && turn.approval_subject().is_none())>
+                    <div class="message-body" hidden=move || answer.with(String::is_empty) && outputs.with(Vec::is_empty) && row.with(|turn| turn.html.is_empty() && turn.apps.is_empty() && turn.components.is_empty() && turn.error.is_none() && turn.dispatch_label.is_none() && turn.approval_subject().is_none())>
                         {panels::rich_replies(chat, row)}
                         {move || row.with(|turn| turn.dispatch_label.clone()).map(|text| view! { <p class="dispatch-receipt">{text}</p> })}
-                        <div aria-label=label hidden=move || answer.with(String::is_empty)>
+                        <div aria-label=label hidden=move || answer.with(String::is_empty) && outputs.with(Vec::is_empty)>
                             <div class="legacy stream-markdown">
                                 <For each=move || blocks.get() key=|(index, block): &(usize, String)| (*index, block.clone())
-                                    children=move |(_, block)| body(block, text_base.clone()) />
+                                    children=move |(_, block)| {
+                                        let scope = text_base.clone();
+                                        view! { <div class="markdown" inner_html=move || markdown(&block, &scope, serde_json::to_string(&outputs.get()).ok())></div> }
+                                    } />
                             </div>
                         </div>
                         {move || row.with(|turn| {
@@ -1131,7 +1209,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                                 class:is-working=subject.is_some_and(|value| value != "form")><i aria-hidden="true"></i>{text}</span></div>
                         })
                     })}
-                    {move || outputs.get().into_iter().filter(|file| !file.deleted).map(|file| attachment(file, rich_base.clone())).collect_view()}
+                    {move || computer_wait.get().map(|(wait, agent, name)| panels::computer_request(agent, name, wait))}
                     {panels::exchanges(chat, row)}
                     {controls::turn_controls(chat, row)}
                     {queue::editor(chat, row)}
@@ -1173,6 +1251,7 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
     let menu = NodeRef::<leptos::html::Details>::new();
     let trigger = NodeRef::<leptos::html::Summary>::new();
     let title = config.name.clone();
+    let workspace = config.agent.as_ref().is_some_and(|agent| !agent.builtin);
     let toggle_details = move || chat.set_details(!chat.details.get_untracked());
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
         if !(event.ctrl_key() || event.meta_key())
@@ -1212,6 +1291,12 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
                         if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                         searching.set(true);
                     }><span class="appearance-icon" inner_html=icons.search></span>"Find messages"</button>
+                    {workspace.then(|| view! {
+                        <button type="button" class="k-menu__item" on:click=move |_| {
+                            if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                            chat.workspace.set(true);
+                        }><span class="appearance-icon" inner_html=icons.folder.clone()></span>"Workspace files"</button>
+                    })}
                     <button type="button" class="k-menu__item" on:click=move |_| {
                         if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                         toggle_details();
@@ -1235,6 +1320,13 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
 /// Key this component by conversation scope when changing routes.
 pub fn shell(config: ConversationConfig) -> impl IntoView {
     let chat = Chat::new(config.clone());
+    let workspace = StoredValue::new(
+        config
+            .agent
+            .as_ref()
+            .map(|agent| (agent.id.clone(), agent.name.clone())),
+    );
+    results::connect(chat);
     let snapshots = StoredValue::new(HashMap::new());
     subscribe(chat, snapshots);
     polling(chat, snapshots);
@@ -1329,7 +1421,9 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         }
     };
     view! {
-        <div class="chat-row conversation-layout bs-root">
+        {move || chat.workspace.get().then(|| workspace.get_value())
+            .flatten().map(|(agent, name)| files::workspace_page(chat, agent, name))}
+        <div class="chat-row conversation-layout bs-root" hidden=move || chat.workspace.get() on:click=move |event| results::follow(chat, event)>
             <main class="chat conversation-chat" class:is-finding=searching aria-label=label>
                 <form class="conversation-find k-inline" role="search" hidden=move || !searching.get()
                     on:keydown=move |event| { if event.key() == "Escape" { event.prevent_default(); close_search(); } }

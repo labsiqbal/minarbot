@@ -240,269 +240,244 @@ pub fn exchanges(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     }
 }
 
-#[derive(Clone, Deserialize)]
-struct Context {
-    computer: Option<String>,
-    workspace: Option<Value>,
-}
-
-fn files_panel(chat: Chat, context: RwSignal<Option<Context>>) -> impl IntoView {
-    let files = RwSignal::new(None::<Vec<FileRef>>);
-    let selected = RwSignal::new(None::<FileRef>);
-    let error = RwSignal::new(String::new());
-    let path = format!("{}/panel/files", chat.base());
-    let icons = use_context::<Icons>().unwrap_or_default();
-    let has_workspace = move || {
-        context.with(|value| {
-            value
-                .as_ref()
-                .is_some_and(|value| value.workspace.is_some())
-        })
-    };
-    leptos::task::spawn_local(async move {
-        match get::<Vec<FileRef>>(&path).await {
-            Ok(value) => {
-                files.try_set(Some(value));
-            }
-            Err(reason) => {
-                error.try_set(reason.message);
-            }
-        }
-    });
-    view! {
-        <section aria-label="Conversation files" class="k-section" hidden=move || has_workspace() && files.with(|rows| rows.as_ref().is_some_and(Vec::is_empty))>
-            <h2 class="k-section__title">"Conversation files"</h2>
-            <p role="status" hidden=move || files.with(Option::is_some) || !error.with(String::is_empty)>"Loading files…"</p>
-            <p role="status" hidden=move || files.with(|files| files.as_ref().is_none_or(|files| !files.is_empty()))>"No files yet"</p>
-            <p role="alert" class="message-error" hidden=move || error.with(String::is_empty)>{error}</p>
-            <div class="attachments__list" hidden=move || selected.with(Option::is_some)>
-                {move || files.with(|files| files.iter().flatten().filter(|file| protocol::id(&file.id) && !file.deleted).cloned().map(|file| {
-                    let id = file.id.clone();
-                    let label_id = id.clone();
-                    let label = file.name.clone();
-                    view! {
-                        <div class="right-panel__file-row">
-                            <button type="button" class="right-panel__file" aria-label=format!("Preview {label}") on:click=move |_| selected.set(Some(file.clone()))>
-                                <span class="right-panel__thumbnail"><span class="appearance-icon" inner_html=icons.file.clone()></span></span>
-                                <span class="right-panel__file-name">{label.clone()}</span>
-                            </button>
-                            <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || chat.locked()
-                                on:click=move |_| {
-                                    let mut attached = chat.files.get_untracked();
-                                    if attached.contains(&id) { attached.retain(|value| value != &id); } else if attached.len() < MAX_FILES { attached.push(id.clone()); }
-                                    chat.attach(attached);
-                                }>{move || if chat.files.with(|files| files.contains(&label_id)) { "Remove from message" } else { "Attach to message" }}</button>
-                        </div>
-                    }
-                }).collect_view())}
-            </div>
-            {move || selected.get().map(|file| {
-                let path = format!("{}/panel/files/{}", chat.base(), file.id);
-                view! {
-                    <div class="k-row-actions"><button type="button" class="k-btn k-btn--sm k-btn--secondary" on:click=move |_| selected.set(None)>"Close file"</button>
-                        <a class="k-link" href=path.clone() download=file.name.clone()>"Download original"</a>
-                    </div>
-                    {if file.image { view! { <img class="right-panel__image" src=format!("{path}?preview=image") alt=file.name.clone() /> }.into_any() } else if file.name.ends_with(".html") {
-                        view! { <iframe class="html-reply" sandbox="" referrerpolicy="no-referrer" title=format!("Visual preview {}", file.name) src=format!("{path}?preview=render")></iframe> }.into_any()
-                    } else { text_preview(path, file.name).into_any() }}
-                }
-            })}
-        </section>
-        <Show when=has_workspace>{workspace_panel(chat.base())}</Show>
-    }
-}
-
-fn workspace_panel(base: String) -> impl IntoView {
-    let base = StoredValue::new(format!("{base}/panel/workspace"));
-    let directory = RwSignal::new(String::new());
-    let after = RwSignal::new(None::<String>);
-    let file = RwSignal::new(None::<String>);
-    let page = RwSignal::new(None::<Result<Value, String>>);
-    let icons = use_context::<Icons>().unwrap_or_default();
-    let folder = StoredValue::new(icons.folder);
-    Effect::new(move |_| {
-        let path = directory.get();
-        let cursor = after.get();
-        let Ok(params) = web_sys::UrlSearchParams::new() else {
-            return;
-        };
-        params.set("path", &path);
-        if let Some(cursor) = cursor.as_deref() {
-            params.set("after", cursor);
-        }
-        let url = format!(
-            "{}/entries?{}",
-            base.get_value(),
-            params.to_string().as_string().unwrap_or_default()
-        );
-        page.set(None);
-        leptos::task::spawn_local(async move {
-            let result = get::<Value>(&url).await.map_err(|reason| reason.message);
-            if !directory.is_disposed()
-                && directory.get_untracked() == path
-                && after.get_untracked() == cursor
-            {
-                page.set(Some(result));
-            }
-        });
-    });
-    view! {
-        <div class="k-stack bs-root conversation-workspace">
-            <nav class="k-row-actions" aria-label="Workspace path">
-                <button type="button" class="k-btn k-btn--md k-btn--ghost" on:click=move |_| {
-                    file.set(None); after.set(None); directory.set(String::new());
-                }><span class="appearance-icon" inner_html=folder.get_value()></span>"Workspace"</button>
-                {move || directory.with(|path| (!path.is_empty()).then(|| view! { <span class="right-panel__path">{path.clone()}</span> }))}
-            </nav>
-            {move || {
-                if let Some(path) = file.get() {
-                    let encoded = js_sys::encode_uri_component(&path).as_string().unwrap_or_default();
-                    let endpoint = base.get_value();
-                    let name = path.rsplit('/').next().unwrap_or_default().to_owned();
-                    return view! {
-                        <div class="k-row-actions">
-                            <button type="button" class="k-btn k-btn--sm k-btn--secondary" on:click=move |_| file.set(None)>"Close file"</button>
-                            <a class="k-link" href=format!("{endpoint}/download?path={encoded}") download=name>"Download original"</a>
-                        </div>
-                        {preview_text(format!("{endpoint}/file?path={encoded}"), path)}
-                    }.into_any();
-                }
-                page.with(|page| match page {
-                    Some(Ok(page)) => {
-                        let rows = page["entries"].as_array().into_iter().flatten().filter_map(|entry| {
-                            let name = entry["name"].as_str()?.to_owned();
-                            if name == ".git" { return None; }
-                            let is_file = entry["kind"] == "file";
-                            let supported = (is_file || entry["kind"] == "directory") && !name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\'));
-                            let path = directory.with_untracked(|dir| if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") });
-                            Some(view! { <div class="k-row is-clickable"><button type="button" class="k-row__main" disabled=!supported on:click=move |_| {
-                                if is_file { file.set(Some(path.clone())); } else { after.set(None); directory.set(path.clone()); }
-                            }><span class="k-row__text"><span class="k-row__title">{name}</span></span></button></div> })
-                        }).collect::<Vec<_>>();
-                        let next = page["next_after"].as_str().map(str::to_owned);
-                        view! {
-                            <section class="k-section">
-                                {if rows.is_empty() { view! { <div class="k-empty"><span class="k-empty__icon" inner_html=folder.get_value()></span>
-                                    <div class="k-empty__title">"Directory is empty on this page."</div></div> }.into_any()
-                                } else { view! { <div class="k-card">{rows}</div> }.into_any() }}
-                                {next.map(|next| view! { <button type="button" class="k-btn k-btn--sm k-btn--secondary"
-                                    on:click=move |_| after.set(Some(next.clone()))>"Next entries"</button> })}
-                            </section>
-                        }.into_any()
-                    }
-                    Some(Err(message)) => view! { <p role="alert" class="message-error">{message.clone()}</p> }.into_any(),
-                    None => view! { <span class="sr-only" role="status">"Loading workspace..."</span> }.into_any(),
-                })
-            }}
-        </div>
-    }
-}
-
-fn text_preview(path: String, name: String) -> impl IntoView {
-    preview_text(format!("{path}?preview=text"), name)
-}
-
-fn preview_text(path: String, name: String) -> impl IntoView {
-    let content = RwSignal::new(None::<String>);
-    let error = RwSignal::new(String::new());
-    leptos::task::spawn_local(async move {
-        match get::<Value>(&path).await {
-            Ok(value) => {
-                content.try_set(value["text"].as_str().map(str::to_owned));
-            }
-            Err(reason) => {
-                error.try_set(reason.message);
-            }
-        }
-    });
-    view! {
-        <p role="status" hidden=move || content.with(Option::is_some) || !error.with(String::is_empty)>"Loading preview…"</p>
-        <p role="alert" class="message-error" hidden=move || error.with(String::is_empty)>{error}</p>
-        <pre tabindex="0" hidden=move || content.with(Option::is_none) aria-label=format!("Contents of {name}")>{content}</pre>
-    }
-}
-
 fn run_panel(chat: Chat) -> impl IntoView {
-    let data = RwSignal::new(None::<Value>);
-    let error = RwSignal::new(String::new());
+    let data = RwSignal::new(None::<Result<Value, String>>);
+    let refresh = RwSignal::new(0_u32);
+    files::watch(
+        move || {
+            let id = chat.run.get();
+            if protocol::id(&id) {
+                format!("/api/turns/{id}/inspect")
+            } else {
+                String::new()
+            }
+        },
+        refresh,
+        data,
+    );
+    view! { <section class="run-inspector" aria-label="Run inspector">
+        {move || match data.get() {
+            None => files::loading("Loading run...").into_any(),
+            Some(Err(error)) => files::retry(error, refresh).into_any(),
+            Some(Ok(run)) => inspection(run).into_any(),
+        }}
+    </section> }
+}
+
+fn inspect_value(label: &'static str, text: String) -> impl IntoView {
+    let snippet = text
+        .chars()
+        .take(640)
+        .collect::<String>()
+        .lines()
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let short = snippet.len() < text.len();
+    let preview = if short {
+        format!("{snippet}…")
+    } else {
+        text.clone()
+    };
+    let expanded = RwSignal::new(false);
+    let id = uuid().unwrap_or_default();
+    let controls = id.clone();
+    view! { <div class="run-inspector__value">
+        <div class="run-inspector__value-head"><strong>{label}</strong>
+            {short.then(|| view! { <button type="button" class="link-btn link-btn--small" aria-expanded=move || expanded.get().to_string()
+                aria-controls=controls on:click=move |_| expanded.update(|value| *value = !*value)>
+                {move || if expanded.get() { "Collapse" } else { "Expand" }}<span class="sr-only">{format!(" {}", label.to_ascii_lowercase())}</span>
+            </button> })}
+        </div>
+        <pre id=id><code>{move || if expanded.get() { text.clone() } else { preview.clone() }}</code></pre>
+    </div> }
+}
+
+fn step_state(state: Option<&str>, run: &str) -> &'static str {
+    match state.unwrap_or_default() {
+        "completed" | "done" | "received" | "succeeded" => "Completed",
+        "failed" | "error" | "uncertain" => "Failed",
+        "declined" | "denied" | "rejected" => "Declined",
+        "waiting" | "waiting_for_user" | "approval" | "paused" => "Waiting",
+        "interrupted" | "aborted" => "Interrupted",
+        "cancelled" | "canceled" | "closed" => "Stopped",
+        _ => match run {
+            "failed" => "Failed",
+            "interrupted" => "Interrupted",
+            "cancelled" => "Stopped",
+            _ if matches!(state, Some("running" | "in_progress" | "inProgress")) => "Running",
+            _ => "Pending",
+        },
+    }
+}
+
+fn duration(ms: f64) -> String {
+    if ms < 1_000.0 {
+        format!("{ms:.0} ms")
+    } else {
+        format!("{:.2} s", ms / 1_000.0)
+    }
+}
+
+fn inspection(run: Value) -> impl IntoView {
+    let status = run["status"].as_str().unwrap_or_default();
     let chevron = use_context::<Icons>().unwrap_or_default().next;
-    fn refresh(chat: Chat, data: RwSignal<Option<Value>>, error: RwSignal<String>, id: String) {
-        if data.is_disposed() || chat.run.get_untracked() != id {
-            return;
+    let rows = |key: &str| run[key].as_array().into_iter().flatten();
+    let judgments = rows("judgments").map(|judge| {
+        let title = format!("Turn {}", judge["number"]);
+        let met = judge["met"] == true || judge["met"] == 1;
+        let reason = judge["reason"].as_str().unwrap_or_default().to_owned();
+        view! { <li><details><summary><span class="appearance-icon" inner_html=chevron.clone()></span>
+            <span>{title}</span><span class="run-inspector__state" data-state=met.then_some("Done")>{if met { "Met" } else { "More work" }}</span>
+        </summary><div class="run-inspector__details"><p>{reason}</p></div></details></li> }
+    }).collect::<Vec<_>>();
+    let providers = rows("providers").map(|call| {
+        let model = call["model"].as_str().unwrap_or_default().to_owned();
+        let state = call["status"].as_str();
+        let state = step_state(if status == "cancelled" && state == Some("interrupted") { Some("cancelled") } else { state }, status);
+        let label = call["duration_ms"].as_f64().map_or_else(|| state.to_owned(), |ms| format!("{state} · {}", duration(ms)));
+        let times = inspect_times(call["created"].as_str(), call["finished"].as_str());
+        let tokens = [("input_tokens", "Input tokens"), ("output_tokens", "Output tokens"), ("total_tokens", "Total tokens")]
+            .into_iter().filter_map(|(field, label)| call[field].as_u64().map(|value| view! { <dt>{label}</dt><dd>{value.to_string()}</dd> })).collect_view();
+        view! { <li><details><summary><span class="appearance-icon" inner_html=chevron.clone()></span>
+            <span>{model}</span><span class="run-inspector__state">{label}</span>
+        </summary><div class="run-inspector__details"><dl>{times}{tokens}</dl></div></details></li> }
+    }).collect::<Vec<_>>();
+    let show_tool = |step: &&Value| {
+        let name = step["name"].as_str().unwrap_or_default();
+        let name = name.to_ascii_lowercase().replace(['_', '-', ' '], "");
+        !matches!(
+            name.as_str(),
+            "" | "usermessage"
+                | "agentmessage"
+                | "assistantmessage"
+                | "reasoning"
+                | "plan"
+                | "contextcompaction"
+                | "verificationreminder"
+        ) && step["id"] != "verification-reminder"
+    };
+    let mut tools = rows("tools").filter(show_tool).collect::<Vec<_>>();
+    let mut matched = std::collections::HashSet::new();
+    let mut steps = Vec::new();
+    for step in rows("harness").filter(show_tool) {
+        if !matched.insert(step["id"].as_str().unwrap_or_default()) {
+            continue;
         }
-        leptos::task::spawn_local(async move {
-            let result = get(&format!("/api/turns/{id}/inspect")).await;
-            if data.is_disposed() || chat.run.get_untracked() != id {
-                return;
+        let index = tools
+            .iter()
+            .position(|tool| tool["id"] == step["id"])
+            .or_else(|| {
+                tools.iter().position(|tool| {
+                    tool["name"]
+                        .as_str()
+                        .map(|name| name.trim_start_matches("mcp__minarbot__"))
+                        == step["name"]
+                            .as_str()
+                            .map(|name| name.trim_start_matches("mcp__minarbot__"))
+                })
+            });
+        steps.push((Some(step), index.map(|index| tools.remove(index))));
+    }
+    steps.extend(tools.into_iter().map(|tool| (None, Some(tool))));
+    let last_failed = steps
+        .iter()
+        .rposition(|(native, tool)| inspection_step_state(*native, *tool, status) == "Failed");
+    let steps = steps.into_iter().enumerate().map(|(index, (native, tool))| {
+        let data = native.or(tool).unwrap_or(&Value::Null);
+        let state = inspection_step_state(native, tool, status);
+        let name = data["name"].as_str().unwrap_or_default();
+        let title = data["title"].as_str().map(str::to_owned).unwrap_or_else(|| match name {
+            "commandExecution" | "exec_command" | "Bash" | "bash" => "Run shell".into(),
+            "fileChange" | "apply_patch" | "Edit" | "MultiEdit" => "Edit files".into(),
+            _ => {
+                let title = name.rsplit("__").next().unwrap_or(name).replace(['_', '-'], " ");
+                let mut letters = title.chars();
+                letters.next().map_or_else(String::new, |first| format!("{}{}", first.to_uppercase(), letters.as_str()))
             }
-            match result {
-                Ok(value) => {
-                    if data.with_untracked(|previous| previous.as_ref() != Some(&value)) {
-                        data.set(Some(value));
-                    }
-                    error.set(String::new());
-                }
-                Err(reason) => error.set(reason.message),
-            }
-            set_timeout(
-                move || refresh(chat, data, error, id),
-                Duration::from_millis(1200),
-            );
         });
-    }
-    Effect::new(move |_| {
-        let id = chat.run.get();
-        if protocol::id(&id) {
-            data.set(None);
-            refresh(chat, data, error, id);
-        }
-    });
+        let field = |key: &str| native.and_then(|value| value[key].as_str()).or_else(|| tool.and_then(|value| value[key].as_str()));
+        let started = field("started");
+        let ended = field("finished");
+        let elapsed = started.zip(ended).map(|(start, end)| js_sys::Date::parse(end) - js_sys::Date::parse(start))
+            .filter(|ms| ms.is_finite()).map_or_else(|| "Unavailable".into(), |ms| duration(ms.max(0.0)));
+        let times = inspect_times(started, ended);
+        let native = native.and_then(|value| value["state"].as_str()).map(str::to_owned);
+        let name = name.to_owned();
+        let arguments = field("arguments").map(|value| inspect_value("Arguments", value.to_owned()));
+        let result = field("result").map(|value| inspect_value(if state == "Failed" { "Error" } else { "Result" }, value.to_owned()));
+        view! { <li><details open=last_failed == Some(index)><summary><span class="appearance-icon" inner_html=chevron.clone()></span><span>{title}</span>
+            <span class="run-inspector__state" data-state=state>{state}</span></summary><div class="run-inspector__details">
+                <dl><dt>"Tool"</dt><dd><code>{name}</code></dd>
+                {native.map(|state| view! { <dt>"Native state"</dt><dd><code>{state}</code></dd> })}
+                {times}<dt>"Duration"</dt><dd>{elapsed}</dd></dl>
+                {arguments}{result}
+            </div></details></li> }
+    }).collect::<Vec<_>>();
+    let error = run["error"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            inspect_value(
+                if status == "cancelled" {
+                    "Run stopped"
+                } else {
+                    "Run error"
+                },
+                value.to_owned(),
+            )
+        });
+    let stderr = run["engineStderr"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(|value| inspect_value("Engine stderr", value.to_owned()));
+    let empty = error.is_none()
+        && stderr.is_none()
+        && steps.is_empty()
+        && providers.is_empty()
+        && judgments.is_empty();
     view! {
-        <section class="run-inspector" aria-label="Run inspector">
-            <p role="status" hidden=move || data.with(Option::is_some) || !error.with(String::is_empty)>"Loading run…"</p>
-            <p role="alert" class="message-error" hidden=move || error.with(String::is_empty)>{error}</p>
-            {move || data.with(|data| data.as_ref().map(|run| {
-                let stopped = run["status"] == "cancelled";
-                let error = run["error"].as_str().map(str::to_owned);
-                view! {
-                    {error.map(|error| view! {
-                        <div class="run-inspector__value"><div class="run-inspector__value-head"><strong>{if stopped { "Run stopped" } else { "Run error" }}</strong></div><pre><code>{error}</code></pre></div>
-                    })}
-                    {["judgments", "tools", "harness", "providers"].into_iter().filter_map(|key| {
-                        let list = run[key].as_array()?;
-                        if list.is_empty() { return None }
-                        let title = match key { "judgments" => "Goal judge", "providers" => "Provider calls", "tools" => "Tool steps", _ => "Harness steps" };
-                        let rows = list.iter().map(|step| {
-                            let header = if key == "judgments" { format!("Turn {}", step["number"]) } else {
-                                step["title"].as_str().or_else(|| step["name"].as_str()).or_else(|| step["model"].as_str()).unwrap_or(title).to_owned()
-                            };
-                            let status = if key == "judgments" {
-                                if step["met"] == 1 || step["met"] == true { "Met" } else { "More work" }
-                            } else {
-                                match step["state"].as_str().or_else(|| step["status"].as_str()).unwrap_or_default() {
-                                    "pending" => "Pending", "running" => "Running", "received" | "done" | "completed" => "Completed",
-                                    "failed" => "Failed", "interrupted" if stopped => "Stopped", "interrupted" => "Interrupted", _ => "Waiting",
-                                }
-                            };
-                            let duration = step["duration_ms"].as_u64().map(|ms| if ms < 1000 {
-                                format!("{ms} ms")
-                            } else {
-                                format!("{:.2} s", ms as f64 / 1000.)
-                            });
-                            let state = duration.map_or_else(|| status.to_owned(), |duration| format!("{status} · {duration}"));
-                            view! { <li><details><summary><span class="appearance-icon" inner_html=chevron.clone()></span><span>{header}</span><span class="run-inspector__state" data-state=(key != "providers").then_some(status)>{state}</span></summary>
-                                <div class="run-inspector__details">
-                                    {["arguments", "result", "reason", "created", "finished"].into_iter().filter_map(|key| step[key].as_str().map(|text|
-                                        view! { <pre>{text.to_owned()}</pre> })).collect_view()}
-                                </div></details></li> }
-                        }).collect_view();
-                        Some(view! { <section class="run-inspector__providers" aria-label=title><h3>{title}</h3><ul class="run-inspector__list">{rows}</ul></section> })
-                    }).collect_view()}
-                    {run["engineStderr"].as_str().map(|text| view! { <details><summary>"Engine stderr"</summary><pre>{text.to_owned()}</pre></details> })}
-                }
-            }))}
-        </section>
+        {error}
+        {(!judgments.is_empty()).then(|| view! { <section class="run-inspector__providers" aria-label="Goal judge">
+            <h3>"Goal judge"</h3><ul class="run-inspector__list">{judgments}</ul></section> })}
+        {(!steps.is_empty()).then(|| view! { <ul class="run-inspector__list" aria-label="Steps">{steps}</ul> })}
+        {(!providers.is_empty()).then(|| view! { <section class="run-inspector__providers" aria-label="Provider calls">
+            <h3>"Provider calls"</h3><ul class="run-inspector__list">{providers}</ul></section> })}
+        {stderr}
+        {empty.then(|| view! { <p role="status">"No run details"</p> })}
     }
+}
+
+fn inspection_step_state(
+    native: Option<&Value>,
+    tool: Option<&Value>,
+    status: &str,
+) -> &'static str {
+    let failed = native.is_some_and(|step| step["failed"] == 1 || step["failed"] == true)
+        || tool.is_some_and(|step| step["state"] == "failed");
+    step_state(
+        if failed {
+            Some("failed")
+        } else {
+            native.or(tool).and_then(|step| step["state"].as_str())
+        },
+        status,
+    )
+}
+
+fn inspect_times(started: Option<&str>, ended: Option<&str>) -> impl IntoView {
+    let options = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&options, &"dateStyle".into(), &"short".into());
+    let _ = js_sys::Reflect::set(&options, &"timeStyle".into(), &"medium".into());
+    let time = |value: Option<&str>| {
+        let Some(value) = value.filter(|value| js_sys::Date::parse(value).is_finite()) else {
+            return "Unavailable".into_any();
+        };
+        let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(value));
+        let text = String::from(date.to_locale_string("default", options.as_ref()));
+        view! { <time datetime=value.to_owned()>{text}</time> }.into_any()
+    };
+    view! { <dt>"Started"</dt><dd>{time(started)}</dd><dt>"Ended"</dt><dd>{time(ended)}</dd> }
 }
 
 #[derive(Clone, PartialEq, Deserialize)]
@@ -512,6 +487,41 @@ struct ComputerStatus {
     state: String,
     #[serde(default)]
     control: Control,
+    #[serde(default)]
+    revision: u64,
+    #[serde(rename = "stopsInMs")]
+    stops_in_ms: Option<u64>,
+    #[serde(default)]
+    requests: Vec<ComputerWait>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub(super) struct ComputerWait {
+    turn: String,
+    call_id: String,
+    reason: String,
+    secret_entry: Option<String>,
+    secret_origin: Option<String>,
+}
+
+impl ComputerWait {
+    fn label(&self, name: &str, viewer: bool) -> String {
+        if self.secret_entry.is_some() {
+            format!(
+                "{name} needs a secure value for {}",
+                self.secret_origin.as_deref().unwrap_or_default()
+            )
+        } else {
+            let reason = if !self.reason.is_empty() {
+                &self.reason
+            } else if viewer {
+                "Computer access is waiting for you."
+            } else {
+                "The user is controlling this computer."
+            };
+            format!("{name} needs you to take over: {reason}")
+        }
+    }
 }
 #[derive(Clone, PartialEq, Deserialize, Default)]
 struct Control {
@@ -540,67 +550,187 @@ fn valid_computer_command(raw: &str) -> bool {
     })
 }
 
-fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
-    let path = StoredValue::new(format!("/api/agents/{agent}/computer"));
-    let key = StoredValue::new(format!("minarbot-computer-control:{agent}"));
-    let pending = RwSignal::new(saved(&key.get_value()));
-    let status = RwSignal::new(None::<ComputerStatus>);
+#[derive(Clone, Copy)]
+struct ComputerControl {
+    path: StoredValue<String>,
+    key: StoredValue<String>,
+    pending: RwSignal<Option<String>>,
+    status: RwSignal<Option<ComputerStatus>>,
+    error: RwSignal<String>,
+    busy: RwSignal<bool>,
+}
+
+impl ComputerControl {
+    fn new(agent: &str) -> Self {
+        let key = format!("minarbot-computer-control:{agent}");
+        let control = Self {
+            path: StoredValue::new(format!("/api/agents/{agent}/computer")),
+            pending: RwSignal::new(saved(&key)),
+            key: StoredValue::new(key),
+            status: RwSignal::new(None),
+            error: RwSignal::new(String::new()),
+            busy: RwSignal::new(false),
+        };
+        control.refresh();
+        control
+    }
+
+    fn locked(self) -> bool {
+        self.busy.get() || self.pending.with(Option::is_some) || self.status.with(Option::is_none)
+    }
+
+    fn user(self) -> bool {
+        self.status.with(|status| {
+            status
+                .as_ref()
+                .is_some_and(|value| value.control.mode == "user")
+        })
+    }
+
+    fn refresh(self) {
+        if self.status.is_disposed() {
+            return;
+        }
+        let path = self.path.get_value();
+        let previous = self.status.get_untracked();
+        leptos::task::spawn_local(async move {
+            if !document().hidden() {
+                let result = get::<ComputerStatus>(&path).await;
+                if self.status.is_disposed() {
+                    return;
+                }
+                if !self.busy.get_untracked() && self.status.get_untracked() == previous {
+                    match result {
+                        Ok(next) => {
+                            if previous.as_ref().is_none_or(|previous| {
+                                next.control.revision >= previous.control.revision
+                                    && previous != &next
+                            }) {
+                                self.status.set(Some(next));
+                            }
+                        }
+                        Err(reason) => self.error.set(reason.message),
+                    }
+                }
+            }
+            set_timeout(move || self.refresh(), Duration::from_secs(1));
+        });
+    }
+
+    fn reload(self) {
+        if self.busy.get_untracked() {
+            return;
+        }
+        self.busy.set(true);
+        let endpoint = self.path.get_value();
+        let key = self.key.get_value();
+        leptos::task::spawn_local(async move {
+            match get::<ComputerStatus>(&endpoint).await {
+                Ok(value) if remove(&key) => {
+                    self.status.try_set(Some(value));
+                    self.pending.try_set(None);
+                    self.error.try_set(String::new());
+                }
+                Ok(_) => {
+                    self.error
+                        .try_set("Computer recovery data could not be cleared.".into());
+                }
+                Err(reason) => {
+                    self.error.try_set(reason.message);
+                }
+            }
+            self.busy.try_set(false);
+        });
+    }
+
+    fn submit(self, operation: Option<(&str, Option<&str>)>) {
+        if self.busy.get_untracked() {
+            return;
+        }
+        let key = self.key.get_value();
+        let raw = match (operation, self.pending.get_untracked()) {
+            (None, Some(raw)) if valid_computer_command(&raw) => raw,
+            (Some((operation, turn)), None) => {
+                let Some(revision) = self
+                    .status
+                    .with_untracked(|s| s.as_ref().map(|s| s.control.revision))
+                else {
+                    return;
+                };
+                let Some(id) = uuid() else {
+                    return;
+                };
+                let mut value = json!({"id":id, "revision":revision, "operation":operation});
+                if let Some(turn) = turn.filter(|turn| protocol::id(turn)) {
+                    value["turn"] = json!(turn);
+                }
+                let raw = value.to_string();
+                if !valid_computer_command(&raw) {
+                    return;
+                }
+                raw
+            }
+            _ => return,
+        };
+        if !save(&key, &raw) {
+            self.error
+                .set("Computer request could not be saved.".into());
+            return;
+        }
+        self.pending.set(Some(raw.clone()));
+        self.busy.set(true);
+        self.error.set(String::new());
+        let endpoint = format!("{}/control", self.path.get_value());
+        leptos::task::spawn_local(async move {
+            match post::<ComputerStatus>(&endpoint, &raw).await {
+                Ok(value) => {
+                    self.status.try_set(Some(value));
+                    if remove(&key) {
+                        self.pending.try_set(None);
+                    } else {
+                        self.error.try_set(
+                            "Computer control changed. Recovery data could not be cleared.".into(),
+                        );
+                    }
+                }
+                Err(reason) => {
+                    self.error.try_set(reason.message);
+                }
+            }
+            self.busy.try_set(false);
+        });
+    }
+}
+
+fn computer_panel(agent: String, name: String, popout: bool, url: Option<String>) -> impl IntoView {
+    let controls = ComputerControl::new(&agent);
+    let ComputerControl {
+        path,
+        pending,
+        status,
+        error,
+        busy,
+        ..
+    } = controls;
+    let settings_key = StoredValue::new(format!("minarbot-computer:{agent}"));
+    let settings_pending = RwSignal::new(saved(&settings_key.get_value()));
     let clipboard = RwSignal::new(String::new());
-    let error = RwSignal::new(String::new());
     let connection = RwSignal::new(String::new());
-    let busy = RwSignal::new(false);
     let screen = NodeRef::<leptos::html::Div>::new();
     let dialog = NodeRef::<leptos::html::Dialog>::new();
     let stop_dialog = NodeRef::<leptos::html::Dialog>::new();
     let recover_dialog = NodeRef::<leptos::html::Dialog>::new();
     let hand_back = NodeRef::<leptos::html::Button>::new();
+    let settings_dialog = NodeRef::<leptos::html::Dialog>::new();
     let reconnect = RwSignal::new(0_u32);
     let visible = RwSignal::new(!document().hidden());
-    let locked = move || busy.get() || pending.with(Option::is_some);
+    let locked = move || controls.locked() || settings_pending.with(Option::is_some);
     let listener = window_event_listener(leptos::ev::visibilitychange, move |_| {
         visible.set(!document().hidden())
     });
     on_cleanup(move || listener.remove());
 
-    fn refresh(
-        path: StoredValue<String>,
-        status: RwSignal<Option<ComputerStatus>>,
-        busy: RwSignal<bool>,
-        error: RwSignal<String>,
-    ) {
-        if status.is_disposed() {
-            return;
-        }
-        let endpoint = path.get_value();
-        leptos::task::spawn_local(async move {
-            let result = get::<ComputerStatus>(&endpoint).await;
-            if status.is_disposed() {
-                return;
-            }
-            match result {
-                Ok(next) => {
-                    if !busy.get_untracked()
-                        && status.with_untracked(|current| {
-                            current.as_ref().is_none_or(|current| {
-                                next.control.revision >= current.control.revision
-                                    && *current != next
-                            })
-                        })
-                    {
-                        status.set(Some(next));
-                    }
-                }
-                Err(reason) => error.set(reason.message),
-            }
-            set_timeout(
-                move || refresh(path, status, busy, error),
-                Duration::from_secs(1),
-            );
-        });
-    }
-    refresh(path, status, busy, error);
-    let user =
-        move || status.with(|status| status.as_ref().is_some_and(|s| s.control.mode == "user"));
+    let user = move || controls.user();
     let running = move || {
         status.with(|status| {
             status
@@ -608,14 +738,36 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
                 .is_some_and(|s| matches!(s.state.as_str(), "running" | "idle"))
         })
     };
-    let popout = format!("/?computer={agent}");
+    let waits = Memo::new(move |_| {
+        if running() {
+            status.with(|value| {
+                value
+                    .as_ref()
+                    .map_or_else(Vec::new, |value| value.requests.clone())
+            })
+        } else {
+            Vec::new()
+        }
+    });
+    let popup_url = format!("/?computer={agent}&ui=leptos");
+    let request_agent = StoredValue::new(agent.clone());
+    let visible_mount = Memo::new(move |_| {
+        (
+            running(),
+            visible.get(),
+            locked(),
+            user(),
+            status.with(|s| s.as_ref().map_or(0, |s| s.control.revision)),
+        )
+    });
     dom_mount(screen, move |node| {
         reconnect.track();
         clipboard.set(String::new());
-        if !running() || !visible.get() || locked() {
+        connection.set(String::new());
+        let (running, visible, locked, user, revision) = visible_mount.get();
+        if !running || !visible || locked {
             return None;
         }
-        let revision = status.with(|s| s.as_ref().map_or(0, |s| s.control.revision));
         let callback = Closure::<dyn FnMut(String)>::new(move |raw: String| {
             if let Ok(value) = serde_json::from_str::<Value>(&raw) {
                 if let Some(text) = value["clipboard"].as_str() {
@@ -630,72 +782,98 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
             &node,
             &agent,
             revision,
-            user(),
+            user,
             callback.as_ref().unchecked_ref(),
         );
         Some((dispose, callback))
     });
     let control = move |operation: Option<&str>| {
-        if busy.get_untracked() {
+        controls.submit(operation.map(|operation| (operation, None)))
+    };
+    let command = move |operation: &str, retry: bool| {
+        if controls.locked() || !retry && settings_pending.with_untracked(Option::is_some) {
             return;
         }
-        let key = key.get_value();
-        let raw = match (operation, pending.get_untracked()) {
-            (None, Some(raw)) if valid_computer_command(&raw) => raw,
-            (Some(operation), None) => {
-                let Some(revision) =
-                    status.with_untracked(|s| s.as_ref().map(|s| s.control.revision))
-                else {
+        let path = path.get_value();
+        let endpoint = format!("{path}/{operation}");
+        let settings_key = settings_key.get_value();
+        let mut enable = None;
+        if operation == "start" {
+            if let Some(raw) = settings_pending.get_untracked() {
+                let valid = serde_json::from_str::<Value>(&raw).ok().filter(|value| {
+                    value.as_object().is_some_and(|object| {
+                        object.len() == 3
+                            && value["enabled"] == true
+                            && value["id"].as_str().is_some_and(protocol::id)
+                            && value["revision"]
+                                .as_u64()
+                                .is_some_and(|revision| revision <= 9_007_199_254_740_991)
+                    })
+                });
+                if valid.is_none() {
+                    error.set(
+                        "Saved computer request is invalid. Load latest status before continuing."
+                            .into(),
+                    );
+                    return;
+                }
+                enable = Some(raw);
+            } else if let Some(revision) = status.with_untracked(|status| {
+                status
+                    .as_ref()
+                    .filter(|status| !status.enabled)
+                    .map(|status| status.revision)
+            }) {
+                let Some(id) = uuid() else {
                     return;
                 };
-                let Some(id) = uuid() else { return };
-                json!({"id": id, "revision": revision, "operation": operation}).to_string()
+                let raw = json!({"id":id,"revision":revision,"enabled":true}).to_string();
+                if !save(&settings_key, &raw) {
+                    error.set("Browser could not save recovery data. Check site storage.".into());
+                    return;
+                }
+                settings_pending.set(Some(raw.clone()));
+                enable = Some(raw);
             }
-            _ => return,
-        };
-        if !save(&key, &raw) {
-            error.set("Computer request could not be saved.".into());
-            return;
         }
-        pending.set(Some(raw.clone()));
-        busy.set(true);
         error.set(String::new());
-        let endpoint = format!("{}/control", path.get_value());
+        busy.set(true);
         leptos::task::spawn_local(async move {
-            match post::<ComputerStatus>(&endpoint, &raw).await {
+            if let Some(raw) = enable {
+                match post::<ComputerStatus>(&path, &raw).await {
+                    Ok(value) if remove(&settings_key) => {
+                        let enabled = value.enabled;
+                        status.try_set(Some(value));
+                        settings_pending.try_set(None);
+                        if !enabled || busy.is_disposed() {
+                            busy.try_set(false);
+                            return;
+                        }
+                    }
+                    Ok(_) => {
+                        error.try_set(
+                            "Computer change confirmed. Recovery data could not be cleared.".into(),
+                        );
+                        busy.try_set(false);
+                        return;
+                    }
+                    Err(reason) => {
+                        error.try_set(reason.message);
+                        busy.try_set(false);
+                        return;
+                    }
+                }
+            }
+            let result = post::<ComputerStatus>(&endpoint, "{}").await;
+            match result {
                 Ok(value) => {
                     status.try_set(Some(value));
-                    if remove(&key) {
-                        pending.try_set(None);
-                    } else {
-                        error.try_set(
-                            "Computer control changed. Recovery data could not be cleared.".into(),
-                        );
-                    }
                 }
                 Err(reason) => {
                     error.try_set(reason.message);
                 }
             }
             busy.try_set(false);
-        });
-    };
-    let command = move |operation: &str| {
-        if locked() {
-            return;
-        }
-        let path = format!("{}/{operation}", path.get_value());
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            let result = post::<ComputerStatus>(&path, "{}").await;
-            if busy.is_disposed() {
-                return;
-            }
-            match result {
-                Ok(value) => status.set(Some(value)),
-                Err(reason) => error.set(reason.message),
-            }
-            busy.set(false);
         });
     };
     let paste = move || {
@@ -734,9 +912,8 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
         });
     };
     let icons = use_context::<Icons>().unwrap_or_default();
-    let title = chat
-        .config
-        .with_value(|config| format!("{}'s computer", config.name));
+    let title = format!("{name}'s computer");
+    let name = StoredValue::new(name);
     let title_attr = title.clone();
     let menu = NodeRef::<leptos::html::Details>::new();
     let close_menu = move || {
@@ -746,6 +923,17 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
     };
     view! {
         <section class="computer-viewer bs-root" aria-label="Computer">
+            {url.map(|url| {
+                let target = url.clone();
+                view! { <div class="k-row-actions"><span class="right-panel__path">{url}</span>
+                    <button class="k-btn k-btn--sm k-btn--secondary" type="button" disabled=move || !running() || !user() || locked() on:click=move |_| {
+                        let revision = status.with_untracked(|status| status.as_ref().map(|status| status.control.revision));
+                        let endpoint = format!("{}/input", path.get_value());
+                        let raw = json!({"revision":revision,"name":"computer_open_url","args":{"url":target}}).to_string();
+                        leptos::task::spawn_local(async move { if let Err(reason) = post::<Value>(&endpoint, &raw).await { error.try_set(reason.message); } });
+                    }>"Open URL"</button>
+                </div> }
+            })}
             <header class="computer-viewer__toolbar" hidden=move || !running()>
                 <div class="computer-viewer__identity">
                     <div class="computer-viewer__heading">
@@ -754,11 +942,13 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
                     </div>
                     <div class="computer-viewer__meta"><span class="computer-viewer__owner">
                         {move || if user() { "You're in control" } else { "Agent in control" }}
-                    </span></div>
+                    </span>{move || status.with(|status| status.as_ref().and_then(|status| status.stops_in_ms).map(|ms| view! {
+                        <span class="computer-viewer__since">{format!("Stops in {} min", ms.div_ceil(60000).max(1))}</span>
+                    }))}</div>
                 </div>
                 <div class="computer-viewer__actions">
-                    <button type="button" class="k-icon-btn" aria-label="Pop out" title="Pop out" on:click=move |_| {
-                        let _ = window().open_with_url_and_target_and_features(&popout, "_blank", "popup,width=1280,height=960,noopener");
+                    <button type="button" class="k-icon-btn" aria-label="Pop out" title="Pop out" hidden=popout on:click=move |_| {
+                        let _ = window().open_with_url_and_target_and_features(&popup_url, "_blank", "popup,width=1280,height=960,noopener");
                     }><span class="appearance-icon" inner_html=icons.external></span></button>
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked hidden=move || !user() on:click=move |_| paste()>"Paste clipboard"</button>
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" hidden=move || !user() || clipboard.with(String::is_empty)
@@ -769,7 +959,7 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
                     <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=locked hidden=user
                         on:click=move |_| { if let Some(dialog) = dialog.get_untracked() { let _ = dialog.show_modal(); } }>"Take control"</button>
                     <button type="button" class="k-btn k-btn--sm k-btn--primary" node_ref=hand_back disabled=locked hidden=move || !user()
-                        on:click=move |_| control(Some("hand-back"))>"Hand back to agent"</button>
+                        aria-label="Hand back to agent" on:click=move |_| control(Some("hand-back"))>"Hand back"</button>
                     <details node_ref=menu class="chat-pilot-menu computer-actions" on:keydown=move |event| { if event.key() == "Escape" { close_menu(); event.stop_propagation(); } }>
                         <summary class="k-icon-btn" aria-label="More computer actions" title="More computer actions"><span class="appearance-icon" inner_html=icons.more></span></summary>
                         <div class="k-pop k-menu task-actions">
@@ -780,7 +970,23 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
                     </details>
                 </div>
             </header>
-            <div class="computer-viewer__screen" role="application" aria-label="Agent computer. Shift+Escape returns to controls."
+            <Show when=move || !waits.with(Vec::is_empty)>
+                <div class="computer-viewer__requests">
+                    <For each=move || waits.get() key=|wait| (wait.turn.clone(), wait.call_id.clone()) children=move |wait| {
+                        let turn = wait.turn.clone();
+                        let label = name.with_value(|name| wait.label(name, true));
+                        view! { <div class="computer-viewer__request"><span>{label}</span>
+                            {wait.secret_entry.is_some().then(|| secure_request(request_agent.get_value(), wait, controls))}
+                            <button type="button" class="k-btn k-btn--sm k-btn--ghost" hidden=user disabled=locked
+                                on:click=move |_| controls.submit(Some(("dismiss", Some(&turn))))>"Dismiss"</button>
+                        </div> }
+                    }/>
+                </div>
+            </Show>
+            <p class="computer-viewer__idle-control" hidden=move || running() || !user()>"You still hold control. "
+                <button class="k-btn k-btn--sm k-btn--ghost" type="button" disabled=locked on:click=move |_| control(Some("hand-back"))>"Hand back"</button>
+            </p>
+            <div class="computer-viewer__screen" role=move || running().then_some("application") aria-label=move || running().then_some("Agent computer. Shift+Escape returns to controls.")
                 class:is-controlled=user on:keydown:capture=move |event| {
                 if user() && event.shift_key() && event.key() == "Escape" {
                     event.prevent_default(); event.stop_propagation();
@@ -790,18 +996,63 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
                     event.prevent_default(); event.stop_propagation(); paste();
                 }
             }><div class="computer-viewer__canvas" node_ref=screen aria-label="Agent computer screen" hidden=move || !running()></div>
-                <div class="computer-viewer__empty" role="status" hidden=running>
-                    <span class="appearance-icon" inner_html=icons.computer></span>
-                    <p>{move || status.with(|status| status.as_ref().map(|s| {
-                        if !s.available { "Computer is disabled on this server." } else if !s.enabled { "No computer assigned." } else if s.state == "starting" { "Starting computer..." } else { "Computer is off." }
-                    }).unwrap_or("Loading computer status..."))}</p>
-                    <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=locked
-                        hidden=move || status.with(|status| status.as_ref().is_none_or(|s| !s.enabled || !s.available || s.state == "starting"))
-                        on:click=move |_| command("start")>"Start computer"</button>
+                <div class="computer-viewer__empty" role="status" aria-live="polite"
+                    hidden=move || running() && visible.get() && connection.with(|state| state == "Live")>
+                    {move || {
+                        let starting = status.with(|value| value.as_ref().is_some_and(|value| value.state == "starting"));
+                        let screen_error = connection.with(|state| !state.is_empty() && !matches!(state.as_str(), "Live" | "Connecting to computer…"));
+                        let connecting = visible.get() && running() && !screen_error;
+                        let message = if !visible.get() { Some("Viewer paused while window is hidden.".to_owned()) }
+                            else if screen_error && running() { Some(connection.get()) }
+                            else if starting { Some("Starting computer...".into()) }
+                            else if connecting { Some("Connecting to computer...".into()) }
+                            else if status.with(Option::is_none) { Some("Loading computer status...".into()) }
+                            else { None };
+                        view! {
+                            {if starting || connecting { view! { <span class="k-spinner computer-viewer__spinner" aria-hidden="true"></span> }.into_any() }
+                            else { view! { <span class="appearance-icon computer-empty-icon" inner_html=icons.computer.clone()></span> }.into_any() }}
+                            {message.map(|message| view! { <p>{message}</p> })}
+                            {if screen_error && running() && visible.get() {
+                                view! { <button type="button" class="k-btn k-btn--sm k-btn--secondary"
+                                    on:click=move |_| reconnect.update(|count| *count = count.wrapping_add(1))>"Reconnect"</button> }.into_any()
+                            } else if !running() && !starting && status.with(|value| value.as_ref().is_some_and(|value| value.available)) {
+                                view! { <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=locked on:click=move |_| command("start", false)>"Turn on computer"</button> }.into_any()
+                            } else { ().into_any() }}
+                        }
+                    }}
                 </div>
             </div>
             <p class="sr-only" role="status" hidden=move || !running()>{connection}</p>
 
+            <div class="k-row-actions" hidden=move || settings_pending.with(Option::is_none)>
+                <p role="status">"Couldn't confirm the change"</p>
+                <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=busy on:click=move |_| command("start", true)>"Try again"</button>
+                <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=busy on:click=move |_| controls::dialog_open(settings_dialog)>"Reload"</button>
+            </div>
+            <dialog class="conversation-dialog" node_ref=settings_dialog aria-label="Discard computer request?">
+                <p>"Changes already accepted by the server still apply."</p>
+                <form method="dialog" class="k-row-actions">
+                    <button class="k-btn k-btn--sm k-btn--secondary">"Cancel"</button>
+                    <button class="k-btn k-btn--sm k-btn--danger" on:click=move |_| {
+                        if busy.get_untracked() { return; }
+                        busy.set(true);
+                        let path = path.get_value();
+                        let key = settings_key.get_value();
+                        leptos::task::spawn_local(async move {
+                            match get::<ComputerStatus>(&path).await {
+                                Ok(value) if remove(&key) => {
+                                    status.try_set(Some(value));
+                                    settings_pending.try_set(None);
+                                    error.try_set(String::new());
+                                }
+                                Ok(_) => { error.try_set("Computer recovery data could not be cleared.".into()); }
+                                Err(reason) => { error.try_set(reason.message); }
+                            }
+                            busy.try_set(false);
+                        });
+                    }>"Discard and reload"</button>
+                </form>
+            </dialog>
             <div class="k-row-actions" hidden=move || pending.with(Option::is_none)>
                 <p role="status">"Control change not confirmed"</p>
                 <button type="button" class="k-btn k-btn--sm k-btn--primary" disabled=busy
@@ -815,29 +1066,14 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
                 <p>"Accepted changes still apply. Check current control before taking another action."</p>
                 <form method="dialog" class="k-row-actions">
                     <button class="k-btn k-btn--sm k-btn--secondary">"Cancel"</button>
-                    <button class="k-btn k-btn--sm k-btn--primary" on:click=move |_| {
-                        if busy.get_untracked() { return }
-                        busy.set(true);
-                        let endpoint = path.get_value();
-                        let key = key.get_value();
-                        leptos::task::spawn_local(async move {
-                            match get::<ComputerStatus>(&endpoint).await {
-                                Ok(value) if remove(&key) => {
-                                    status.try_set(Some(value)); pending.try_set(None); error.try_set(String::new());
-                                }
-                                Ok(_) => { error.try_set("Computer recovery data could not be cleared.".into()); }
-                                Err(reason) => { error.try_set(reason.message); }
-                            }
-                            busy.try_set(false);
-                        });
-                    }>"Load current control"</button>
+                    <button class="k-btn k-btn--sm k-btn--primary" on:click=move |_| controls.reload()>"Load current control"</button>
                 </form>
             </dialog>
             <dialog class="conversation-dialog" node_ref=stop_dialog aria-label="Stop computer?">
                 <p>"Unsaved work in the desktop may be lost."</p>
                 <form method="dialog" class="k-row-actions">
                     <button class="k-btn k-btn--sm k-btn--secondary">"Cancel"</button>
-                    <button class="k-btn k-btn--sm k-btn--primary" on:click=move |_| command("stop")>"Stop computer"</button>
+                    <button class="k-btn k-btn--sm k-btn--primary" on:click=move |_| command("stop", false)>"Stop computer"</button>
                 </form>
             </dialog>
             <dialog class="conversation-dialog" node_ref=dialog aria-label="Take control?">
@@ -852,33 +1088,91 @@ fn computer_panel(chat: Chat, agent: String) -> impl IntoView {
 }
 
 pub fn right_panel(chat: Chat) -> impl IntoView {
-    let context = RwSignal::new(None::<Context>);
-    let computer_available = RwSignal::new(false);
-    Effect::new(move |_| {
-        if !chat.details.get() {
-            return;
-        }
-        let path = format!("{}/panel", chat.base());
-        leptos::task::spawn_local(async move {
-            match get::<Context>(&path).await {
-                Ok(value) => {
-                    let agent = value.computer.clone();
-                    context.try_set(Some(value));
-                    let available = if let Some(agent) = agent.filter(|agent| protocol::id(agent)) {
-                        get::<ComputerStatus>(&format!("/api/agents/{agent}/computer"))
-                            .await
-                            .is_ok_and(|status| status.available)
-                    } else {
-                        false
-                    };
-                    computer_available.try_set(available);
-                }
-                Err(reason) => {
-                    chat.error.try_set(reason.message);
-                }
-            }
-        });
+    let context = RwSignal::new(None::<Result<files::Context, String>>);
+    let files_page = RwSignal::new(None::<Result<Vec<files::PanelFile>, String>>);
+    let git = RwSignal::new(None::<Result<changes::Status, String>>);
+    let refresh = RwSignal::new(0_u32);
+    let computer = Memo::new(move |_| {
+        chat.result
+            .with(|result| result.as_ref().and_then(|target| target.agent.clone()))
+            .or_else(|| {
+                context.with(|value| {
+                    value
+                        .as_ref()
+                        .and_then(|value| value.as_ref().ok())
+                        .and_then(|value| value.computer.clone())
+                })
+            })
+            .filter(|id| protocol::id(id))
     });
+    let status = RwSignal::new(None::<Result<ComputerStatus, String>>);
+    files::watch(
+        move || {
+            if chat.details.get() {
+                format!("{}/panel", chat.base())
+            } else {
+                String::new()
+            }
+        },
+        refresh,
+        context,
+    );
+    files::watch(
+        move || {
+            if chat.details.get() {
+                format!("{}/panel/files", chat.base())
+            } else {
+                String::new()
+            }
+        },
+        refresh,
+        files_page,
+    );
+    files::watch(
+        move || {
+            if chat.details.get()
+                && context.with(|value| {
+                    value
+                        .as_ref()
+                        .and_then(|value| value.as_ref().ok())
+                        .is_some_and(|context| context.workspace.is_some())
+                })
+            {
+                format!("{}/panel/git", chat.base())
+            } else {
+                String::new()
+            }
+        },
+        refresh,
+        git,
+    );
+    files::watch(
+        move || match computer.get().filter(|_| chat.details.get()) {
+            Some(agent) => format!("/api/agents/{agent}/computer"),
+            None => String::new(),
+        },
+        refresh,
+        status,
+    );
+    let available = move || {
+        status.with(|value| {
+            value
+                .as_ref()
+                .and_then(|value| value.as_ref().ok())
+                .is_some_and(|status| status.available)
+        })
+    };
+    let current_tab = Memo::new(move |_| {
+        chat.result.with(|target| {
+            target
+                .as_ref()
+                .map_or_else(|| chat.tab.get(), results::ResultTarget::tab)
+        })
+    });
+    let selected_tab = move || match current_tab.get() {
+        "preview" | "diff" => "files",
+        tab => tab,
+    };
     let icons = use_context::<Icons>().unwrap_or_default();
     let channel = chat.config.with_value(|c| c.channel);
     let tabs = [
@@ -961,21 +1255,37 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
                     on:keydown=move |event| crate::settings::move_focus(&event, "[role=tablist]", true)>
                     {tabs.into_iter().map(|(tab, label, icon)| view! {
                         <button type="button" role="tab" class="k-tabs__tab" title=label
-                            data-state=move || if chat.tab.get() == tab { "active" } else { "inactive" }
-                            aria-selected=move || (chat.tab.get() == tab).to_string() tabindex=move || if chat.tab.get() == tab { 0 } else { -1 }
-                            hidden=move || tab == "computer" && !computer_available.get() || tab == "run" && chat.run.with(String::is_empty)
-                            on:click=move |_| chat.tab.set(tab)>
+                            data-state=move || if selected_tab() == tab { "active" } else { "inactive" }
+                            aria-selected=move || (selected_tab() == tab).to_string() tabindex=move || if selected_tab() == tab { 0 } else { -1 }
+                            hidden=move || tab == "computer" && !available() && current_tab.get() != "computer" || tab == "run" && chat.run.with(String::is_empty)
+                            on:click=move |_| chat.select_tab(tab)>
                             <span class="appearance-icon" inner_html=icon></span><span class="right-panel__tab-label">{label}</span>
                         </button>
                     }).collect_view()}
                 </div>
-                <div class="k-tabs__panel" role="tabpanel" aria-label=move || chat.tab.get()>
+                {move || {
+                    let error = [context.with(|value| value.as_ref().and_then(|result| result.as_ref().err()).cloned()),
+                        files_page.with(|value| value.as_ref().and_then(|result| result.as_ref().err()).cloned()),
+                        git.with(|value| value.as_ref().and_then(|result| result.as_ref().err()).cloned())].into_iter().flatten().next();
+                    error.map(|error| view! { <div class="right-panel__error">{files::retry(error, refresh)}</div> })
+                }}
+                <div class="k-tabs__panel" role="tabpanel" aria-label=selected_tab>
                     {move || {
                         if !chat.details.get() { return ().into_any() }
-                        match chat.tab.get() {
-                            "files" => view! { <div class="right-panel__body">{files_panel(chat, context)}</div> }.into_any(),
-                            "computer" => context.with(|context| context.as_ref().and_then(|value| value.computer.clone()))
-                                .filter(|agent| protocol::id(agent)).map(|agent| view! { <div class="right-panel__computer">{computer_panel(chat, agent)}</div> }).into_any(),
+                        match current_tab.get() {
+                            "files" => files::panel(chat, context, git, files_page, refresh).into_any(),
+                            "diff" => changes::panel(chat, git).into_any(),
+                            "preview" => chat.result.get().filter(|target| target.view == results::Kind::Url)
+                                .map(|target| result_preview(chat, target, computer, status).into_any())
+                                .unwrap_or_else(|| context.with(|value| value.as_ref().and_then(|result| result.as_ref().ok()).cloned())
+                                    .map_or_else(|| files::loading("Loading preview...").into_any(), |context| files::artifacts(chat, context).into_any())),
+                            "computer" => {
+                                if let Some(target) = chat.result.get().filter(|target| target.view == results::Kind::Computer) {
+                                    result_preview(chat, target, computer, status).into_any()
+                                } else {
+                                    computer.get().map(|agent| view! { <div class="right-panel__computer">{computer_panel(agent, chat.config.with_value(|config| config.agent.as_ref().map_or_else(|| config.name.clone(), |agent| agent.name.clone())), false, None)}</div> }).into_any()
+                                }
+                            }
                             "run" => view! { <div class="right-panel__body">{run_panel(chat)}</div> }.into_any(),
                             _ => routes::chats(chat, profile).into_any(),
                         }
@@ -1173,4 +1483,270 @@ fn chart(kind: &str, title: String, points: Vec<Point>) -> impl IntoView {
             </div>
         </details>
     }
+}
+
+fn result_preview(
+    chat: Chat,
+    target: results::ResultTarget,
+    computer: Memo<Option<String>>,
+    status: RwSignal<Option<Result<ComputerStatus, String>>>,
+) -> impl IntoView {
+    let target = StoredValue::new(target);
+    let path = target.with_value(|target| target.path.clone());
+    let browser = target.with_value(|target| target.view == results::Kind::Computer);
+    let agent = Memo::new(move |_| {
+        computer.get().filter(|_| {
+            status.with(|status| {
+                status
+                    .as_ref()
+                    .and_then(|value| value.as_ref().ok())
+                    .is_some_and(|value| value.available)
+            })
+        })
+    });
+    let opened = RwSignal::new(None::<Result<(), String>>);
+    let frame = RwSignal::new(None::<bool>);
+    let url = StoredValue::new(path);
+    if browser {
+        Effect::new(move |_| {
+            let Some(agent) = agent.get() else {
+                return;
+            };
+            let path = url.get_value();
+            let endpoint = format!("/api/agents/{agent}/computer/open-url");
+            opened.set(None);
+            leptos::task::spawn_local(async move {
+                let result = post::<Value>(&endpoint, &json!({"url":path}).to_string()).await;
+                opened.try_set(Some(result.map(|_| ()).map_err(|error| error.message)));
+            });
+        });
+    } else {
+        let path = url.get_value();
+        let local = web_sys::Url::new(&path)
+            .ok()
+            .is_some_and(|url| window().location().origin().ok().as_deref() == Some(&url.origin()));
+        if local {
+            leptos::task::spawn_local(async move {
+                frame.try_set(Some(
+                    Request::get(&path)
+                        .send()
+                        .await
+                        .is_ok_and(|response| response.ok()),
+                ));
+            });
+        } else {
+            frame.set(Some(true));
+        }
+    }
+    let title = target.with_value(|target| {
+        if target.name.is_empty() {
+            target.path.clone()
+        } else {
+            target.name.clone()
+        }
+    });
+    view! { <div class="right-panel__body k-stack">
+        <div class="right-panel__preview-head">{files::back(chat, "Back to files")}<span class="right-panel__path">{title}</span></div>
+        {move || if browser {
+            match (agent.get(), opened.get()) {
+                (None, _) if computer.get().is_some() && status.with(Option::is_none) => view! { <p role="status">"Opening page in Computer..."</p> }.into_any(),
+                (None, _) => files::empty("Computer unavailable").into_any(),
+                (Some(_), None) => view! { <p role="status">"Opening page in Computer..."</p> }.into_any(),
+                (Some(_), Some(Err(message))) => view! { <p role="status">{message}</p> }.into_any(),
+                (Some(agent), Some(Ok(()))) => computer_panel(agent, chat.config.with_value(|config| config.agent.as_ref().map_or_else(|| config.name.clone(), |agent| agent.name.clone())), false, Some(url.get_value())).into_any(),
+            }
+        } else {
+            match frame.get() {
+                None => view! { <p role="status">"Loading preview..."</p> }.into_any(),
+                Some(false) => files::empty("Page not found").into_any(),
+                Some(true) => view! { <iframe class="right-panel__preview" title="URL preview" sandbox="" referrerpolicy="no-referrer"
+                    src=url.get_value() on:error=move |_| frame.set(Some(false))></iframe> }.into_any(),
+            }
+        }}
+        {move || (!browser && agent.get().is_some()).then(|| view! {
+            <button type="button" class="k-btn k-btn--md k-btn--secondary" on:click=move |_| {
+                let mut target = target.get_value();
+                target.view = results::Kind::Computer;
+                target.agent = agent.get_untracked();
+                results::open(chat, target);
+            }>"Open in Computer"</button>
+        })}
+    </div> }
+}
+
+fn secure_request(agent: String, wait: ComputerWait, controls: ComputerControl) -> impl IntoView {
+    let dialog = NodeRef::<leptos::html::Dialog>::new();
+    let input = NodeRef::<leptos::html::Input>::new();
+    let busy = RwSignal::new(false);
+    let error = RwSignal::new(String::new());
+    let Some(entry) = wait.secret_entry else {
+        return ().into_any();
+    };
+    let data = StoredValue::new((agent, wait.turn, wait.call_id));
+    let icon = use_context::<Icons>().unwrap_or_default().close;
+    let origin = wait.secret_origin.unwrap_or_default();
+    let clear = move || {
+        if let Some(input) = input.get_untracked() {
+            input.set_value("");
+        }
+        error.set(String::new());
+    };
+    let cancel = move || {
+        if !busy.get_untracked() {
+            clear();
+            if let Some(dialog) = dialog.get_untracked() {
+                dialog.close();
+            }
+        }
+    };
+    let send = move |event: web_sys::SubmitEvent| {
+        event.prevent_default();
+        if busy.get_untracked() || controls.locked() || controls.user() {
+            return;
+        }
+        let Some(input) = input.get_untracked() else {
+            return;
+        };
+        let value = input.value();
+        if value.is_empty() || value.encode_utf16().count() > 4000 {
+            return;
+        }
+        let (agent, turn, call) = data.get_value();
+        let raw = json!({"agent":agent, "turn":turn, "call":call, "value":value}).to_string();
+        input.set_value("");
+        busy.set(true);
+        error.set(String::new());
+        leptos::task::spawn_local(async move {
+            let response = post::<Value>("/api/vault/respond", &raw).await;
+            if busy.is_disposed() {
+                return;
+            }
+            busy.set(false);
+            if response.is_ok() {
+                cancel();
+            } else {
+                clear();
+                error.set(
+                    "Secure fill could not be confirmed. Check the request before trying again."
+                        .into(),
+                );
+            }
+        });
+    };
+    view! {
+        <button type="button" class="k-btn k-btn--sm k-btn--primary" hidden=move || controls.user()
+            disabled=move || controls.locked() || busy.get() on:click=move |_| { clear(); controls::dialog_open(dialog); }>"Enter value"</button>
+        <dialog class="k-dialog k-dialog--md conversation-kit-dialog" aria-label="Enter a secure value" node_ref=dialog
+            on:cancel=move |event: web_sys::Event| { event.prevent_default(); cancel(); }
+            on:close=move |_| clear()>
+            <div class="k-dialog__head"><div><h2 class="k-dialog__title">"Enter a secure value"</h2>
+                <p class="k-dialog__desc">{origin}</p></div>
+                <button type="button" class="k-icon-btn" aria-label="Close" title="Close" disabled=busy on:click=move |_| cancel()><span class="appearance-icon" inner_html=icon></span></button>
+            </div>
+            <form autocomplete="off" on:submit=send>
+                <div class="k-dialog__body k-stack">
+                    <p class="message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
+                    <label class="k-field"><span class="k-field__label">{entry}</span>
+                        <input class="k-input" type="password" name="value" node_ref=input autocomplete="new-password" required maxlength="4000" autofocus disabled=busy />
+                    </label>
+                </div>
+                <div class="k-dialog__foot">
+                    <button type="button" class="k-btn k-btn--md k-btn--secondary" disabled=busy on:click=move |_| cancel()>"Cancel"</button>
+                    <button type="submit" class="k-btn k-btn--md k-btn--primary" disabled=busy aria-busy=move || busy.get().to_string()>"Save and fill"</button>
+                </div>
+            </form>
+        </dialog>
+    }.into_any()
+}
+
+pub(super) fn computer_request(agent: String, name: String, wait: ComputerWait) -> impl IntoView {
+    if !protocol::id(&agent) || !protocol::id(&wait.turn) {
+        return ().into_any();
+    }
+    let controls = ComputerControl::new(&agent);
+    let take = NodeRef::<leptos::html::Dialog>::new();
+    let reset = NodeRef::<leptos::html::Dialog>::new();
+    let turn = wait.turn.clone();
+    let label = wait.label(&name, false);
+    let secret = wait.secret_entry.is_some();
+    view! {
+        <div class="bs-root computer-request"><div class="k-card">
+            <p><strong>{label}</strong></p>
+            <div class="k-inline">
+                <button type="button" class="k-btn k-btn--sm k-btn--secondary" hidden=move || !controls.user()
+                    disabled=move || controls.locked() on:click=move |_| controls.submit(Some(("hand-back", None)))>"Hand back to agent"</button>
+                {if secret { secure_request(agent, wait, controls).into_any() } else { view! {
+                    <button type="button" class="k-btn k-btn--sm k-btn--primary" hidden=move || controls.user()
+                        disabled=move || controls.locked() on:click=move |_| controls::dialog_open(take)>"Take control"</button>
+                }.into_any() }}
+                <button type="button" class="k-btn k-btn--sm k-btn--secondary" hidden=move || controls.user()
+                    disabled=move || controls.locked() on:click=move |_| controls.submit(Some(("dismiss", Some(&turn))))>"Dismiss"</button>
+            </div>
+        </div>
+        <dialog class="k-dialog k-dialog--sm conversation-kit-dialog" node_ref=take aria-label="Take control?">
+            <div class="k-dialog__head"><div><h2 class="k-dialog__title">"Take control?"</h2>
+                <p class="k-dialog__desc">"Computer tools will pause until you hand control back. Closing this viewer keeps you in control."</p></div></div>
+            <form method="dialog" class="k-dialog__foot">
+                <button class="k-btn k-btn--md k-btn--secondary">"Cancel"</button>
+                <button class="k-btn k-btn--md k-btn--primary" on:click=move |_| controls.submit(Some(("take", None)))>"Take control"</button>
+            </form>
+        </dialog>
+        <div class="k-row-actions" hidden=move || controls.pending.with(Option::is_none)>
+            <p role="status">"Control change not confirmed"</p>
+            <button class="k-btn k-btn--sm k-btn--primary" type="button" disabled=controls.busy
+                hidden=move || !controls.pending.with(|raw| raw.as_deref().is_some_and(valid_computer_command))
+                on:click=move |_| controls.submit(None)>"Retry saved request"</button>
+            <button class="k-btn k-btn--sm k-btn--secondary" type="button" disabled=controls.busy on:click=move |_| controls::dialog_open(reset)>"Load current control"</button>
+        </div>
+        <dialog class="conversation-dialog" aria-label="Load current control?" node_ref=reset>
+            <p>"Accepted changes still apply. Check current control before taking another action."</p>
+            <form method="dialog" class="k-row-actions">
+                <button class="k-btn k-btn--sm k-btn--secondary">"Cancel"</button>
+                <button class="k-btn k-btn--sm k-btn--primary" on:click=move |_| controls.reload()>"Load current control"</button>
+            </form>
+        </dialog>
+        <p class="message-error" role="alert" hidden=move || controls.error.with(String::is_empty)>{controls.error}</p>
+        </div>
+    }.into_any()
+}
+
+pub(crate) fn computer_window() -> impl IntoView {
+    let agent = window()
+        .location()
+        .search()
+        .ok()
+        .and_then(|query| web_sys::UrlSearchParams::new_with_str(&query).ok())
+        .and_then(|query| query.get("computer"))
+        .filter(|id| protocol::id(id))
+        .map(|id| id.to_ascii_lowercase());
+    let result = RwSignal::new(None::<Result<(String, String), String>>);
+    leptos::task::spawn_local(async move {
+        let value = match agent {
+            Some(id) => match get::<Value>("/api/agents").await {
+                Ok(directory) => directory["agents"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|agent| agent["id"] == id)
+                    .and_then(|agent| agent["name"].as_str())
+                    .map(|name| (id, name.to_owned()))
+                    .ok_or_else(|| "Agent not found.".into()),
+                Err(reason) => Err(reason.message),
+            },
+            None => Err("Agent not found.".into()),
+        };
+        if let Ok((_, name)) = &value {
+            document().set_title(&format!("Computer · {name} · Minarbot"));
+        } else {
+            document().set_title("Computer unavailable · Minarbot");
+        }
+        result.try_set(Some(value));
+    });
+    view! { <main class="computer-window bs-root">
+        {move || match result.get() {
+            Some(Ok((id, name))) => computer_panel(id, name, true, None).into_any(),
+            Some(Err(reason)) => view! { <p class="message-error" role="alert">{reason}</p> }.into_any(),
+            None => view! { <p role="status">"Loading computer status..."</p> }.into_any(),
+        }}
+    </main> }
 }

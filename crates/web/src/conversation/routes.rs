@@ -162,6 +162,10 @@ pub fn standalone() -> impl IntoView {
     let config = RwSignal::new(None);
     let error = RwSignal::new(String::new());
     leptos::task::spawn_local(async move {
+        if results::current().is_err() {
+            error.set("Page not found.".into());
+            return;
+        }
         let result = match window()
             .location()
             .pathname()

@@ -14,6 +14,9 @@ pub const WORKFLOWS_DOCUMENT: &str = "_leptos/workflows.html";
 pub const CONVERSATION_DOCUMENT: &str = "_leptos/conversation.html";
 
 pub fn conversation_route(path: &str, query: &str) -> bool {
+    if path == "/" && form_urlencoded::parse(query.as_bytes()).any(|(key, _)| key == "computer") {
+        return true;
+    }
     crate::navigation(path)
         && (path.starts_with("/rooms/")
             || path.starts_with("/agents/") && !path.ends_with("/inbox"))
