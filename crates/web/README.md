@@ -64,6 +64,17 @@ with React for updates, table deletion, and access token recovery.
 The system settings use `js-sys` (MIT OR Apache-2.0), already pinned through
 wasm-bindgen, directly for browser date and URI formatting.
 
+## Warm navigation in #62
+
+On the NUC, headless Chrome 155 measured 20 warmed General-to-Appearance switches per client against the same local server. Times are from click to heading focus.
+
+| Client | Median | p95 |
+| --- | ---: | ---: |
+| React | 6.3 ms | 14.7 ms |
+| Leptos | 4.7 ms | 6.9 ms |
+
+The settings rail stays mounted and navigation reuses the document. Each section gets its own scroll container. This removes the `scrollTop` reset that triggered 38 ms of synchronous layout in the pre-fix Chrome trace.
+
 ## Appearance pilot baseline from #59
 
 NUC, Chromium 156.0.8078.4, optimized Axum build, loopback, no throttling. Twenty interleaved runs per client measured time to heading focus. Cold runs used fresh browser contexts. Warm navigation opened Appearance from a warmed General settings page.

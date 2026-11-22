@@ -305,6 +305,7 @@ async function exercise(page, client, route, panel, state, commands) {
 
 const clients = process.env.MINARBOT_SYSTEM_CLIENT ? [process.env.MINARBOT_SYSTEM_CLIENT] : ['react', 'leptos'];
 const routes = process.env.MINARBOT_SYSTEM_ROUTE ? [process.env.MINARBOT_SYSTEM_ROUTE] : Object.keys(names);
+const failures = [];
 let app, browser;
 try {
   app = await startRustServer({ database: join(data, 'state.sqlite'), defaultModel: 'fixture-model', dist, port: 0, appearanceClient: 'leptos' });
@@ -341,7 +342,13 @@ try {
           await page.setViewportSize(size);
           for (const theme of ['dark', 'light']) {
             await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
+            if (page.url().startsWith(origin + '/')) {
+              await page.evaluate(theme => localStorage.setItem('minarbot-presentation-v1', JSON.stringify({
+                version: 1, theme, colorTheme: 'minarbot', textSize: 'standard',
+              })), theme);
+            }
             await open(page, client, route);
+            assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
             await page.evaluate(() => document.fonts.ready);
             assert.equal(await page.locator('.app-settings__main').evaluate(element => element.scrollWidth <= element.clientWidth), true);
             if (output) await page.screenshot({ path: join(output, `${route}-${viewport}-${theme}-${client}.png`), animations: 'disabled' });
@@ -361,6 +368,9 @@ try {
         }
         assert.deepEqual(errors, [], `${client} ${route} browser errors`);
         console.log(`${client} ${route} passed`);
+      } catch (error) {
+        console.error(`${client} ${route} failed`, error.message);
+        failures.push(new Error(`${client} ${route}`, { cause: error }));
       } finally { await context.close(); }
     }
   }
@@ -369,3 +379,4 @@ try {
     try { await app?.close(); } finally { await rm(data, { recursive: true }); }
   }
 }
+if (failures.length) throw new AggregateError(failures, 'System settings parity failed');
