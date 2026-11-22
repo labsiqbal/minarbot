@@ -133,7 +133,7 @@ fn restore_canonical(connection: &Connection, upgrade: bool) -> db::Result<Value
         [],
         |row| row.get(0),
     )?;
-    if !(1..=db::SCHEMA_VERSION).contains(&schema) {
+    if !(db::BASELINE_VERSION..=db::SCHEMA_VERSION).contains(&schema) {
         return Err("Unsupported canonical backup format.".into());
     }
     let marker: bool = connection.query_row("SELECT count(*)=1 AND min(generation)=(SELECT generation FROM authority_state WHERE id=1) FROM minarbot_backup_authority", [], |row| row.get(0))?;
@@ -159,12 +159,8 @@ fn restore_canonical(connection: &Connection, upgrade: bool) -> db::Result<Value
     tx.execute_batch("UPDATE minarbot_backup_authority SET owner_account=(SELECT min(account) FROM projects HAVING count(DISTINCT account)=1) WHERE owner_account IS NULL;")?;
     tx.execute("UPDATE authority_state SET generation=?,serving_state='read_only_recovery',recovery_session_hash=?,recovery_expires_at=?,revision=revision+1 WHERE id=1", params![generation,digest(&bootstrap),expires])?;
     tx.execute_batch(include_str!("restore.sql"))?;
-    if schema >= 2 {
-        tx.execute_batch(include_str!("restore-v2.sql"))?;
-    }
-    if schema >= 3 {
-        tx.execute_batch(include_str!("restore-v3.sql"))?;
-    }
+    tx.execute_batch(include_str!("restore-v2.sql"))?;
+    tx.execute_batch(include_str!("restore-v3.sql"))?;
     for (name, sql) in [
         ("provider_calls", "UPDATE provider_calls SET status='interrupted' WHERE status='pending'"),
         ("routines", "UPDATE routines SET enabled=0,revision=revision+1"),

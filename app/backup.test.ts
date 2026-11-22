@@ -10,13 +10,13 @@ import { join } from 'node:path';
 import { startApp, startCanonicalApp } from './test-bridge.ts';
 import { rustBinary } from './rust-binary.ts';
 import { checkedRestore, restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
-import { initializeCanonicalSchema } from './test-support/schema-fixture.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { canonicalHttp } from './test-support/canonical-http.ts';
 
 test('canonical server guard fences aliases and processes, releases on SIGKILL and rejects unsafe files', async () => {
   const dir=mkdtempSync(join(tmpdir(),'minarbot-server-lock-')),database=join(dir,'canonical.sqlite'),guardPath=database+'.server-lock.sqlite';
   const source = testDatabase(database);
-  initializeCanonicalSchema(source);
+  installCanonicalFixture(source);
   source.exec("UPDATE authority_state SET serving_state='read_only_recovery'");
   source.close();
   chmodSync(database, 0o600);

@@ -6,7 +6,7 @@ import { testDatabase } from './test-support/database.ts';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { initializeCanonicalSchema } from './test-support/schema-fixture.ts';
+import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { checkedRestore, restoreCommand, workspaceSnapshot } from './test-support/backup.ts';
 import { restoreIdentity } from './test-support/restore-identity.ts';
 import type { HumanActor } from './test-support/auth.ts';
@@ -32,9 +32,9 @@ function holdRestoreGuard(database: string) {
   return guard;
 }
 
-async function fixture(version: 1 | 2 | 3 = 3, seed?: (db: DatabaseSync, owner: HumanActor, project: string) => void) {
+async function fixture(seed?: (db: DatabaseSync, owner: HumanActor, project: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-fence-')), database = join(dir, 'restored.sqlite');
-  let db = testDatabase(join(dir, 'source.sqlite')); initializeCanonicalSchema(db, Date.now(), version);
+  let db = testDatabase(join(dir, 'source.sqlite')); installCanonicalFixture(db);
   const owner: HumanActor = { accountId: '11111111-1111-4111-8111-111111111111', issuer: 'https://fixture.clerk.accounts.dev', subject: 'user_owner', sessionId: 'sess_owner', expiresAt: Date.now() + 300000 };
   const config = { origin: 'https://minarbot.example', issuer: owner.issuer, secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}` };
   const project = '22222222-2222-4222-8222-222222222222';
@@ -220,7 +220,7 @@ test('activation rolls back on receipt failure and rejects changed plans', async
 
 test('activation retains populated revoked grants and held tasks, refusing unsafe recovery state', async () => {
   const member = randomUUID(), installation = randomUUID(), device = randomUUID(), agent = randomUUID(), task = randomUUID();
-  const f = await fixture(3, (db, owner, project) => {
+  const f = await fixture((db, owner, project) => {
     const authority = String(db.prepare('SELECT generation FROM authority_state').get()!.generation);
     db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(member, owner.issuer, 'user_member', Date.now());
     db.prepare("INSERT INTO project_members VALUES (?,?,'member',1,0)").run(project, member);
@@ -233,7 +233,6 @@ test('activation retains populated revoked grants and held tasks, refusing unsaf
     db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,'Recover','running',?)").run(task, agent, new Date().toISOString());
     db.prepare("INSERT INTO tasks VALUES (?,?,NULL,?,?,?,?,1,1,?,'{\"tools\":[]}',NULL,NULL,NULL,'running',?,'{}',1,?)").run(task, task, project, agent, owner.accountId, device, sha256('capabilities'), sha256('{}'), Date.now());
     db.prepare("INSERT INTO execution_owners VALUES (?,?,?,1,1,?,'{}',0,?,0)").run(task, device, authority, sha256('executor'), Date.now());
-    db.exec(`CREATE TABLE routines(id TEXT PRIMARY KEY,agent TEXT NOT NULL REFERENCES agents(id),name TEXT NOT NULL,prompt TEXT NOT NULL,next_at INTEGER NOT NULL,interval_ms INTEGER,enabled INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1,trigger TEXT NOT NULL DEFAULT 'schedule',observation_revision INTEGER NOT NULL DEFAULT 1) STRICT;`);
     db.prepare("INSERT INTO routines(id,agent,name,prompt,next_at,enabled) VALUES(?,?,'Fixture','Fixture',0,1)").run(randomUUID(),agent);
   });
   try {
@@ -263,13 +262,11 @@ test('activation requires current schema, owner session and fresh infrastructure
   const f = await fixture();
   try {
     const request = f.prepare(), evidence = f.signed(request);
-    for (const version of [1, 2]) {
-      const migrations = f.db().prepare('SELECT * FROM schema_migrations WHERE version>?').all(version);
-      f.db().prepare('DELETE FROM schema_migrations WHERE version>?').run(version);
-      try { assert.throws(() => f.plan(evidence), /Upgrade the canonical schema/); }
-      finally {
-        for (const row of migrations) f.db().prepare('INSERT INTO schema_migrations VALUES(?,?,?,?)').run(row.version, row.name, row.checksum, row.applied_at);
-      }
+    const baseline = f.db().prepare('SELECT * FROM schema_migrations WHERE version=6').get()!;
+    f.db().prepare('DELETE FROM schema_migrations WHERE version=6').run();
+    try { assert.throws(() => f.plan(evidence), /Upgrade the canonical schema/); }
+    finally {
+      f.db().prepare('INSERT INTO schema_migrations VALUES(?,?,?,?)').run(baseline.version, baseline.name, baseline.checksum, baseline.applied_at);
     }
     const plan = f.plan(evidence);
     const expiry = f.db().prepare('SELECT recovery_expires_at AS expires FROM authority_state').get()!.expires;

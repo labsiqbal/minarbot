@@ -1,5 +1,7 @@
 use minarbot_launcher::data_format;
-use rusqlite::{functions::FunctionFlags, Connection, OptionalExtension};
+use rusqlite::{
+    functions::FunctionFlags, Connection, OptionalExtension, Transaction, TransactionBehavior,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -8,14 +10,58 @@ use std::{
     path::Path,
 };
 
-mod automation;
-
-mod sql {
-    include!(concat!(env!("OUT_DIR"), "/schema.rs"));
-}
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-pub const SCHEMA_VERSION: i64 = 6;
+
+// Keep released ledger rows readable by existing servers and backups.
+const BASELINE_LEDGER: &[(&str, &str)] = &[
+    (
+        "v1_owner_project",
+        "61c06b2162d013123bf8901c1f4e72c33deb6cf60b7018a8c6ac65aa0b2e417b",
+    ),
+    (
+        "v2_device_authority",
+        "8be7de84c6c87fb68b0afedf22bfa59ff8e88c08aeda262eded348216e86dc7f",
+    ),
+    (
+        "v3_task_fencing",
+        "f933c4c0663fa9680a4b6227e578052b31afa9c8d377bd753e1e8f0ffd0c5b1a",
+    ),
+    (
+        "v4_sync_retention",
+        "9c7b5684504ef6d121413585b4b78322e9149188af0ebb1d7e7e4a354cae0a7e",
+    ),
+    (
+        "v5_canonical_indexes",
+        "57a220046ffb095a17a6c987070f59f518b72d80a8f605d5e8c309fdd2dd7b52",
+    ),
+    (
+        "v6_provider_accounts",
+        "e5228a7b235e9cf8176187f1313b106c1b7ae704713e4ca2ff90e4e0c99dec6f",
+    ),
+];
+pub(crate) const BASELINE_VERSION: i64 = BASELINE_LEDGER.len() as i64;
+const CANONICAL_MIGRATIONS: &[(&str, &str)] = &[
+    // Append named SQL steps in version order starting at v7.
+    // Include affected tables in the baseline if their setup normally runs after this slot.
+];
+pub const SCHEMA_VERSION: i64 = BASELINE_VERSION + CANONICAL_MIGRATIONS.len() as i64;
+const LOCAL_MIGRATIONS: &[&str] = &[
+    // Append SQL steps in user_version order starting at v1.
+    // Include affected tables in the baseline if their setup normally runs after this slot.
+];
+
 const PROVIDER_ACCOUNTS: &str = include_str!("data/provider-accounts.sql");
+const CANONICAL_SCHEMA: &str = concat!(
+    include_str!("data/canonical-current.sql"),
+    include_str!("data/protected-waits.sql"),
+    include_str!("data/task-successors.sql"),
+    include_str!("data/sync-scopes.sql"),
+    include_str!("turns/agent-visibility.sql"),
+    include_str!("turns/agent-messages.sql"),
+    include_str!("computer/remote-agents.sql"),
+    include_str!("turns/agent-delegation.sql"),
+    include_str!("turns/rooms.sql"),
+);
 const CANONICAL_INDEXES: &str = concat!(
     include_str!("files/indexes.sql"),
     include_str!("turns/indexes.sql"),
@@ -161,35 +207,58 @@ fn table(db: &Connection, name: &str) -> Result<bool> {
         .optional()?
         .is_some())
 }
-fn column(db: &Connection, table: &str, name: &str, definition: &str) -> Result<()> {
-    let mut query = db.prepare(&format!("PRAGMA table_info({table})"))?;
-    let columns = query
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    if !columns.iter().any(|value| value == name) {
-        db.execute_batch(&format!(
-            "ALTER TABLE {table} ADD COLUMN {name} {definition}"
-        ))?;
+pub(crate) fn empty_schema(db: &Connection) -> Result<bool> {
+    Ok(!db.prepare("SELECT 1 FROM sqlite_schema")?.exists([])?)
+}
+
+pub(crate) fn migrate_user_version(
+    db: &Transaction<'_>,
+    baseline: i64,
+    steps: &[&str],
+    unsupported: &str,
+) -> Result<()> {
+    let version: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if !(baseline..=baseline + steps.len() as i64).contains(&version) {
+        return Err(unsupported.into());
+    }
+    for (index, sql) in steps.iter().enumerate().skip((version - baseline) as usize) {
+        db.execute_batch(sql)?;
+        db.pragma_update(None, "user_version", baseline + index as i64 + 1)?;
     }
     Ok(())
 }
-fn messages(db: &Connection) -> Result<()> {
-    db.execute_batch(include_str!("turns/agent-visibility.sql"))?;
-    column(db, "turns", "origin", "TEXT")?;
-    db.execute_batch(include_str!("turns/agent-messages.sql"))?;
-    db.execute_batch(sql::REMOTE)?;
-    column(db, "turns", "message_depth", "INTEGER NOT NULL DEFAULT 0")?;
-    db.execute_batch(include_str!("turns/agent-delegation.sql"))?;
-    db.execute_batch(include_str!("turns/rooms.sql"))?;
-    column(
-        db,
-        "room_discussions",
-        "stopped",
-        "INTEGER NOT NULL DEFAULT 0",
-    )
+
+fn create_canonical(db: &Connection, now: i64) -> Result<()> {
+    db.execute_batch(CANONICAL_SCHEMA)?;
+    provider_tables(db)?;
+    db.execute_batch(PROVIDER_ACCOUNTS)?;
+    crate::turns::initialize_canonical(db).map_err(|error| error.message)?;
+    crate::files::init_canonical_schema(db)?;
+    crate::automation::project::initialize(db).map_err(|error| error.message)?;
+    db.execute_batch(CANONICAL_INDEXES)?;
+    db.execute(
+        "INSERT INTO authority_state VALUES (1,?,'active',0,NULL,NULL,1)",
+        [uuid::Uuid::new_v4().to_string()],
+    )?;
+    for (index, (name, checksum)) in BASELINE_LEDGER.iter().enumerate() {
+        db.execute(
+            "INSERT INTO schema_migrations VALUES (?,?,?,?)",
+            rusqlite::params![index as i64 + 1, name, checksum, now],
+        )?;
+    }
+    Ok(())
 }
 
 pub fn migrate(db: &Connection, now: i64, through: i64) -> Result<()> {
+    migrate_canonical(db, now, through, CANONICAL_MIGRATIONS)
+}
+
+fn migrate_canonical(
+    db: &Connection,
+    now: i64,
+    through: i64,
+    steps: &[(&str, &str)],
+) -> Result<()> {
     db.create_scalar_function(
         "minarbot_capability_digest",
         1,
@@ -204,173 +273,82 @@ pub fn migrate(db: &Connection, now: i64, through: i64) -> Result<()> {
             ]))))
         },
     )?;
-    db.execute_batch("BEGIN IMMEDIATE")?;
-    let result = (|| -> Result<()> {
-        let mut version: i64 = if table(db, "schema_migrations")? {
-            db.query_row(
-                "SELECT coalesce(max(version),0) FROM schema_migrations",
-                [],
-                |row| row.get(0),
-            )?
-        } else {
-            0
-        };
-        if version > SCHEMA_VERSION {
-            return Err("Database schema is newer than this server".into());
+    let tx = Transaction::new_unchecked(db, TransactionBehavior::Immediate)?;
+    let version = if empty_schema(&tx)? {
+        create_canonical(&tx, now)?;
+        BASELINE_VERSION
+    } else {
+        if !table(&tx, "schema_migrations")? {
+            return Err("Database does not have a canonical schema".into());
         }
-        if version > through {
-            return Err("Schema downgrade is not supported".into());
-        }
-        let migrations = [
-            (sql::MIGRATION, "v1_owner_project"),
-            (sql::MIGRATIONV2, "v2_device_authority"),
-            (sql::MIGRATIONV3, "v3_task_fencing"),
-            (sql::MIGRATIONV4, "v4_sync_retention"),
-            (CANONICAL_INDEXES, "v5_canonical_indexes"),
-            (PROVIDER_ACCOUNTS, "v6_provider_accounts"),
-        ];
-        for (index, (sql, name)) in migrations.iter().enumerate() {
-            let next = index as i64 + 1;
-            if next > through {
-                break;
-            }
-            if version < next {
-                if next == 3 {
-                    db.execute_batch("CREATE TABLE IF NOT EXISTS threads(id TEXT PRIMARY KEY,agent TEXT NOT NULL REFERENCES agents(id),name TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1,archived INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0) STRICT; CREATE TABLE IF NOT EXISTS channels(id TEXT PRIMARY KEY,name TEXT NOT NULL,instructions TEXT NOT NULL,lead TEXT REFERENCES agents(id),revision INTEGER NOT NULL DEFAULT 1,archived INTEGER NOT NULL DEFAULT 0) STRICT; CREATE TABLE IF NOT EXISTS channel_members(channel TEXT NOT NULL REFERENCES channels(id),agent TEXT NOT NULL REFERENCES agents(id),PRIMARY KEY(channel,agent)) STRICT;")?;
-                    for (name, definition) in [
-                        ("thread", "TEXT REFERENCES threads(id)"),
-                        ("channel", "TEXT REFERENCES channels(id)"),
-                        ("attachments", "TEXT NOT NULL DEFAULT '[]'"),
-                        ("recipient", "TEXT REFERENCES agents(id)"),
-                        ("automatic", "INTEGER NOT NULL DEFAULT 0"),
-                        ("routing", "TEXT"),
-                        ("paused", "INTEGER NOT NULL DEFAULT 0"),
-                        ("revision", "INTEGER NOT NULL DEFAULT 1"),
-                        ("profile_setup", "INTEGER NOT NULL DEFAULT 0"),
-                    ] {
-                        column(db, "turns", name, definition)?;
-                    }
-                }
-                if next == 5 {
-                    provider_tables(db)?;
-                    crate::turns::initialize_canonical(db).map_err(|error| error.message)?;
-                    crate::files::init_canonical_schema(db)?;
-                    automation::upgrade(db)?;
-                }
-                db.execute_batch(sql)?;
-                if next == 1 {
-                    column(db, "agents", "revision", "INTEGER NOT NULL DEFAULT 1")?;
-                    db.execute(
-                        "INSERT INTO authority_state VALUES (1,?,'active',0,NULL,NULL,1)",
-                        [uuid::Uuid::new_v4().to_string()],
-                    )?;
-                }
-                if next == 2 {
-                    for (name, definition) in [
-                        ("thread_limit", "INTEGER NOT NULL DEFAULT 2"),
-                        ("backup_model", "TEXT NOT NULL DEFAULT ''"),
-                        ("provider_account", "TEXT NOT NULL DEFAULT ''"),
-                    ] {
-                        column(db, "agents", name, definition)?;
-                    }
-                }
-                db.execute(
-                    "INSERT INTO schema_migrations VALUES (?,?,?,?)",
-                    rusqlite::params![next, name, digest(sql), now],
-                )?;
-                version = next;
-            } else {
-                let saved: Option<(String, String)> = db
-                    .query_row(
-                        "SELECT name,checksum FROM schema_migrations WHERE version=?",
-                        [next],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .optional()?;
-                if saved != Some((name.to_string(), digest(sql))) {
-                    return Err("Schema migration checksum mismatch".into());
-                }
-                if next == 5 {
-                    // Legacy schedule mappings may become eligible after the schema is installed.
-                    automation::upgrade(db)?;
-                }
-            }
-            if next == 1 {
-                column(db, "agents", "role", "TEXT NOT NULL DEFAULT ''")?;
-                column(db, "agents", "tool_budget", "INTEGER NOT NULL DEFAULT 90")?;
-            }
-            if next == 3 {
-                db.execute_batch("CREATE TABLE IF NOT EXISTS recovery_quarantine(request_id TEXT NOT NULL REFERENCES receipts(request_id), owner_account TEXT NOT NULL REFERENCES accounts(id), task TEXT NOT NULL, action TEXT NOT NULL, source_device TEXT NOT NULL REFERENCES devices(id), source_authority TEXT NOT NULL, recovery_generation TEXT NOT NULL, watermark INTEGER NOT NULL CHECK(watermark>=0), envelope_digest TEXT NOT NULL, envelope_json TEXT NOT NULL CHECK(json_valid(envelope_json)), reason TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(request_id,action)) STRICT; CREATE INDEX IF NOT EXISTS recovery_quarantine_scope ON recovery_quarantine(owner_account,task,created);")?;
-                db.execute_batch(sql::TASKSUCCESSORCONSTRAINT)?;
-                column(db, "turns", "parent", "TEXT REFERENCES turns(id)")?;
-                column(
-                    db,
-                    "turns",
-                    "no_update",
-                    "INTEGER NOT NULL DEFAULT 0 CHECK(no_update IN(0,1))",
-                )?;
-                if through == 3 {
-                    messages(db)?;
-                }
-            }
-            if next == 4 {
-                db.execute_batch(sql::PROTECTEDWAITSCHEMA)?;
-                db.execute_batch(sql::SYNCSCOPESCHEMA)?;
-                messages(db)?;
-            }
+        tx.query_row(
+            "SELECT coalesce(max(version),0) FROM schema_migrations",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?
+    };
+    if version < BASELINE_VERSION {
+        return Err("Unsupported canonical database version".into());
+    }
+    let latest = BASELINE_VERSION + steps.len() as i64;
+    if version > latest || through > latest {
+        return Err("Database schema is newer than this server".into());
+    }
+    if version > through {
+        return Err("Schema downgrade is not supported".into());
+    }
+    let validate = |version, name: &str, checksum: &str| -> Result<()> {
+        let valid: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=? AND name=? AND checksum=?)",
+            rusqlite::params![version, name, checksum],
+            |row| row.get(0),
+        )?;
+        if !valid {
+            return Err("Schema migration checksum mismatch".into());
         }
         Ok(())
-    })();
-    match result {
-        Ok(()) => {
-            db.execute_batch("COMMIT")?;
-            Ok(())
+    };
+    for (index, (name, checksum)) in BASELINE_LEDGER.iter().enumerate() {
+        validate(index as i64 + 1, name, checksum)?;
+    }
+    for (index, (name, sql)) in steps.iter().enumerate() {
+        let next = BASELINE_VERSION + index as i64 + 1;
+        if next > through {
+            break;
         }
-        Err(error) => {
-            db.execute_batch("ROLLBACK")?;
-            Err(error)
+        let checksum = digest(sql);
+        if next <= version {
+            validate(next, name, &checksum)?;
+        } else {
+            tx.execute_batch(sql)?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES (?,?,?,?)",
+                rusqlite::params![next, name, checksum, now],
+            )?;
         }
     }
+    tx.commit()?;
+    Ok(())
 }
 
 fn local(db: &Connection) -> Result<()> {
-    db.execute_batch("CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,instructions TEXT NOT NULL) STRICT; CREATE TABLE IF NOT EXISTS turns(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,agent TEXT NOT NULL REFERENCES agents(id),text TEXT NOT NULL,reply TEXT,status TEXT NOT NULL CHECK(status IN('queued','running','done','failed','interrupted','cancelled')),error TEXT,created TEXT NOT NULL,tool_budget_used INTEGER NOT NULL DEFAULT 0,tool_budget_stopped INTEGER NOT NULL DEFAULT 0) STRICT; CREATE INDEX IF NOT EXISTS turns_agent_seq ON turns(agent,seq);")?;
-    for (name, definition) in [
-        ("role", "TEXT NOT NULL DEFAULT ''"),
-        ("revision", "INTEGER NOT NULL DEFAULT 1"),
-        ("thread_limit", "INTEGER NOT NULL DEFAULT 2"),
-        ("tool_budget", "INTEGER NOT NULL DEFAULT 90"),
-        ("backup_model", "TEXT NOT NULL DEFAULT ''"),
-        ("provider_account", "TEXT NOT NULL DEFAULT ''"),
-        ("runtime", "TEXT NOT NULL DEFAULT 'api'"),
-    ] {
-        column(db, "agents", name, definition)?;
-    }
-    db.execute_batch("CREATE TABLE IF NOT EXISTS threads(id TEXT PRIMARY KEY,agent TEXT NOT NULL REFERENCES agents(id),name TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1,archived INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0) STRICT; CREATE TABLE IF NOT EXISTS channels(id TEXT PRIMARY KEY,name TEXT NOT NULL,instructions TEXT NOT NULL,lead TEXT REFERENCES agents(id),revision INTEGER NOT NULL DEFAULT 1,archived INTEGER NOT NULL DEFAULT 0) STRICT;")?;
-    for (name, definition) in [
-        ("thread", "TEXT REFERENCES threads(id)"),
-        ("channel", "TEXT REFERENCES channels(id)"),
-        ("attachments", "TEXT NOT NULL DEFAULT '[]'"),
-        ("parent", "TEXT REFERENCES turns(id)"),
-    ] {
-        column(db, "turns", name, definition)?;
-    }
-    provider_tables(db)?;
-    db.execute_batch(PROVIDER_ACCOUNTS)?;
-    db.execute_batch(include_str!("provider-indexes.sql"))?;
+    let tx = Transaction::new_unchecked(db, TransactionBehavior::Immediate)?;
+    tx.execute_batch(include_str!("data/local-current.sql"))?;
+    provider_tables(&tx)?;
+    tx.execute_batch(PROVIDER_ACCOUNTS)?;
+    tx.execute_batch(include_str!("provider-indexes.sql"))?;
+    migrate_user_version(
+        &tx,
+        0,
+        LOCAL_MIGRATIONS,
+        "Unsupported local database version",
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
 pub fn provider_tables(db: &Connection) -> Result<()> {
-    db.execute_batch("CREATE TABLE IF NOT EXISTS provider_calls(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT NOT NULL REFERENCES turns(id),agent TEXT NOT NULL REFERENCES agents(id),model TEXT NOT NULL,origin TEXT NOT NULL,purpose TEXT NOT NULL CHECK(purpose IN('routing','completion')),status TEXT NOT NULL CHECK(status IN('pending','received','failed','interrupted')),created TEXT NOT NULL,finished TEXT,input_tokens INTEGER,output_tokens INTEGER,total_tokens INTEGER) STRICT;")?;
-    for (name, definition) in [
-        ("phase", "TEXT NOT NULL DEFAULT 'answer'"),
-        ("family", "TEXT NOT NULL DEFAULT 'openai-compatible'"),
-        ("account", "TEXT NOT NULL DEFAULT ''"),
-    ] {
-        column(db, "provider_calls", name, definition)?;
-    }
-    db.execute_batch("CREATE TABLE IF NOT EXISTS provider_streams(call INTEGER PRIMARY KEY REFERENCES provider_calls(seq),text TEXT NOT NULL) STRICT; CREATE TABLE IF NOT EXISTS provider_stream_segments(call INTEGER NOT NULL REFERENCES provider_calls(seq),ordinal INTEGER NOT NULL,id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL,final INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL,PRIMARY KEY(call,ordinal),UNIQUE(call,id)) STRICT;")?;
+    db.execute_batch(include_str!("data/provider-calls.sql"))?;
     Ok(())
 }
 
@@ -378,33 +356,90 @@ pub fn provider_tables(db: &Connection) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
-    fn migrations_upgrade_and_refuse_drift_atomically() -> Result<()> {
-        for version in 1..SCHEMA_VERSION {
-            let db = Connection::open_in_memory()?;
-            migrate(&db, 123, version)?;
-            migrate(&db, 124, SCHEMA_VERSION)?;
-            migrate(&db, 125, SCHEMA_VERSION)?;
-            assert_eq!(
-                db.query_row("SELECT max(version) FROM schema_migrations", [], |row| row
-                    .get::<_, i64>(
-                    0
-                ))?,
-                SCHEMA_VERSION
-            );
-            db.execute(
-                "UPDATE schema_migrations SET checksum='bad' WHERE version=1",
-                [],
-            )?;
-            assert!(migrate(&db, 126, SCHEMA_VERSION).is_err());
-            assert!(db.is_autocommit());
-        }
+    fn no_pending_canonical_migrations_preserve_ledger_and_schema() -> Result<()> {
+        let db = Connection::open_in_memory()?;
+        migrate(&db, 1, SCHEMA_VERSION)?;
+        let changes: i64 = db.query_row("SELECT total_changes()", [], |row| row.get(0))?;
+        let cookie: i64 = db.pragma_query_value(None, "schema_version", |row| row.get(0))?;
+        migrate(&db, 2, SCHEMA_VERSION)?;
+        assert_eq!(
+            db.query_row("SELECT total_changes()", [], |row| row.get::<_, i64>(0))?,
+            changes
+        );
+        assert_eq!(
+            db.pragma_query_value(None, "schema_version", |row| row.get::<_, i64>(0))?,
+            cookie
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn numbered_steps_run_once_and_validate_their_checksum() -> Result<()> {
+        let db = Connection::open_in_memory()?;
+        migrate_canonical(&db, 1, BASELINE_VERSION, &[])?;
+        let next = BASELINE_VERSION + 1;
+        let sql = "ALTER TABLE agents ADD COLUMN fixture_note TEXT";
+        let steps = [("v7_fixture", sql)];
+        let two_steps = [steps[0], ("v8_fixture", "INVALID SQL")];
+        assert!(migrate_canonical(&db, 2, next + 1, &two_steps).is_err());
+
+        migrate_canonical(&db, 3, next, &steps)?;
+        migrate_canonical(&db, 4, next, &steps)?;
+        let saved = db.query_row(
+            "SELECT name, checksum, applied_at FROM schema_migrations WHERE version=?",
+            [next],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        assert_eq!(saved, (steps[0].0.to_owned(), digest(sql), 3));
+        let edited = [(
+            steps[0].0,
+            "ALTER TABLE agents ADD COLUMN fixture_note INTEGER",
+        )];
+        assert!(migrate_canonical(&db, 5, next, &edited)
+            .is_err_and(|error| error.to_string() == "Schema migration checksum mismatch"));
+        assert!(db.is_autocommit());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_canonical_versions_and_checksum_drift() -> Result<()> {
         let db = Connection::open_in_memory()?;
         migrate(&db, 1, SCHEMA_VERSION)?;
         db.execute(
             "INSERT INTO schema_migrations VALUES(?,'future','future',1)",
             [SCHEMA_VERSION + 1],
         )?;
-        assert!(migrate(&db, 2, SCHEMA_VERSION).is_err());
+        let error = migrate(&db, 2, SCHEMA_VERSION)
+            .err()
+            .ok_or("Unknown migration must be refused")?;
+        assert_eq!(
+            error.to_string(),
+            "Database schema is newer than this server"
+        );
+        assert!(db.is_autocommit());
+        db.execute(
+            "DELETE FROM schema_migrations WHERE version>?",
+            [SCHEMA_VERSION],
+        )?;
+        db.execute(
+            "UPDATE schema_migrations SET checksum='bad' WHERE version=?",
+            [BASELINE_VERSION],
+        )?;
+        assert!(migrate(&db, 2, SCHEMA_VERSION)
+            .is_err_and(|error| error.to_string() == "Schema migration checksum mismatch"));
+        assert!(db.is_autocommit());
+        db.execute(
+            "DELETE FROM schema_migrations WHERE version>=?",
+            [BASELINE_VERSION],
+        )?;
+        assert!(migrate(&db, 2, SCHEMA_VERSION)
+            .is_err_and(|error| error.to_string() == "Unsupported canonical database version"));
         assert!(db.is_autocommit());
         Ok(())
     }
