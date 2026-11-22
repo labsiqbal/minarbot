@@ -51,6 +51,21 @@
 .leptos-workspace .sidebar .bs-avatar { width: 36px; height: 36px; font-size: 15px; }
 .leptos-workspace .sidebar .provider-status { margin-right: auto; }
 .leptos-workspace .project-home a { text-decoration: none; }
+.leptos-workspace .first-run .k-field:has(> select) { position: relative; }
+.leptos-workspace .first-run .k-field:has(> select)::after {
+  content: "";
+  position: absolute;
+  right: 16px;
+  bottom: 17px;
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-text-secondary);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.leptos-workspace .first-run select.k-input { appearance: none; padding-right: 30px; }
+.leptos-workspace .first-run select.k-input:disabled { opacity: .54; }
 .leptos-workspace #workspace-filters { margin: auto; }
 .leptos-workspace__outlet { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; height: 100%; }
 .leptos-workspace__header { display: flex; align-items: center; min-height: 60px; padding-inline: 16px; }
