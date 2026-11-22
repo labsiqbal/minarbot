@@ -719,7 +719,7 @@ async fn execute(
                 string(turn, "agent"),
             )?
         };
-        let mut params = json!({"cwd":workspace,"approvalPolicy":"on-request","sandbox":if binding.write{"workspace-write"}else{"read-only"},"config":{"mcp_servers":{"minarbot":{"url":mcp_url,"bearer_token_env_var":"MINARBOT_MCP_TOKEN"}},"approvals_reviewer":"user","shell_environment_policy.inherit":"none","shell_environment_policy.set":{"PATH":super::path(state),"LANG":"C.UTF-8","HOME":workspace},"shell_environment_policy.exclude":["MINARBOT_PROVIDER_KEY","MINARBOT_MCP_TOKEN","ANTHROPIC_API_KEY"]}});
+        let mut params = json!({"cwd":workspace,"approvalPolicy":"on-request","sandbox":if binding.write{"workspace-write"}else{"read-only"},"config":{"mcp_servers":{"minarbot":{"url":mcp_url,"bearer_token_env_var":"MINARBOT_MCP_TOKEN","tool_timeout_sec":crate::files::components::FORM_WAIT_SECONDS+10}},"approvals_reviewer":"user","shell_environment_policy.inherit":"none","shell_environment_policy.set":{"PATH":super::path(state),"LANG":"C.UTF-8","HOME":workspace},"shell_environment_policy.exclude":["MINARBOT_PROVIDER_KEY","MINARBOT_MCP_TOKEN","ANTHROPIC_API_KEY"]}});
         codegraph::Server::configure(codegraph.as_ref(), runtime, &mut params);
         for (name, value) in environment {
             params["config"]["shell_environment_policy.set"][name] = json!(value);
@@ -1669,6 +1669,12 @@ pub async fn run(
         id,
         external: !external.is_null(),
     };
+    if runtime == "claude" {
+        env.insert(
+            "MCP_TOOL_TIMEOUT".into(),
+            ((crate::files::components::FORM_WAIT_SECONDS + 10) * 1000).to_string(),
+        );
+    }
     env.insert("MINARBOT_MCP_TOKEN".into(), token.clone());
     env.insert("MINARBOT_MCP_URL".into(), crate::mcp::url(state));
     if runtime == "hermes" {

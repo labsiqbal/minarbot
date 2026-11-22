@@ -1,0 +1,44 @@
+<style>
+  body { margin: 0; }
+  #diagram { display: grid; justify-items: center; }
+  #diagram svg { max-width: 100%; height: auto; }
+  #description, #fallback { margin: 0; padding: 8px; }
+  #fallback { overflow-wrap: anywhere; white-space: pre-wrap; }
+</style>
+<p id="description"></p>
+<pre id="fallback"></pre>
+<div id="diagram" aria-hidden="true"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.5/dist/mermaid.min.js"
+  integrity="sha256-YWoQnxnNGGhC4R1Fs1rAdFazp1UTMQ9uoHU1GqQwseI=" crossorigin="anonymous"></script>
+<script>
+  const source = document.querySelector('#fallback');
+  const diagram = document.querySelector('#diagram');
+  let rendering = false;
+  let pending = false;
+  async function drawDiagram() {
+    if (rendering) { pending = true; return; }
+    if (!window.mermaid) return;
+    rendering = true;
+    try {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'neutral',
+        maxTextSize: 8000,
+        maxEdges: 200,
+        flowchart: { htmlLabels: false },
+      });
+      const { svg } = await mermaid.render('minarbot-diagram', source.textContent, diagram);
+      diagram.innerHTML = svg;
+      source.hidden = true;
+    } catch {
+      diagram.replaceChildren();
+      source.hidden = false;
+    } finally {
+      rendering = false;
+      if (pending) { pending = false; void drawDiagram(); }
+    }
+  }
+  addEventListener('minarbot:theme', drawDiagram);
+  void drawDiagram();
+</script>

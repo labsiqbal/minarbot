@@ -298,13 +298,23 @@ pub fn route(
         ["api", kind, owner, "turns", turn, "harness-approvals", approval]
             if *method == Method::POST =>
         {
-            scoped(
+            let target = scoped(
                 db,
                 kind,
                 owner,
                 turn,
                 "Approval not found in this conversation.",
             )?;
+            if let Some(form) = one(
+                db,
+                "SELECT * FROM harness_approvals WHERE id=? AND turn=? AND kind='form'",
+                [approval, turn],
+            )? {
+                return Ok((
+                    200,
+                    crate::files::components::decide(state, db, &target, &form, v)?,
+                ));
+            }
             Ok((200, shell::decide(db, turn, approval, v)?))
         }
         ["api", kind, owner, "turns"] if *method == Method::POST => {

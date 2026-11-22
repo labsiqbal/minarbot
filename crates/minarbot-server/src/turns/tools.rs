@@ -169,6 +169,9 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         );
     }
     specs.extend(crate::mcp::execution::specs()?);
+    if crate::files::rich_html::available(state, turn) {
+        specs.push(crate::files::components::spec());
+    }
     if turn["profile_setup"] == 1 {
         specs.retain(|t| ["edit_profile", "ask_user"].contains(&string(&t["function"], "name")));
         for tool in &mut specs {
@@ -204,6 +207,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     if turn["agent"] == crate::mcp::guide::ID {
         return crate::mcp::guide::call(state, turn, name, &args).await;
+    }
+    if name == "render_component" {
+        return crate::files::components::run(state, turn, call, &args).await;
     }
     if name == "html_preview" {
         let result = crate::files::rich_html::preview(state, turn, &args)
@@ -491,9 +497,9 @@ pub fn journal(db: &Connection, turn: &Value, call: &Value, result: &Value) -> R
     if exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND call_id=? UNION ALL SELECT 1 FROM generated_files WHERE turn=? AND call_id=?",[string(turn,"id"),string(call,"id"),string(turn,"id"),string(call,"id")])? {return Ok(());}
     let recorded = if matches!(
         string(&call["function"], "name"),
-        "html_render" | "html_preview"
+        "html_render" | "html_preview" | "render_component"
     ) {
-        // Rendered source lives in html_replies. Keep raw documents out of the tool journal.
+        // Reply payloads have their own tables. Keep raw documents out of the tool journal.
         let mut recorded = call.clone();
         recorded["function"]["arguments"] = json!("{}");
         recorded.to_string()
