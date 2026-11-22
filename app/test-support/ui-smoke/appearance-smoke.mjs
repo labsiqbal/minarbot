@@ -457,12 +457,10 @@ async function setupAndDirectory(origin, client) {
       for (const theme of ['dark', 'light']) {
         await page.emulateMedia({ colorScheme: theme });
         await page.goto(origin + location);
-        if (routeName !== 'pairing') {
-          await page.evaluate(({ key, theme }) => localStorage.setItem(key, JSON.stringify({
-            version: 1, colorTheme: 'minarbot', theme, textSize: 'standard',
-          })), { key, theme });
-          await page.reload();
-        }
+        await page.evaluate(({ key, theme }) => localStorage.setItem(key, JSON.stringify({
+          version: 1, colorTheme: 'minarbot', theme, textSize: 'standard',
+        })), { key, theme });
+        await page.reload();
         await ready();
         await page.evaluate(() => document.fonts.ready);
         await page.screenshot({ path: join(screenshots, `${routeName}-${client}-${width}-${theme}.png`), animations: 'disabled' });
@@ -499,6 +497,20 @@ async function setupAndDirectory(origin, client) {
     await page.reload();
     await heading(project).waitFor();
     await capture('project', projectPath, () => heading(project).waitFor());
+    const agent = await post('/api/agents', {
+      id: randomUUID(), name: 'Directory agent', model: 'fixture', instructions: 'Test only.', runtime: 'api',
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.reload();
+    await heading(project).waitFor();
+    await page.getByRole('tab', { name: /^Projects/ }).press('ArrowLeft');
+    const sidebar = page.getByRole('complementary', { name: 'Workspace navigation' });
+    const find = page.getByRole('searchbox', { name: 'Search agents' }).or(page.getByRole('textbox', { name: 'Search agents' }));
+    await find.fill('Directory agent');
+    await sidebar.getByText('Directory agent', { exact: true }).click();
+    await page.waitForURL(origin + `/agents/${agent.id}`);
+    await page.getByRole('main', { name: 'Conversation Directory agent' }).waitFor();
+    assert.equal(await page.locator('#leptos-root').count(), 0);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 }
