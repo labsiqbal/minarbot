@@ -6,7 +6,7 @@ const locationPath = () => window.location.pathname + window.location.search;
 
 function ownedPath(route: AppRoute) {
   const path = routePath(route);
-  if ((!route.settings && !route.project && path !== '/') || !new URLSearchParams(window.location.search).getAll('ui').includes('react')) return path;
+  if ((!route.settings && !route.project) || !new URLSearchParams(window.location.search).getAll('ui').includes('react')) return path;
   return path + (path.includes('?') ? '&' : '?') + 'ui=react';
 }
 
