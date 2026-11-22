@@ -1015,7 +1015,7 @@ pub fn form_reply(
             <fieldset class="k-stack component-fields" disabled=move || busy.get() || chat.config.with_value(|c| c.archived)>
                 <legend class="component-sr-only">{node.title.clone()}</legend>
                 {fields.into_iter().map(|field| match field.kind {
-                    FieldKind::Select => view! { <label class="k-field"><span>{field.label}</span>
+                    FieldKind::Select => view! { <label class="k-field"><span class="k-field__label">{field.label}{(!field.required).then(|| view! { <span class="k-field__optional">"Optional"</span> })}</span>
                         <select class="k-input" name=field.name required=field.required>
                             <option value="">"Select…"</option>
                             {field.options.into_iter().map(|option| {
@@ -1024,7 +1024,7 @@ pub fn form_reply(
                             }).collect_view()}
                         </select></label> }.into_any(),
                     FieldKind::Boolean => view! { <label class="k-check component-checkbox"><input type="checkbox" name=field.name required=field.required />{field.label}{field.required.then(|| view! { <span class="component-detail" aria-hidden="true">"Required"</span> })}</label> }.into_any(),
-                    kind => view! { <label class="k-field"><span>{field.label}</span>
+                    kind => view! { <label class="k-field"><span class="k-field__label">{field.label}{(!field.required).then(|| view! { <span class="k-field__optional">"Optional"</span> })}</span>
                         <input type=if matches!(kind, FieldKind::Number) { "number" } else { "text" } class="k-input" name=field.name
                             required=field.required maxlength="1000" step="any" min="-1000000000000000" max="1000000000000000" />
                     </label> }.into_any(),

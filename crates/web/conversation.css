@@ -14,7 +14,8 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .chat__pill-chev > svg { opacity: 0.5; flex-shrink: 0; }
 .chat-pilot-menu summary::-webkit-details-marker, .turn-activity__details summary::-webkit-details-marker { display: none; }
 .chat-pilot-menu__items { position: absolute; z-index: 6; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); min-width: 160px; }
-.conversation-layout .chat-pilot-menu.turn-task-controls { display: inline-block; position: relative; }
+.conversation-layout .chat-pilot-menu.turn-task-controls:not([hidden]) { display: inline-block; position: relative; }
+.turn-task-controls [hidden] { display: none; }
 .task-actions { position: absolute; z-index: 6; bottom: calc(100% + 4px); left: 0; min-width: 140px; }
 .conversation-find { position: absolute; z-index: 5; top: 60px; inset-inline: 16px; }
 .conversation-layout .turn-activity { position: relative; }
