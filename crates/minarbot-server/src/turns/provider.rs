@@ -19,13 +19,19 @@ pub async fn call(
     tools: &[Value],
     phase: &str,
 ) -> Result<Answer> {
+    let memory = phase.starts_with("memory_");
+    let private = memory || phase == "compaction";
     let hub_turn = crate::computer::hub::check(state, turn)?.is_some();
+    if memory && (hub_turn || pending(state)) {
+        return Err(error(409, "Memory provider is unavailable."));
+    }
     let native = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         exists(
             &guard.connection,
-            "SELECT 1 FROM turns t JOIN agents a ON a.id=t.agent WHERE t.id=? AND a.runtime<>'api'",
-            [turn],
+            "SELECT 1 FROM turns t JOIN agents a ON a.id=t.agent WHERE t.id=? AND a.runtime<>'api'
+                AND (NOT ? OR a.provider_account='device' OR a.provider_account LIKE 'login:%')",
+            params![turn, memory],
         )?
     };
     if native && hub_turn {
@@ -33,6 +39,11 @@ pub async fn call(
             403,
             "This runtime cannot fence every native effect for hub turns. Use an API runtime.",
         ));
+    }
+    if native && memory {
+        return crate::harness::memory::call(state, turn, model, messages, phase)
+            .await
+            .map(Answer::Text);
     }
     if native {
         state.turns.mark_started(turn);
@@ -52,10 +63,17 @@ pub async fn call(
             "SELECT agent,status,paused FROM turns WHERE id=?",
             [turn],
         )?
-        .filter(|r| (r["status"] == "running" || r["status"] == "queued") && r["paused"] == 0)
+        .filter(|r| {
+            if memory {
+                r["status"] == "done"
+            } else {
+                (r["status"] == "running" || r["status"] == "queued") && r["paused"] == 0
+            }
+        })
         .ok_or_else(|| error(409, "Task has stopped."))?;
         let account = admission::account(state, db, string(&row, "agent"))?;
-        if !["compaction", "routing"].contains(&phase)
+        if !private
+            && phase != "routing"
             && !super::profile::setup(db, &json!({"id":turn,"agent":row["agent"]}))?
             && super::messaging::allowed(db, turn)?
         {
@@ -70,7 +88,10 @@ pub async fn call(
             }
         }
 
-        let vault_secrets = crate::computer::vault::redactions(state, db)?;
+        let mut vault_secrets = crate::computer::vault::redactions(state, db)?;
+        if memory {
+            vault_secrets.extend(account.key.iter().cloned());
+        }
         for message in &mut messages {
             crate::mcp::secrets::redact_content(message, &vault_secrets);
         }
@@ -85,11 +106,17 @@ pub async fn call(
         };
         db.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES (?,?,?,?,?,?,?,?, 'pending',?)",params![turn,row["agent"].as_str(),model,origin,purpose,phase,account.family,account.id,iso(db,state.config.now())?])?;
         let seq = db.last_insert_rowid();
-        state.events.turn(db, turn)?;
+        if !memory {
+            state.events.turn(db, turn)?;
+        }
         (account, seq, vault_secrets)
     };
     let streamed = account.stream;
-    let max_tokens = account.max_tokens;
+    let max_tokens = if memory {
+        account.max_tokens.min(4096)
+    } else {
+        account.max_tokens
+    };
     let endpoint = match account.family.as_str() {
         "anthropic" => format!("{}/messages", account.base.trim_end_matches('/')),
         "gemini" => {
@@ -108,7 +135,7 @@ pub async fn call(
         }
         _ => format!("{}/chat/completions", account.base.trim_end_matches('/')),
     };
-    let body = translate(
+    let mut body = translate(
         &account.family,
         model,
         &messages,
@@ -116,6 +143,9 @@ pub async fn call(
         max_tokens,
         streamed,
     )?;
+    if memory && account.family == "openai-compatible" {
+        body["max_tokens"] = json!(max_tokens);
+    }
     let mut request = state.turns.client.post(endpoint).json(&body);
     if account.family == "anthropic" {
         request = request.header("anthropic-version", "2023-06-01");
@@ -127,19 +157,29 @@ pub async fn call(
             _ => request.bearer_auth(key),
         };
     }
-    let effect = crate::computer::hub::before_effect(state, turn, "provider", json!({"model":model,"purpose":if phase=="routing"{"routing"}else{"completion"},"phase":phase})).await?;
+    let effect = if memory {
+        None
+    } else {
+        crate::computer::hub::before_effect(state, turn, "provider", json!({"model":model,"purpose":if phase=="routing"{"routing"}else{"completion"},"phase":phase})).await?
+    };
     let mut tokens = [None; 3];
     let limit = state.config.data.turn_idle_timeout();
-    let explicit_timeout = state.config.data.timeout.map(|ms| {
-        Duration::from_millis(if phase == "compaction" {
-            ms.min(15000)
-        } else {
-            ms
+    let explicit_timeout = if memory {
+        Some(Duration::from_millis(
+            state.config.data.timeout.unwrap_or(90_000).min(90_000),
+        ))
+    } else {
+        state.config.data.timeout.map(|ms| {
+            Duration::from_millis(if phase == "compaction" {
+                ms.min(15000)
+            } else {
+                ms
+            })
         })
-    });
+    };
     let stream_idle = (streamed && explicit_timeout.is_none()).then_some(limit);
     let operation = async {
-        {
+        if !memory {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
             if pending(state) || guard.connection.execute("UPDATE turns SET status='running',started_at=coalesce(started_at,?) WHERE id=? AND status IN('queued','running') AND paused=0",params![iso(&guard.connection,state.config.now())?,turn])? == 0 {
                 return Err(error(409,"Task has stopped."));
@@ -202,7 +242,7 @@ pub async fn call(
                     {
                         return Err(error(502, MALFORMED));
                     }
-                    if phase == "compaction" {
+                    if private {
                         Ok(())
                     } else {
                         let text = crate::mcp::secrets::redact(text, &vault_secrets, true);
@@ -275,7 +315,7 @@ pub async fn call(
             return Err(error(502, INCOMPLETE));
         }
         let text = crate::mcp::secrets::redact(text, &vault_secrets, false);
-        if phase != "compaction" {
+        if !private {
             stream::text(state, seq, &text, true)?;
         }
         Ok(Answer::Text(text))

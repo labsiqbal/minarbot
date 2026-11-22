@@ -751,6 +751,19 @@ async fn main() -> db::Result<()> {
     }
     automation::scripts::sync(&state).map_err(|e| e.message)?;
     let turn_task = turns::start(state.clone()).map_err(|e| e.message)?;
+    let memory_task = if state.auth.is_none()
+        && (!state.config.harness.test_mode || state.config.test_memory_extraction)
+    {
+        let db = state
+            .database
+            .lock()
+            .map_err(|_| "Database lock poisoned")?;
+        db.connection
+            .execute_batch(include_str!("data/memory-worker.sql"))?;
+        Some(turns::memory_worker::start(state.clone()))
+    } else {
+        None
+    };
     let automation_task = automation::start(state.clone());
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
@@ -848,6 +861,9 @@ async fn main() -> db::Result<()> {
         .await
     };
     turn_task.abort();
+    if let Some(task) = memory_task {
+        task.abort();
+    }
     automation_task.abort();
     maintenance.abort();
     conversation_maintenance.abort();

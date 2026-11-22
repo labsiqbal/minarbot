@@ -5,9 +5,11 @@
 
 mod models;
 mod recall;
+mod retain;
 
 pub use models::LocalModels;
 pub use recall::{Hit, Query};
+pub use retain::Work;
 
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -61,7 +63,10 @@ pub struct Unit {
 }
 
 pub fn initialize(db: &Connection) -> rusqlite::Result<()> {
-    db.execute_batch(include_str!("schema.sql"))
+    db.execute_batch(concat!(
+        include_str!("schema.sql"),
+        include_str!("retain.sql")
+    ))
 }
 
 pub struct Store<'a> {

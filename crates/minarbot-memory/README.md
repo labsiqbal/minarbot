@@ -27,6 +27,7 @@ Candle performs inference on CPU in Rust. The embedding model is [BAAI bge-small
 | `serde`, `serde_json` | MIT OR Apache-2.0 | Existing JSON metadata, API responses, and model config |
 | `sha2` | MIT OR Apache-2.0 | Existing SHA-256 implementation for artifact checks |
 | `uuid` | MIT OR Apache-2.0 | Existing source ID generator for raw retains |
+| `chrono` | MIT OR Apache-2.0 | ISO-8601 event date parsing for extracted facts |
 
 No Python, Postgres, or model server is needed at runtime.
 
@@ -54,3 +55,25 @@ includes the query embedding, vector scan, fusion and MiniLM reranking.
 | 10k SQLite fixture | 22,392,832 bytes |
 | First-use model download and cache | 225,761,231 bytes |
 | Server release binary | 79,577,040 bytes, up 6,057,136 bytes from the v0.16.4 baseline artifact |
+
+## Phase 2 extraction and consolidation
+
+New completed local conversations enqueue prompt and reply units for extraction. Each
+request is capped at 4096 UTF-8 bytes and can resume at its byte offset. A model
+returns world facts, assistant experiences, entities, event dates, and causal
+links in JSON. Raw prompt and reply units stay searchable when extraction or
+consolidation fails.
+
+The consolidation queue folds facts into one-facet observations. It uses
+Hindsight's fact-by-fact temporal rules, preserves earlier states in
+contradictions, deduplicates normalized text, and records evidence links and
+proof counts. Source edits invalidate derived facts and observations, then
+requeue extraction. Three attempts with backoff bound each job.
+
+`src/prompts/extraction.txt` and `src/prompts/consolidation.txt` carry
+provenance headers naming Hindsight v1.2.3 and the upstream paths. Server
+provider calls use phase names `memory_extract_*` and `memory_consolidate_*`,
+so `/api/usage` reports model calls and input/output/total tokens per source
+turn. API agents use their configured account. Codex and Claude Code agents use
+their existing login binding in a tool-free, ephemeral run. Old turns, explicit
+notes, and turns that run under remote authority keep their Phase 1 recall units.
