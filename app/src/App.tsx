@@ -43,6 +43,8 @@ import { useRoutePresentation } from './hooks/useRoutePresentation';
 import { QueueEditor } from './QueueEditor';
 import { CancelTurn, QueuedRunsControl } from './ui/RunControls';
 import { Markdown, StreamingMarkdown } from './Markdown';
+import { HtmlReplies } from './HtmlReply';
+import type { HtmlReplyAction, HtmlReplyContext, HtmlReplyReference } from './html-reply';
 import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useTimelineFollow } from './ui/useTimelineFollow';
 import { useTurnStream } from './ui/useTurnStream';
@@ -103,7 +105,7 @@ type Thread = { needs_you?: number; delivery?: boolean; active?: boolean; activi
 type ForkContext = { summary?: string; inherited?: string; turns: { id: string; text: string; reply: string | null }[] };
 type AgentMessage = Exchange & { taskId?: string; task?: string; wait?: boolean; generatedFiles?: { id: string; name: string; size: number; thread: string }[]; paused: number; request: string; expects_reply: number; settled: number; id: string; agent: string; thread: string; name: string; status: string; error: string | null; reply: string | null; truncated: boolean };
 
-type Turn = { guide?: GuideActions; optimistic?: boolean; history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; panelFile?: { seq: number; id: string; name: string; openedAt: string; deleted?: number } | null; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
+type Turn = { htmlReplies?: HtmlReplyReference[]; guide?: GuideActions; optimistic?: boolean; history_page?: number; routineReport?: { run: string; name: string; agent: string; thread: string; destination: string; status: string } | null; room?: RoomView | null; harnessApprovals?: HarnessApproval[]; computerWait?: ComputerWait; checkpoint?: { turn: string; restorable: boolean } | null; approvals?: AppApproval[]; recipient?: string | null; dispatch_mode?: 'queue' | 'steer' | 'restart'; dispatch_target?: string | null; dispatch_label?: string | null; activity?: TurnActivityData; editing?: boolean; events?: { id: string; event: string; deadline: number; status: string }[]; receivedAgentReplies?: (AgentMessage & { source: string })[]; messageOrigin?: { kind?: 'peer'; name: string; agent: string | null; channel: string | null; thread: string | null } | null; agentMessages?: AgentMessage[]; partial?: { text: string; model: string; status: string; seq: number } | null; answer_model?: string | null; questions?: Question[]; workflow_run?: string | null; no_update: number; panelFile?: { seq: number; id: string; name: string; openedAt: string; deleted?: number } | null; generatedFiles?: { id: string; name: string; size: number; deleted?: boolean }[]; seq: number; files?: { id: string; name: string; size: number; image?: boolean }[]; revision: number; paused: number; agent: string; parent?: string | null; waiting_for?: string | null; coordination?: { kind: string; child: string | null; prompt: string; owner_name: string; target_name: string }[]; routing?: string | null; agent_name?: string; id: string; text: string; reply: string | null; status: string; error: string | null; created: string };
 const mergeHistory = (history: Turn[], page: Turn[]) => [...new Map([...history, ...page].map(turn => [turn.id, turn])).values()].sort((a, b) => a.seq - b.seq);
 type Directory = { guide?: Agent | null; hubAvailable?: boolean; agents: Agent[]; configured: boolean; defaultModel: string };
 type Environment = { id: string; name: string; origin: string; version: string };
@@ -247,7 +249,6 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const [activeTurns, setActiveTurns] = useState<{ id: string; agent: string; capabilities: { steer: boolean; queue: boolean; restart: boolean } }[]>([]);
   const [addressedTurn, setAddressedTurn] = useState('');
   const dispatchTarget = activeTurns.find(turn => channel ? turn.id === addressedTurn : true);
-  const canSteer = !!dispatchTarget?.capabilities.steer;
   const targets = channel ? members.filter(member => !dispatchTarget || member.id === dispatchTarget.agent) : [agent as Agent];
   const blockedAgent = targets.find(target => target.runnable === false);
   const canSend = !blockedAgent && (targets.length ? targets.every(target => target.runnable ?? configured) : false);
@@ -262,6 +263,8 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   });
   const [pending, setPending] = useState<Pending | null>(recovery.command), [blocked, setBlocked] = useState(recovery.blocked);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const [htmlContext, setHtmlContext] = useState<HtmlReplyContext | undefined>(recovery.command?.htmlContext);
+  const canSteer = !!dispatchTarget?.capabilities.steer && !htmlContext;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [readError, setReadError] = useState('');
@@ -326,15 +329,31 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   useEffect(() => {
     if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id && !turn.optimistic)) {
       try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); } catch { /* The same ID remains safe to retry. */ }
-      setPending(null); setDraft(''); setAttached([]); setError('');
+      setPending(null); setDraft(''); setAttached([]); setHtmlContext(undefined); setError('');
     }
   }, [turns, pending, storageKey, draftKey, attachmentKey]);
+  function htmlReplyAction(action: HtmlReplyAction) {
+    if (busy || pending || blocked || archived) return;
+    if (action.kind === 'context') {
+      setHtmlContext(action.context);
+      return;
+    }
+    const value = draft.trim() ? `${draft}\n\n${action.text}` : action.text;
+    if (value.length > 16000) {
+      setError('Free up space in your draft before adding this reply.');
+      return;
+    }
+    setDraft(value);
+    try { sessionStorage.setItem(draftKey, value); }
+    catch { setError('Draft was not saved. Copy your message before leaving.'); }
+    composer.current?.focus();
+  }
   async function send(event: FormEvent, forcedMode?: 'queue' | 'steer') {
     event.preventDefault();
     if (requestActive.current || pastedFiles.length || attachments.uploading || blocked || (!pending && (!canSend || !draft.trim() && !attached.length))) return;
     if (archived) { setError('Restore the conversation before sending a new message.'); return; }
-    const mode = dispatchTarget ? forcedMode ?? 'queue' : 'queue';
-    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(channel && mode === 'queue' && dispatchTarget ? { recipient: dispatchTarget.agent } : {}), ...(attached.length ? { files: attached } : {}),  };
+    const mode = dispatchTarget && !htmlContext ? forcedMode ?? 'queue' : 'queue';
+    const request = pending ?? { id: crypto.randomUUID(), text: draft.trim(), ...(mode !== 'queue' ? { dispatchMode: mode, targetTurn: dispatchTarget!.id, ...(channel ? { recipient: dispatchTarget!.agent } : {}) } : {}), ...(channel && mode === 'queue' && dispatchTarget ? { recipient: dispatchTarget.agent } : {}), ...(attached.length ? { files: attached } : {}), ...(htmlContext ? { htmlContext } : {}) };
     try { sessionStorage.setItem(storageKey, JSON.stringify(request)); }
     catch { setError('The browser could not save send status. Enable site storage before sending.'); return; }
     requestActive.current = true; setBusy(true); setPending(request); setError(''); nearBottom.current = true;
@@ -346,7 +365,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
       // A remounted conversation owns recovery and any newer draft after navigation.
       if (!mounted.current) return;
       setAddressedTurn('');
-      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false);
+      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setHtmlContext(undefined); setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false);
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof HttpError && (error.status < 500 || error.status === 503 && !error.restarting)) {
@@ -463,13 +482,14 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
                     {turn.parent && !turn.messageOrigin && <a className="link-btn link-btn--small" href={`#turn-${turn.parent}`} onClick={event => { event.preventDefault(); openFocused(turn.parent!); }}>View parent task</a>}
                     {turn.messageOrigin && turn.messageOrigin.kind !== 'peer' && <button type="button" className="link-btn link-btn--small" onClick={() => turn.messageOrigin!.channel ? onOpenChannel?.(turn.messageOrigin!.channel) : onOpenAgent?.(turn.messageOrigin!.agent!, turn.messageOrigin!.thread ?? '')}>Open requester conversation</button>}
                 </HumanMessage>
-                {turn.room ? <><RoomMessages room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} skip />{answerActions(item)}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} onInspect={inspectRun} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && turnRequests(item); }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
+                {turn.room ? <><RoomMessages onHtmlReplyAction={htmlReplyAction} room={turn.room} members={members} scope={path.slice(0, -6)} turns={turns} controls={id => { const item = turns.find(item => item.id === id); return item && <><TaskControls key={`${item.id}:${item.revision}`} turn={item} path={path} members={members} archived={archived} skip />{answerActions(item)}</>; }} pending={turns.filter(item => item.room?.root === turn.room!.root && !item.room.silent && !turn.room!.messages.some(message => message.kind === 'reply' && message.turn === item.id))} details={id => { const item = turns.find(item => item.id === id); return item && <TurnActivity scope={path.slice(0, -6)} logOnly turn={item} agentName={members.find(member => member.id === item.agent)?.name ?? agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} onInspect={inspectRun} />; }} extras={id => { const item = turns.find(item => item.id === id); return item && turnRequests(item); }} /></> : <AgentMessage identity={channel && members.length > 1 && <div className="agent-identity"><AgentAvatar agent={members.find(member => member.id === turn.agent) ?? { id: turn.agent, name: turn.agent_name ?? agent.name }} size={24} /><strong className="message-name">{turn.agent_name ?? agent.name}</strong></div>}>
                     <TurnActivity scope={path.slice(0, -6)} turn={turn} agentName={agent.name} onOpenTask={openFocused} onOpenAgent={onOpenAgent} onInspect={inspectRun} />
                     {!channel && (!!turn.agentMessages?.length || !!turn.receivedAgentReplies?.length) && <AgentConversation items={[...(turn.agentMessages ?? []), ...(turn.receivedAgentReplies ?? []).filter(item => !turn.agentMessages?.some(sent => sent.id === item.id))]} sender={turn.agent_name ?? agent.name} scope={path.slice(0, -6)} onOpen={onOpenAgent} />}
                     <div className="message-body">
+                      <HtmlReplies replies={turn.htmlReplies} scope={path.slice(0, -6)} onAction={htmlReplyAction} />
                       {channel && turn.parent && <div className="room-request"><strong>{turn.messageOrigin?.name ?? turn.agent_name ?? agent.name}</strong><p>{turn.text}</p></div>}
                       {turn.dispatch_mode === 'steer' && turn.dispatch_label && ['queued', 'running'].includes(turn.status) && <p className="dispatch-receipt">{turn.dispatch_label}{turn.dispatch_target && <> · <button type="button" className="link-btn link-btn--small" onClick={() => openFocused(turn.dispatch_target!)}>View target turn</button></>}</p>}
-                      {turn.status === 'cancelled' && !turn.reply && !turn.partial?.text ? null : turn.status === 'done' && !turn.reply && turn.dispatch_label ? null : (turn.reply || livePartial(turn) || turn.status === 'cancelled' && turn.partial?.text) ? <div className={livePartial(turn) ? "live-answer" : "reply-answer"} aria-label={livePartial(turn) ? "Streaming answer" : "Agent reply"}><div className="legacy"><StreamingMarkdown files={turn.generatedFiles} key={turn.id} text={turn.reply ?? turn.partial?.text ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div>{livePartial(turn) && <span className="stream-caret" aria-hidden />}</div>
+                      {turn.status === 'cancelled' && !turn.reply && !turn.partial?.text ? null : turn.status === 'done' && !turn.reply && (turn.dispatch_label || turn.htmlReplies?.length) ? null : (turn.reply || livePartial(turn) || turn.status === 'cancelled' && turn.partial?.text) ? <div className={livePartial(turn) ? "live-answer" : "reply-answer"} aria-label={livePartial(turn) ? "Streaming answer" : "Agent reply"}><div className="legacy"><StreamingMarkdown files={turn.generatedFiles} key={turn.id} text={turn.reply ?? turn.partial?.text ?? ''} scope={path.slice(0, -6)} origin={window.location.origin} /></div>{livePartial(turn) && <span className="stream-caret" aria-hidden />}</div>
                         : <p className={turn.error ? 'message-error' : 'message-muted'}>{turn.error && <CircleAlert size={14} aria-hidden />}{turn.error ?? <span>{approvalSubject ? `Review the ${approvalSubject} to continue.` : turn.questions?.some(question => question.answer === null) ? 'Answer the question to continue the task.' : turn.workflow_run ? 'Workflow finished without a text result.' : turn.agentMessages?.some(item => item.expects_reply && !item.settled) ? 'Results will be combined after all recipients finish. New messages include results already available.' : turn.events?.some(event => event.status === 'waiting') ? 'Waiting for a signed event.' : turn.waiting_for ? 'Waiting for child task results.' : turn.status === 'queued' ? 'Waiting for turn.' : null}</span>}</p>}
                       {!turn.reply && !turn.partial?.text && !['queued', 'running'].includes(turn.status) && !!turn.generatedFiles?.length && <div className="legacy"><Markdown results text="" files={turn.generatedFiles} scope={path.slice(0, -6)} origin={window.location.origin} /></div>}
                       {!turn.reply && turn.partial?.text && !livePartial(turn) && turn.status !== 'cancelled' && <div className="message-partial"><span className="message-muted">Partial reply</span><div className="legacy"><Markdown results files={turn.generatedFiles} text={turn.partial.text} scope={path.slice(0, -6)} origin={window.location.origin} /></div></div>}
@@ -504,6 +524,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
         {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} onOrder={() => setQueueOrderOpen(true)} />
+        {htmlContext && <div className="html-reply-context"><span role="status">Reply context attached</span><Button type="button" variant="ghost" size="sm" disabled={!!pending || busy} onClick={() => setHtmlContext(undefined)}>Remove context</Button></div>}
         <ChatComposer attachments={attachments.composer} hasAttachments={!!attached.length} onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={channel ? `Message #${channel.section_name ?? channel.name}` : `Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
           recipient={channel && activeTurns.length > 0 ? <Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /> : undefined}
           stopAction={runningRoom && !archived ? <RoomStop key={runningRoom.root} room={runningRoom} path={path} archived={archived} onStopped={() => { refreshTurns(); composer.current?.focus(); }} /> : runningTurn && !archived ? <CancelTurn key={runningTurn.id} primary turn={runningTurn.id} path={path} request={api} onCancelled={() => { refreshTurns(); composer.current?.focus(); }} /> : undefined}

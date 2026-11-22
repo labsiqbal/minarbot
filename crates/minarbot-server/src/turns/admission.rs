@@ -394,7 +394,14 @@ fn create(
             "Select an active member turn before steering or restarting.",
         ));
     }
-    let request = json!({"path":path,"text":text,"files":f,"recipient":v["recipient"].as_str().filter(|s|!s.is_empty()),"automatic":automatic,"mode":mode,"target":target});
+    let mut request = json!({"path":path,"text":text,"files":f,"recipient":v["recipient"].as_str().filter(|s|!s.is_empty()),"automatic":automatic,"mode":mode,"target":target});
+    if let Some(context) = v.get("htmlContext") {
+        if mode != "queue" {
+            return Err(error(400, "Send HTML reply context with a new message."));
+        }
+        request["htmlContext"] =
+            crate::files::rich_html::accept_context(state, db, kind, owner, context)?;
+    }
     if let Some(old) = one(db, "SELECT * FROM turns WHERE id=?", [id])? {
         if let Some(receipt) = one(
             db,
@@ -483,6 +490,12 @@ fn create(
         None
     };
     db.execute("INSERT INTO turns(id,agent,thread,channel,recipient,automatic,routing,text,attachments,status,created) VALUES (?,?,?,?,?,?,?,?,?,'queued',?)",params![id,agent,thread,channel,v["recipient"].as_str().filter(|s|!s.is_empty()),automatic,routing,text,f.to_string(),iso(db,state.config.now())?])?;
+    if let Some(context) = request.get("htmlContext") {
+        db.execute(
+            "INSERT INTO html_reply_context(turn,context) VALUES(?,?)",
+            params![id, string(context, "data")],
+        )?;
+    }
     if channel.is_none() || v["recipient"].as_str().is_some_and(|s| !s.is_empty()) || automatic == 1
     {
         super::messaging::capture(db, id)?;

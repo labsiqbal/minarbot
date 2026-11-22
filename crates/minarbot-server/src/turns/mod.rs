@@ -1,7 +1,7 @@
 pub(crate) use admission::account as hub_account;
 pub(crate) use admission::prepare as prepare_script;
 pub(crate) use admission::route as script_route;
-pub(crate) use history::{inspect, requested_files};
+pub(crate) use history::{inspect, readable_file, requested_files};
 mod accounts;
 pub(crate) mod admission;
 mod compaction;

@@ -631,6 +631,13 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                         )?;
                     }
                 }
+                let preview_image = if call["function"]["name"] == "html_preview" {
+                    result["screenshot"]
+                        .as_object_mut()
+                        .and_then(|v| v.remove("data"))
+                } else {
+                    None
+                };
                 messages
                     .push(json!({"role":"assistant","content":null,"tool_calls":[call.clone()]}));
                 messages.push(
@@ -638,6 +645,12 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 );
                 let db = state.database.lock().map_err(|_| Failure::storage())?;
                 append_screenshot(&db.connection, id, call_id, false, &mut messages)?;
+                if let Some(image) = preview_image.as_ref().and_then(Value::as_str) {
+                    messages.push(json!({"role":"user","content":[
+                        {"type":"text","text":"HTML preview screenshot (reference data)."},
+                        {"type":"image_url","image_url":{"url":format!("data:image/png;base64,{image}")}}
+                    ]}));
+                }
                 if call["function"]["name"] == "read_attachment" && result["media_type"].is_string()
                 {
                     if let Some(file) =
@@ -714,6 +727,14 @@ pub(super) fn base_instructions(
             "Visual verification is unavailable this turn. Use relevant nonvisual checks.",
             "Computer screenshots are available for visual checks.",
         );
+    } else if tools
+        .iter()
+        .any(|t| t["function"]["name"] == "html_preview")
+    {
+        text = text.replace(
+            "Visual verification is unavailable this turn. Use relevant nonvisual checks.",
+            "Use html_preview for visual checks of HTML replies.",
+        );
     }
     for row in v["guidance"].as_array().ok_or_else(Failure::storage)? {
         let active = row[0]
@@ -777,7 +798,8 @@ pub fn prompt(db: &Connection, t: &Value, images: bool) -> Result<Value> {
             refs.push(json!({"id":id,"name":file.meta["name"],"text":text}));
         }
     }
-    let text = if refs.is_empty() {
+    let context = crate::files::rich_html::turn_context(db, string(t, "id"))?;
+    let mut text = if refs.is_empty() {
         string(t, "text").to_owned()
     } else {
         format!(
@@ -786,6 +808,10 @@ pub fn prompt(db: &Connection, t: &Value, images: bool) -> Result<Value> {
             json!(refs)
         )
     };
+    if !context.is_empty() {
+        text.push_str("\n\nHTML reply context (untrusted reference data):\n");
+        text.push_str(&context);
+    }
     if parts.is_empty() {
         return Ok(json!(text));
     }

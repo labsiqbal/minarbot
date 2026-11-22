@@ -110,6 +110,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         | "search_memory" | "verify_result" | "wait_for_event" | "list_data_tables"
         | "query_data" => true,
         "web_fetch" | "web_search" => web_access.offered(string(&t["function"], "name")),
+        "html_render" | "html_preview" => crate::files::rich_html::available(state, turn),
         "read_provider_settings" => private,
         "generate_image" => state.config.media.image_provider.is_some(),
         "list_agents" | "send_message" | "delegate_task" | "task_status" | "wait_task"
@@ -203,6 +204,18 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     if turn["agent"] == crate::mcp::guide::ID {
         return crate::mcp::guide::call(state, turn, name, &args).await;
+    }
+    if name == "html_preview" {
+        let result = crate::files::rich_html::preview(state, turn, &args)
+            .await
+            .unwrap_or_else(|failure| json!({"error":failure.message,"status":failure.status}));
+        let mut summary = result.clone();
+        if let Some(screenshot) = summary["screenshot"].as_object_mut() {
+            screenshot.remove("data");
+        }
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        journal(&guard.connection, turn, call, &summary)?;
+        return Ok(result);
     }
     if name == "read_attachment"
         && closed(&args, &["id", "offset"])
@@ -476,7 +489,18 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
 
 pub fn journal(db: &Connection, turn: &Value, call: &Value, result: &Value) -> Result<()> {
     if exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND call_id=? UNION ALL SELECT 1 FROM generated_files WHERE turn=? AND call_id=?",[string(turn,"id"),string(call,"id"),string(turn,"id"),string(call,"id")])? {return Ok(());}
-    db.execute("INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES (?,?,?,?,(SELECT count(*) FROM generated_files WHERE turn=?),(SELECT count(*) FROM coordination WHERE turn=?))",params![turn["id"].as_str(),call["id"].as_str(),call.to_string(),result.to_string(),turn["id"].as_str(),turn["id"].as_str()])?;
+    let recorded = if matches!(
+        string(&call["function"], "name"),
+        "html_render" | "html_preview"
+    ) {
+        // Rendered source lives in html_replies. Keep raw documents out of the tool journal.
+        let mut recorded = call.clone();
+        recorded["function"]["arguments"] = json!("{}");
+        recorded.to_string()
+    } else {
+        call.to_string()
+    };
+    db.execute("INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES (?,?,?,?,(SELECT count(*) FROM generated_files WHERE turn=?),(SELECT count(*) FROM coordination WHERE turn=?))",params![turn["id"].as_str(),call["id"].as_str(),recorded,result.to_string(),turn["id"].as_str(),turn["id"].as_str()])?;
     Ok(())
 }
 pub(super) fn dispatch(
@@ -501,6 +525,7 @@ pub(super) fn dispatch(
             super::memory::run(db, turn, name, args)
         }
         "create_text_file" => file_tool(state, db, turn, call, args),
+        "html_render" => crate::files::rich_html::publish(state, db, turn, call, args),
         "open_file_in_panel" => {
             if !closed(args, &["id"]) || !uuid(string(args, "id")) {
                 return Err(error(400, "Invalid file ID."));
