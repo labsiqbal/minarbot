@@ -278,6 +278,7 @@ pub fn handles(path: &str) -> bool {
             | ["api", "provider-accounts", _, "test" | "edit" | "delete"]
             | ["api", "sidebar", "summary"]
             | ["api", "conversations", "settings"]
+            | ["api", "settings", "library-docs"]
             | ["api", "settings", "web-search"]
             | ["api", "settings", "web-search", "test"]
             | ["api", "threads", _]
@@ -440,6 +441,25 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
             ));
         }
         return provider_store::route(state, &parts, &method, &q, &body).await;
+    }
+    if path == "/api/settings/library-docs" {
+        if headers.contains_key("authorization")
+            || headers.contains_key("origin") && !origin(state, &headers)
+        {
+            return Err(error(
+                403,
+                "Library docs settings require the local owner in Minarbot.",
+            ));
+        }
+        if method != Method::GET || !q.is_empty() {
+            return Err(error(
+                400,
+                "Use GET with no parameters for library docs status.",
+            ));
+        }
+        return crate::turns::library_docs::settings(state)
+            .await
+            .map(|value| json_response(200, value));
     }
     if matches!(
         parts.as_slice(),
@@ -778,6 +798,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/provider-accounts/{id}/edit", any(crate::dispatch))
         .route("/api/provider-accounts/{id}/delete", any(crate::dispatch))
         .route("/api/conversations/settings", any(crate::dispatch))
+        .route("/api/settings/library-docs", any(crate::dispatch))
         .route("/api/settings/web-search", any(crate::dispatch))
         .route("/api/settings/web-search/test", any(crate::dispatch))
 }

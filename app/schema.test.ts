@@ -91,6 +91,8 @@ for (const mode of ['canonical', 'local'] as const) {
         CREATE INDEX mcp_apps_turn ON mcp_apps(turn);
         CREATE TABLE mcp_app_approvals(app TEXT PRIMARY KEY REFERENCES mcp_apps(id) ON DELETE CASCADE,id TEXT NOT NULL,digest TEXT NOT NULL,expires INTEGER NOT NULL) STRICT;`);
       expected.exec(readFileSync(new URL('../crates/minarbot-server/src/files/schema.sql', import.meta.url), 'utf8'));
+      expected.exec('ALTER TABLE agents ADD COLUMN library_docs_access INTEGER NOT NULL DEFAULT 1 CHECK(library_docs_access IN(0,1))');
+      expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/library_docs/schema.sql', import.meta.url), 'utf8'));
       addMemorySchema(expected, mode);
       const current = snapshot(expected);
       await startAndClose(fresh, mode);
@@ -130,7 +132,7 @@ for (const mode of ['canonical', 'local'] as const) {
         assert.deepEqual(snapshot(existing), current);
         assert.deepEqual(existing.prepare('PRAGMA schema_version').get(), upgradedVersion);
         assert.deepEqual({ ...existing.prepare(retainedData).get() }, mode === 'local'
-          ? { ...saved, learn_from_conversations: 1, memory_model: '' } : { ...saved });
+          ? { ...saved, learn_from_conversations: 1, memory_model: '', library_docs_access: 1 } : { ...saved, library_docs_access: 1 });
         if (mode === 'canonical') assert.deepEqual(existing.prepare('SELECT * FROM schema_migrations ORDER BY version').all(), beforeLedger);
       } finally { existing.close(); }
     } finally {

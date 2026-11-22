@@ -49,6 +49,17 @@ export function checkData(id, data) {
                 { status: 503, title: 'Service Unavailable', source: 'https://www.rfc-editor.org/rfc/rfc9110.html#section-15.6.4' },
             ]);
             break;
+        case 'pgx-row-docs': {
+            const { source, ...facts } = data;
+            assert.deepEqual(facts, { version: 'v5.7.2', helper: 'CollectExactlyOneRow', zeroRows: 'ErrNoRows', multipleRows: 'ErrTooManyRows' });
+            const url = new URL(source);
+            assert.equal(url.origin, 'https://pkg.go.dev');
+            assert.equal(url.pathname, '/github.com/jackc/pgx/v5@v5.7.2');
+            assert.equal(url.hash, '#CollectExactlyOneRow');
+            assert.equal(url.username + url.password, '');
+            assert(['', '?tab=doc'].includes(url.search));
+            break;
+        }
         case 'csv-research':
             assert.deepEqual({ ...data, extension: data.extension?.toLowerCase() }, { mediaType: 'text/csv', extension: 'csv', rfc: 4180, source: 'https://www.iana.org/assignments/media-types/text/csv' });
             break;
@@ -126,6 +137,7 @@ export async function checkTask(task, context) {
         case 'sales-csv': return checkData(task.id, await json('sales-summary.json'));
         case 'http-research': return checkData(task.id, await json('http-facts.json'));
         case 'csv-research': return checkData(task.id, await json('csv-facts.json'));
+        case 'pgx-row-docs': return checkData(task.id, await json('pgx-rows.json'));
         case 'handover-doc': return checkData(task.id, await text('handover.md'));
         case 'team-review': return checkData(task.id, { output: await json('review.json'), ...context.delegation });
         case 'routine-setup':

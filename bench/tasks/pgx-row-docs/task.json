@@ -1,0 +1,6 @@
+{
+  "category": "research",
+  "timeSeconds": 120,
+  "tokenBudget": 60000,
+  "checker": "checker.mjs"
+}

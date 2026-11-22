@@ -216,6 +216,12 @@ async function attempt(runtime, task, count, server, signal) {
             row.models = final.models;
             row.interventions = final.interventionCount;
             row.interventionKinds = final.interventions;
+            if (task.id === 'pgx-row-docs') {
+                row.docsTools = db.prepare(`SELECT json_extract(call,'$.function.name') AS name FROM flow_tool_calls
+                    UNION SELECT name FROM harness_steps WHERE state='done'`).all()
+                    .map(({ name }) => name?.replace(/^mcp__minarbot__/, ''))
+                    .filter(name => ['library_docs', 'project_stack', 'web_fetch'].includes(name));
+            }
             if (final.interventionCount) row.reason ??= 'User intervention requested';
             if (final.knownTokens > task.tokens) row.reason ??= 'Token budget exceeded';
 

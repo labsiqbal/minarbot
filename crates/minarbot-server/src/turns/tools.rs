@@ -104,11 +104,13 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
     let bound = binding.is_some();
     let writable = bound && binding.as_ref().is_some_and(|b| b.write);
     let web_access = super::web::access(state, db, string(turn, "agent"))?;
+    let docs_enabled = super::library_docs::enabled(db, string(turn, "agent"))?;
     specs.retain(|t| match string(&t["function"], "name") {
         "read_history" | "read_message" | "read_attachment" | "create_text_file"
         | "open_file_in_panel" | "ask_user" | "select_memory" | "remember_memory"
         | "search_memory" | "recall" | "reflect" | "remember" | "search_history"
         | "verify_result" | "wait_for_event" | "list_data_tables" | "query_data" => true,
+        "project_stack" | "library_docs" => docs_enabled,
         "web_fetch" | "web_search" => web_access.offered(string(&t["function"], "name")),
         "html_render" | "html_preview" => crate::files::rich_html::available(state, turn),
         "read_provider_settings" => private,
@@ -217,6 +219,15 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     if name == "render_component" {
         return crate::files::components::run(state, turn, call, &args).await;
+    }
+    if ["project_stack", "library_docs"].contains(&name) {
+        let result = match super::library_docs::tool(state, turn, name, &args).await {
+            Err(e) if e.status != 403 => json!({"error":e.message,"status":e.status}),
+            other => other?,
+        };
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        journal(&guard.connection, turn, call, &result)?;
+        return Ok(result);
     }
     if name == "html_preview" {
         let result = crate::files::rich_html::preview(state, turn, &args)
@@ -507,7 +518,7 @@ pub fn journal(db: &Connection, turn: &Value, call: &Value, result: &Value) -> R
     if exists(db,"SELECT 1 FROM flow_tool_calls WHERE turn=? AND call_id=? UNION ALL SELECT 1 FROM generated_files WHERE turn=? AND call_id=?",[string(turn,"id"),string(call,"id"),string(turn,"id"),string(call,"id")])? {return Ok(());}
     let recorded = if matches!(
         string(&call["function"], "name"),
-        "html_render" | "html_preview" | "render_component"
+        "html_render" | "html_preview" | "render_component" | "library_docs"
     ) {
         // Reply payloads have their own tables. Keep raw documents out of the tool journal.
         let mut recorded = call.clone();

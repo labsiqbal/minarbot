@@ -100,6 +100,8 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
             "ask_user",
             "edit_profile",
             "run_shell",
+            "project_stack",
+            "library_docs",
         ]
         .contains(&string(&t["function"], "name"))
             || (crate::files::rich_html::available(state, turn)
@@ -116,6 +118,14 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
                     "with approval for sensitive commands"
                 ));
         }
+    }
+    if !super::library_docs::enabled(db, string(turn, "agent"))? {
+        specs.retain(|t| {
+            !matches!(
+                string(&t["function"], "name"),
+                "project_stack" | "library_docs"
+            )
+        });
     }
     specs.extend(crate::mcp::execution::specs()?);
     if crate::files::rich_html::available(state, turn) {
