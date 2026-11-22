@@ -188,7 +188,7 @@ pub(super) fn name(name: &str, query: &str) -> f64 {
 pub(super) fn is_test(path: &str) -> bool {
     static TEST: LazyLock<regex::Regex> = LazyLock::new(|| {
         crate::literal_regex(
-            r"(?i)(?:^|/)(?:tests?|__tests__|specs?|testlib|testing|e2e|testdata|test[-_]?utils?|fakes?|mocks?|__mocks__|stubs|integration|samples?|examples?|benchmarks?|fixtures?|demos|[\w.]+[-_]test(?:s|ing)?)/|(?:^|/)test[_.]|[._-](?:tests?|specs?)\.[a-z0-9]+$|(?-i:Test|Tests|TestCase|Tester|Spec|Specs)\.[a-z0-9]+$",
+            r"(?i)(?:^|/)(?:tests?|__tests__|specs?|testlib|testing|e2e|testdata|test[-_]?(?:utils?|support)|fakes?|mocks?|__mocks__|stubs|integration|samples?|examples?|benchmarks?|fixtures?|demos|[\w.]+[-_]test(?:s|ing)?)/|(?:^|/)tests?[_.]|[._-](?:tests?|specs?)\.[a-z0-9]+$|(?-i:Test|Tests|TestCase|Tester|Spec|Specs)\.[a-z0-9]+$",
         )
     });
     TEST.is_match(path)
@@ -197,6 +197,16 @@ pub(super) fn is_test(path: &str) -> bool {
 pub(super) fn test_query(query: &str) -> bool {
     let query = query.to_ascii_lowercase();
     query.contains("test") || query.contains("spec")
+}
+
+#[test]
+fn ranks_test_support_as_test_code() -> crate::Result<()> {
+    let path = "app/test-support/ui-smoke/browser.mjs";
+    assert!(is_test(path));
+    assert!(is_test("src/browser/tests.rs"));
+    assert!(PathRank::new("browser evaluation").score(path) < 0.0);
+    assert!(PathRank::new("browser test").score(path) > 0.0);
+    Ok(())
 }
 
 pub(super) struct PathRank {

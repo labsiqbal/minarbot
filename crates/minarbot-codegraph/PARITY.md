@@ -159,12 +159,33 @@ The native index now keeps recovered declarations and flags those files as
 | Elasticsearch | 12 | Node / Node | 68.8% | 100% |
 | Elasticsearch | 12 | Rust / Node | 79.2% | 75.5% |
 | Minarbot `c707e98` | 24 | Node / Node | 81.2% | 100% |
-| Minarbot `c707e98` | 24 | Rust / Node | 81.2% | 69.3% |
-| Minarbot `c707e98` | 24 | Rust / Rust | 81.2% | 69.0% |
+| Minarbot `c707e98` | 24 | Rust / Node | 83.3% | 66.8% |
+| Minarbot `c707e98` | 24 | Rust / Rust | 83.3% | 66.5% |
 
 The six Elasticsearch search cases returned identical file sets on the shared
 database. Across the Minarbot queries, Rust returned the same expected
-symbols on either database, with 94.6% file overlap between those runs. Rust
+symbols on either database, with 95.5% file overlap between those runs. Rust
 explore showed 7.9 files per Minarbot query on average, versus Node's 7.0.
+Explore downranks `test-support/` and standalone `tests.rs` files for
+production questions. The Chrome query now includes the browser supervisor
+source and returns zero smoke-fixture files, down from seven.
 This corpus shows differences in ranking and breadth, with unchanged recall
 when substituting the native extraction and resolution.
+
+### Remaining misses
+
+- **Generic lifecycle language**. “Where does a paused turn resume work?”
+  surfaces turn controls and the harness configuration. The action is a
+  string in `turns/admission.rs` and the scheduler entry is
+  `promote` in `turns/dispatch.rs`. Missing that handoff matters when
+  changing resume behavior. Use both file paths to trace it.
+- **Protocol names and symbol names**. “How does browser page evaluation
+  reach Chrome?” expects `evaluate`, which occurs as the CDP method
+  `Runtime.evaluate`. The indexed transport symbol is `Cdp::call`.
+  The browser supervisor file gives agents a starting point. The oracle's
+  missing name overstates the retrieval gap for that question.
+- **Broad search crowded by nearby symbols**. “How does search execution work
+  from request to shard?” surfaces cluster-shard requests and aggregators.
+  The eight-file budget drops the three expected request and shard symbols
+  on the shared Node database. That matters for tracing the flow. Naming
+  `ShardSearchRequest` anchors a follow-up query.
