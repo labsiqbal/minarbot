@@ -1210,8 +1210,10 @@ fn CalendarDialog(
                 },
                 DialogMode::Run => {
                     let run = live.with(|item| text(&item["run"]).to_owned());
-                    if is_workflow { workflows::run_details(run, None).into_any() }
-                    else { routine_run_details(run).into_any() }
+                    view! { <div class="calendar-run">
+                        {if is_workflow { workflows::run_details(run, None).into_any() }
+                        else { routine_run_details(run).into_any() }}
+                    </div> }.into_any()
                 },
                 DialogMode::Edit | DialogMode::Move => {
                     let moving = mode.get()==DialogMode::Move;
@@ -1345,11 +1347,27 @@ fn calendar_details(
     }
 }
 
+fn inspect_state(state: &str, run: &str) -> &'static str {
+    match (state, run) {
+        ("completed" | "done" | "received" | "succeeded", _) => "Completed",
+        ("failed" | "error" | "uncertain", _) => "Failed",
+        ("declined" | "denied" | "rejected", _) => "Declined",
+        ("waiting" | "waiting_for_user" | "approval" | "paused", _) => "Waiting",
+        ("cancelled" | "canceled" | "closed", _) | ("interrupted", "cancelled") => "Stopped",
+        ("interrupted" | "aborted", _) => "Interrupted",
+        (_, "failed") => "Failed",
+        (_, "interrupted") => "Interrupted",
+        (_, "cancelled") => "Stopped",
+        ("running" | "in_progress" | "inProgress", _) => "Running",
+        _ => "Pending",
+    }
+}
+
 fn routine_run_details(id: String) -> impl IntoView {
     let query = ui::query::<Value>(move || format!("/api/turns/{id}/inspect"));
     poll(query.reload, 1200);
     view! {
-        <div class="run-inspector k-stack">
+        <div class="right-panel__body run-inspector">
             <ReadError query />
             {move || match query.data.get() {
                 Some(run) => {
@@ -1374,7 +1392,7 @@ fn routine_run_details(id: String) -> impl IntoView {
                             <ul class="run-inspector__list" aria-label="Steps">
                                 {tools.iter().filter(|tool| !native.iter().any(|step| step["id"]==tool["id"])).chain(native).map(|step| {
                                     let label=step["title"].as_str().unwrap_or_else(||text(&step["name"])).to_owned();
-                                    let state=if enabled(&step["failed"]) {"Failed"} else {status(text(&step["state"]))}.to_owned();
+                                    let state=inspect_state(if enabled(&step["failed"]) {"failed"} else {text(&step["state"])}, text(&run["status"]));
                                     let failed = state == "Failed";
                                     view! {
                                         <li><details><summary><ui::Icon name="chevron-right" /><span>{label}</span><span class="run-inspector__state" data-state=failed.then_some("Failed")>{state}</span></summary>
@@ -1395,7 +1413,7 @@ fn routine_run_details(id: String) -> impl IntoView {
                                     let duration=call["duration_ms"].as_i64().map(|duration| if duration<1000 {format!(" · {duration} ms")}
                                         else {format!(" · {:.2} s",duration as f64 / 1000.0)}).unwrap_or_default();
                                     view! { <li><details><summary><ui::Icon name="chevron-right" /><span>{text(&call["model"]).to_owned()}</span>
-                                        <span class="run-inspector__state">{format!("{}{duration}",status(text(&call["status"])))}</span>
+                                        <span class="run-inspector__state">{format!("{}{duration}",inspect_state(text(&call["status"]), text(&run["status"])))}</span>
                                     </summary><div class="run-inspector__details"><dl>
                                         <dt>"Started"</dt><dd>{inspect_time(&call["created"])}</dd>
                                         <dt>"Ended"</dt><dd>{inspect_time(&call["finished"])}</dd>

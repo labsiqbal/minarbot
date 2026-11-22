@@ -13,6 +13,7 @@
 }
 .leptos-workspace .system-dialog::backdrop { background: var(--color-bg-scrim); }
 .leptos-workspace .system-dialog .k-dialog__foot { flex-wrap: wrap; }
+.leptos-workspace .system-dialog:has(.calendar-run) { max-width: 680px; }
 .leptos-workspace .system-menu { position: fixed; inset: auto; margin: 0; }
 .leptos-workspace .system-menu .k-menu__item { width: 100%; }
 .leptos-workspace .workflow-node {

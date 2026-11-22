@@ -200,6 +200,7 @@ try {
   assert.equal(navigations, 0, 'Run finished after page navigation');
   await button('Open Run inspector', dialog()).click();
   await show(dialog().getByRole('heading', { name: 'Run inspector' }));
+  await show(dialog().getByRole('region', { name: 'Provider calls' }).getByText(/^Completed · /));
   const providers = dialog().getByRole('region', { name: 'Provider calls' });
   await providers.locator('summary').filter({ hasText: 'fixture' }).first().click();
   await show(providers.getByText('Total tokens', { exact: true }).first());
