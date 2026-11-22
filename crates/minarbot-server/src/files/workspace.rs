@@ -104,8 +104,15 @@ pub(super) fn read_bytes(directory: &File, name: &str, limit: usize) -> Result<V
     Ok(bytes)
 }
 pub fn download(root: &Path, relative: &str) -> Result<(String, Vec<u8>)> {
+    download_bounded(root, relative, 10 * 1024 * 1024)
+}
+pub(super) fn download_bounded(
+    root: &Path,
+    relative: &str,
+    limit: usize,
+) -> Result<(String, Vec<u8>)> {
     let (fd, name) = directory(root, relative, false)?;
-    let bytes = read_bytes(&fd, &name, 10 * 1024 * 1024)?;
+    let bytes = read_bytes(&fd, &name, limit)?;
     Ok((name, bytes))
 }
 pub fn read(root: &Path, listing: bool, args: &[(String, String)]) -> Result<Value> {

@@ -2693,5 +2693,107 @@
       "adaptation": "Show target release notes in an optional disclosure using the Minarbot feed and kit.",
       "compatibilityCheck": "app/updateEverything.logic.test.ts"
     }
+  ],
+  "htmlReplySourceEntries": [
+    {
+      "sourcePath": "apps/server/src/mcp/toolkits/html/tools.ts",
+      "symbols": [
+        "HtmlPreviewTool",
+        "HtmlRenderTool"
+      ],
+      "localPaths": [
+        "crates/minarbot-server/src/turns/tool-specs.json"
+      ],
+      "adaptation": "Provider-neutral render and preview tools with bounded input and native MCP exposure.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "b62f0538e466ade54e525dc97c292780d6a417e56a6b37712041c244d9358e63",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/html-replies-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/mcp/toolkits/html/handlers.ts",
+      "symbols": [
+        "pageSource",
+        "handlers"
+      ],
+      "localPaths": [
+        "crates/minarbot-server/src/files/rich_html.rs"
+      ],
+      "adaptation": "Turn-scoped publishing, preview metadata and image results. Read HTML only from conversation attachments or the active workspace.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "4568b08ddcf43b8ad0d125a06be86e5d3c198544dcf98e886ca655c48c426ad2",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/html-replies-smoke.mjs"
+    },
+    {
+      "sourcePath": "packages/shared/src/htmlRender.ts",
+      "symbols": [
+        "injectHtmlRenderBootstrap",
+        "htmlRenderTheme",
+        "htmlRenderFrameHeight"
+      ],
+      "localPaths": [
+        "app/src/html-reply.ts",
+        "app/src/HtmlReply.tsx",
+        "crates/minarbot-server/src/files/rich_html/bootstrap.html"
+      ],
+      "adaptation": "Opaque iframe bootstrap, theme variables, content sizing and link forwarding. Minarbot bridge adds validated draft and context messages.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "22f3ce39f764f15d0625055121313d2839db252e38a4064e81b1e6823ebb2455",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/html-replies-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/http.ts",
+      "symbols": [
+        "HTML_CONTENT_SECURITY_POLICY"
+      ],
+      "localPaths": [
+        "crates/minarbot-server/src/files/rich_html.rs"
+      ],
+      "adaptation": "Adapt script and form sandbox to a same-origin framing policy, explicit resource restrictions and no popup capability.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "0247640c83ee449c33e448719b44879085ca809df2645bcf428e6a713ba07829",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/html-replies-smoke.mjs"
+    },
+    {
+      "sourcePath": "apps/server/src/htmlRender/headlessChrome.ts",
+      "symbols": [
+        "HtmlRenderBrowserError"
+      ],
+      "localPaths": [
+        "crates/minarbot-server/src/files/rich_html/headless.rs"
+      ],
+      "adaptation": "Headless capture and diagnostics using the existing Chrome pipe, an isolated network namespace, and fixed vetted CDN scripts.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "26acece5f2f49e1fe5bd33911d8c8e98668185b56e1bbf592576333921a3f5a6",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/html-replies-smoke.mjs"
+    },
+    {
+      "sourcePath": "docs/user/html-renders.md",
+      "symbols": [],
+      "localPaths": [
+        "app/guide/html-replies.md"
+      ],
+      "adaptation": "Adapt the user and agent guidance to Minarbot conversation, theme, and preview behavior.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "6452dd5982a3aa016d251d2b5ca3ca9af26f9bbd448f390b56589da491d425b1",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/test-support/ui-smoke/html-replies-smoke.mjs"
+    }
   ]
 }

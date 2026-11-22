@@ -1,0 +1,112 @@
+<style>
+:root {
+  color-scheme: light dark;
+  --background: #fff;
+  --foreground: #1c1c1c;
+  --card: #f5f5f5;
+  --muted: #f1f1f1;
+  --muted-foreground: #5a5a5a;
+  --border: #c9c9c9;
+  --accent: #4f55d9;
+  --primary: var(--accent);
+  --primary-foreground: #fff;
+  --ring: var(--accent);
+  --chart-1: #4f55d9;
+  --chart-2: #087f70;
+  --chart-3: #875400;
+  --chart-4: #8d2fc1;
+  --chart-5: #b11b56;
+  --chart-6: #4b7014;
+  --radius: 12px;
+  --font-sans: system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+}
+:root[data-theme="dark"] {
+  --primary-foreground: #121212;
+  --accent: #8f94ff;
+  --border: #555;
+  --muted-foreground: #b8b8b8;
+  --muted: #282828;
+  --card: #1f1f1f;
+  --foreground: #f5f5f5;
+  --background: #161616;
+  --chart-1: #6b71f2;
+  --chart-2: #5eead4;
+  --chart-3: #fbbf24;
+  --chart-4: #c084fc;
+  --chart-5: #fb7185;
+  --chart-6: #a3e635;
+}
+html { padding: 4px; color: var(--foreground); font: 14px/1.5 var(--font-sans); }
+body { margin: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+</style>
+<script>
+(() => {
+  const root = document.documentElement;
+  const preview = document.querySelector('meta[name="minarbot-appearance"]')?.content;
+  const channel = new URLSearchParams(location.hash.slice(1)).get('bridge');
+  // The document URL retains its origin even though the sandboxed window is opaque.
+  const target = new URL(location.href).origin;
+  const themed = (mode, variables) => {
+    if (mode !== 'light' && mode !== 'dark') return;
+    root.style.colorScheme = mode;
+    root.dataset.theme = mode;
+    for (const [name, value] of Object.entries(variables ?? {})) {
+      if (/^--[a-z0-9-]+$/.test(name) && typeof value === 'string' && value.length <= 256) {
+        root.style.setProperty(name, value);
+      }
+    }
+    dispatchEvent(new Event('minarbot:theme'));
+  };
+  themed(preview ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  if (preview) {
+    window.sendMessage = () => {};
+    window.setContext = () => {};
+  }
+  if (window === parent || !channel) return;
+  const post = (method, value) => parent.postMessage({ channel, method, value }, target);
+  window.sendMessage = text => {
+    if (navigator.userActivation?.isActive && typeof text === 'string' && text.length <= 16000) post('draft', text);
+  };
+  window.setContext = data => {
+    try {
+      const encoded = JSON.stringify(data);
+      if (encoded && new TextEncoder().encode(encoded).length <= 4096) post('context', encoded);
+    } catch { /* Non-JSON input. */ }
+  };
+  addEventListener('message', event => {
+    if (event.source === parent && event.origin === target && event.data?.channel === channel && event.data?.method === 'theme') {
+      themed(event.data.mode, event.data.variables);
+    }
+  });
+  document.addEventListener('click', event => {
+    const link = event.composedPath().find(item => item instanceof Element && item.matches('a[href]'));
+    if (!link || !event.isTrusted || event.defaultPrevented) return;
+    const href = link.getAttribute('href');
+    if (href.startsWith('#')) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(href) && href.length <= 2048) post('link', href);
+  });
+  let lastHeight;
+  const report = () => {
+    // scrollHeight alone cannot shrink below the iframe viewport.
+    const height = Math.ceil(root.scrollHeight > root.clientHeight
+      ? root.scrollHeight : root.getBoundingClientRect().height);
+    if (height > 0 && height !== lastHeight) {
+      lastHeight = height;
+      post('size', height);
+    }
+  };
+  const observer = new ResizeObserver(report);
+  observer.observe(root);
+  document.addEventListener('DOMContentLoaded', () => {
+    if (document.body) observer.observe(document.body);
+    report();
+  });
+  addEventListener('load', report);
+  post('ready');
+})();
+</script>

@@ -527,6 +527,86 @@
   {
     "type": "function",
     "function": {
+      "name": "html_render",
+      "description": "Show interactive HTML inline above your reply. Use for charts, graphs and diagrams. Pass exactly one of html, file, or path. Use fluid layout, content-sized height, and theme variables --background, --foreground, --accent, --chart-1 through --chart-6. External scripts must use the pinned jsDelivr URLs in tool guidance.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "html": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512000
+          },
+          "file": {
+            "type": "string",
+            "description": "ID of a readable HTML attachment in this conversation."
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Path to a readable HTML file inside your active workspace."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 80,
+            "maximum": 2000
+          }
+        },
+        "required": [
+          "title",
+          "height"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "html_preview",
+      "description": "Check an HTML reply in isolated headless Chrome. Returns a PNG, CSS content height, and bounded console diagnostics. Pass exactly one of html, file, or path. Use the measured height, clamped to 80 through 2000, for html_render.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "html": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512000
+          },
+          "file": {
+            "type": "string",
+            "description": "ID of a readable HTML attachment in this conversation."
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Path to a readable HTML file inside your active workspace."
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 240,
+            "maximum": 1600
+          },
+          "appearance": {
+            "type": "string",
+            "enum": [
+              "dark",
+              "light"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "publish_site",
       "description": "Publish an already-sent or generated HTML file from this conversation as your local static site. Only text, tables and selected inline styles survive; scripts, images, forms and outside resources are removed. Maximum 256 KiB UTF-8. Supply site and revision to replace an existing site, otherwise create. Changes survive task cancellation. Never claim public hosting.",
       "parameters": {

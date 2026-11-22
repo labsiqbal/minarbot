@@ -144,6 +144,12 @@ fn decorate(state: &AppState, db: &Connection, turn: &mut Value, channel: bool) 
     }
     turn["files"] = json!(files);
     turn["generatedFiles"] = generated(db, &id)?;
+    if table(db, "html_replies")? {
+        let replies = crate::files::rich_html::references(db, &id)?;
+        if !replies.is_empty() {
+            turn["htmlReplies"] = json!(replies);
+        }
+    }
     turn["events"]=json!(rows(db,"turn_waits","SELECT w.id,w.event,w.deadline,CASE WHEN w.status='waiting' AND t.status NOT IN('queued','running') THEN 'closed' ELSE w.status END AS status FROM turn_waits w JOIN turns t ON t.id=w.turn WHERE w.turn=? ORDER BY w.rowid",[&id])?);
     let mut approvals = rows(db,"composio_calls","SELECT call_id,tool,state,decision,revision FROM composio_calls WHERE turn=? AND decision IS NOT NULL ORDER BY rowid",[&id])?;
     for approval in &mut approvals {
