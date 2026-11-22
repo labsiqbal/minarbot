@@ -133,7 +133,7 @@ function fixtureRequests() {
 async function focused(page, locator, client) {
   await locator.waitFor();
   if (client === 'leptos') {
-    await page.waitForFunction(selector => document.activeElement === document.querySelector(selector), '.app-settings__page h1');
+    await page.waitForFunction(() => document.activeElement === document.querySelector('#appearance-dialog .app-settings__page h1'));
   }
 }
 
@@ -213,10 +213,12 @@ async function exercise(page, slug) {
     case 'email':
       await page.getByRole('textbox', { name: 'Receiving domain' }).fill('agents.example.test');
       await button('Save domain').press('Enter');
-      await button('Generate secret').press('Enter');
-      await dialog('Save endpoint secret').waitFor();
+      await page.getByRole('button', { name: 'Generate secret', exact: true, disabled: false }).press('Enter');
+      const secret = dialog('Save endpoint secret');
+      await secret.waitFor();
       assert.equal(await page.locator('[data-private-token]').inputValue(), proof);
       await button('Done').press('Enter');
+      await secret.waitFor({ state: 'hidden' });
       assert.equal(await page.locator('[data-private-token]').count(), 0);
       await page.reload();
       await button('Rotate secret').waitFor();
