@@ -104,11 +104,24 @@ test('project apps and MCP: separate OAuth identities, offered tools, approvals,
     else if(url.pathname.startsWith('/tools/execute/')){executed.push(data.user_id);assert.equal(accounts.get(data.user_id),data.connected_account_id);result={successful:true,data:reflect?secret.repeat(300):'App result'};}
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(result));})().catch(error=>{res.writeHead(500);res.end(String(error));});});
   const mcpServer=createServer((req,res)=>{void(async()=>{if(req.method==='GET'){res.writeHead(405);res.end();return;}if(req.method==='DELETE'){res.end();return;}const data=await body(req);if(data.id===undefined){res.writeHead(202);res.end();return;}const result=data.method==='initialize'?{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'project-fixture',version:'1'}}:data.method==='tools/list'?{tools:[{name:'echo',inputSchema:{type:'object',properties:{},additionalProperties:false}}]}:data.method==='tools/call'?{content:[binary?{type:'resource',resource:{uri:'file:///secret.txt',mimeType:'text/plain',blob:Buffer.from(secret).toString('base64')}}:{type:'text',text:secret}]}:{};res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({jsonrpc:'2.0',id:data.id,result}));})();});
-  const provider=createServer((req,res)=>{void(async()=>{const data=await body(req);providerBodies.push(data);const toolResults=data.messages.filter((row:any)=>row.role==='tool');let message:any={content:'No tools'};
+  const provider=createServer(async(req,res)=>{
+    if(req.method==='GET'&&req.url==='/v1/models'){
+      res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({data:[{id:'fake'}]}));return;
+    }
+    if(req.method!=='POST'||req.url!=='/v1/chat/completions'){
+      res.writeHead(404);res.end();return;
+    }
+    const data=await body(req).catch(()=>null);
+    if(!Array.isArray(data?.messages)){
+      res.writeHead(400);res.end();return;
+    }
+    providerBodies.push(data);const toolResults=data.messages.filter((row:any)=>row.role==='tool');let message:any={content:'No tools'};
     if(toolResults.length)message={content:toolResults.at(-1).content};else if(mode==='apps'&&data.tools?.some((tool:any)=>tool.function.name===composioToolName('GMAIL_ACTION')))message={tool_calls:[{id:randomUUID(),type:'function',function:{name:composioToolName('GMAIL_ACTION'),arguments:'{}'}}]};else if(mode==='mcp')message={tool_calls:[{id:randomUUID(),type:'function',function:{name:'call_mcp_tool',arguments:JSON.stringify({connection,name:'echo',arguments:{}})}}]};else if(mode==='list')message={tool_calls:[{id:randomUUID(),type:'function',function:{name:'list_mcp_tools',arguments:'{}'}}]};
-    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{message,finish_reason:message.tool_calls?'tool_calls':'stop'}]}));})();});
+    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{message,finish_reason:message.tool_calls?'tool_calls':'stop'}]}));
+  });
   const remoteURL=await listen(remote),mcpURL=await listen(mcpServer),providerURL=await listen(provider);const f=await fixture({baseURL:providerURL+'/v1',composio:{baseURL:remoteURL}}, [remote, mcpServer, provider]);
   try{
+    assert.deepEqual((await f.request('/api/models')).models,['fake']);
     await f.request('/api/connected-apps/key',{id:randomUUID(),revision:0,key:'FAKE_COMPOSIO_KEY'});const a=await f.agent(),foreign=await f.agent('Nonmember'),p=await f.project(a.id,'Apps A'),b=await f.project(a.id,'Apps B');const direct=`/api/agents/${a.id}/turns`;
     const side=async(p:any)=>f.request(`/api/projects/${p.id}/thread`,{id:randomUUID(),revision:(await f.request(`/api/projects/${p.id}`)).revision,agent:a.id,name:'Apps thread'});const x=await side(p),y=await side(b),xp=`/api/threads/${x.threads.at(-1).id}/turns`,yp=`/api/threads/${y.threads.at(-1).id}/turns`;
     for(const scope of ['',`/projects/${p.id}`,`/projects/${b.id}`])await f.request(`/api${scope}/connected-apps/connect/gmail`,{id:randomUUID()});
@@ -124,7 +137,7 @@ test('project apps and MCP: separate OAuth identities, offered tools, approvals,
     const global=await pending(direct),denial=global.approvals[0];await f.request(`${direct}/${global.id}/app-approvals/${denial.id}`,{id:randomUUID(),revision:denial.revision,decision:'deny'});await f.until(direct,global.id);assert.equal((await f.request(`/api/agents/${a.id}/connected-app-policies`)).items.length,0);assert.equal((await f.request(`/api/projects/${p.id}/agents/${a.id}/connected-app-policies`)).items.length,1);
     await f.request(`/api/projects/${p.id}/environment`,{id:randomUUID(),name:'TOKEN',value:secret});reflect=true;assert.match((await f.run(xp,'Redact large app output')).reply,/REDACTED/);reflect=false;const tested=await f.request(`/api/projects/${p.id}/mcp/test`,{id:randomUUID(),name:'Project MCP',url:mcpURL,token:'FAKE_MCP_TOKEN'});connection=randomUUID();await f.request(`/api/projects/${p.id}/mcp`,{id:connection,test:tested.id});await f.request(`/api/projects/${b.id}/mcp`,{id:randomUUID(),test:tested.id},409);
     await f.request(`/api/projects/${p.id}/agents/${a.id}/mcp/${connection}`,{id:randomUUID(),revision:0,connectionRevision:1,tools:['echo']});assert.equal((await f.request('/api/mcp')).items.length,0);assert.equal((await f.request(`/api/projects/${b.id}/mcp`)).items.length,0);
-    mode='list';const section=await f.run(`/api/channels/${p.channel}/turns`,'Project section MCP',a.id);assert.match(section.reply,/Project MCP/);assert(providerBodies.at(-1).tools.some((tool:any)=>tool.function.name==='list_mcp_tools'));assert.match((await f.run(xp,'List A MCP')).reply,/Project MCP/);assert(!((await f.run(yp,'List B MCP')).reply.includes(connection)));
+    mode='list';const beforeSection=providerBodies.length;const section=await f.run(`/api/channels/${p.channel}/turns`,'Project section MCP',a.id);assert.match(section.reply,/Project MCP/);assert(providerBodies.slice(beforeSection).some(data=>data.tools?.some((tool:any)=>tool.function.name==='list_mcp_tools')));assert.match((await f.run(xp,'List A MCP')).reply,/Project MCP/);assert(!((await f.run(yp,'List B MCP')).reply.includes(connection)));
     mode='mcp';assert.match((await f.run(xp,'Call A MCP')).reply,/REDACTED/);const blocked=randomUUID();await f.request(yp,{id:blocked,text:'Call foreign MCP'},202);assert.equal((await f.until(yp,blocked)).status,'failed');assert(!JSON.stringify(providerBodies).includes(secret));
     await f.restart();assert.equal((await f.request(`/api/projects/${p.id}/mcp`)).items[0].id,connection);assert.equal((await f.request(`/api/projects/${p.id}/connected-apps/accounts`)).items[0].id,'account_2');await f.run(xp,'MCP after restart');
     binary=true;const binaryTurn=randomUUID();await f.request(xp,{id:binaryTurn,text:'Refuse secret file'},202);assert.equal((await f.until(xp,binaryTurn)).status,'failed');binary=false;

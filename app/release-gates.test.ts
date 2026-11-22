@@ -141,7 +141,7 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     assert.equal(readFileSync(join(stage, 'machine/install-machine.sh'), 'utf8'), readFileSync(new URL('../scripts/install-machine.sh', import.meta.url), 'utf8'));
     const checks = readFileSync(join(f.dir, 'cargo-checks'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.equal(checks.length, 20);
-    assert(checks.some(args => args.join(' ') === 'build --workspace --release --locked'));
+    assert(checks.some(args => args.join(' ') === 'build --workspace --release --locked --features minarbot-server/codegraph-all-languages'));
     assert.deepEqual([...new Set(readFileSync(join(f.dir, 'cargo-targets'), 'utf8').trim().split('\n'))], [join(f.dir, 'target')]);
   } finally {
     process.env.PATH = previousPath;
