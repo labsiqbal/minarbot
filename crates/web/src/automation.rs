@@ -316,7 +316,7 @@ pub(crate) fn mount(
     icons: crate::shell::Icons,
 ) -> impl IntoView {
     let route = RwSignal::new(path.clone());
-    provide_context(Navigation(route));
+    provide_context(crate::shell::AutomationNavigation(route));
     let listener = window_event_listener(leptos::ev::popstate, move |_| {
         if let Ok(path) = window().location().pathname() {
             route.set(path);
@@ -338,29 +338,5 @@ pub(crate) fn mount(
                 .map(|route| workspace::page(route, String::new()))}
             <Show when=move || calendar_visited.get()>{calendar_page(calendar_active.into())}</Show>
         </crate::shell::WorkspaceShell>
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct Navigation(pub RwSignal<String>);
-
-impl Navigation {
-    pub(crate) fn open(self, path: &str) {
-        if self.0.with_untracked(|current| current == path)
-            && window()
-                .location()
-                .search()
-                .is_ok_and(|query| query.is_empty())
-        {
-            return;
-        }
-        let pushed = window().history().and_then(|history| {
-            history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path))
-        });
-        if pushed.is_ok() {
-            self.0.set(path.to_owned());
-        } else {
-            let _ = window().location().assign(path);
-        }
     }
 }

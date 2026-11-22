@@ -726,6 +726,7 @@ fn RoutineEditor(
                 <Recovery journal done=saved confirm />
                 <div class="k-grid-2">
                     <kit::Field id="routine-owner" label="Owner agent"><Select name="routine-owner" value=owner.into() options=Signal::derive(directory)
+                        described_by=is_edit.then_some("routine-owner-hint")
                         disabled=Signal::derive(move || locked.get() || is_edit) change=Callback::new(move |value| {
                             if storage().ok().and_then(|storage| storage.get_item(&format!("minarbot:routine-command:{value}")).ok().flatten()).is_some() {
                                 journal.error.set("This agent has a pending routine request. Resume it first.".into());return;
@@ -735,7 +736,7 @@ fn RoutineEditor(
                             if !available_projects.with(|projects| projects.iter().any(|(id,_)| *id==project.get_untracked())) {
                                 project.set(String::new());report_to.set("direct".into());
                             }
-                        }) /></kit::Field>
+                        }) />{is_edit.then(|| view! { <span id="routine-owner-hint" class="k-field__hint">"The owner cannot change after creation."</span> })}</kit::Field>
                     <kit::Field id="routine-name" label="Name"><input id="routine-name" class="k-input" name="name" maxlength="80" required
                         readonly=locked value=name placeholder="Morning briefing" /></kit::Field>
                 </div>
@@ -750,13 +751,15 @@ fn RoutineEditor(
                 <Show when=move || trigger.get()=="script"><kit::Alert>"After saving, allow Local script access in the routine overview."</kit::Alert></Show>
                 <ScheduleFields initial=spec next_at=next interval_ms=interval zone={zone.unwrap_or_default()} active locked output=timing />
                 <div class="k-grid-2">
-                    <kit::Field id="routine-editor-project" label="Project"><Select name="routine-editor-project" value=project.into()
+                    <kit::Field id="routine-editor-project" label="Project"><Select name="routine-editor-project" value=project.into() described_by=Some("routine-project-hint")
                         options=available_projects disabled=locked change=Callback::new(move |value: String| {
                             report_to.set(if value.is_empty() {"direct".into()} else {"run".into()});project.set(value);
-                        }) /></kit::Field>
-                    <kit::Field id="routine-report-to" label="Report to"><Select name="routine-report-to" value=report_to.into()
-                        options=report_options disabled=locked change=Callback::new(move |value| report_to.set(value)) /></kit::Field>
+                        }) /><span id="routine-project-hint" class="k-field__hint">"Project runs use its folders and access grants."</span></kit::Field>
+                    <kit::Field id="routine-report-to" label="Report to"><Select name="routine-report-to" value=report_to.into() described_by=Some("routine-report-hint")
+                        options=report_options disabled=locked change=Callback::new(move |value| report_to.set(value)) />
+                        <span id="routine-report-hint" class="k-field__hint">"Reports never start replies from other agents."</span></kit::Field>
                 </div>
+                {is_edit.then(|| view! { <p class="k-field__hint">"Disabling or changing a schedule cancels queued runs. Runs already in progress continue."</p> })}
             </form>
         </kit::Dialog>
     }

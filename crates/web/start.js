@@ -1,16 +1,14 @@
-import init, { mount_appearance } from './appearance.js';
-
-globalThis.minarbotWorkflowMarkdown = (text, scope) => import('minarbot-workflow-markdown')
-  .then(({ renderWorkflowMarkdown }) => renderWorkflowMarkdown(text, scope));
+import init, { __MOUNT__ as mount } from './__APP__.js';
 
 const status = document.getElementById('appearance-startup');
-const title = document.querySelector('#appearance-fallback h1').textContent;
+const fallback = document.getElementById('appearance-fallback');
+const title = fallback.querySelector('h1')?.textContent ?? 'Conversation';
 let ready = false;
 
 for (const cache of ['default', 'reload']) {
   try {
     const response = await fetch('__WASM_URL__', { cache, signal: AbortSignal.timeout(4000) });
-    if (!response.ok) throw new Error('Appearance download failed');
+    if (!response.ok) throw new Error('Minarbot download failed');
     await init({ module_or_path: response });
     ready = true;
     break;
@@ -21,12 +19,12 @@ for (const cache of ['default', 'reload']) {
 
 if (ready) {
   try {
-    const fallback = document.getElementById('appearance-fallback');
     const pairing = document.querySelector('#leptos-root[data-pairing]');
     const editing = pairing && (fallback.contains(document.activeElement)
       || Array.from(fallback.querySelectorAll('input')).some(input => input.value));
     if (!editing) {
-      mount_appearance();
+      __ADAPTER__
+      mount();
       fallback.hidden = true;
     }
   } catch {

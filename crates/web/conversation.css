@@ -1,0 +1,81 @@
+@import "./appearance.css";
+@import "../../app/src/ui/details.css";
+@import "../../app/src/right-panel.css";
+@import "../../app/src/Conversations.css";
+@import "../../app/src/html-reply.css";
+@import "../../app/src/component-reply.css";
+@import "../../app/src/computer-viewer.css";
+@import "../../app/src/goal-mode.css";
+@import "../../app/src/attachments.css";
+
+.conversation-startup { padding: 24px; }
+body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
+.chat-pilot-menu summary { list-style: none; cursor: pointer; }
+.chat__pill-chev > svg { opacity: 0.5; flex-shrink: 0; }
+.chat-pilot-menu summary::-webkit-details-marker, .turn-activity__details summary::-webkit-details-marker { display: none; }
+.chat-pilot-menu__items { position: absolute; z-index: 6; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); min-width: 160px; }
+.conversation-layout .chat-pilot-menu.turn-task-controls:not([hidden]) { display: inline-block; position: relative; }
+.turn-task-controls [hidden] { display: none; }
+.task-actions { position: absolute; z-index: 6; bottom: calc(100% + 4px); left: 0; min-width: 140px; }
+.conversation-find { position: absolute; z-index: 5; top: 60px; inset-inline: 16px; }
+.conversation-layout .turn-activity { position: relative; }
+.conversation-inspect { position: absolute; inset: 0 4px auto auto; opacity: 0; }
+.turn-activity:hover .conversation-inspect, .turn-activity:focus-within .conversation-inspect { opacity: 1; }
+.conversation-layout .turn-activity__details summary { display: flex; width: 100%; list-style: none; }
+.conversation-layout .conversation-panel { flex: 0 1 360px; width: 360px; min-width: 0; }
+.conversation-panel > .k-tabs > .k-tabs__list > .k-tabs__tab[hidden] { display: none; }
+.conversation-panel a.panel-row { text-decoration: none; }
+.conversation-panel .panel-row > .appearance-icon > svg { width: 16px; height: 16px; }
+.conversation-panel .details-list-actions > button svg { width: 15px; height: 15px; }
+.right-panel.conversation-panel .details__identity { padding-inline: 20px; }
+.right-panel.conversation-panel .details__identity + .details__sections { padding-block-start: 28px; }
+.conversation-layout .conversation-panel .right-panel__body { overflow: auto; min-height: 0; }
+.conversation-card { padding: 12px; margin: 8px 0; }
+.conversation-card pre, .conversation-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.conversation-dialog {
+  max-width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto;
+  color: var(--color-text-primary); background: var(--color-bg-pane);
+  border: 1px solid var(--color-border-primary); border-radius: var(--radius-lg); padding: 18px;
+}
+.conversation-dialog::backdrop { background: rgb(0 0 0 / 50%); }
+.conversation-dialog:not([open]) { display: none; }
+.conversation-panel .computer-viewer__screen canvas { max-width: 100%; }
+
+/* Keep panel content mounted across viewport changes. Native modal handles focus and Escape. */
+.conversation-panel-shell {
+  position: static; inset: auto; margin: 0; padding: 0; border: 0; color: inherit;
+  background: transparent; max-width: none; max-height: none; height: 100%; flex: 0 1 360px; min-width: 0;
+}
+.conversation-panel-shell > .conversation-panel { width: 100%; }
+.conversation-panel-shell:modal {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 100%; height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--color-bg-pane); overscroll-behavior: contain;
+}
+.conversation-panel-shell:modal::backdrop { background: var(--color-bg-scrim); overflow: hidden; overscroll-behavior: contain; }
+.conversation-disclosure > summary { list-style: none; }
+.conversation-disclosure > summary::-webkit-details-marker { display: none; }
+.leptos-workspace .conversation-disclosure .k-collapsible__chev { display: inline-flex; }
+.conversation-disclosure .k-collapsible__chev svg { width: 15px; height: 15px; }
+.conversation-disclosure[open] .k-collapsible__chev { transform: rotate(180deg); }
+.approval-card-body { padding: 14px; }
+.approval-card-body > p { margin: 0; overflow-wrap: anywhere; }
+.approval-card-body .k-code { max-height: 280px; }
+.run-inspector summary > .appearance-icon { flex: none; }
+.run-inspector details[open] > summary > .appearance-icon { transform: rotate(90deg); }
+.computer-actions { position: relative; }
+.computer-actions .task-actions { top: calc(100% + 4px); bottom: auto; }
+.composer__cta--stop svg { fill: currentColor; }
+
+.chat-list-menu { position: relative; flex: none; margin-right: 4px; }
+.chat-list-menu > .k-icon-btn { width: 28px; height: 28px; }
+.chat-list-menu > .k-icon-btn svg { width: 15px; height: 15px; }
+.conversation-workspace > nav svg { width: 14px; height: 14px; }
+.conversation-workspace .k-empty__icon > svg { width: 18px; height: 18px; }
+.chat-list-menu .k-pop { position: absolute; right: 0; z-index: 2; }
+.leptos-workspace .turn-activity__details .k-collapsible__chev { display: inline-flex; }
+.turn-activity__details[open] .k-collapsible__chev { transform: none; }
+.answer-actions:not([hidden]) { display: contents; }
+.message-error > .appearance-icon > svg { flex: none; align-self: flex-start; margin-top: 5px; }
+
+.conversation-panel > .right-panel__header { padding-inline-end: 12px; }

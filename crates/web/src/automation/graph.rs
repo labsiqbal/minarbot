@@ -147,7 +147,7 @@ struct Drag {
 #[component]
 pub(super) fn Graph(
     graph: Signal<Value>,
-    selected: RwSignal<String>,
+    #[prop(into)] selected: Signal<String>,
     clicked: Callback<String>,
     #[prop(optional)] steps: Option<Signal<Value>>,
     #[prop(optional)] moved: Option<Callback<(String, i64, i64)>>,
@@ -223,7 +223,7 @@ pub(super) fn Graph(
     view! {
         <p id=help.clone() class="k-field__hint">{if moved.is_some() {
             "Drag nodes to position them. With a keyboard, focus a node and press Alt and an arrow key. Enter opens settings."
-        } else { "Choose a node to see its details." }}</p>
+        } else { "Graph version when the run started. Status shows the last attempt for each step. Choose a node to see its details." }}</p>
         <div class="workflow-graph" node_ref=viewport role="region" aria-label="Workflow graph, scroll to see all steps" tabindex="0">
             <div class="workflow-graph-content" style:width=move || format!("{}px",size().0) style:height=move || format!("{}px",size().1)>
                 <svg width=move || size().0 height=move || size().1 aria-hidden="true">

@@ -8,6 +8,9 @@ import { setTimeout } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
 
+const client = process.env.MINARBOT_SMOKE_CLIENT === 'leptos' ? 'leptos' : 'react';
+const selector = client === 'leptos' ? '?ui=leptos' : '';
+
 const scratch = mkdtempSync(join(tmpdir(), 'minarbot-goal-ui-'));
 const screenshots = resolve(process.argv[2] ?? join(tmpdir(), 'minarbot-goal-screenshots'));
 mkdirSync(screenshots, { recursive: true });
@@ -45,7 +48,7 @@ await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 let app, browser;
 try {
   app = await startApp({
-    database: join(scratch, 'test.sqlite'), dist: resolve('dist'), appearanceClient: process.env.MINARBOT_SMOKE_UI ?? 'react', baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
+    appearanceClient: client, database: join(scratch, 'test.sqlite'), dist: resolve('dist'), baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
     defaultModel: 'fixture', stream: false,
   });
   async function api(path, body) {
@@ -62,7 +65,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await context.addInitScript(theme => localStorage.setItem('minarbot-presentation-v1', JSON.stringify({ version: 1, theme, textSize: 'standard' })), theme);
-    await page.goto(`${app.origin}/agents/${agent.id}`);
+    await page.goto(`${app.origin}/agents/${agent.id}${selector}`);
     const composer = page.getByRole('textbox', { name: 'Message Goal fixture' });
     await composer.fill('/goal Confirm fixture readiness');
     await composer.press('Enter');

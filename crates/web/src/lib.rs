@@ -2,9 +2,12 @@
 
 mod api;
 mod appearance;
+#[cfg(feature = "workflows")]
 mod automation;
 mod connected_apps;
 mod connection_ui;
+#[cfg(feature = "conversation")]
+pub mod conversation;
 mod craft_anything;
 mod email;
 mod engines;
@@ -32,8 +35,11 @@ mod workspace_route;
 
 use leptos::{mount::mount_to, prelude::*};
 use wasm_bindgen::{prelude::*, JsCast};
-use web_sys::{HtmlDialogElement, HtmlElement};
+#[cfg(not(any(feature = "conversation", feature = "workflows")))]
+use web_sys::HtmlDialogElement;
+use web_sys::HtmlElement;
 
+#[cfg(not(any(feature = "conversation", feature = "workflows")))]
 #[wasm_bindgen]
 pub fn mount_appearance() -> Result<(), JsValue> {
     let document = document();
@@ -77,30 +83,97 @@ pub fn mount_appearance() -> Result<(), JsValue> {
             .show_modal()?;
         settings::focus_heading();
         mount.forget();
-    } else if let Some(route) = workspace_route::WorkspaceRoute::from_path(&path) {
+    } else if let Some(route) =
+        workspace_route::WorkspaceRoute::from_path(&path).filter(|route| !route.is_automation())
+    {
         mount_to(root, move || {
-            provide_context(config.connection_icons);
-            provide_context(config.system_icons);
             let colors = StoredValue::new(config.colors);
-            if matches!(
-                route,
-                workspace_route::WorkspaceRoute::Routines
-                    | workspace_route::WorkspaceRoute::Workflows
-                    | workspace_route::WorkspaceRoute::Calendar
-            ) {
-                automation::mount(path, colors, icons).into_any()
-            } else {
-                view! {
-                    <shell::WorkspaceShell base_path=path colors=colors icons=icons>
-                        {workspace::page(route, error_icon)}
-                    </shell::WorkspaceShell>
-                }
-                .into_any()
+            view! {
+                <shell::WorkspaceShell base_path=path colors=colors icons=icons>
+                    {workspace::page(route, error_icon)}
+                </shell::WorkspaceShell>
             }
         })
         .forget();
     } else {
         return Err(JsValue::from_str("Unknown Minarbot route"));
     }
+    Ok(())
+}
+
+#[cfg(feature = "workflows")]
+#[wasm_bindgen]
+pub fn mount_workflows() -> Result<(), JsValue> {
+    let document = document();
+    let root = document
+        .get_element_by_id("leptos-root")
+        .ok_or_else(|| JsValue::from_str("Automation document is incomplete"))?
+        .dyn_into::<HtmlElement>()?;
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Config {
+        colors: Vec<appearance::ColorTheme>,
+        workspace_icons: shell::Icons,
+        connection_icons: connection_ui::Icons,
+        system_icons: system::kit::Icons,
+        error_icon: String,
+    }
+    let config = document
+        .get_element_by_id("appearance-config")
+        .and_then(|element| element.text_content())
+        .and_then(|raw| serde_json::from_str::<Config>(&raw).ok())
+        .ok_or_else(|| JsValue::from_str("Automation configuration is invalid"))?;
+    let path = window().location().pathname()?;
+    let route = workspace_route::WorkspaceRoute::from_path(&path)
+        .ok_or_else(|| JsValue::from_str("Unknown automation route"))?;
+    mount_to(root, move || {
+        let colors = StoredValue::new(config.colors);
+        provide_context(config.connection_icons);
+        provide_context(config.system_icons);
+        if route.is_automation() {
+            automation::mount(path, colors, config.workspace_icons).into_any()
+        } else {
+            view! {
+                <shell::WorkspaceShell base_path=path colors icons=config.workspace_icons>
+                    {workspace::page(route, config.error_icon)}
+                </shell::WorkspaceShell>
+            }
+            .into_any()
+        }
+    })
+    .forget();
+    Ok(())
+}
+
+#[cfg(feature = "conversation")]
+#[wasm_bindgen]
+pub fn mount_conversation() -> Result<(), JsValue> {
+    let document = document();
+    let root = document
+        .get_element_by_id("leptos-root")
+        .ok_or_else(|| JsValue::from_str("Conversation document is incomplete"))?
+        .dyn_into::<HtmlElement>()?;
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Config {
+        colors: Vec<appearance::ColorTheme>,
+        workspace_icons: shell::Icons,
+        conversation_icons: conversation::Icons,
+    }
+    let config = document
+        .get_element_by_id("appearance-config")
+        .and_then(|element| element.text_content())
+        .and_then(|raw| serde_json::from_str::<Config>(&raw).ok())
+        .ok_or_else(|| JsValue::from_str("Conversation configuration is invalid"))?;
+    let path = window().location().pathname()?;
+    mount_to(root, move || {
+        let colors = StoredValue::new(config.colors);
+        provide_context(config.conversation_icons);
+        view! {
+            <shell::WorkspaceShell base_path=path colors=colors icons=config.workspace_icons conversation_navigation=true>
+                {conversation::standalone()}
+            </shell::WorkspaceShell>
+        }
+    }).forget();
     Ok(())
 }

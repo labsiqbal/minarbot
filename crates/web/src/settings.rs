@@ -17,9 +17,9 @@ pub struct Config {
     close_icon: String,
     pub(crate) error_icon: String,
     #[serde(default)]
-    pub(crate) connection_icons: crate::connection_ui::Icons,
+    connection_icons: crate::connection_ui::Icons,
     #[serde(default)]
-    pub(crate) system_icons: crate::system::kit::Icons,
+    system_icons: crate::system::kit::Icons,
     #[serde(default)]
     mcp_scopes: Vec<crate::system::external::Scope>,
 }

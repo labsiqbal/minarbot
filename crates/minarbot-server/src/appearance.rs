@@ -10,6 +10,26 @@ pub use workspace_route::WorkspaceRoute;
 
 pub const NAMESPACE: &str = "/_leptos/";
 pub const DOCUMENT: &str = "_leptos/appearance.html";
+pub const WORKFLOWS_DOCUMENT: &str = "_leptos/workflows.html";
+pub const CONVERSATION_DOCUMENT: &str = "_leptos/conversation.html";
+
+pub fn conversation_route(path: &str, query: &str) -> bool {
+    crate::navigation(path)
+        && (path.starts_with("/rooms/")
+            || path.starts_with("/agents/") && !path.ends_with("/inbox"))
+        && form_urlencoded::parse(query.as_bytes())
+            .any(|(key, value)| key == "ui" && value == "leptos")
+}
+
+pub fn conversation_document(html: &str, path: &str, query: &str) -> String {
+    let mut params = form_urlencoded::Serializer::new(String::new());
+    params.append_pair("ui", "react");
+    params.extend_pairs(form_urlencoded::parse(query.as_bytes()).filter(|(key, _)| key != "ui"));
+    html.replace(
+        "__REACT_CONVERSATION__",
+        &format!("{path}?{}", params.finish()).replace('&', "&amp;"),
+    )
+}
 
 /// Pairing may load only the hashed startup module from the packaged document.
 pub fn startup_asset(document: &str) -> Option<&str> {
@@ -71,6 +91,19 @@ pub fn route_title(state: &crate::AppState, path: &str, query: &str) -> Option<&
             (!ready).then(|| WorkspaceRoute::Setup.title())
         }
         route => Some(route.title()),
+    }
+}
+
+pub fn document_for_route(path: &str, query: &str) -> &'static str {
+    if WorkspaceRoute::from_path(path).is_some_and(|route| {
+        route.is_automation()
+            || matches!(route, WorkspaceRoute::Project(_))
+                && form_urlencoded::parse(query.as_bytes())
+                    .any(|(key, value)| key == "projectTab" && value == "calendar")
+    }) {
+        WORKFLOWS_DOCUMENT
+    } else {
+        DOCUMENT
     }
 }
 

@@ -5,6 +5,7 @@ use wasm_bindgen::JsCast;
 pub(super) fn Select(
     name: &'static str,
     #[prop(optional, into)] label: Option<String>,
+    #[prop(optional_no_strip)] described_by: Option<&'static str>,
     value: Signal<String>,
     options: Signal<Vec<(String, String)>>,
     change: Callback<String>,
@@ -88,7 +89,7 @@ pub(super) fn Select(
     let typeahead = RwSignal::new((0.0_f64, String::new()));
     view! {
         <button id=name node_ref=trigger type="button" role="combobox" class="k-input k-select" class:k-select--sm=small
-            aria-label=label aria-controls=controls aria-haspopup="listbox" aria-expanded=move || expanded.get().to_string()
+            aria-label=label aria-describedby=described_by aria-controls=controls aria-haspopup="listbox" aria-expanded=move || expanded.get().to_string()
             data-state=move || if expanded.get() {"open"}else{"closed"} disabled=disabled
             on:click=move |_| open(false)
             on:keydown=move |event: web_sys::KeyboardEvent| {

@@ -9,6 +9,10 @@ pub enum WorkspaceRoute {
 }
 
 impl WorkspaceRoute {
+    pub fn is_automation(&self) -> bool {
+        matches!(self, Self::Routines | Self::Workflows | Self::Calendar)
+    }
+
     pub fn from_path(path: &str) -> Option<Self> {
         if path == "/" {
             return Some(Self::Setup);

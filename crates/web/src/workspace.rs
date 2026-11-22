@@ -1,13 +1,22 @@
-use crate::{automation, onboarding, projects, workspace_route::WorkspaceRoute};
+#[cfg(feature = "workflows")]
+use crate::automation;
+use crate::{onboarding, projects, workspace_route::WorkspaceRoute};
 use leptos::prelude::*;
 
 pub fn page(route: WorkspaceRoute, error_icon: String) -> impl IntoView {
     document().set_title(&format!("{} · Minarbot", route.title()));
     match route {
         WorkspaceRoute::Setup => onboarding::page(error_icon).into_any(),
+        #[cfg(feature = "workflows")]
         WorkspaceRoute::Routines => automation::routines_page().into_any(),
+        #[cfg(feature = "workflows")]
         WorkspaceRoute::Workflows => automation::workflows_page().into_any(),
+        #[cfg(feature = "workflows")]
         WorkspaceRoute::Calendar => automation::calendar_page(Signal::stored(true)).into_any(),
+        #[cfg(not(feature = "workflows"))]
+        WorkspaceRoute::Routines | WorkspaceRoute::Workflows | WorkspaceRoute::Calendar => {
+            ().into_any()
+        }
         WorkspaceRoute::Project(id) => projects::page(id, error_icon).into_any(),
     }
 }

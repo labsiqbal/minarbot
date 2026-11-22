@@ -6,11 +6,19 @@ use std::{
     fs::{self, File},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 const VERSION: &str = "0.2.130";
+const WASM_PROFILE: &str = "wasm-release";
+const BINARYEN_VERSION: &str = "133";
 const NAMESPACE: &str = "/_leptos/";
+// Each route group gets its own document, CSS and Wasm.
+const ROUTE_GROUPS: [(&str, &[&str]); 3] = [
+    ("appearance", &[]),
+    ("workflows", &["--features", "workflows"]),
+    ("conversation", &["--features", "conversation"]),
+];
 
 fn bindgen(target: &Path) -> Result<PathBuf> {
     let (host, checksum) = match (env::consts::OS, env::consts::ARCH) {
@@ -61,6 +69,66 @@ fn bindgen(target: &Path) -> Result<PathBuf> {
     Ok(bin)
 }
 
+fn wasm_opt(target: &Path) -> Result<PathBuf> {
+    let (host, checksum) = match (env::consts::OS, env::consts::ARCH) {
+        ("linux", "x86_64") => (
+            "x86_64-linux",
+            "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489",
+        ),
+        ("linux", "aarch64") => (
+            "aarch64-linux",
+            "89c07ea56faf38d0fbecf36ca8ec0721756716185f265b568e133d427f299bf8",
+        ),
+        ("macos", "x86_64") => (
+            "x86_64-macos",
+            "13a9b90be775c6389ce3d1f879cb8627bea56708ba8c122983941d53a8199b95",
+        ),
+        ("macos", "aarch64") => (
+            "arm64-macos",
+            "ad66da82ac13f163e424b1643f16c6dfcccc98b5966296b43e52d3cab04f84a8",
+        ),
+        _ => return Err("Unsupported host for pinned Binaryen CLI.".into()),
+    };
+    let name = format!("binaryen-version_{BINARYEN_VERSION}-{host}");
+    let bin = target.join(&name).join("bin/wasm-opt");
+    if !bin.is_file() {
+        let temp = private_stage("binaryen-cli-", target)?;
+        let archive = temp.path().join(format!("{name}.tar.gz"));
+        run(Command::new("curl")
+            .args(["--fail", "--silent", "--show-error", "--location", "--retry", "2", "--max-time", "180", "--output"])
+            .arg(&archive)
+            .arg(format!("https://github.com/WebAssembly/binaryen/releases/download/version_{BINARYEN_VERSION}/{name}.tar.gz")))?;
+        if sha256(&archive)? != checksum {
+            return Err("Binaryen download checksum mismatch.".into());
+        }
+        let unpacked = format!("binaryen-version_{BINARYEN_VERSION}");
+        run(Command::new("tar")
+            .arg("-xzf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(temp.path())
+            .arg(format!("{unpacked}/bin/wasm-opt")))?;
+        if let Err(error) = fs::rename(temp.path().join(unpacked), target.join(&name)) {
+            if !bin.is_file() {
+                return Err(error.into());
+            }
+        }
+    }
+    let version = output(Command::new(&bin).arg("--version"))?;
+    if version.split_whitespace().nth(2) != Some(BINARYEN_VERSION) {
+        return Err("Unexpected Binaryen CLI version.".into());
+    }
+    Ok(bin)
+}
+
+fn gzip(source: &Path, destination: &Path) -> Result<u64> {
+    run(Command::new("gzip")
+        .args(["-n", "-9", "-c"])
+        .arg(source)
+        .stdout(Stdio::from(File::create(destination)?)))?;
+    Ok(fs::metadata(destination)?.len())
+}
+
 fn hash_asset(source: &Path, assets: &Path, name: &str, ext: &str) -> Result<String> {
     let hash = sha256(source)?;
     let filename = format!("{name}.{}.{ext}", &hash[..16]);
@@ -69,8 +137,13 @@ fn hash_asset(source: &Path, assets: &Path, name: &str, ext: &str) -> Result<Str
 }
 
 pub fn require_build(app: &Path) -> Result<()> {
-    if !app.join("dist/_leptos/appearance.html").is_file() {
-        return Err("Build Leptos Appearance with cargo xtask leptos before packaging.".into());
+    for (name, _) in ROUTE_GROUPS {
+        if !app.join(format!("dist/_leptos/{name}.html")).is_file() {
+            return Err(format!(
+                "Build the Leptos {name} group with cargo xtask leptos before packaging."
+            )
+            .into());
+        }
     }
     Ok(())
 }
@@ -81,57 +154,94 @@ pub fn build(root: &Path) -> Result<()> {
     let target = web.join("target");
     fs::create_dir_all(&target)?;
     let cli = bindgen(&target)?;
+    let optimizer = wasm_opt(&target)?;
     let began = Instant::now();
-    run(Command::new("cargo")
-        .current_dir(&web)
-        .env_remove("RUSTUP_TOOLCHAIN")
-        .env("CARGO_TARGET_DIR", &target)
-        .args([
-            "build",
-            "--locked",
-            "--release",
-            "--target",
-            "wasm32-unknown-unknown",
-        ]))?;
-    let cargo_time = began.elapsed();
-    let package_began = Instant::now();
     let dist = app.join("dist");
     fs::create_dir_all(&dist)?;
     let temp = private_stage("bindgen-", &target)?;
     let stage = private_stage(".leptos-", &dist)?;
     let assets = stage.path().join("assets");
     fs::create_dir(&assets)?;
-    run(Command::new(&cli)
-        .args([
-            "--target",
-            "web",
-            "--out-name",
-            "appearance",
-            "--no-typescript",
-            "--out-dir",
-        ])
-        .arg(temp.path())
-        .arg(target.join("wasm32-unknown-unknown/release/minarbot_web.wasm")))?;
-    let wasm = hash_asset(
-        &temp.path().join("appearance_bg.wasm"),
-        &assets,
-        "appearance",
-        "wasm",
-    )?;
-    let glue = temp.path().join("appearance.js");
-    fs::write(
-        &glue,
-        fs::read_to_string(&glue)?.replace("appearance_bg.wasm", &wasm),
-    )?;
-    let start_source = temp.path().join("start.js");
-    fs::write(
-        &start_source,
-        fs::read_to_string(web.join("start.js"))?.replace("__WASM_URL__", &wasm),
-    )?;
+    let mut inputs = BTreeMap::new();
+    let mut cargo_time = Duration::ZERO;
+    let mut bundles = BTreeMap::new();
+    for (name, features) in ROUTE_GROUPS {
+        let cargo_began = Instant::now();
+        run(Command::new("cargo")
+            .current_dir(&web)
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .env("CARGO_TARGET_DIR", &target)
+            .args([
+                "build",
+                "--locked",
+                "--profile",
+                WASM_PROFILE,
+                "--target",
+                "wasm32-unknown-unknown",
+                "--config",
+                "target.wasm32-unknown-unknown.rustflags=['--cfg','erase_components']",
+            ])
+            .args(features))?;
+        cargo_time += cargo_began.elapsed();
+        run(Command::new(&cli)
+            .args([
+                "--target",
+                "web",
+                "--out-name",
+                name,
+                "--no-typescript",
+                "--remove-name-section",
+                "--remove-producers-section",
+                "--out-dir",
+            ])
+            .arg(temp.path())
+            .arg(target.join(format!(
+                "wasm32-unknown-unknown/{WASM_PROFILE}/minarbot_web.wasm"
+            ))))?;
+        let wasm_name = format!("{name}_bg.wasm");
+        let unoptimized = temp.path().join(&wasm_name);
+        let before_raw = fs::metadata(&unoptimized)?.len();
+        let before_gzip = gzip(&unoptimized, &unoptimized.with_extension("wasm.gz"))?;
+        let optimized = temp.path().join(format!("{name}_optimized.wasm"));
+        run(Command::new(&optimizer)
+            .args(["-Oz", "--strip-debug", "--strip-producers", "-o"])
+            .arg(&optimized)
+            .arg(&unoptimized))?;
+        let after_raw = fs::metadata(&optimized)?.len();
+        let after_gzip = gzip(&optimized, &optimized.with_extension("wasm.gz"))?;
+        let wasm = hash_asset(&optimized, &assets, name, "wasm")?;
+        bundles.insert(
+            name,
+            json!({
+                "routeGroup": if name == "appearance" { "shell-settings" } else { name },
+                "beforeWasmOpt": { "raw": before_raw, "gzip": before_gzip },
+                "afterWasmOpt": { "raw": after_raw, "gzip": after_gzip },
+                "asset": wasm,
+            }),
+        );
+        let glue = temp.path().join(format!("{name}.js"));
+        fs::write(&glue, fs::read_to_string(&glue)?.replace(&wasm_name, &wasm))?;
+        let adapter = match name {
+            "conversation" => "globalThis.MinarbotConversation = (await import('minarbot-conversation-adapter')).browserAdapter;",
+            "workflows" => "globalThis.minarbotWorkflowMarkdown = (text, scope) => import('minarbot-workflow-markdown').then(({ renderWorkflowMarkdown }) => renderWorkflowMarkdown(text, scope));",
+            _ => "",
+        };
+        let start = temp.path().join(format!("{name}-start.js"));
+        fs::write(
+            &start,
+            fs::read_to_string(web.join("start.js"))?
+                .replace("__APP__", name)
+                .replace("__MOUNT__", &format!("mount_{name}"))
+                .replace("__WASM_URL__", &wasm)
+                .replace("__ADAPTER__", adapter),
+        )?;
+        inputs.insert(format!("{name}-start"), start);
+        inputs.insert(name.to_owned(), web.join(format!("{name}.css")));
+    }
     let bundle = temp.path().join("bundle");
     run(Command::new("node")
         .current_dir(&app)
-        .env("MINARBOT_LEPTOS_START", start_source)
+        .env("MINARBOT_LEPTOS_INPUTS", serde_json::to_string(&inputs)?)
         .args([
             "node_modules/vite/bin/vite.js",
             "build",
@@ -144,45 +254,38 @@ pub fn build(root: &Path) -> Result<()> {
     let themes = hash_asset(&bundle.join("themes.css"), &assets, "themes", "css")?;
     let icon = hash_asset(&app.join("src/favicon.svg"), &assets, "minarbot", "svg")?;
     let mut sizes = BTreeMap::new();
-    let (mut styles, mut start) = (None, None);
     let entries = fs::read_dir(&assets)?.collect::<std::io::Result<Vec<_>>>()?;
     for entry in entries {
         let name = entry
             .file_name()
             .into_string()
             .map_err(|_| "Invalid asset filename")?;
-        let url = || format!("{NAMESPACE}assets/{name}");
-        if name.starts_with("appearance.") && name.ends_with(".css") {
-            styles = Some(url());
-        }
-        if name.starts_with("start.") && name.ends_with(".js") {
-            start = Some(url());
-        }
         let mut size = json!({ "raw": entry.metadata()?.len() });
         if !name.ends_with(".woff2") {
-            let gzip = assets.join(format!("{name}.gz"));
-            run(Command::new("gzip")
-                .args(["-n", "-9", "-c"])
-                .arg(entry.path())
-                .stdout(Stdio::from(File::create(&gzip)?)))?;
-            size["gzip"] = json!(fs::metadata(gzip)?.len());
+            size["gzip"] = json!(gzip(&entry.path(), &assets.join(format!("{name}.gz")))?);
         }
         sizes.insert(format!("assets/{name}"), size);
     }
-    let config = fs::read_to_string(bundle.join("appearance-config.json"))?.replace('<', "\\u003c");
-    let html = fs::read_to_string(web.join("appearance.html"))?
-        .replace("__ICON_URL__", &icon)
-        .replace(
-            "__STYLES_URL__",
-            &styles.ok_or("Appearance CSS is missing.")?,
-        )
-        .replace("__THEMES_URL__", &themes)
-        .replace(
-            "__START_URL__",
-            &start.ok_or("Appearance bootstrap is missing.")?,
-        )
-        .replace("__CONFIG__", &config);
-    fs::write(stage.path().join("appearance.html"), html)?;
+    for (name, _) in ROUTE_GROUPS {
+        let asset = |prefix: &str, extension: &str| -> Result<String> {
+            let key = format!("assets/{prefix}.");
+            let path = sizes
+                .keys()
+                .find(|path| path.starts_with(&key) && path.ends_with(extension))
+                .ok_or_else(|| format!("Missing Leptos asset {prefix}{extension}"))?;
+            Ok(format!("{NAMESPACE}{path}"))
+        };
+        let config =
+            fs::read_to_string(bundle.join(format!("{name}-config.json")))?.replace('<', "\\u003c");
+        let document = format!("{name}.html");
+        let html = fs::read_to_string(web.join(&document))?
+            .replace("__ICON_URL__", &icon)
+            .replace("__STYLES_URL__", &asset(name, ".css")?)
+            .replace("__THEMES_URL__", &themes)
+            .replace("__START_URL__", &asset(&format!("{name}-start"), ".js")?)
+            .replace("__CONFIG__", &config);
+        fs::write(stage.path().join(document), html)?;
+    }
     for name in ["NOTICE", "NOTICE.hermes", "NOTICE.t3", "provenance.json"] {
         copy(
             &app.join("src/ui").join(name),
@@ -219,7 +322,10 @@ pub fn build(root: &Path) -> Result<()> {
         "{}",
         serde_json::to_string_pretty(&json!({
             "cargoWallSeconds": cargo_time.as_secs_f64(),
-            "packageSeconds": package_began.elapsed().as_secs_f64(),
+            "packageSeconds": began.elapsed().saturating_sub(cargo_time).as_secs_f64(),
+            "wasmProfile": WASM_PROFILE,
+            "binaryen": BINARYEN_VERSION,
+            "bundles": bundles,
             "sizes": sizes,
         }))?
     );

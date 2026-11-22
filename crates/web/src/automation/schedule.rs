@@ -288,7 +288,9 @@ pub(super) fn ScheduleFields(
                         prop:value=time on:input=move |event| time.set(event_target_value(&event)) /></kit::Field>
                 </Show>
                 <kit::Field id="routine-zone" label="Time zone"><input id="routine-zone" class="k-input" required=active disabled=locked maxlength="100"
-                    placeholder="Asia/Jakarta" prop:value=zone on:input=move |event| zone.set(event_target_value(&event)) /></kit::Field>
+                    aria-describedby="routine-zone-hint" placeholder="Asia/Jakarta" prop:value=zone on:input=move |event| zone.set(event_target_value(&event)) />
+                    <span class="k-field__hint" id="routine-zone-hint">"IANA zone. Daily and weekly times follow its local clock."</span>
+                </kit::Field>
             </div>
             <Show when=move || mode.get() == "weekly">
                 <fieldset class="routine-days"><legend>"Days"</legend>

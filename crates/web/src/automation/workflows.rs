@@ -33,6 +33,14 @@ fn result_markdown(value: String, run: &str) -> impl IntoView {
     }
 }
 
+fn badge_tone(value: &str) -> &'static str {
+    match value {
+        "done" => "success",
+        "failed" | "approval" => "warn",
+        _ => "neutral",
+    }
+}
+
 fn workflow_request(key: &str, value: Value) -> Result<Request, String> {
     let owner = key
         .strip_prefix("minarbot:workflow-command:")
@@ -1260,9 +1268,10 @@ fn Detail(
                     Some(value) if rows(&value).is_empty() => kit::empty("No runs on this page yet",String::new()).into_any(),
                     Some(value) => view! { <kit::Card>{rows(&value).iter().map(|row| {
                         let id=text(&row["id"]).to_owned();
-                        let label = status(text(&row["status"])).to_owned();
+                        let tone = badge_tone(text(&row["status"]));
+                        let label = if row["status"] == "done" { "Done".to_owned() } else { step_label(row) };
                         let when=date_text(&row["created"]);
-                        view! { <ui::Row title=when meta=kit::content(move || kit::badge("neutral",label))
+                        view! { <ui::Row title=when meta=kit::content(move || kit::badge(tone,label))
                             trailing=kit::content(move || view! {
                                 <button type="button" class="k-btn k-btn--sm k-btn--secondary"
                                     aria-pressed={ let selected=id.clone(); move || (run.get()==selected).to_string() }
@@ -1621,21 +1630,35 @@ pub(super) fn run_details(
     let steps = Signal::derive(move || snapshot.with(|run| run["steps"].clone()));
     let result = Memo::new(move |_| snapshot.with(|run| text(&run["last"]).to_owned()));
     let selection = RwSignal::new(String::new());
+    let selected = Signal::derive(move || {
+        selection.with(|id| {
+            if id.is_empty() {
+                snapshot.with(|run| text(&run["cursor"]).to_owned())
+            } else {
+                id.clone()
+            }
+        })
+    });
     let details = NodeRef::<leptos::html::Div>::new();
     let return_to_step = actions.is_some();
-    let title = move || {
-        snapshot.with(|run| format!("Version {} · {}", number(&run["version"]), step_label(run)))
-    };
     view! {
         <div class="k-stack">
             <ReadError query label="Reload run" />
             <Show when=move || !loaded() && query.error.with(String::is_empty)>{kit::skeleton(3,"Loading run inspector...")}</Show>
             <Show when=loaded>
-                <div>{kit::badge("neutral",title)}</div>
+                {move || snapshot.with(|run| {
+                    let version = format!("Version {}", number(&run["version"]));
+                    if return_to_step {
+                        let label = if run["status"] == "done" { "Done".into() } else { step_label(run) };
+                        view! { <h2 class="k-section__title">{version} " " {kit::badge(badge_tone(text(&run["status"])), label)}</h2> }.into_any()
+                    } else {
+                        view! { <div>{kit::badge("neutral",format!("{version} · {}",step_label(run)))}</div> }.into_any()
+                    }
+                })}
                 <Show when=move || snapshot.with(|run| !text(&run["error"]).is_empty())>
                     <kit::Alert tone="error">{move || snapshot.with(|run| text(&run["error"]).to_owned())}</kit::Alert>
                 </Show>
-                <Graph graph selected=selection steps=steps clicked=Callback::new(move |id| {
+                <Graph graph selected steps=steps clicked=Callback::new(move |id| {
                     selection.set(id);
                     request_animation_frame(move || { if let Some(node)=details.get_untracked() { let _=node.focus(); } });
                 }) />

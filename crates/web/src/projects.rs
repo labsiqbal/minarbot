@@ -277,47 +277,37 @@ fn overview(project: Project, error_icon: String) -> impl IntoView {
     let project_url = project.with_value(|project| format!("/projects/{}", project.id));
     let react_url = format!("{project_url}?ui=react");
     let calendar_url = format!("{project_url}?projectTab=calendar");
-    let active_calendar = || {
-        window()
-            .location()
-            .search()
-            .ok()
-            .and_then(|query| {
-                web_sys::UrlSearchParams::new_with_str(&query)
-                    .ok()?
-                    .get("projectTab")
-            })
-            .as_deref()
-            == Some("calendar")
-    };
-    let calendar = RwSignal::new(active_calendar());
-    let search_signal = use_context::<shell::WorkspaceSearch>().map(|search| search.0);
-    let listener = window_event_listener(leptos::ev::popstate, move |_| {
-        calendar.set(active_calendar());
-        if let Some(search) = search_signal {
-            search.set(window().location().search().unwrap_or_default());
-        }
-    });
-    on_cleanup(move || listener.remove());
+    let calendar = cfg!(feature = "workflows")
+        && window().location().search().ok().is_some_and(|query| {
+            web_sys::UrlSearchParams::new_with_str(&query)
+                .ok()
+                .and_then(|params| params.get("projectTab"))
+                .as_deref()
+                == Some("calendar")
+        });
     let choose = move |calendar_tab: bool, url: &str| {
-        if calendar.get_untracked() != calendar_tab {
-            let pushed = window().history().and_then(|history| {
-                history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(url))
-            });
-            if pushed.is_err() {
-                let _ = window().location().assign(url);
-                return;
-            }
-            calendar.set(calendar_tab);
-            if let Some(search) = search_signal {
-                search.set(window().location().search().unwrap_or_default());
-            }
+        if calendar != calendar_tab {
+            let _ = window().location().assign(url);
         }
     };
     let overview_href = StoredValue::new(project_url);
     let calendar_href = StoredValue::new(calendar_url);
-    let calendar_project = project
-        .with_value(|row| json!({"id":row.id,"archived":row.archived,"members":row.members}));
+    let calendar_tab = NodeRef::<leptos::html::Button>::new();
+    #[cfg(feature = "workflows")]
+    let calendar_panel = {
+        let calendar_project = project
+            .with_value(|row| json!({"id":row.id,"archived":row.archived,"members":row.members}));
+        calendar_tab.on_load(|tab| {
+            let _ = tab.focus();
+        });
+        view! {
+            <div id="project-calendar-panel" class="k-tabs__panel calendar-in-project" role="tabpanel" aria-labelledby="project-calendar-tab">
+                <crate::automation::Calendar project=Some(calendar_project) />
+            </div>
+        }
+    };
+    #[cfg(not(feature = "workflows"))]
+    let calendar_panel = ();
     let pending = RwSignal::new(read_pending());
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
@@ -510,22 +500,18 @@ fn overview(project: Project, error_icon: String) -> impl IntoView {
                 <div class="k-inline" role="tablist" aria-label="Project overview and calendar"
                   on:keydown=move |event| crate::settings::move_focus(&event, "[role=tablist]", true)>
                 <button type="button" class="k-tabs__tab" role="tab" id="project-overview-tab" aria-controls="project-overview-panel"
-                  tabindex=move || if calendar.get() {-1} else {0}
-                  aria-selected=move || (!calendar.get()).to_string() data-state=move || if calendar.get() {"inactive"}else{"active"}
+                  tabindex=if calendar {-1} else {0}
+                  aria-selected=(!calendar).to_string() data-state=if calendar {"inactive"}else{"active"}
                   on:click=move |_| overview_href.with_value(|href| choose(false,href))>"Overview"</button>
-                <button type="button" class="k-tabs__tab" role="tab" id="project-calendar-tab" aria-controls="project-calendar-panel"
-                  tabindex=move || if calendar.get() {0} else {-1}
-                  aria-selected=move || calendar.get().to_string() data-state=move || if calendar.get() {"active"}else{"inactive"}
+                <button type="button" class="k-tabs__tab" role="tab" id="project-calendar-tab" aria-controls="project-calendar-panel" node_ref=calendar_tab
+                  tabindex=if calendar {0} else {-1}
+                  aria-selected=calendar.to_string() data-state=if calendar {"active"}else{"inactive"}
                   on:click=move |_| calendar_href.with_value(|href| choose(true,href))>"Calendar"</button>
                 </div>
                 {[("apps", "Connected apps"), ("environment", "Environment"), ("mcp", "MCP")].into_iter()
                     .map(|(tab, label)| view! { <a class="k-tabs__tab" href=format!("{react_url}&projectTab={tab}")>{label}</a> }).collect_view()}
             </nav>
-            {move || calendar.get().then(|| view! {
-                <div id="project-calendar-panel" class="k-tabs__panel calendar-in-project" role="tabpanel" aria-labelledby="project-calendar-tab">
-                    <crate::automation::Calendar project=Some(calendar_project.clone()) />
-                </div>
-            })}
+            {calendar_panel}
             <div id="project-overview-panel" class="k-tabs__panel" role="tabpanel" aria-labelledby="project-overview-tab" hidden=calendar>
             <form class="k-stack" hidden=move || !editing.get() on:submit=save>
                 <section class="k-section">

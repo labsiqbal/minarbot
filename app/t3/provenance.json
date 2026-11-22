@@ -2739,6 +2739,7 @@
       "localPaths": [
         "app/src/html-reply.ts",
         "app/src/HtmlReply.tsx",
+        "app/src/html-reply-bridge.ts",
         "crates/minarbot-server/src/files/rich_html/bootstrap.html"
       ],
       "adaptation": "Opaque iframe bootstrap, theme variables, content sizing and link forwarding. Minarbot bridge adds validated draft and context messages.",
@@ -2803,6 +2804,7 @@
       ],
       "localPaths": [
         "app/src/McpAppFrame.tsx",
+        "app/src/mcp-app-bridge.ts",
         "app/src/mcp-app-host.ts"
       ],
       "adaptation": "Port JSON-RPC lifecycle, bounded messages, tool delivery, context and host theme.",
@@ -2819,7 +2821,8 @@
         "McpAppFrame"
       ],
       "localPaths": [
-        "app/src/McpAppFrame.tsx"
+        "app/src/McpAppFrame.tsx",
+        "app/src/mcp-app-bridge.ts"
       ],
       "adaptation": "Adopt frame source checks, user confirmations and host context on the Minarbot kit.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",

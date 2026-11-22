@@ -271,7 +271,8 @@ async fn static_ui(
     }
     let hashed = path.starts_with("/assets/") || leptos_asset;
     let spa = !hashed && !public_ui_asset(path);
-    let leptos_document = state.config.dist.join(appearance::DOCUMENT);
+    let document = appearance::document_for_route(path, query);
+    let leptos_document = state.config.dist.join(document);
     let pilot = spa
         && state.config.appearance_client == config::AppearanceClient::Leptos
         && !appearance::react_override(query)
@@ -281,9 +282,17 @@ async fn static_ui(
     let leptos_page = pilot
         .then(|| appearance::route_title(state, path, query))
         .flatten();
+    let conversation_page = state.config.appearance_client == config::AppearanceClient::Leptos
+        && !appearance::react_override(query)
+        && appearance::conversation_route(path, query)
+        && tokio::fs::try_exists(state.config.dist.join(appearance::CONVERSATION_DOCUMENT))
+            .await
+            .unwrap_or(false);
     let file = state.config.dist.join(if spa {
         if leptos_page.is_some() {
-            appearance::DOCUMENT
+            document
+        } else if conversation_page {
+            appearance::CONVERSATION_DOCUMENT
         } else {
             "index.html"
         }
@@ -316,6 +325,10 @@ async fn static_ui(
     if let Some(title) = leptos_page {
         bytes =
             appearance::document(&String::from_utf8_lossy(&bytes), path, title, query).into_bytes();
+        policy = Some(appearance::POLICY.to_owned());
+    } else if conversation_page {
+        bytes = appearance::conversation_document(&String::from_utf8_lossy(&bytes), path, query)
+            .into_bytes();
         policy = Some(appearance::POLICY.to_owned());
     } else if spa {
         let html = String::from_utf8_lossy(&bytes);

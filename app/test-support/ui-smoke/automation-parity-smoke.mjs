@@ -24,6 +24,13 @@ let browser;
 const receipts = {};
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
 const clients = process.env.MINARBOT_SMOKE_UI ? [process.env.MINARBOT_SMOKE_UI] : ['react', 'leptos'];
+const coldSamples = Number(process.env.MINARBOT_AUTOMATION_COLD_BENCH ?? 0);
+assert(Number.isSafeInteger(coldSamples) && coldSamples >= 0);
+const routes = [
+  { path: '/routines', title: 'Routines', ready: 'main .routine-table tbody tr' },
+  { path: '/workflows', title: 'Workflows', ready: 'main .k-row__title' },
+  { path: '/calendar', title: 'Automation calendar', ready: 'main .calendar-grid .calendar-event' },
+];
 const fixtureIds = { agent: randomUUID(), other: randomUUID(), workflow: randomUUID(), routine: randomUUID() };
 
 async function exercise(client) {
@@ -51,6 +58,10 @@ async function exercise(client) {
     assert.equal((await response.headerValue('content-security-policy')).includes('wasm-unsafe-eval'), client === 'leptos');
     await heading(title).waitFor();
     assert.equal(await page.locator('#leptos-root').count(), client === 'leptos' ? 1 : 0);
+    if (client === 'leptos') {
+      assert.equal(await page.locator('script[src*="/workflows-start."]').count(), 1);
+      assert.equal(await page.locator('script[src*="/appearance-start."], script[src*="/conversation-start."]').count(), 0);
+    }
   };
   const mutations = [];
   const inspectGraph = async label => graphLayout(page, { graphLayouts: [], cspViolations: await page.evaluate(() => window.automationCsp) }, label);
@@ -258,15 +269,40 @@ async function exercise(client) {
     assert.equal(failedExpected.length, 1);
     assert.deepEqual(await page.evaluate(() => window.automationCsp), []);
     console.log(`PASS ${client}: routines, flow, webhook templates, workflow keyboard and layout checks, exact run replay, Markdown and calendar.`);
-    return { mutations: mutations.map(({ id, ...body }) => body), replayed: runBody.length, consoleErrors: errors.length, timings };
+    const cold = coldSamples ? await coldNavigation(origin) : {};
+    return { mutations: mutations.map(({ id, ...body }) => body), replayed: runBody.length, consoleErrors: errors.length, timings, cold };
   } finally {
     await context.close();
     await app.close();
   }
 }
 
+function summarize(values) {
+  values.sort((a, b) => a - b);
+  const middle = (values.length - 1) / 2;
+  return { samples: values.length, median: (values[Math.floor(middle)] + values[Math.ceil(middle)]) / 2,
+    p95: values[Math.ceil(values.length * .95) - 1] };
+}
+
+async function coldNavigation(origin) {
+  const samples = Object.fromEntries(routes.map(({ title }) => [title, []]));
+  for (let attempt = 0; attempt < coldSamples; attempt++) {
+    for (const { path, title, ready } of routes) {
+      const context = await browser.newContext({ viewport: sizes.desktop, timezoneId: 'UTC' });
+      try {
+        const page = await context.newPage();
+        const response = await page.goto(origin + path, { waitUntil: 'commit' });
+        assert.equal(response.status(), 200);
+        await page.locator(ready).first().waitFor({ state: 'visible' });
+        samples[title].push(await page.evaluate(() => performance.now()));
+      } finally { await context.close(); }
+    }
+  }
+  return Object.fromEntries(Object.entries(samples).map(([title, values]) => [title, summarize(values)]));
+}
+
 async function warmNavigation(page) {
-  const titles = ['Routines', 'Workflows', 'Automation calendar'];
+  const titles = routes.map(({ title }) => title);
   await page.getByRole('navigation', { name: 'Automation', exact: true }).waitFor();
   const samples = Object.fromEntries(titles.map(title => [title, []]));
   for (let i = 0; i < 45; i += 1) {
@@ -290,10 +326,7 @@ async function warmNavigation(page) {
       if (i >= 5) samples[title].push(elapsed);
     }
   }
-  return Object.fromEntries(Object.entries(samples).map(([title, values]) => {
-    values.sort((a, b) => a - b);
-    return [title, { samples: values.length, median: (values[19] + values[20]) / 2, p95: values[37] }];
-  }));
+  return Object.fromEntries(Object.entries(samples).map(([title, values]) => [title, summarize(values)]));
 }
 
 try {
@@ -301,14 +334,20 @@ try {
   for (const client of clients) receipts[client] = await exercise(client);
   await writeFile(join(output, 'receipt.json'), JSON.stringify(receipts, null, 2) + '\n');
   if (receipts.react && receipts.leptos) {
-    const { timings: reactTiming, ...react } = receipts.react;
-    const { timings: leptosTiming, ...leptos } = receipts.leptos;
+    const { timings: reactTiming, cold: reactCold, ...react } = receipts.react;
+    const { timings: leptosTiming, cold: leptosCold, ...leptos } = receipts.leptos;
     assert.deepEqual(leptos, react);
     for (const key of Object.keys(reactTiming)) {
       console.log(`${key} warm p95: React ${reactTiming[key].p95.toFixed(1)} ms, Leptos ${leptosTiming[key].p95.toFixed(1)} ms`);
     }
+    for (const key of Object.keys(reactCold)) {
+      console.log(`${key} cold p95: React ${reactCold[key].p95.toFixed(1)} ms, Leptos ${leptosCold[key].p95.toFixed(1)} ms`);
+    }
     for (const key of Object.keys(reactTiming)) {
       assert(leptosTiming[key].p95 <= reactTiming[key].p95 * 1.1, `${key} exceeded the warm p95 regression budget`);
+    }
+    for (const key of Object.keys(reactCold)) {
+      assert(leptosCold[key].p95 <= reactCold[key].p95 * 1.2, `${key} exceeded the cold p95 regression budget`);
     }
   }
 } finally {

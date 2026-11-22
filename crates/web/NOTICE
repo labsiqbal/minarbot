@@ -1,10 +1,14 @@
-Minarbot Appearance client dependencies
+Minarbot Leptos client dependencies
 
 Leptos 0.8.23 - MIT - https://github.com/leptos-rs/leptos/tree/v0.8.23
 gloo-net 0.6.0 - MIT OR Apache-2.0 - https://crates.io/crates/gloo-net/0.6.0
 wasm-bindgen 0.2.130 - MIT OR Apache-2.0 - https://github.com/wasm-bindgen/wasm-bindgen/releases/tag/0.2.130
 web-sys 0.3.107 - MIT OR Apache-2.0 - https://crates.io/crates/web-sys/0.3.107
+js-sys 0.3.107 and wasm-bindgen-futures 0.4.80 - MIT OR Apache-2.0 - https://github.com/wasm-bindgen/wasm-bindgen
 serde and serde_json - MIT OR Apache-2.0 - https://github.com/serde-rs/serde and https://github.com/serde-rs/json
+Marked 18.2.0 - MIT - https://github.com/markedjs/marked
+noVNC 1.7.0 - MPL-2.0 - https://github.com/novnc/noVNC
+Binaryen 133 - Apache-2.0 - https://github.com/WebAssembly/binaryen/releases/tag/version_133
 
 Cargo.lock records exact package versions and registry checksums.
 Shared CSS, palettes, icons and Inter use the same sources as the React build.
