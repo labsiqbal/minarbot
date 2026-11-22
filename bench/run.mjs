@@ -137,7 +137,7 @@ async function attempt(runtime, task, count, server, signal) {
             app = await startServer({ ...server, scratch, fixture: site });
             const { DatabaseSync } = await import('node:sqlite');
             db = new DatabaseSync(app.database, { readOnly: true, timeout: 1000 });
-            const model = native.has(runtime.name) ? 'default' : runtime.model;
+            const model = runtime.model;
             const account = native.has(runtime.name) ? 'device' : server.provider?.id;
             const profile = {
                 runtime: runtime.name, model, ...(account && { providerAccount: account }),
@@ -290,6 +290,7 @@ export async function save(dir, receipt) {
 async function main() {
     const { values } = parseArgs({ options: {
         'dry-run': { type: 'boolean' }, 'project-codegraph': { type: 'boolean' }, tasks: { type: 'string' }, runtime: { type: 'string' },
+        model: { type: 'string' },
         repeat: { type: 'string', default: '1' }, binary: { type: 'string', default: join(root, 'target/release/minarbot-server') },
         results: { type: 'string', default: join(here, 'results') },
     } });
@@ -298,6 +299,7 @@ async function main() {
     assert(taskIds.every(id => selected.some(task => task.id === id)), 'Unknown task ID in --tasks');
     const repeat = Number(values.repeat);
     assert(/^\d+$/.test(values.repeat) && Number.isSafeInteger(repeat) && repeat > 0, '--repeat must be a positive integer');
+    assert(values.model === undefined || native.has(values.runtime) && /^[a-zA-Z0-9._-]{1,160}$/.test(values.model), '--model requires one native runtime and a model ID');
     if (values['dry-run']) {
         for (const task of selected) {
             await dryRun(task);
@@ -330,7 +332,7 @@ async function main() {
         { name: 'api', model: server.provider?.defaultModel, reason: server.provider ? null : 'skipped: no provider' },
         ...choices.choices.map(({ runtime: name, version, available, signedIn, models, reason }) => ({
             name, version, account: native.has(name) ? 'device' : server.provider?.id,
-            model: native.has(name) ? 'default' : models[0]?.id ?? server.provider?.defaultModel ?? 'default',
+            model: native.has(name) ? values.model ?? 'default' : models[0]?.id ?? server.provider?.defaultModel ?? 'default',
             reason: !available ? reason ?? 'Harness unavailable' : signedIn === false ? 'Device sign-in unavailable'
                 : native.has(name) || models.length > 0 || server.provider ? null : 'No ACP model reported and no provider configured',
         })),
