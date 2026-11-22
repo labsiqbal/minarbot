@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 minarbot-launcher = { path = "../minarbot-launcher" }
+minarbot-memory = { path = "../minarbot-memory" }
 flate2 = "1"
 ammonia = "4"
 mail-parser = "0.11"

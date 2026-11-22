@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/minarbot-server", "crates/minarbot-launcher", "crates/minarbot-codegraph"]
+members = ["crates/minarbot-server", "crates/minarbot-launcher", "crates/minarbot-codegraph", "crates/minarbot-memory"]
 resolver = "2"
 
 [workspace.package]

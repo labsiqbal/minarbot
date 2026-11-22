@@ -320,6 +320,7 @@ pub fn handles(path: &str) -> bool {
             | ["api", "agents", _, "folder", "reset"]
             | ["api", "threads", _, "edit" | "delete" | "fork-context"]
             | ["api", "channels", _, "memory" | "edit" | "read"]
+            | ["api", "agents" | "channels", _, "history", "search"]
             | ["api", "channels", _, "turns"]
             | [
                 "api",
@@ -343,6 +344,20 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
     let method = request.method().clone();
     let q = query(&request);
     let headers = request.headers().clone();
+    if let ["api", kind @ ("agents" | "channels"), id, "history", "search"] = parts.as_slice() {
+        if headers.contains_key("authorization")
+            || headers.contains_key("origin") && !origin(state, &headers)
+        {
+            return Err(error(
+                403,
+                "History search requires the local owner in Minarbot.",
+            ));
+        }
+        if method != Method::GET {
+            return Err(error(405, "Use GET for history search."));
+        }
+        return history::search_sessions(state, kind, id, &q).await;
+    }
     if let ["api", "turns", id, "inspect"] = parts.as_slice() {
         return crate::turns::inspect(state, id, &method, &headers, &q);
     }
@@ -713,6 +728,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/{id}/template", any(crate::dispatch))
         .route("/api/agents/{id}/memory", any(crate::dispatch))
         .route("/api/channels/{id}/memory", any(crate::dispatch))
+        .route("/api/agents/{id}/history/search", any(crate::dispatch))
+        .route("/api/channels/{id}/history/search", any(crate::dispatch))
         .route("/api/agents/{id}/threads", any(crate::dispatch))
         .route("/api/threads/{id}", any(crate::dispatch))
         .route("/api/threads/{id}/edit", any(crate::dispatch))
