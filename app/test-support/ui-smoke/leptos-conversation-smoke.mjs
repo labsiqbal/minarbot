@@ -72,7 +72,9 @@ try {
   const input = page.getByRole('textbox', { name: 'Message Conversation fixture' });
   const response = await page.goto(route);
   assert.equal(response.status(), 200);
-  assert.match(await response.headerValue('content-security-policy'), /wasm-unsafe-eval/);
+  const csp = await response.headerValue('content-security-policy');
+  assert.match(csp, /script-src 'self'/);
+  assert.doesNotMatch(csp, /unsafe-eval/);
   await input.fill('Replay fixture');
   await page.reload();
   assert.equal(await input.inputValue(), 'Replay fixture');
