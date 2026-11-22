@@ -36,6 +36,8 @@ pub struct Config {
     pub fixed_clock: Option<i64>,
     #[serde(default)]
     pub test_remote_pairing: bool,
+    #[serde(default)]
+    pub test_memory_extraction: bool,
     pub tls: Option<Tls>,
     #[serde(default, deserialize_with = "workspace_bindings")]
     pub workspaces: Vec<WorkspaceConfig>,
@@ -221,6 +223,7 @@ impl Config {
                 .collect(),
             fixed_clock: None,
             test_remote_pairing: false,
+            test_memory_extraction: false,
             tls,
             workspaces: match std::env::var("MINARBOT_WORKSPACES") {
                 Ok(raw) if raw.len() > 65536 => {

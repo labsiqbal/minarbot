@@ -223,8 +223,12 @@ impl Process {
             ));
         }
         bytes.push(b'\n');
+        self.write_input(&bytes).await
+    }
+
+    pub(crate) async fn write_input(&mut self, bytes: &[u8]) -> Result<()> {
         let stdin = self.stdin.as_mut().ok_or_else(stopped)?;
-        tokio::time::timeout(Duration::from_secs(15), stdin.write_all(&bytes))
+        tokio::time::timeout(Duration::from_secs(15), stdin.write_all(bytes))
             .await
             .map_err(|_| error(502, "Coding harness input timed out."))?
             .map_err(|_| stopped())

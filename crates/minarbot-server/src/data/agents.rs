@@ -495,6 +495,29 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     if v.get("webAccess").is_some_and(|value| !value.is_boolean()) {
         return Err(error(400, "Web access must be a boolean."));
     }
+    let learn = v
+        .get("learnFromConversations")
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| error(400, "Learn from conversations must be a boolean."))
+        })
+        .transpose()?;
+    let memory_model = v
+        .get("memoryModel")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|s| {
+                    s.encode_utf16().count() <= 160
+                        && !s
+                            .chars()
+                            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+                })
+                .map(str::trim)
+                .ok_or_else(|| error(400, "Invalid memory model."))
+        })
+        .transpose()?;
     if !integer(&v["revision"], 1, 9_007_199_254_740_991) {
         return Err(error(400, "Invalid agent revision."));
     }
@@ -514,6 +537,8 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         "providerAccount",
         "webAccess",
         "goalJudgeModel",
+        "learnFromConversations",
+        "memoryModel",
     ] {
         if let Some(value) = v.get(key) {
             request[key] = value.clone();
@@ -605,7 +630,10 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         }
         db.execute("INSERT INTO harness_models(agent,runtime,model) VALUES(?,?,?) ON CONFLICT(agent,runtime) DO UPDATE SET model=excluded.model",[id,selected,harness_model])?;
     }
-    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),web_access=coalesce(?,web_access),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,v["webAccess"].as_bool(),id])?;
+    let binding_changed = account.is_some_and(|a| a != saved_binding)
+        || selected_runtime != string(&current, "runtime");
+    let memory_model = memory_model.or(binding_changed.then_some(""));
+    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),web_access=coalesce(?,web_access),learn_from_conversations=coalesce(?,learn_from_conversations),memory_model=coalesce(?,memory_model),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,v["webAccess"].as_bool(),learn,memory_model,id])?;
     if account.is_some_and(|a| a != string(&current, "provider_account"))
         && table(db, "model_fallbacks")?
     {

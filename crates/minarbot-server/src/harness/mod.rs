@@ -1,5 +1,6 @@
 pub mod config;
 mod fs;
+pub(crate) mod memory;
 pub(crate) mod model_catalog;
 pub(crate) mod pdf;
 pub(crate) mod process;

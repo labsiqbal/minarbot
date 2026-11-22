@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDatabase } from './test-support/database.ts';
@@ -21,10 +21,30 @@ function snapshot(db: ReturnType<typeof testDatabase>) {
 }
 
 const ledger = 'SELECT version, name, checksum FROM schema_migrations ORDER BY version';
-const goalSchema = readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8');
 
 function fixture(name: string) {
   return readFileSync(new URL(`./test-support/fixtures/${name}-pre-collapse.sql`, import.meta.url), 'utf8');
+}
+
+function addMemorySchema(db: ReturnType<typeof testDatabase>, mode: 'canonical' | 'local', phase2 = true) {
+  for (const path of phase2 ? ['minarbot-memory/src/schema.sql', 'minarbot-memory/src/retain.sql'] : ['minarbot-memory/src/schema.sql']) {
+    db.exec(readFileSync(new URL(`../crates/${path}`, import.meta.url), 'utf8'));
+  }
+  if (mode === 'canonical') {
+    db.exec(readFileSync(new URL('../crates/minarbot-server/src/data/memory-history-canonical.sql', import.meta.url), 'utf8'));
+  } else {
+    db.exec(`CREATE VIEW memory_history_scope AS
+      SELECT t.id, CASE WHEN t.channel IS NOT NULL THEN 'channels:'||t.channel
+                        ELSE 'agents:'||coalesce(th.agent,t.agent) END AS bank
+      FROM turns t LEFT JOIN threads th ON th.id=t.thread
+      WHERE t.channel IS NOT NULL OR coalesce(th.agent,t.agent) IS NOT NULL`);
+  }
+  db.exec(readFileSync(new URL('../crates/minarbot-server/src/data/memory-import.sql', import.meta.url), 'utf8'));
+  db.exec('CREATE TABLE memory_imports(version INTEGER PRIMARY KEY) STRICT');
+  if (mode === 'local' && phase2) {
+    db.exec("ALTER TABLE agents ADD COLUMN learn_from_conversations INTEGER NOT NULL DEFAULT 1 CHECK(learn_from_conversations IN(0,1)); ALTER TABLE agents ADD COLUMN memory_model TEXT NOT NULL DEFAULT '';");
+    db.exec(readFileSync(new URL('../crates/minarbot-server/src/data/memory-worker.sql', import.meta.url), 'utf8'));
+  }
 }
 
 async function startAndClose(database: string, mode: 'canonical' | 'local') {
@@ -48,7 +68,7 @@ const retainedData = `SELECT a.*, c.request, t.reply, t.status, p.enabled, o.age
   WHERE a.id='fixture-agent'`;
 
 for (const mode of ['canonical', 'local'] as const) {
-  test(`fresh ${mode} startup matches current schema and reopens 85373b3 data unchanged`, async () => {
+  test(`fresh ${mode} startup adds memory schema to 85373b3 and reopens its data unchanged`, async () => {
     const directory = mkdtempSync(join(tmpdir(), 'minarbot-schema-'));
     const old = join(directory, 'pre-collapse.sqlite');
     const fresh = join(directory, 'fresh.sqlite');
@@ -57,12 +77,14 @@ for (const mode of ['canonical', 'local'] as const) {
       expected.exec(fixture(mode));
       const frozen = snapshot(expected);
       const frozenLedger = mode === 'canonical' ? expected.prepare(ledger).all() : [];
-      if (mode === 'local') expected.exec(goalSchema);
-      const installed = snapshot(expected);
+      if (mode === 'local') expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8'));
+      expected.exec(readFileSync(new URL('../crates/minarbot-server/src/files/schema.sql', import.meta.url), 'utf8'));
+      addMemorySchema(expected, mode);
+      const current = snapshot(expected);
       await startAndClose(fresh, mode);
       const actual = testDatabase(fresh, { readOnly: true });
       try {
-        assert.deepEqual(snapshot(actual), installed);
+        assert.deepEqual(snapshot(actual), current);
         if (mode === 'canonical') {
           assert.deepEqual(actual.prepare(ledger).all(), frozenLedger);
           assert.equal(actual.prepare('SELECT serving_state FROM authority_state').get()?.serving_state, 'active');
@@ -89,15 +111,14 @@ for (const mode of ['canonical', 'local'] as const) {
         const beforeVersion = existing.prepare('PRAGMA schema_version').get();
         const beforeLedger = mode === 'canonical' ? existing.prepare('SELECT * FROM schema_migrations ORDER BY version').all() : [];
         await startAndClose(old, mode);
-        assert.deepEqual(snapshot(existing), installed);
-        const afterVersion = existing.prepare('PRAGMA schema_version').get();
-        if (mode === 'local') {
-          assert.notDeepEqual(afterVersion, beforeVersion);
-          await startAndClose(old, mode);
-          assert.deepEqual(snapshot(existing), installed);
-        }
-        assert.deepEqual(existing.prepare('PRAGMA schema_version').get(), mode === 'local' ? afterVersion : beforeVersion);
-        assert.deepEqual(existing.prepare(retainedData).get(), saved);
+        assert.deepEqual(snapshot(existing), current);
+        const upgradedVersion = existing.prepare('PRAGMA schema_version').get();
+        assert.notDeepEqual(upgradedVersion, beforeVersion);
+        await startAndClose(old, mode);
+        assert.deepEqual(snapshot(existing), current);
+        assert.deepEqual(existing.prepare('PRAGMA schema_version').get(), upgradedVersion);
+        assert.deepEqual({ ...existing.prepare(retainedData).get() }, mode === 'local'
+          ? { ...saved, learn_from_conversations: 1, memory_model: '' } : { ...saved });
         if (mode === 'canonical') assert.deepEqual(existing.prepare('SELECT * FROM schema_migrations ORDER BY version').all(), beforeLedger);
       } finally { existing.close(); }
     } finally {
@@ -119,6 +140,51 @@ test('fresh hub startup matches 85373b3', () => {
     } finally { hub.close(); }
   } finally {
     expected.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('local 0.16.4 memory import does not backfill learning jobs', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-memory-upgrade-'));
+  const database = join(directory, 'legacy.sqlite');
+  const baseline = join(directory, 'baseline.sqlite');
+  const released = process.env.MINARBOT_V0164_BINARY;
+  try {
+    if (released) await startBaseline(baseline, 'local', released);
+    const original = testDatabase(baseline);
+    try {
+      if (!released) original.exec(fixture('local'));
+      original.exec(`INSERT INTO agents(id,name,model,instructions) VALUES('learning-agent','Learning agent','agent-model','');
+        INSERT INTO turns(id,agent,text,reply,status,created) VALUES('historical-turn','learning-agent','Old question','Old answer','done','2026-11-22');`);
+      addMemorySchema(original, 'local', false);
+      original.exec('INSERT INTO memory_imports VALUES(1); INSERT INTO memory_import SELECT * FROM memory_history_rows;');
+      assert.equal(original.prepare('SELECT count(*) AS n FROM memory_units').get()?.n, 2);
+    } finally { original.close(); }
+    copyFileSync(baseline, database);
+
+    const server = await startRustServer({ database });
+    await server.close();
+    const reopened = testDatabase(database);
+    try {
+      assert.equal(reopened.prepare('SELECT count(*) AS n FROM memory_learning_turns').get()?.n, 0);
+      assert.equal(reopened.prepare('SELECT count(*) AS n FROM memory_extraction').get()?.n, 0);
+      reopened.exec(`UPDATE turns SET reply='Edited answer' WHERE id='historical-turn';
+        INSERT INTO turns(id,agent,text,status,created) VALUES('new-turn','learning-agent','New question','queued','2026-11-22');
+        UPDATE turns SET status='done',reply='New answer' WHERE id='new-turn';`);
+      assert.equal(reopened.prepare('SELECT count(*) AS n FROM memory_learning_turns').get()?.n, 1);
+      const queued = reopened.prepare('SELECT source_id,origin FROM memory_extraction JOIN memory_units ON raw=id ORDER BY origin').all();
+      assert.deepEqual(queued.map(row => [row.source_id, row.origin]), [['new-turn', 'prompt'], ['new-turn', 'reply']]);
+      assert.equal(reopened.prepare("SELECT count(*) AS n FROM memory_units JOIN memory_fts ON memory_fts.rowid=id WHERE source_id='historical-turn' AND memory_fts MATCH 'question'").get()?.n, 1);
+
+      reopened.exec(`INSERT INTO agents(id,name,model,instructions,learn_from_conversations) VALUES('paused-agent','Paused agent','agent-model','',0);
+        INSERT INTO turns(id,agent,text,reply,status,created) VALUES('paused-turn','paused-agent','No learn','No learn','queued','2026-11-22');
+        UPDATE turns SET status='done' WHERE id='paused-turn';`);
+      assert.equal(reopened.prepare("SELECT count(*) AS n FROM memory_learning_turns WHERE agent='paused-agent'").get()?.n, 0);
+      assert.equal(reopened.prepare("SELECT count(*) AS n FROM memory_units WHERE source_id='paused-turn'").get()?.n, 2);
+    } finally {
+      reopened.close();
+    }
+  } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });

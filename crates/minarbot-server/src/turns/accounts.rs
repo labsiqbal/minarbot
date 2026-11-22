@@ -117,7 +117,7 @@ pub fn confirm(
             "Wait for other agent work to finish before changing accounts.",
         ));
     }
-    db.execute("UPDATE agents SET provider_account=?,model=?,backup_model='',revision=revision+1 WHERE id=?",params![string(&pending,"account"),string(&pending,"model"),string(&pending,"agent")])?;
+    db.execute("UPDATE agents SET provider_account=?,model=?,backup_model='',memory_model='',revision=revision+1 WHERE id=?",params![string(&pending,"account"),string(&pending,"model"),string(&pending,"agent")])?;
     db.execute(
         "DELETE FROM model_fallbacks WHERE agent=?",
         [string(&pending, "agent")],

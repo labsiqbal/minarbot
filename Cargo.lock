@@ -2346,6 +2346,7 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
+ "chrono",
  "reqwest",
  "rusqlite",
  "serde",

@@ -154,15 +154,17 @@ impl Query<'_> {
     }
 }
 
-fn lexical(db: &Connection, q: &Query<'_>) -> Result<Vec<i64>> {
-    let query = q
-        .text
-        .split(|c: char| !c.is_alphanumeric())
+pub(super) fn fts_expression(text: &str) -> String {
+    text.split(|c: char| !c.is_alphanumeric())
         .filter(|token| !token.is_empty())
         .take(64)
         .map(|token| format!("\"{token}\""))
         .collect::<Vec<_>>()
-        .join(" OR ");
+        .join(" OR ")
+}
+
+fn lexical(db: &Connection, q: &Query<'_>) -> Result<Vec<i64>> {
+    let query = fts_expression(q.text);
     if query.is_empty() {
         return Ok(Vec::new());
     }
