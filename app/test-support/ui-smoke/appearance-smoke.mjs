@@ -556,8 +556,11 @@ async function pairing(client) {
     await page.keyboard.press('Enter');
     await page.waitForURL(origin + '/');
     assert.equal(await pairingForm.count(), 0);
-    const devices = await context.request.get(origin + '/api/device-pairing');
-    const result = await devices.json();
+    // Use the browser's Secure cookie handling on loopback.
+    const result = await page.evaluate(async () => {
+      const response = await fetch('/api/device-pairing');
+      return response.json();
+    });
     assert.equal(result.devices.find(device => device.id === result.current)?.name, 'Parity browser');
     assert.deepEqual(errors, []);
   } finally { await context.close(); await stop(); }
