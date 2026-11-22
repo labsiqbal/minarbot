@@ -14,7 +14,7 @@ pub(crate) mod harness;
 mod history;
 pub(crate) use crate::media::images as media;
 pub(crate) use memory::scoped as canonical_memory;
-mod memory;
+pub(crate) mod memory;
 pub(crate) mod memory_worker;
 pub(crate) mod messaging;
 pub mod options;

@@ -3,7 +3,7 @@ use super::{
     store, Result,
 };
 use crate::{
-    data::{self, error, logins, one, string},
+    data::{self, error, logins, string},
     mcp::secrets,
     web::Failure,
     AppState,
@@ -16,13 +16,7 @@ pub async fn call(state: &AppState, turn: &str, messages: &[Value], phase: &str)
     let (agent, credential, mut redactions) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
-        let agent = one(
-            db,
-            "SELECT a.*, r.model AS learning_model FROM agents a JOIN memory_learning_ready r
-             ON r.agent=a.id WHERE r.id=?",
-            [turn],
-        )?
-        .ok_or_else(Failure::storage)?;
+        let agent = crate::turns::memory::completion_agent(db, turn, phase)?;
         let runtime = string(&agent, "runtime");
         if !logins::device_runtime(runtime) {
             return Err(error(503, "Engine memory login is unavailable."));
@@ -139,12 +133,8 @@ pub async fn call(state: &AppState, turn: &str, messages: &[Value], phase: &str)
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         if crate::turns::pending(state)
-            || !data::exists(
-                db,
-                "SELECT 1 FROM memory_learning_ready r JOIN agents a ON a.id=r.agent
-                WHERE r.id=? AND r.agent=? AND a.revision=?",
-                params![turn, string(&agent, "id"), agent["revision"].as_i64()],
-            )?
+            || crate::turns::memory::completion_agent(db, turn, phase)?["revision"]
+                != agent["revision"]
         {
             return Err(error(409, "Conversation learning settings changed."));
         }

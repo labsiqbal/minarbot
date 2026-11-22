@@ -107,8 +107,8 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
     specs.retain(|t| match string(&t["function"], "name") {
         "read_history" | "read_message" | "read_attachment" | "create_text_file"
         | "open_file_in_panel" | "ask_user" | "select_memory" | "remember_memory"
-        | "search_memory" | "verify_result" | "wait_for_event" | "list_data_tables"
-        | "query_data" => true,
+        | "search_memory" | "recall" | "reflect" | "remember" | "search_history"
+        | "verify_result" | "wait_for_event" | "list_data_tables" | "query_data" => true,
         "web_fetch" | "web_search" => web_access.offered(string(&t["function"], "name")),
         "html_render" | "html_preview" => crate::files::rich_html::available(state, turn),
         "read_provider_settings" => private,
@@ -211,6 +211,9 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }
     if turn["agent"] == crate::mcp::guide::ID {
         return crate::mcp::guide::call(state, turn, name, &args).await;
+    }
+    if matches!(name, "recall" | "reflect" | "search_history") {
+        return super::memory::tool(state, turn, name, &args).await;
     }
     if name == "render_component" {
         return crate::files::components::run(state, turn, call, &args).await;
@@ -534,7 +537,7 @@ pub(super) fn dispatch(
         "read_history" | "read_message" | "read_attachment" => {
             super::history::read(db, turn, name, args)
         }
-        "search_memory" | "remember_memory" | "select_memory" => {
+        "search_memory" | "remember_memory" | "remember" | "select_memory" => {
             super::memory::run(db, turn, name, args)
         }
         "create_text_file" => file_tool(state, db, turn, call, args),

@@ -20,6 +20,7 @@ pub async fn call(
     phase: &str,
 ) -> Result<Answer> {
     let memory = phase.starts_with("memory_");
+    let foreground_memory = phase == "memory_reflect";
     let private = memory || phase == "compaction" || phase == goals::JUDGE;
     let allowance = if memory {
         None
@@ -32,25 +33,42 @@ pub async fn call(
     }
     let native = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        exists(
+        one(
             &guard.connection,
-            "SELECT 1 FROM turns t JOIN agents a ON a.id=t.agent WHERE t.id=? AND a.runtime<>'api'
-                AND (NOT ? OR a.provider_account='device' OR a.provider_account LIKE 'login:%')",
-            params![turn, memory],
+            "SELECT a.runtime,a.provider_account FROM turns t JOIN agents a ON a.id=t.agent
+             WHERE t.id=? AND a.runtime<>'api'",
+            [turn],
         )?
     };
-    if native && hub_turn {
+    if native.is_some() && hub_turn {
         return Err(error(
             403,
             "This runtime cannot fence every native effect for hub turns. Use an API runtime.",
         ));
     }
-    if native && memory {
-        return crate::harness::memory::call(state, turn, messages, phase)
-            .await
-            .map(Answer::Text);
+    if let Some(agent) = native.as_ref().filter(|_| memory) {
+        let runtime = string(agent, "runtime");
+        let binding = string(agent, "provider_account");
+        if crate::data::logins::device_runtime(runtime)
+            && (binding == crate::data::logins::DEVICE
+                || binding.starts_with(crate::data::logins::PREFIX))
+        {
+            return crate::harness::memory::call(state, turn, messages, phase)
+                .await
+                .map(Answer::Text);
+        }
+        if !crate::data::logins::device_runtime(runtime) {
+            let model = {
+                let db = state.database.lock().map_err(|_| Failure::storage())?;
+                let agent = super::memory::completion_agent(&db.connection, turn, phase)?;
+                string(&agent, "learning_model").to_owned()
+            };
+            return Box::pin(crate::harness::run(state, turn, &model, messages, phase))
+                .await
+                .map(Answer::Text);
+        }
     }
-    if native {
+    if native.is_some() && !memory {
         state.turns.mark_started(turn);
         return crate::harness::run(state, turn, model, messages, phase)
             .await
@@ -69,7 +87,7 @@ pub async fn call(
             [turn],
         )?
         .filter(|r| {
-            if memory {
+            if memory && !foreground_memory {
                 r["status"] == "done"
             } else {
                 (r["status"] == "running" || r["status"] == "queued") && r["paused"] == 0
@@ -77,17 +95,24 @@ pub async fn call(
         })
         .ok_or_else(|| error(409, "Task has stopped."))?;
         let learning_model = if memory {
-            let learning = one(
-                db,
-                "SELECT model FROM memory_learning_ready WHERE id=? AND agent=?",
-                params![turn, string(&row, "agent")],
-            )?
-            .ok_or_else(|| error(409, "Conversation learning is paused."))?;
-            Some(string(&learning, "model").to_owned())
+            Some(
+                string(
+                    &super::memory::completion_agent(db, turn, phase)?,
+                    "learning_model",
+                )
+                .to_owned(),
+            )
         } else {
             None
         };
         let account = admission::account(state, db, string(&row, "agent"))?;
+        let learning_model = learning_model.map(|model| {
+            if model.is_empty() || model == "default" {
+                account.model.clone()
+            } else {
+                model
+            }
+        });
         if !private
             && phase != "routing"
             && !super::profile::setup(db, &json!({"id":turn,"agent":row["agent"]}))?
@@ -130,7 +155,13 @@ pub async fn call(
     let model = learning_model.as_deref().unwrap_or(model);
     let streamed = account.stream;
     let max_tokens = if memory {
-        account.max_tokens.min(4096)
+        account
+            .max_tokens
+            .min(if matches!(phase, "memory_reflect" | "memory_refresh") {
+                1024
+            } else {
+                4096
+            })
     } else {
         allowance.map_or(account.max_tokens, |(_, limit)| {
             account.max_tokens.min(limit as u64)

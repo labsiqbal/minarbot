@@ -162,17 +162,16 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 .as_deref()
                 .map(|id| format!("channels:{id}"))
                 .unwrap_or_else(|| format!("agents:{}", string(&turn, "agent")));
-            let memory = all(
-                db,
-                "SELECT id,text FROM memories WHERE scope=? AND essential=1 AND removed=0 ORDER BY id",
-                [&memory_scope],
-            )?;
+            let memory = data::memory::pinned(db, &memory_scope)?;
             if !memory.is_empty() {
                 system.push_str(&format!(
                     "\n\nSaved memory (reference data):\n{}",
                     json!(memory)
                 ));
             }
+        }
+        if super::memory::augment(state, db, &turn, &mut system).is_err() {
+            eprintln!("Memory auto-recall unavailable");
         }
         if context_channel.is_none() && crate::automation::model(db, id)?.is_none() {
             system.push_str(&crate::files::skills::context(db, string(&turn, "agent"))?);

@@ -1,4 +1,5 @@
 use super::*;
+pub(crate) mod knowledge;
 pub fn route(
     db: &Connection,
     kind: &str,
@@ -44,6 +45,8 @@ pub(crate) fn scoped(
             json!({"next_after":if rows.len()>10{rows[9]["id"].clone()}else{Value::Null},"items":rows.into_iter().take(10).collect::<Vec<_>>()}),
         );
     }
+    let remove = v["remove"] == true;
+    let restore = v["restore"] == true;
     if !closed(
         v,
         &[
@@ -54,18 +57,19 @@ pub(crate) fn scoped(
             "essential",
             "remove",
             "automatic",
+            "restore",
         ],
-    ) || v
-        .as_object()
-        .is_none_or(|m| m.len() != if v.get("automatic").is_some() { 7 } else { 6 })
+    ) || !uuid(string(v, "id"))
         || !uuid(string(v, "entry"))
-        || !integer(&v["revision"], 0, 9_007_199_254_740_991)
+        || !integer(&v["revision"], 0, 9_007_199_254_740_990)
         || !v["text"].is_string()
         || string(v, "text").encode_utf16().count() > 2000
         || !v["essential"].is_boolean()
         || !v["remove"].is_boolean()
         || v.get("automatic").is_some_and(|v| !v.is_boolean())
-        || if v["remove"] == true {
+        || v.get("restore").is_some_and(|v| !v.is_boolean())
+        || remove && restore
+        || if remove || restore {
             v["revision"] == 0 || v["text"] != "" || v["essential"] == true
         } else {
             string(v, "text").trim().is_empty()
@@ -98,12 +102,31 @@ pub(crate) fn scoped(
         .and_then(|v| v["revision"].as_i64())
         .unwrap_or(0)
         != rev
-        || current.as_ref().is_some_and(|v| v["removed"] == 1)
+        || current.as_ref().is_some_and(|v| v["removed"] == 1) != restore
     {
         return Err(error(409, "Memory changed. Reload before saving."));
     }
-    let text = string(v, "text").trim();
-    if v["remove"] != true
+    let (text, essential, selection_locked) = if remove || restore {
+        let row = current.as_ref().ok_or_else(Failure::storage)?;
+        (
+            string(row, "text"),
+            row["essential"] == 1,
+            row["selection_locked"] == 1,
+        )
+    } else {
+        (
+            string(v, "text").trim(),
+            v["essential"] == true,
+            v["automatic"] != true,
+        )
+    };
+    if restore && text.is_empty() {
+        return Err(error(
+            409,
+            "This note was removed before undo was available.",
+        ));
+    }
+    if !remove
         && exists(
             db,
             "SELECT 1 FROM memories WHERE scope=? AND removed=0 AND text=? AND id<>?",
@@ -112,7 +135,7 @@ pub(crate) fn scoped(
     {
         return Err(error(409, "This note is already saved."));
     }
-    if current.is_none()
+    if (current.is_none() || restore)
         && one(
             db,
             "SELECT count(*) n FROM memories WHERE scope=? AND removed=0",
@@ -125,23 +148,39 @@ pub(crate) fn scoped(
             "Memory is full (128 notes). Remove notes you no longer need.",
         ));
     }
-    db.execute("INSERT INTO memories(scope,id,text,essential,revision,removed,selection_locked) VALUES(?,?,?,?,?,?,?) ON CONFLICT(scope,id) DO UPDATE SET text=excluded.text,essential=excluded.essential,revision=excluded.revision,removed=excluded.removed,selection_locked=excluded.selection_locked",rusqlite::params![scope,string(v,"entry"),text,(v["essential"]==true)as i64,rev+1,(v["remove"]==true)as i64,(v["automatic"]!=true)as i64])?;
-    let rows = all(
+    db.execute("INSERT INTO memories(scope,id,text,essential,revision,removed,selection_locked) VALUES(?,?,?,?,?,?,?) ON CONFLICT(scope,id) DO UPDATE SET text=excluded.text,essential=excluded.essential,revision=excluded.revision,removed=excluded.removed,selection_locked=excluded.selection_locked",rusqlite::params![scope,string(v,"entry"),text,i64::from(essential),rev+1,i64::from(remove),i64::from(selection_locked)])?;
+    check_pinned(db, scope)?;
+    let result=one(db,"SELECT id,text,essential,revision,removed,selection_locked FROM memories WHERE scope=? AND id=?",rusqlite::params![scope,string(v,"entry")])?.ok_or_else(Failure::storage)?;
+    save_receipt(db, "memory_commands", string(v, "id"), &request, &result)?;
+    Ok(result)
+}
+
+pub(crate) fn pinned(db: &Connection, bank: &str) -> Result<Vec<Value>> {
+    all(
         db,
-        "SELECT id,text FROM memories WHERE scope=? AND removed=0 AND essential=1 ORDER BY id",
-        [&scope],
-    )?;
-    if !rows.is_empty()
-        && format!("\n\nSaved memory (reference data):\n{}", json!(rows)).len() > 8192
+        "SELECT id,text FROM memories WHERE scope=?1 AND removed=0 AND essential=1
+         UNION ALL
+         SELECT u.id,u.text FROM memory_units u JOIN memory_unit_controls c ON c.unit=u.id
+         WHERE u.bank=?1 AND u.origin='retained' AND u.removed=0 AND c.essential=1
+         ORDER BY id",
+        [bank],
+    )
+}
+
+pub(crate) fn check_pinned(db: &Connection, bank: &str) -> Result<()> {
+    if format!(
+        "\n\nSaved memory (reference data):\n{}",
+        json!(pinned(db, bank)?)
+    )
+    .len()
+        > 8192
     {
         return Err(error(
             413,
             "Memory context limit is 8 KiB. Make some notes searchable on demand instead.",
         ));
     }
-    let result=one(db,"SELECT id,text,essential,revision,removed,selection_locked FROM memories WHERE scope=? AND id=?",rusqlite::params![scope,string(v,"entry")])?.ok_or_else(Failure::storage)?;
-    save_receipt(db, "memory_commands", string(v, "id"), &request, &result)?;
-    Ok(result)
+    Ok(())
 }
 
 pub(super) fn initialize(db: &Connection, canonical: bool) -> crate::db::Result<()> {
