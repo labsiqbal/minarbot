@@ -1,0 +1,5 @@
+{
+  "version": "0.9.2",
+  "cases": {},
+  "blocked": "HTTP 500 on PUT bank and POST retain (PostgreSQL shared memory exhausted); probe DELETE requests returned 200"
+}
