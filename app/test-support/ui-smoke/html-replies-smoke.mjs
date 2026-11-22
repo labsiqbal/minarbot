@@ -133,8 +133,9 @@ try {
   await page.goto(app.origin + history + selector);
   const iframe = page.locator(`iframe[title="${title}"]`);
   const inner = iframe.contentFrame();
+  const transcript = page.getByRole('region', { name: 'Conversation history' });
   await inner.locator('body[data-drawn="true"]').waitFor({ timeout: 45_000 });
-  await page.getByText('Signups rose across the four weeks.').waitFor();
+  await transcript.getByText('Signups rose across the four weeks.').waitFor();
   assert(previewVerified, 'Agent receives the measured chart, PNG and console diagnostics');
   assert.equal(await iframe.getAttribute('sandbox'), 'allow-scripts allow-forms');
   const src = await iframe.getAttribute('src');
@@ -220,7 +221,7 @@ try {
   await page.getByText('Reply context attached').waitFor();
   assert.equal((await api(path)).length, 1, 'Bridge action only drafts');
   await composer.press('Enter');
-  await page.getByText('Comparison complete.').waitFor();
+  await transcript.getByText('Comparison complete.').waitFor();
   assert(contextReceived, 'Explicit user send includes bounded context separately from transcript text');
   const followup = (await api(path)).find(turn => turn.text === draft);
   assert(followup && !JSON.stringify(followup).includes(context));

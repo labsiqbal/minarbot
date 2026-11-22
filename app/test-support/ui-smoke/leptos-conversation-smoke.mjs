@@ -134,7 +134,6 @@ try {
         await page.setViewportSize({ width, height });
         const images = [];
         for (const client of ['react', 'leptos']) {
-          await page.evaluate(() => localStorage.removeItem('minarbot:details-open'));
           await page.goto(origin + path + '?ui=' + client);
           await page.getByText('Final answer.', { exact: true }).waitFor();
           await page.evaluate(() => document.fonts.ready);
