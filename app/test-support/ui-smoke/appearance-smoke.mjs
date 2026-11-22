@@ -441,7 +441,7 @@ async function setupAndDirectory(origin, client) {
     if (message.type() === 'error') errors.push(message.text());
   });
   const heading = name => page.getByRole('heading', { name, level: 1, exact: true });
-  const setup = heading('Set up Minarbot');
+  const setup = page.locator('.first-run').getByRole('heading', { name: 'Set up Minarbot', level: 1 });
   const project = 'Directory fixture';
   const id = randomUUID();
   const projectPath = `/projects/${id}`;
@@ -484,7 +484,7 @@ async function setupAndDirectory(origin, client) {
     await post('/api/projects', { id, name: project, members: [] });
     await page.reload();
     const nav = page.getByRole('navigation', { name: 'Projects', exact: true });
-    await page.getByRole('tab', { name: /^Projects/ }).press('Enter');
+    if (await nav.isHidden()) await page.getByRole('tab', { name: /^Agents/ }).press('ArrowRight');
     const projectEntry = nav.getByText(project, { exact: true });
     await projectEntry.click();
     await page.waitForURL(origin + projectPath);
