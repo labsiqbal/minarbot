@@ -38,6 +38,14 @@ PARITY_GROUPS=appearance ~/.cache/minarbot-node-slot.sh npm run parity:gate -- /
 npm run parity:gate -- --update /tmp/review-captures appearance/desktop-dark.png appearance/narrow-light.png
 ```
 
+## Fixture reproducibility
+
+Display-sensitive fixtures pin timestamps and UUIDs from the frozen images.
+The smoke displays the original synthetic loopback URL or workspace path where
+the live test uses an ephemeral port or temporary root. Assertions still use
+the real disposable fixture. Capture-only text substitutions restore the
+original values before the smoke continues. No baseline PNGs were replaced.
+
 ## Frozen timing budgets
 
 Visual runs skip timing samples by default. Set the relevant benchmark
