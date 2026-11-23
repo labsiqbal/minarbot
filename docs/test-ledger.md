@@ -288,3 +288,7 @@ Paths below are relative to `app/`. Playwright remains in `test-support/ui-smoke
   `transcript.test.ts`, `turn-stream.test.ts`, `turn-waits.test.ts`, `usage.test.ts`,
   `webhooks.test.ts`, `workflow-files.test.ts`, `workflow-http.test.ts`,
   `workflow-parallel.test.ts`, `workflow-waits.test.ts`, `workspace-files.test.ts`.
+
+## Issue #67 hosted Hub retirement
+
+The hosted Hub lane starts only Rust `minarbot-server --hub` with disposable data and loopback ports. Node Hub runtime and fixture consumers are retired. `@clerk/backend` remains for canonical fixture tests. The removed `@clerk/react`, `@napi-rs/keyring`, `@anthropic-ai/claude-agent-sdk`, `sanitize-html`, `cli`, and `skills` npm consumers were checked across app, Cargo xtask, desktop, scripts, workflows, deploy, and docs. Cloudflare email routing and Pi JavaScript adapters remain.
