@@ -96,7 +96,7 @@ export function bindMcpApp(
     }));
   }
   async function confirm(title: string, text: string, label: string) {
-    if (approvalOpen || document.querySelector('dialog:modal, [role="dialog"]:not(dialog), [role="alertdialog"]:not(dialog)')) {
+    if (approvalOpen || document.querySelector('dialog[open], [role="dialog"]:not(dialog), [role="alertdialog"]:not(dialog)')) {
       throw new Error('Finish the open dialog and try again.');
     }
     approvalOpen = true;
