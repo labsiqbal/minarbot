@@ -48,6 +48,17 @@ pub fn startup_asset(document: &str) -> Option<&str> {
     (src.ends_with(".js") && asset(src)).then_some(src)
 }
 
+pub async fn load_document(dist: &std::path::Path, name: &str) -> Option<String> {
+    let html = tokio::fs::read_to_string(dist.join(name)).await.ok()?;
+    let startup = startup_asset(&html)?;
+    let file = dist.join(startup.trim_start_matches('/'));
+    tokio::fs::metadata(file)
+        .await
+        .ok()?
+        .is_file()
+        .then_some(html)
+}
+
 pub const POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self' https: http:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 pub fn asset(path: &str) -> bool {

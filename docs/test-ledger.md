@@ -1,5 +1,45 @@
 # Test migration ledger
 
+## #67 route ownership ledger
+
+Leptos owns route groups by default. React remains available through
+MINARBOT_APPEARANCE_CLIENT=react or ?ui=react during the two-release fallback window.
+
+| Group | Public paths and surfaces | Leptos document | React rollback |
+| --- | --- | --- | --- |
+| Shell and setup | /, first run, sidebar, Quick switcher | appearance.html or active route document | React recovery page |
+| Settings | /settings/:section, system and connection panels | appearance.html | index.html?ui=react |
+| Pairing | /pair on secure origin | pairing form with Leptos bootstrap | native pairing form |
+| Conversation | agents, rooms, project conversations, Guide, Files, Changes, Computer | conversation.html | index.html?ui=react |
+| Agent and Memory | profiles, templates, inbox, remote agent detail, Memory and History | active conversation or appearance document | React profile/conversation views |
+| Projects | /projects/:id, Overview, Connected apps, Environment, MCP | appearance.html | index.html?ui=react |
+| Automation | /routines, /workflows, /calendar, project Calendar, scoped Workflows | workflows.html | index.html?ui=react |
+| Hosted Hub | accounts, sign-in, join, members, invitations, rooms | Hub Leptos document | Hub React document |
+
+Public paths, API routes, settings keys, browser drafts, and recovery journal
+formats stay stable across client selection. Missing Leptos documents or
+startup assets use the React recovery document.
+
+## #67 UI coverage ledger
+
+The parity gate names the client for every browser run. Groups without a per-run
+selector launch both clients inside one smoke. `app/rust-test-server.ts` pins
+non-UI Node tests to React so the production default cannot silently change
+their exercised client.
+
+| Gate group | Pairs | Client selection |
+| --- | ---: | --- |
+| appearance, connections, system | 88 | React and Leptos explicit |
+| automation, calendar, scoped | 104 | React and Leptos explicit |
+| controls, conversation, files, rich | 146 | React and Leptos explicit |
+| guide, shell | 52 | React and Leptos explicit |
+| hub | 26 | React and Leptos explicit, 10 intentional narrow pairs |
+| memory, profiles, projects | 164 | React and Leptos explicit |
+
+Coverage receipt is written by `parity:gate` to the supplied empty output
+directory as `summary.json`, per-group logs, and paired images. The release gate
+requires all 16 groups and at least 580 pairs.
+
 ## Issue #60 turn protocol
 
 Issue #60 runs production `minarbot-server` with stdin config, an OS-assigned IPv4 loopback port, and a private temporary SQLite and config root. Axum providers use their own loopback ports. The lifecycle test verifies startup rejection, child teardown, temporary root removal, and closure of both listeners.

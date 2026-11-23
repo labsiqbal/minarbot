@@ -786,6 +786,7 @@ pub(crate) fn WorkspaceShell(
         projects,
         base_path: Signal::derive(current_url),
         new_conversation: conversation_creation,
+        new_project: project_commands.create,
         online,
         attention,
     };

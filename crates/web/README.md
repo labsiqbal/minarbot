@@ -1,6 +1,6 @@
 # Leptos workspace and settings
 
-Axum serves React by default. Set `MINARBOT_APPEARANCE_CLIENT=leptos` in the local server environment and restart to select Leptos for the routes below. Set it to `react` or remove it and restart to roll back. The launcher passes this setting from its environment file. A missing Leptos build selects React automatically. The fallback page links to React for that visit with `?ui=react`.
+Axum serves Leptos by default for every route group. Set `MINARBOT_APPEARANCE_CLIENT=react` in the launcher environment file and restart to roll back. `MINARBOT_APPEARANCE_CLIENT=leptos` remains accepted. A missing or invalid Leptos document selects React automatically. The recovery page links to React for that visit with `?ui=react`. The launcher reads and passes the environment file unchanged.
 
 Both clients use `minarbot-presentation-v1` in the browser's local storage. The same origin is required to retain preferences. Appearance uses `GET /api/agents` to determine hub-link visibility. It makes no settings API writes.
 
@@ -23,6 +23,27 @@ compressed sizes. The build fails before publishing if primary WASM exceeds
 960,000 gzip bytes for shell/settings, 430,000 for conversation, 610,000 for
 workflows, or 240,000 for the hosted hub.
 
+## Bootstrap and browser glue
+
+Each Leptos document contains a small hashed ES module that fetches its matching
+WASM with two bounded attempts, initializes `wasm-bindgen`, mounts the route, and
+hides the server-rendered recovery page only after mount succeeds. Axum serves
+WASM with `application/wasm`, immutable hashed assets, and the scoped CSP
+`wasm-unsafe-eval` permission. The same recovery page remains usable when an
+asset, glue module, or WASM fetch fails.
+
+The browser gate uses external Playwright dependencies. From `app/`, install
+the pinned smoke package and Chromium before running browser checks:
+
+```sh
+npm ci --prefix test-support/ui-smoke
+(cd test-support/ui-smoke && npx playwright-core install --with-deps chromium)
+```
+
+Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`, `CHROME_PATH`, or `CHROME_BIN` when the
+browser is installed outside Playwright's cache. These dependencies stay in the
+test harness and are not shipped in either client.
+
 ## Mount route groups
 
 Use `shell::WorkspaceShell` once per Leptos document and pass the current workspace
@@ -43,46 +64,55 @@ route ownership.
 
 ## Route ownership
 
-General, Appearance, Providers, Engines, Skills, minarbot.com, Connected apps,
-Email, MCP connections, Vault, Craft Anything, Machines, Devices, Computer,
-Updates, Usage, Shared data, Backup & restore, and External access use Leptos
-when `MINARBOT_APPEARANCE_CLIENT=leptos`. First-run setup, project management,
-the Rust-rendered `/pair` form, `/routines`, `/workflows`, `/calendar`, and the
-project Calendar tab also use Leptos. The three automation routes share a mounted
-workspace shell and load the `workflows` bundle. The project Calendar link loads
-the same bundle. Setup, Settings, and project Overview, Connected apps,
-Environment, and MCP use `appearance`. Project tabs preserve their URL and
-browser history. The sidebar can create, rename, archive, and restore projects,
-and rename, reorder, archive, and restore sections. Restoring a project
+| Group | Public paths and surfaces | Default Leptos document |
+| --- | --- | --- |
+| First run and shell | Fresh install at `/`, sidebar and Quick switcher | `appearance.html` on first run, then the document for the active route |
+| Settings | `/settings/:section` including General, Appearance, Providers, Engines, Skills, minarbot.com, Connected apps, Email, MCP connections, Vault, Craft Anything, Machines, Devices, Computer, Updates, Usage, Shared data, Backup & restore, External access | `appearance.html` |
+| Pairing | `/pair` on a secure origin | Axum pairing form with the Leptos appearance bootstrap |
+| Conversation | Configured workspace at `/`, `/agents/:id`, `/agents/:id/conversations/:thread`, `/rooms/:id`, Guide, Files, Changes, workspace browser, results and standalone Computer | `conversation.html` |
+| Inbox and remote agents | `/agents/:id/inbox` and `/machines/:id/agents/:id` | `conversation.html` |
+| Agent lifecycle and Memory | Agent creation, profiles, templates, conversation and Advanced profile Memory and History summary | Active workspace document, with Memory loaded on demand |
+| Projects | `/projects/:id`, Overview, Connected apps, Environment and MCP | `appearance.html` |
+| Automation | `/routines`, `/workflows`, `/calendar`, project Calendar tab, direct scoped Workflows | `workflows.html` |
+| Embedded automation | Upcoming routines, inbound reports, agent-scoped Workflows, and inline run steps | `conversation.html` with workflow content loaded on demand |
+| Hosted Hub | Accounts and project hosts, `/`, `/login`, `/invite`, `/join`, `/nodes/link` | `hub.html` |
+
+Each group has a React rollback at the same public URL. Pairing falls back
+to the native form. Unknown workspace paths still return HTTP 404. See the
+[coverage ledger](../../docs/test-ledger.md#67-ui-coverage-ledger).
+
+Project tabs preserve their URL and browser history. Restoring a project
 reopens the sections and conversations that were active when it was archived.
 Restoring projects archived before #81 keeps their sections and conversations
-archived. Discord and WhatsApp reuse the installation settings for project
-routing destinations.
-
-After setup, `/`, agent Main chat, named and project conversations, rooms, and
-Guide use the `conversation` bundle. Files, Changes, result previews, workspace
-browsing, and standalone Computer also use that bundle. Conversation links
-reuse the shell and browser history. Settings return links retain the selected
-route. Add `?ui=react` to open the React client. The workspace shell mounts agent
-creation, profile editing, and template dialogs inside the selected route group.
-Conversation controls and Advanced profile provide Memory and History summary.
-Agent email inbox and paired-machine agent detail also use the conversation bundle.
-Agent-scoped Workflows opens in the conversation shell. Its first open loads the
-workflows WASM and CSS. Reopening shows the last loaded first page while
-revalidating it. Inline run steps mount the conversation bundle through the
-same loader and reuse it when the shell already has it.
-Both clients share the note recovery journal format.
-React remains the default for the staged rollout in #67.
+archived. Discord and WhatsApp reuse installation settings for project routing.
+Settings return links retain the selected workspace route. Both clients share
+the conversation, workflow and Memory recovery formats.
 
 ## Hosted hub
 
-The hosted listener serves React by default. Build the hub document with
-`cargo xtask leptos` and set `MINARBOT_APPEARANCE_CLIENT=leptos` on that
-listener to select Leptos for accounts, sign-in, machine linking, joining an
+The hosted listener serves Leptos by default. Build the hub document with
+`cargo xtask leptos`. Set `MINARBOT_APPEARANCE_CLIENT=react` on that
+listener to select React for accounts, sign-in, machine linking, joining an
 agent, project sections, members, invitations and room chat. The hub reads its
 own asset allowlist from `app/dist/_leptos/hub-assets.json`. Open the same route
 with `?ui=react` for rollback. Both clients use the same sessions, API and
 browser draft storage.
+
+## Rollback rehearsal
+
+Use a staged release with both client builds. The rehearsal uses a private data
+directory and a loopback port.
+
+```sh
+MINARBOT_XTASK_BINARY="$PWD/target/debug/xtask" \
+  node --experimental-strip-types app/test-support/ui-smoke/client-rollback-smoke.mjs \
+  <staged-release-directory> <screenshot-directory>
+```
+
+The rehearsal seeds agents, a project, a named conversation, drafts, a running
+and finished goal, a loop, a routine, a workflow, and Memory. It restarts through
+Leptos, React, and Leptos, checks draft and uncertain-command journals, confirms
+the running goal becomes interrupted, and asserts no mutation replay.
 
 ## React inventory for #67
 
@@ -93,12 +123,12 @@ issue.
 | Issue group | React screens and dialogs | React sources |
 | --- | --- | --- |
 | Memory and history summary | Agent and section Memory and History summary use Leptos in the selected conversation routes and Advanced profile. React provides the same Notes, Learned, Standing questions, and compaction views on rollback. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
-| Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. Quick switcher's New project entry and remote agent detail use React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
+| Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. Quick switcher opens the Leptos New project dialog and remote agent detail. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
 | Agent inbox and remote agent detail | Agent email inbox and message content at `/agents/:id/inbox`, and paired-machine agent detail at `/machines/:id/agents/:id`. | `App.tsx`, `AgentEmail.tsx`, `MachinesPanel.tsx`, `AgentActions.tsx` |
 | Conversation files, results and Computer | Local agent, named conversation and room file panels, workspace browser, Changes, artifact and result previews, run inspector, secure requests and standalone Computer use the Leptos conversation bundle. Remote agent detail follows its own route group. | `RightPanel.tsx`, `RightPanelFiles.tsx`, `RightPanelDiff.tsx`, `WorkspacePanel.tsx`, `HtmlPreview.tsx`, `ResultURLPreview.tsx`, `ComputerViewer.tsx`, `SecureComputerRequest.tsx`, `RunInspector.tsx` |
 | Automation embedded in conversations | Agent/section Upcoming routines, inbound routine reports and deep links, and the agent-scoped workflow library, editor, versions, webhook/schedule forms and run inspector with inline step conversations. | `App.tsx`, `WorkflowPanel.tsx`, `WorkflowEditor.tsx`, `WorkflowGraph.tsx`, `WorkflowSchedule.tsx`, `WorkflowWebhook.tsx`, `WorkflowInbox.tsx` |
 | Project management and integrations (#81) | Ported creation, project-scoped Connected apps, Environment and MCP, source control, sidebar actions and section settings. | `App.tsx`, `Projects.tsx`, `ConnectedAppsPanel.tsx`, `DiscordSettings.tsx`, `WhatsAppSettings.tsx`, `ProjectEnvironmentPanel.tsx`, `McpPanel.tsx`, `SourceControl.tsx` |
-| Canonical hub fallback | Project hosts and central accounts support staged Leptos. Sign-in uses the hosted identity contract and the existing development token fixture. React remains the rollback client. | `hub/main.tsx`, `hub/HubApp.tsx`, `hub/client.ts` |
+| Canonical hub fallback | Project hosts and central accounts use Leptos by default. Sign-in uses the hosted identity contract and the existing development token fixture. React remains the rollback client. | `hub/main.tsx`, `hub/HubApp.tsx`, `hub/client.ts` |
 | Fallback and retirement | Workspace loading/error/404, then the full React workspace, setup, Settings, Project and Automation when explicitly selected or when a Leptos document is unavailable. Keep rollback available for the staged releases. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `FirstRun.tsx`, `settings-groups.ts`, `lazyPanels.tsx`, `Projects.tsx`, `AutomationCalendar.tsx`, `AutomationCalendarDialog.tsx`, `RoutineSchedule.tsx`, `RoutineTemplates.tsx`, `WorkflowDirectory.tsx` |
 
 Conversation details show upcoming agent and section routines. Inbound reports

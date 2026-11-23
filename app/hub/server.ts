@@ -34,7 +34,11 @@ export function createHubServer(options: {
   let upgradeHandler: NodeUpgradeHandler | undefined;
   let nodeLink: ReturnType<typeof attachNodeLink> | undefined;
   const web = options.web ? hubAssets(options.web.distPath) : undefined, browser = createHubWebApi(authority);
-  const leptos = options.web && process.env.MINARBOT_APPEARANCE_CLIENT === 'leptos' ? hubLeptosAssets(options.web.distPath) : undefined;
+  let leptos: ReturnType<typeof hubLeptosAssets> = undefined;
+  if (options.web && (process.env.MINARBOT_APPEARANCE_CLIENT ?? 'leptos') === 'leptos') {
+    try { leptos = hubLeptosAssets(options.web.distPath); }
+    catch (error) { console.warn('Leptos hub build unavailable, serving React:', error); }
+  }
   const rate = new Map<string, { count: number; until: number }>();
   function limit(key: string, ceiling: number) {
     const prior = rate.get(key), row = prior && prior.until > authority.now() ? prior : { count: 0, until: authority.now() + 60000 };

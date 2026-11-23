@@ -25,7 +25,10 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
   const connectors = await connectorsTestBridge(options).catch(async error => { await bridge.close(); throw error; });
   const pdfBridge = await pdfTestBridge(options.pdfFault);
   const harnessBridge = await harnessTestBridge(options.harness as Parameters<typeof harnessTestBridge>[0]);
+  // UI tests choose Leptos explicitly. Legacy Node tests stay on React so a
+  // server default flip cannot silently change their client coverage.
   const { peerTokenIssuer: unusedIssuer, machines, desktop, testPathPrefix, pdfFault: unusedPdfFault, ...serializable } = options;
+  serializable.appearanceClient ??= 'react';
   let config: string;
   try { config = JSON.stringify({ ...serializable, hubLink: options.hubLink ? { origin: options.hubLink.origin, hubSigningPublicKey: options.hubLink.hubSigningPublicKey, development: options.hubLink.development, reconnectMs: options.hubLink.reconnectMs } : undefined, harness: options.harness ? { ...options.harness, issuer: undefined } : undefined, testHarnessBridge: harnessBridge.config, testPdfBridge: pdfBridge.config, desktop: desktop ? { ...desktop, runtime: undefined, now: undefined, testRuntime: !!desktop.runtime } : undefined, machines: machines ? { healthIntervalMs: machines.healthIntervalMs } : undefined, testConnectorBridge: connectors.config, testComputerBridge: bridge.config }, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key}`); return value; }); } catch (error) { await bridge.close(); await connectors.close(); await harnessBridge.close(); await pdfBridge.close(); throw error; }
   const root = fileURLToPath(new URL('../', import.meta.url));
