@@ -1,7 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Plug, Plus, Receipt, RefreshCw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
 import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, Pencil, Siren, Trash2, WrapText } from 'lucide-react';
-import { Brain, CircleDot, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, Pencil, Siren, Trash2, WrapText } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -105,7 +104,6 @@ const appearanceConfig: Plugin = {
           branch: svg(GitBranch, 14), wrap: svg(WrapText, 15),
         },
       },
-    };
     };
     for (const [group, config] of Object.entries(configs)) {
       this.emitFile({ type: 'asset', fileName: `${group}-config.json`, source: JSON.stringify(config) });
