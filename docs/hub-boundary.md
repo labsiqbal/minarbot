@@ -20,6 +20,20 @@ The P1-A through P1-D entries in the owner's local backlog document the coordina
 | `app/hub.html`, `app/vite.hub.config.ts`, `app/src/hub/{main.tsx,HubApp.tsx,client.ts,hub.css}` | `npm run build` produces `app/dist/hub` for `web.distPath`. Covers accounts, node review, invitations, join, projects, sections, consent and chat. `app/hub/web.test.ts` covers adapters and draft parsing. | `crates/web/src/hub_connection.rs` ports local-owner linking controls. Hosted SPA absent. React remains the default during parity staging. |
 | `app/src/hub/HubConnection.tsx` | Local Settings mounts the React path for `/api/hub-link` and cross-origin join/enrollment. | Leptos local counterpart in `crates/web/src/hub_connection.rs` uses the same Rust endpoints. |
 
+## Explicit top-level TypeScript runtime inventory
+
+These are every tracked non-test TypeScript file directly under `app/`.
+
+| File | Consumer | Rust status and evidence |
+| --- | --- | --- |
+| `app/rust-binary.ts` | Rust integration and release tests resolve the server, launcher and xtask binaries. | Test launcher only. Rust binaries are the implementation. |
+| `app/rust-connectors-runner.ts` | Connector suites spawn `minarbot-server --connector-config` and `--connector-journal-config` through loopback fixture bridges. | Ported connector implementation under `crates/minarbot-server/src/connectors/`. Keep runner until Node tests move. |
+| `app/vite.config.ts` | React workspace browser build and generated Leptos config share aliases, CSS and fonts. | Build tooling. No shipped Node service. |
+| `app/vite.hub.config.ts` | React hub build writes `app/dist/hub` and is loaded by `app/hub/web.ts`. | React rollback build. Leptos hub uses `vite.leptos.config.ts` and `cargo xtask leptos`. Keep until dual-client release gate. |
+| `app/vite.leptos.config.ts` | Vite input/config adapter for Leptos wasm, icons, shared themes and route-group documents. | Build tooling. `hub` route group now emits its own manifest and document. |
+
+`app/hub/*.ts` is listed in the hosted runtime table above. `app/shared/*.ts` is split between browser UI adapters, test-only protocol helpers and user-facing file/turn algorithms. The static production import test and release runtime staging test prove that these files are not copied into the Rust runtime image.
+
 ## Other Node consumers and build inputs
 
 | Source or dependency | Consumer and evidence | Disposition |
