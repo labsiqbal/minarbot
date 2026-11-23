@@ -10,8 +10,7 @@ import { startApp } from '../../test-bridge.ts';
 
 const output = resolve(process.argv[2] ?? 'test-support/ui-smoke/artifacts/conversation-automation');
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-conversation-automation-'));
-const folder = join(scratch, 'fixture-project');
-await mkdir(folder);
+const folder = await mkdtemp(resolve('node_modules/.conversation-automation-project-'));
 await mkdir(output, { recursive: true });
 const ids = Object.fromEntries(['agent', 'other', 'project', 'section', 'routine', 'workflow', 'foreign', 'machine', 'remote', 'mail'].map(key => [key, randomUUID()]));
 const provider = createServer(async (req, res) => {
@@ -36,7 +35,7 @@ async function exercise(client) {
   const leptos = client === 'leptos';
   const app = await startApp({
     database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: client,
-    projectRoot: scratch, defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
+    defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
     stream: false,
   });
   const { origin } = app;
@@ -99,7 +98,7 @@ async function exercise(client) {
     const response = await fetch(origin + path, body === undefined ? {} : {
       method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    assert(response.ok, `${path}: ${response.status}`);
+    assert(response.ok, `${path}: ${response.status} ${response.ok ? "" : await response.text()}`);
     return response.json();
   }
   async function open(path, tab = page, expected = leptos) {
@@ -143,6 +142,8 @@ async function exercise(client) {
   const capturePanel = async (name, upcoming) => {
     await capture(name, async size => {
       if (size === 'narrow') await reveal();
+      const tab = details.getByRole('tab', { name: name.startsWith('section') ? 'Members' : 'Chats', exact: true });
+      await tab.click();
       if (!await upcoming.getByText(digest, { exact: true }).isVisible()) {
         await upcoming.getByRole('button', { name: /^Upcoming/ }).press('Enter');
       }
@@ -178,6 +179,7 @@ async function exercise(client) {
     await open(pilot(chat));
     await page.locator('.chat__pill').waitFor();
     await reveal();
+    assert((await api(`/api/agents/${ids.agent}/routines`)).some(row => row.name === digest && row.enabled && row.trigger === 'schedule'));
     await capturePanel('agent-upcoming', details.getByRole('region', { name: 'Upcoming routines' }));
     await reveal();
     await linkOrButton('Manage', details).click();
@@ -206,18 +208,18 @@ async function exercise(client) {
     await capture('workflow-editor');
     await linkOrButton('Back').click();
     const leave = page.getByRole('alertdialog');
-    if (await leave.isVisible()) await leave.getByRole('button', { name: 'Leave editor' }).click();
+    if (await leave.isVisible()) await leave.getByRole('button', { name: 'Leave', exact: true }).click();
     await page.getByText(wfName, { exact: true }).click();
     await heading(wfName).waitFor();
     await page.getByLabel('Workflow start time', { exact: true }).waitFor();
     await capture('workflow-forms');
-    await button('Run version 1').click();
+    await page.getByRole('button', { name: /^Run version / }).click();
     const step = linkOrButton('Open step work');
     await step.waitFor();
     await capture('workflow-inspector');
     await step.press('Enter');
     await button('Back to run ' + wfName).waitFor();
-    await page.getByRole('region', { name: 'Conversation history' }).getByText('Prepare fixture workflow.', { exact: true }).waitFor();
+    await page.getByRole('region', { name: 'Conversation history' }).getByText(/Prepare fixture workflow\./).waitFor();
     await capture('workflow-step');
     await button('Back to run ' + wfName).press('Enter');
     await page.waitForFunction(() => document.activeElement?.textContent === 'Open step work');
@@ -296,6 +298,10 @@ async function exercise(client) {
       timings[name] = { cold: stats(cold), warm: stats(warm) };
     }
     return { captureNames, timings, consoleErrors: errors.length, cspErrors: 0 };
+  } catch (error) {
+    await page.screenshot({ path: join(output, `${client}-failure.png`), animations: 'disabled',
+      mask: [page.locator('[data-private-token]'), page.locator('input[type=password]')] });
+    throw error;
   } finally {
     await primary.close();
     await app.close();
@@ -321,5 +327,5 @@ try {
   await browser?.close();
   provider.closeAllConnections();
   await new Promise(resolve => provider.close(resolve));
-  await rm(scratch, { recursive: true });
+  await Promise.all([rm(scratch, { recursive: true }), rm(folder, { recursive: true })]);
 }

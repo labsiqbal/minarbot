@@ -3,7 +3,6 @@
 @import "../../app/src/ui/workflow.css";
 
 .workflow-library[hidden] { display: none; }
-.workflow-step-chat { height: max(400px, 65dvh); display: flex; }
 
 .leptos-workspace .system-dialog:not([open]) { display: none; }
 .leptos-workspace .system-dialog {

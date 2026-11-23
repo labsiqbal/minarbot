@@ -29,9 +29,8 @@ pub(super) fn report(chat: Chat, row: RwSignal<Turn>, report: Report) -> impl In
                 <time datetime=move || row.with(|turn| turn.created.clone())>{move || row.with(|turn| message_time(&turn.created))}</time>
             </div>
             <div class="legacy routine-report__body">{move || replies.with(|(reply, files)| {
-                let html = body(reply.clone(), chat.base());
-                let files = files.iter().filter(|file| !file.deleted).cloned().map(|file| attachment(file, chat.base())).collect_view();
-                view! { {html}{files} }
+                let html = markdown(reply, &chat.base(), serde_json::to_string(files).ok());
+                view! { <div class="markdown" inner_html=html></div> }
             })}</div>
             {href.map(|href| view! { <a class="k-link" href=href>"Open full run"</a> })}
         </section>
@@ -72,9 +71,9 @@ pub(super) fn manage(agent: &str) -> String {
     format!("/routines?agent={agent}")
 }
 
-pub(super) fn workflows(agent: &str) -> String {
-    let path = window().location().pathname().unwrap_or_default();
-    format!("/workflows?agent={agent}&from={}", ui::encode(&path))
+pub(super) fn workflow_url(agent: &str) -> String {
+    let from = window().location().pathname().unwrap_or_default();
+    format!("/workflows?agent={agent}&from={}", ui::encode(&from))
 }
 
 pub(super) fn upcoming(agent: String) -> impl IntoView {

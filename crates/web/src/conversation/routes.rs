@@ -163,18 +163,22 @@ async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
     }
 }
 
+fn agent_surface(path: &str) -> Option<AnyView> {
+    let parts = path.strip_prefix('/')?.split('/').collect::<Vec<_>>();
+    match parts.as_slice() {
+        ["agents", agent, "inbox"] if protocol::id(agent) => {
+            Some(inbox::page(agent.to_ascii_lowercase()).into_any())
+        }
+        ["machines", machine, "agents", agent] if protocol::id(machine) && protocol::id(agent) => {
+            Some(remote::page(machine.to_ascii_lowercase(), agent.to_ascii_lowercase()).into_any())
+        }
+        _ => None,
+    }
+}
+
 pub fn standalone() -> impl IntoView {
-    use crate::workspace_route::AgentPage;
-    if let Some(page) = window()
-        .location()
-        .pathname()
-        .ok()
-        .and_then(|path| AgentPage::from_path(&path))
-    {
-        return match page {
-            AgentPage::Inbox(agent) => inbox::page(agent).into_any(),
-            AgentPage::Remote { machine, agent } => remote::page(machine, agent).into_any(),
-        };
+    if let Some(view) = agent_surface(&window().location().pathname().unwrap_or_default()) {
+        return view;
     }
     let config = RwSignal::new(None);
     let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
@@ -492,25 +496,19 @@ pub(crate) fn workflow_step(agent: String, thread: String) -> impl IntoView {
         #[wasm_bindgen(catch, js_name = minarbotLoadWorkflowConversation)]
         async fn load_adapter() -> Result<(), wasm_bindgen::JsValue>;
     }
-
     let config = RwSignal::new(None);
     let error = RwSignal::new(String::new());
     let load_step = Callback::new(move |()| {
         let route = Route::Agent(agent.clone(), Some(thread.clone()));
         error.set(String::new());
         leptos::task::spawn_local(async move {
-            match load_adapter().await {
-                Ok(()) => match load(route).await {
-                    Ok(value) => {
-                        config.try_set(Some(value));
-                    }
-                    Err(reason) => {
-                        error.try_set(reason.message);
-                    }
-                },
-                Err(_) => {
-                    error.try_set("Step conversation could not load.".into());
-                }
+            if load_adapter().await.is_err() {
+                error.try_set("Step conversation could not load.".into());
+                return;
+            }
+            match load(route).await {
+                Ok(value) => { config.try_set(Some(value)); }
+                Err(reason) => { error.try_set(reason.message); }
             }
         });
     });
