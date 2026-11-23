@@ -116,7 +116,7 @@ const foundation = [
 
 // #38: timer and explicit-any ratchets.
 export const timerAllowlist = [];
-const timerMessage = 'Use usePolling from src/hooks/usePolling for refresh loops or use a focused browser timer helper.';
+const timerMessage = 'Use a focused browser timer helper for adapter lifecycles.';
 export const lifecycleRatchets = [
   {
     files: ['**/*.{ts,tsx,mjs,js}'], ignores: ['**/*.test.ts', '**/test.ts', '**/*-it.ts'],

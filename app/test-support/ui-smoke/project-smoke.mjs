@@ -251,7 +251,7 @@ async function run(client) {
     await confirm('Allow all members');
     configured = false;
     await page.goto(go('', '/settings/connected-apps'));
-    await text('Discord').waitFor();
+    await button('Set up').waitFor();
     await capture('discord');
     await text('WhatsApp').click();
     await dialog('WhatsApp').waitFor();
