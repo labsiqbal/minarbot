@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { assertP95 } from './timing-budgets.mjs';
-import { fixDate, parityChromiumArgs, parityShot, withFixtureText } from './parity-shot.mjs';
+import { fixDate, parityChromiumArgs, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -32,7 +32,7 @@ try {
   await mkdir(output, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
   app = await startRustServer({ appearanceClient: 'leptos',
-    database: join(work, 'state.sqlite'), dist, fixedClock: Date.UTC(2026, 10, 23, 16, 21), stream: false,
+    database: join(work, 'state.sqlite'), dist, fixedClock: Date.UTC(2026, 10, 23, 16, 20), stream: false,
     baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', defaultModel: 'fixture',
   });
   const api = async (path, data) => {
@@ -192,7 +192,7 @@ try {
               assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), name + ' overflows');
               assert.deepEqual(await page.evaluate(() => window.fixtureCsp), [], name);
               const file = join(output, `${size}-${theme}-${name}-${client}.png`);
-              await withFixtureText(page, [['11:47 PM', '11:20 PM'], ['11:47', '11:20']], () => parityShot(page, file));
+              await parityShot(page, file);
               evidence.push({ size, theme, name, file });
             };
             const open = async path => {
