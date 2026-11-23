@@ -318,3 +318,204 @@ fn fixed_home_and_exact_dual_consent() -> Check {
     rejects(authority::consent(&db,&b,&p,Some(&n.principal)),"stale_revision");
     Ok(())
 }
+
+struct Pair {
+    alice: String,
+    bob: String,
+    eve: String,
+    alpha: Value,
+    beta: Value,
+    owner: Node,
+    peer: Node,
+}
+impl Pair {
+    fn new(f: &HubFixture, db: &mut Connection) -> Check<Self> {
+        let alice = account(db,"alice")?;
+        let bob = account(db,"bob")?;
+        let eve = account(db,"eve")?;
+        let alpha = f.project(db,&alice,"alpha")?;
+        let beta = f.project(db,&bob,"beta")?;
+        join(db,&alpha,&bob,"member")?;
+        let owner = node(db,&alice)?;
+        let peer = node(db,&bob)?;
+        Ok(Self { alice, bob, eve, alpha, beta, owner, peer })
+    }
+
+    fn alice(&self) -> Context<'_> {
+        context(&self.alpha,&self.alice)
+    }
+
+    fn bob(&self) -> Context<'_> {
+        context(&self.alpha,&self.bob)
+    }
+
+    fn section(&self) -> &str {
+        text(&self.alpha,"sectionId")
+    }
+
+    fn own_grant(&self, db: &Connection) -> Check<Value> {
+        grant(db,&self.alpha,&self.alice,&self.alice,&self.owner,json!({"mode":"owner"}))
+    }
+
+    fn peer_grant(&self, db: &Connection, invocation: Value) -> Check<Value> {
+        grant(db,&self.alpha,&self.alice,&self.bob,&self.peer,invocation)
+    }
+}
+
+#[test]
+fn invocation_scope_idempotency_and_tenant_isolation() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f,&mut db)?;
+    let carol = account(&db,"carol")?;
+    let viewer = account(&db,"viewer")?;
+    join(&db,&p.alpha,&carol,"member")?;
+    join(&db,&p.alpha,&viewer,"viewer")?;
+    let a = p.alice();
+    let b = p.bob();
+    let mut implicit = proposal(p.section(),&p.peer,json!({"mode":"owner"}));
+    implicit["policy"].as_object_mut().ok_or("invalid policy")?.remove("invocation");
+    let first = ok(authority::propose(&db,&b,&implicit))?;
+    ok(authority::consent(&db,&a,&first,None))?;
+    ok(authority::consent(&db,&b,&first,Some(&p.peer.principal)))?;
+    let input = named(p.section(),&first);
+    ok(post(&mut db,&b,&input))?;
+    for ctx in [a, context(&p.alpha,&carol)] {
+        rejects(post(&mut db,&ctx,&input),"authority_denied");
+    }
+    let specific = p.peer_grant(&db,json!({"mode":"members","accountIds":[carol]}))?;
+    ok(post(&mut db,&context(&p.alpha,&carol),&named(p.section(),&specific)))?;
+    rejects(post(&mut db,&a,&named(p.section(),&specific)),"authority_denied");
+    let everyone = p.peer_grant(&db,json!({"mode":"all-members"}))?;
+    let input = named(p.section(),&everyone);
+    let first = ok(post(&mut db,&b,&input))?;
+    let before = ok(routing::pending(&db,&p.peer.principal))?.len();
+    assert_eq!(ok(post(&mut db,&b,&input))?,first);
+    assert_eq!(ok(routing::pending(&db,&p.peer.principal))?.len(),before);
+    let mut changed = input.clone();
+    changed["text"] = json!("Changed");
+    rejects(post(&mut db,&b,&changed),"idempotency_conflict");
+    assert_ne!(ok(post(&mut db,&a,&input))?["messageId"],first["messageId"]);
+    rejects(post(&mut db,&context(&p.alpha,&viewer),&input),"authority_denied");
+    let beta = context(&p.beta,&p.bob);
+    let beta_section = text(&p.beta,"sectionId");
+    let foreign = grant(&db,&p.beta,&p.bob,&p.bob,&p.peer,json!({"mode":"owner"}))?;
+    rejects(post(&mut db,&b,&named(p.section(),&foreign)),"resource_not_found");
+    let mut cross = message(beta_section,json!([]));
+    cross["requestId"] = input["requestId"].clone();
+    rejects(post(&mut db,&b,&cross),"resource_not_found");
+    assert_ne!(ok(post(&mut db,&beta,&cross))?["messageId"],first["messageId"]);
+    let turn = first["turnIds"][0].as_str().ok_or("missing turn")?;
+    rejects(routing::turn(&db,&beta,turn),"resource_not_found");
+    rejects(routing::history(&db,&beta,p.section()),"resource_not_found");
+    assert!(db.execute("INSERT INTO participation_sections VALUES(?,?,?)",params![a.project, everyone["participationId"].as_str(), beta_section]).is_err());
+    Ok(())
+}
+
+#[test]
+fn section_event_and_attribution_stay_scoped_to_active_participants() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f,&mut db)?;
+    let a = p.alice();
+    let foreign = node(&db,&p.eve)?;
+    let alternate = node(&db,&p.alice)?;
+    let other_section = new_id();
+    db.execute("INSERT INTO sections(id,project_id,name) VALUES(?,?,'other')",params![other_section,a.project])?;
+    let mut extra = p.alpha.clone();
+    extra["sectionId"] = json!(other_section);
+    let own = p.own_grant(&db)?;
+    let peer = p.peer_grant(&db,json!({"mode":"all-members"}))?;
+    grant(&db,&p.beta,&p.bob,&p.bob,&p.peer,json!({"mode":"all-members"}))?;
+    grant(&db,&extra,&p.alice,&p.alice,&alternate,json!({"mode":"owner"}))?;
+    ok(post(&mut db,&a,&named(p.section(),&peer)))?;
+    for node in [&p.owner,&p.peer] {
+        assert_eq!(ok(routing::pending(&db,&node.principal))?.iter().filter(|frame|frame["kind"]=="section.event").count(),1);
+    }
+    for node in [&foreign,&alternate] {
+        assert!(ok(routing::pending(&db,&node.principal))?.is_empty());
+    }
+    let req = request(&db,&p.peer)?;
+    assert_eq!(req["projectId"],a.project);
+    assert_eq!(req["requesterAccountId"],p.alice);
+    assert_eq!(req["payerAccountId"],p.bob);
+    assert_eq!(req["payerBindingRef"],"node-local-payer");
+    assert_ne!(req["participationId"],own["participationId"]);
+    assert_eq!(ok(routing::grants(&db,&p.peer.principal))?.len(),2);
+    Ok(())
+}
+
+#[test]
+fn ordered_results_preserve_receipts_and_reject_conflicts() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f,&mut db)?;
+    let a = p.alice();
+    let proposal = p.peer_grant(&db,json!({"mode":"all-members"}))?;
+    ok(post(&mut db,&a,&named(p.section(),&proposal)))?;
+    let req = request(&db,&p.peer)?;
+    let admitted = result(&req,"turn.admitted",1,json!({}));
+    let mut wrong = admitted.clone();
+    wrong["nodeId"] = json!(p.owner.id);
+    rejects(accept(&db,&p.owner,&wrong),"resource_not_found");
+    wrong = admitted.clone();
+    wrong["sectionId"] = p.beta["sectionId"].clone();
+    rejects(accept(&db,&p.peer,&wrong),"authority_denied");
+    rejects(accept(&db,&p.peer,&result(&req,"turn.final",1,json!({"text":"Premature"}))),"authority_denied");
+    assert_eq!(ok(accept(&db,&p.peer,&admitted))?["duplicate"],false);
+    assert_eq!(ok(accept(&db,&p.peer,&admitted))?["duplicate"],true);
+    wrong = admitted.clone();
+    wrong["eventId"] = json!(new_id());
+    rejects(accept(&db,&p.peer,&wrong),"idempotency_conflict");
+    let partial = result(&req,"turn.partial",2,json!({"text":"Answer"}));
+    wrong = partial.clone();
+    wrong["payloadDigest"] = json!(digest("wrong"));
+    rejects(accept(&db,&p.peer,&wrong),"digest_mismatch");
+    wrong = partial.clone();
+    wrong["sequence"] = json!(3);
+    rejects(accept(&db,&p.peer,&wrong),"stale_revision");
+    assert_eq!(ok(accept(&db,&p.peer,&partial))?["sequence"],2);
+    let done = result(&req,"turn.final",3,json!({"text":"Answer complete"}));
+    ok(accept(&db,&p.peer,&done))?;
+    ok(routing::pending(&db,&p.peer.principal))?;
+    assert_eq!(ok(accept(&db,&p.peer,&done))?["duplicate"],true);
+    let turn = text(&req,"turnId");
+    assert!(db.execute("UPDATE turns SET payer_account_id=? WHERE id=?",params![p.alice,turn]).is_err());
+    assert_eq!(ok(routing::turn(&db,&p.bob(),turn))?["state"],"done");
+    assert_eq!(ok(routing::history(&db,&a,p.section()))?["results"].as_array().ok_or("missing results")?.len(),3);
+    rejects(accept(&db,&p.peer,&result(&req,"turn.partial",4,json!({"text":"Late"}))),"stale_revision");
+    Ok(())
+}
+
+#[test]
+fn action_lease_and_result_receipts_recheck_authority() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f,&mut db)?;
+    let a = p.alice();
+    let proposal = p.own_grant(&db)?;
+    ok(post(&mut db,&a,&named(p.section(),&proposal)))?;
+    let req = request(&db,&p.owner)?;
+    let input = json!({"projectId":req["projectId"],"turnId":req["turnId"],"actionId":new_id(),"actionDigest":digest("effect"),"fence":req["fence"]});
+    rejects(routing::lease(&db,&p.owner.principal,&input),"authority_denied");
+    ok(accept(&db,&p.owner,&result(&req,"turn.admitted",1,json!({}))))?;
+    let before = now();
+    let lease = ok(routing::lease(&db,&p.owner.principal,&input))?;
+    let expires = lease["expiresAt"].as_i64().ok_or("missing lease expiry")?;
+    assert!((before+5000..=now()+5000).contains(&expires));
+    assert_eq!(ok(routing::lease(&db,&p.owner.principal,&input))?,lease);
+    let mut changed = input.clone();
+    changed["actionDigest"] = json!(digest("changed"));
+    rejects(routing::lease(&db,&p.owner.principal,&changed),"idempotency_conflict");
+    let receipt = json!({"actionId":input["actionId"],"actionDigest":input["actionDigest"],"leaseId":lease["leaseId"],"outcome":"succeeded"});
+    let mut invalid = receipt.clone();
+    invalid["leaseId"] = json!(new_id());
+    rejects(accept(&db,&p.owner,&result(&req,"turn.effect.receipt",2,invalid)),"authority_denied");
+    ok(accept(&db,&p.owner,&result(&req,"turn.effect.receipt",2,receipt)))?;
+    db.execute("UPDATE action_leases SET expires_at=?", [now()])?;
+    rejects(routing::lease(&db,&p.owner.principal,&input),"stale_revision");
+    ok(authority::withdraw(&db,&a,&json!({"participationId":proposal["participationId"]})))?;
+    changed["actionId"] = json!(new_id());
+    rejects(routing::lease(&db,&p.owner.principal,&changed),"authority_denied");
+    Ok(())
+}
