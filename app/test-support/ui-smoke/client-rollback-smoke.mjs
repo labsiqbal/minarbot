@@ -82,9 +82,12 @@ try {
   const workspace = join(scratch, 'work');
   await mkdir(workspace);
   const names = ['Field planner', 'Inventory reviewer'];
-  const [planner, reviewer] = await Promise.all(names.map(async name => (await api('/api/agents', {
-    id: randomUUID(), name, runtime: 'api', model: 'fixture', instructions: 'Summarize the synthetic greenhouse inventory.',
-  })).id));
+  const [planner, reviewer] = await Promise.all(names.map(async name => {
+    const profile = { name, model: 'fixture', instructions: 'Summarize the synthetic greenhouse inventory.' };
+    const { id, revision } = await api('/api/agents', { ...profile, id: randomUUID(), runtime: 'api' });
+    await api(`/api/agents/${id}/edit`, { ...profile, id: randomUUID(), revision, learnFromConversations: false });
+    return id;
+  }));
   const agent = `/api/agents/${planner}`, second = `/api/agents/${reviewer}`;
   const project = await api('/api/projects', { id: randomUUID(), name: 'Greenhouse operations', description: 'Track inventory and maintenance.', folders: [{ mode: 'existing', path: workspace }], members: [{ agent: planner, write: false }, { agent: reviewer, write: false }] });
   const thread = randomUUID();
@@ -103,6 +106,8 @@ try {
   await api(agent + '/memory', { id: randomUUID(), entry: randomUUID(), text: 'Inventory labels are in the north cabinet.', revision: 0, essential: true, remove: false });
 
   const persisted = ['/api/agents', `/api/projects/${project.id}`, agent + '/threads', `/api/threads/${thread}/turns`, agent + '/goal', `/api/routines/${loop}`, `/api/routines/${routine.id}`, agent + '/workflows', agent + '/memory'];
+  const projectReady = () => until(async () => (await api(`/api/projects/${project.id}`)).codegraphIndex?.state !== 'queued', 'Project indexing stayed queued.');
+  await projectReady();
   const snapshot = await Promise.all(persisted.map(path => api(path)));
   assert.equal(snapshot[3].find(row => row.id === turn)?.status, 'done');
   assert.equal(snapshot[4].id, finished.id);
@@ -145,6 +150,7 @@ try {
       await stop(child, closed);
       await start(selector);
       assert.equal((await api(second + '/goal')).status, 'interrupted');
+      await projectReady();
     }
     const client = label.endsWith('react') ? 'react' : 'leptos';
     await open(named + query, client);
@@ -154,16 +160,7 @@ try {
     assert.equal(await composer.inputValue(), uncertain);
     assert.equal(await storage(pendingKey), journal);
     await parityShot(page, join(output, label + '.png'));
-    const reread = await Promise.all(persisted.map(path => api(path)));
-    assert(reread[0].agents.some(row => row.id === planner));
-    assert.equal(reread[1].id, project.id);
-    assert(reread[2].some(row => row.id === thread));
-    assert.equal(reread[3].find(row => row.id === turn)?.text, 'Summarize inventory for the north greenhouse.');
-    assert.equal(reread[4].id, finished.id);
-    assert.equal(reread[5].id, loop);
-    assert.equal(reread[6].id, routine.id);
-    assert.equal(reread[7].workflows.some(row => row.id), true);
-    assert.equal(reread[8].items[0].text, 'Inventory labels are in the north cabinet.');
+    assert.deepEqual(await Promise.all(persisted.map(path => api(path))), snapshot);
     assert.equal((await api(agent + '/turns')).some(row => row.id === JSON.parse(journal).id), false);
     assert.equal(postAttempts.length, 1);
     assert.equal(calls, previousCalls);
