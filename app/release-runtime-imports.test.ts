@@ -19,7 +19,7 @@ test('release stages Rust runtime inputs and T3 notices without Node source', ()
     assert(!existsSync(join(stage, 'scripts')));
     assert(!existsSync(join(stage, 'hub')));
     const manifest = JSON.parse(readFileSync(join(stage, 'package.json'), 'utf8'));
-    for (const alias of ['cli', 'skills']) assert.equal(manifest.scripts[alias], undefined);
+    for (const alias of ['hub', 'cli', 'skills']) assert.equal(manifest.scripts[alias], undefined);
     mkdirSync(join(stage, 'bin'), { recursive: true });
     cpSync(rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY), join(stage,'bin/minarbot-server'));
     const library = join(stage, 'library'); mkdirSync(library);
