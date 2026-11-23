@@ -159,7 +159,10 @@ pub fn build(root: &Path) -> Result<()> {
     let dist = app.join("dist");
     fs::create_dir_all(&dist)?;
     let temp = private_stage("bindgen-", &target)?;
-    fs::copy(web.join("route-chunks.js"), temp.path().join("route-chunks.js"))?;
+    fs::copy(
+        web.join("route-chunks.js"),
+        temp.path().join("route-chunks.js"),
+    )?;
     let stage = private_stage(".leptos-", &dist)?;
     let assets = stage.path().join("assets");
     fs::create_dir(&assets)?;
