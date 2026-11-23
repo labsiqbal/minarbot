@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
 import { deleteAgentSmoke } from './delete-agent-smoke.mjs';
-import { fixDate, fixtureClock, parityChromiumArgs, parityShot } from './parity-shot.mjs';
+import { fixDate, fixtureClock, parityChromiumArgs, parityShot, withFixtureText } from './parity-shot.mjs';
 
 const output = resolve(process.argv[2] ?? 'test-support/ui-smoke/artifacts/agent-profile');
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-agent-profile-'));
@@ -89,7 +89,8 @@ async function captures(page, prefix) {
   const shot = async (name, panel) => {
     // The mouse position from opening a layer can overlap a field in the new layer.
     await page.mouse.move(0, 0);
-    await parityShot(page, join(output, `${prefix}-${name}.png`), panel);
+    const displayed = [scratch, folder].map(path => [path, path.replace(/-[a-zA-Z0-9]{6}$/, '-ZuiYSz')]);
+    await withFixtureText(page, displayed, () => parityShot(page, join(output, `${prefix}-${name}.png`), panel));
   };
   await createMenu(page, 'New agent');
   const create = dialog(page, 'New agent');

@@ -48,7 +48,7 @@ let app, browser;
 try {
   await mkdir(out, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startRustServer({ appearanceClient: 'leptos', appearanceClient: 'leptos', database: join(work, 'state.sqlite'), dist, fixedClock: Date.UTC(2026, 10, 23, 7), baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: model, stream: false });
+  app = await startRustServer({ appearanceClient: 'leptos', database: join(work, 'state.sqlite'), dist, fixedClock: Date.UTC(2026, 10, 23, 7), baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: model, stream: false });
   async function api(path, payload) {
     const res = await fetch(app.origin + path, payload === undefined ? undefined : { method: 'POST', headers: { origin: app.origin, 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     assert(res.ok, `${path} ${res.status} ${await res.clone().text()}`);

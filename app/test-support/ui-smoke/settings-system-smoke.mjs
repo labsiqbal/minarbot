@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { parityShot } from './parity-shot.mjs';
+import { parityShot, withFixtureText } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -357,13 +357,14 @@ try {
             assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
             await page.evaluate(() => document.fonts.ready);
             assert.equal(await page.locator('.app-settings__main').evaluate(element => element.scrollWidth <= element.clientWidth), true);
-            if (output) await parityShot(page, join(output, `${route}-${viewport}-${theme}-${client}.png`));
+            if (output) await withFixtureText(page, [[origin + '/mcp', 'http://127.0.0.1:41353/mcp']],
+              () => parityShot(page, join(output, `${route}-${viewport}-${theme}-${client}.png`)));
           }
         }
         await page.setViewportSize({ width: 1440, height: 900 });
         const panel = await open(page, client, route);
         await exercise(page, client, route, panel, state, commands);
-        if (true && route === 'backup') {
+        if (route === 'backup') {
           const start = await page.evaluate(() => performance.timeOrigin);
           await button(panel, 'Usage').click();
           await visible(panel.getByRole('heading', { name: 'Usage', exact: true }));

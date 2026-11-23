@@ -16,6 +16,7 @@ const acpHarness = join(process.env.MINARBOT_DATA_DIR, 'fake-acp');
 writeFileSync(acpHarness, `#!${process.execPath}\n` + readFileSync(new URL('../../fixtures/fake-acp.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n'));
 chmodSync(acpHarness, 0o700);
 const options = { harness: { executables: { codex: fakeHarness, claude: fakeHarness, hermes: acpHarness, grok: acpHarness, pi: acpHarness, antigravity: '/missing-antigravity', opencode: '/missing-opencode', gemini: '/missing-gemini', kiro: '/missing-kiro' } }, accounts: [{ id: 'st1-stream', name: 'Synthetic stream', provider: 'openai-compatible', baseURL: process.env.OPENAI_BASE_URL, apiKey: process.env.OPENAI_API_KEY, stream: true }], machines: { healthIntervalMs: 500 }, database, updates:{releasesDir:releases}, port: Number(process.env.PORT), baseURL: process.env.OPENAI_BASE_URL, apiKey: process.env.OPENAI_API_KEY, defaultModel: process.env.OPENAI_MODEL, workspaces: JSON.parse(process.env.MINARBOT_WORKSPACES) };
+options.appearanceClient = 'leptos';
 options.projectRoot = process.env.MINARBOT_PROJECT_ROOT;
 options.dist = fileURLToPath(new URL('../../dist', import.meta.url));
 let app = await startApp(options);

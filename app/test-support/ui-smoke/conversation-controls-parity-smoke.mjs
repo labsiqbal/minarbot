@@ -32,7 +32,7 @@ try {
   await mkdir(output, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
   app = await startRustServer({ appearanceClient: 'leptos',
-    database: join(work, 'state.sqlite'), dist, stream: false,
+    database: join(work, 'state.sqlite'), dist, fixedClock: Date.UTC(2026, 10, 23, 16, 21), stream: false,
     baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', defaultModel: 'fixture',
   });
   const api = async (path, data) => {
@@ -104,7 +104,7 @@ try {
       partial: { seq: 1, text: 'Current partial.', status: 'pending', model: 'fixture' },
     };
     const queue = { ...mk(108, 'Queued task'), reply: null, status: 'queued', dispatch_mode: 'queue' };
-    const eventId = randomUUID();
+    const eventId = '6123bef1-0b4f-47f8-bb90-db1f2cecf8d9';
     const waiting = { ...mk(109, 'Wait for signed event'), reply: null, status: 'queued',
       events: [{ id: eventId, event: 'fixture.ready', deadline: date + 100000, status: 'waiting' }],
     };
@@ -180,7 +180,7 @@ try {
               } });
               if (path.startsWith('/api/turn-waits/')) return route.fulfill({ json: {
                 event: 'fixture.ready', deadline: waiting.events[0].deadline,
-                url: app.origin + path + '/events', secret: 'synthetic-fixture',
+                url: 'http://127.0.0.1:35085' + path + '/events', secret: 'synthetic-fixture',
               } });
               if (path === projectScope + '/dispatch') return route.fulfill({ json: roomRows.some(turn => turn.status === 'running') ? [
                 { id: roomRoot.id, agent: agent.id, capabilities: { steer: true, queue: true, restart: true } },

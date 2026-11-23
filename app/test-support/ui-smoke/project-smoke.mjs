@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { assertP95 } from './timing-budgets.mjs';
-import { fixDate, parityShot } from './parity-shot.mjs';
+import { fixDate, parityShot, withFixtureText } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -14,6 +14,8 @@ await mkdir(output, { recursive: true });
 const directory = await mkdtemp(join(tmpdir(), 'minarbot-project-smoke-'));
 const workspaces = await mkdtemp(resolve('node_modules/.project-smoke-'));
 const folder = join(workspaces, 'git');
+// Only rendered fixture paths use this spelling from the golden capture.
+const displayedWorkspace = '/home/iqbal/.t3/worktrees/minarbot/t3-f37d9395-993c23ddd0f8f9df/app/node_modules/.project-smoke-fwL9iJ';
 const project = '10000000-0000-4000-8000-000000000081';
 const agent = '20000000-0000-4000-8000-000000000081';
 const connection = '30000000-0000-4000-8000-000000000081';
@@ -136,7 +138,7 @@ async function run(client) {
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         const file = name + '-' + layout + '-' + theme + (['project-messaging', 'project-whatsapp', 'restore', 'section-restore'].includes(name) ? '-diagnostic' : '') + '.png';
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), file + ' overflow');
-        await parityShot(page, join(output, client + '-' + file));
+        await withFixtureText(page, [[workspaces, displayedWorkspace]], () => parityShot(page, join(output, client + '-' + file)));
         screenshots.push(file);
       }
     }

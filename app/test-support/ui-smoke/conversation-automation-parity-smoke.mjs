@@ -33,7 +33,7 @@ assert(Number.isSafeInteger(samples) && samples >= 0);
 const fixture = { id: ids.mail, subject: 'Fixture receipt', from: 'sender@example.test', to: 'owner@example.test', text: 'The fixture arrived. <b>Plain text.</b>', received: now };
 const digest = 'Morning digest';
 const wfName = 'Owner workflow';
-const workflowRunId = '40000000-0000-4000-8000-000000000031';
+const workflowRunId = '9c635616-3c81-42c4-8e18-7d021d44872d';
 let browser;
 
 async function exercise(client, app) {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { assertP95 } from './timing-budgets.mjs';
-import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
+import { fixDate, fixtureClock, parityShot, withFixtureText } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -22,7 +22,6 @@ const provider = createServer(async (request, response) => {
     : { choices: [{ finish_reason: 'stop', message: { content: '**Automation fixture completed.**' } }] }));
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-let appPort = 0;
 let browser;
 const receipts = {};
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
@@ -36,13 +35,11 @@ const routes = [
   { path: '/workflows', title: 'Workflows', ready: 'main .k-row__title' },
   { path: '/calendar', title: 'Automation calendar', ready: 'main .calendar-grid .calendar-event' },
 ];
-const fixtureIds = { agent: randomUUID(), other: randomUUID(), workflow: randomUUID(), routine: randomUUID(), webhookRoutine: randomUUID() };
+const fixtureIds = { agent: randomUUID(), other: randomUUID(), workflow: randomUUID(), routine: randomUUID(), webhookRoutine: 'a3e4eaab-0929-4305-9b99-67c0155f199d' };
 
 async function exercise(client) {
-  const app = await startApp({ appearanceClient: 'leptos', database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: appPort, fixedClock: fixtureClock,
+  const app = await startApp({ appearanceClient: 'leptos', database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, fixedClock: fixtureClock,
     defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', stream: false });
-  // The client displays the server's full webhook URL.
-  appPort = Number(new URL(app.origin).port);
   const context = await browser.newContext({ viewport: sizes.desktop, timezoneId: 'UTC' });
   const errors = [], failedExpected = [];
   await context.addInitScript(() => {
@@ -267,7 +264,8 @@ async function exercise(client) {
     }
     await issue1Smoke({ page, routineId: fixtureIds.webhookRoutine,
       check: async (name, run) => { if (name.startsWith('Routine templates')) await run(); },
-      screenshot: name => parityShot(page, join(output, `${client}-${name}.png`)),
+      screenshot: name => withFixtureText(page, [[origin, 'http://127.0.0.1:33797']],
+        () => parityShot(page, join(output, `${client}-${name}.png`))),
     });
     await open('/workflows', 'Workflows');
     await button('Workflow options').click();
