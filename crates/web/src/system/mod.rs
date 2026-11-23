@@ -8,11 +8,10 @@ mod machines;
 pub(crate) mod updates;
 mod usage;
 
-use crate::{api, routes::SettingsRoute};
+use crate::{api, connection_ui::poll_with_backoff, routes::SettingsRoute};
 use leptos::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
-use std::time::Duration;
 use wasm_bindgen::{JsCast, JsValue};
 
 pub fn panel(route: SettingsRoute) -> AnyView {
@@ -30,22 +29,7 @@ pub fn panel(route: SettingsRoute) -> AnyView {
 }
 
 fn poll(interval: u64, refresh: impl Fn() + Copy + Send + Sync + 'static) {
-    if let Ok(timer) = set_interval_with_handle(
-        move || {
-            if !document().hidden() {
-                refresh();
-            }
-        },
-        Duration::from_millis(interval),
-    ) {
-        on_cleanup(move || timer.clear());
-    }
-    let listener = window_event_listener(leptos::ev::focus, move |_| {
-        if !document().hidden() {
-            refresh();
-        }
-    });
-    on_cleanup(move || listener.remove());
+    poll_with_backoff(interval, || Some(false), refresh);
 }
 
 struct Query<T: Send + Sync + 'static> {
@@ -139,7 +123,14 @@ impl<T: Clone + PartialEq + DeserializeOwned + Send + Sync + 'static> Query<T> {
             }
             refresh(true);
         });
-        poll(tick, move || refresh(false));
+        poll_with_backoff(
+            tick,
+            move || {
+                (!busy.get_untracked() && !running.get_untracked())
+                    .then(|| !error.with_untracked(String::is_empty))
+            },
+            move || refresh(false),
+        );
         query
     }
 

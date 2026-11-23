@@ -376,7 +376,8 @@ fn render_conversation(
     if restore_focus {
         request_animation_frame(move || history::focus_element(".chat__pill"));
     }
-    Ok(shell(config).into_any())
+    // One host lets route disposal detach the full conversation in one DOM operation.
+    Ok(view! { <div class="conversation-route">{shell(config)}</div> }.into_any())
 }
 
 pub fn standalone() -> impl IntoView {
@@ -538,7 +539,7 @@ pub fn standalone() -> impl IntoView {
         });
     });
     view! {
-        <div style:display=move || if workflow.with(Option::is_some) {"none"} else {"contents"}
+        <div class="conversation-route" class:is-workflow=move || workflow.with(Option::is_some)
             inert=move || workflow.with(Option::is_some)>
             {move || if deleting() {
                 view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any()

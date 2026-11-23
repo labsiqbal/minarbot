@@ -198,7 +198,7 @@ pub(crate) fn routines_page() -> impl IntoView {
         },
         false,
     );
-    poll(query.reload, 1200);
+    query.poll(1200, || true);
     let hub = Journal::new(HUB_KEY.to_owned(), hub_request);
     let (confirm, confirmation) = kit::confirmation();
     let notice = RwSignal::new(String::new());
@@ -732,7 +732,7 @@ fn RoutineDetail(
     let id = StoredValue::new(text(&routine.get_untracked()["id"]).to_owned());
     let agent = StoredValue::new(text(&routine.get_untracked()["agent"]).to_owned());
     let runs = ui::query::<Value>(move || id.with_value(|id| format!("/api/routines/{id}/runs")));
-    poll(runs.reload, 1200);
+    runs.poll(1200, || true);
     let tab = RwSignal::new(false);
     let locked = Signal::derive(move || hub.locked());
     let loop_done = move || routine.with(|routine| routine["loop"]["reason"].is_string());
@@ -1082,7 +1082,7 @@ fn FlowEditor(
     let query = ui::query::<Value>(move || path.get_value());
     let runs =
         ui::query::<Value>(move || id.with_value(|id| format!("/api/routines/{id}/flow-runs")));
-    poll(runs.reload, 1200);
+    runs.poll(1200, || true);
     let journal = Journal::new(
         id.with_value(|id| format!("minarbot:flow:{id}")),
         flow_request,

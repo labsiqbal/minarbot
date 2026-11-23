@@ -171,14 +171,9 @@ pub(crate) fn workflows_page(active: Signal<bool>) -> impl IntoView {
             None => format!("/api/workflows?deleted={deleted}"),
         }
     });
-    poll(
-        Callback::new(move |_| {
-            if active.get_untracked() && matches!(screen.get_untracked(), Screen::List) {
-                query.reload.run(());
-            }
-        }),
-        5000,
-    );
+    query.poll(5000, move || {
+        active.get_untracked() && matches!(screen.get_untracked(), Screen::List)
+    });
     let refresh = Callback::new(move |_| query.reload.run(()));
     let choose = RwSignal::new(String::new());
     let (confirm, confirmation) = kit::confirmation();
@@ -1448,7 +1443,7 @@ fn Detail(
             })
         })
     });
-    poll(runs.reload, 1200);
+    runs.poll(1200, || true);
     let deleted = move || workflow.with(|workflow| enabled(&workflow["deleted"]));
     let revision = move || workflow.with(|workflow| number(&workflow["revision"]));
     let version = RwSignal::new(0_u64);
@@ -1949,7 +1944,7 @@ pub(super) fn run_details(
 ) -> impl IntoView {
     let id = StoredValue::new(id);
     let query = ui::query::<Value>(move || id.with_value(|id| format!("/api/workflow-runs/{id}")));
-    poll(query.reload, 1200);
+    query.poll(1200, || true);
     let loaded = move || query.data.with(Option::is_some);
     let snapshot = Signal::derive(move || query.data.get().unwrap_or_default());
     let graph = Signal::derive(move || snapshot.with(|run| run["graph"].clone()));
@@ -2195,7 +2190,8 @@ fn inbox(back: Callback<()>) -> impl IntoView {
         query.reload.run(());
         newest.reload.run(());
     });
-    poll(refresh, 5000);
+    query.poll(5000, || true);
+    newest.poll(5000, || true);
     let seen = RwSignal::new(None::<i64>);
     Effect::new(move |_| {
         let data = if first_page() {

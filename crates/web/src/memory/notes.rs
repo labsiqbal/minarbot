@@ -415,10 +415,8 @@ pub(super) fn panel(
         read.data.set(None);
         read.reload.run(());
     });
-    visible_poll(root, move || {
-        if active.get_untracked() && !read.busy.get_untracked() && !journal.busy.get_untracked() {
-            read.reload.run(());
-        }
+    visible_poll(root, read, move || {
+        active.get_untracked() && !journal.busy.get_untracked()
     });
     let locked = Signal::derive(move || {
         archived

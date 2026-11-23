@@ -79,7 +79,7 @@ pub(super) fn page(agent: String) -> impl IntoView {
             })
         })
     });
-    poll_visible(list.reload, 5000);
+    list.poll(5000, || true);
     let heading = NodeRef::<leptos::html::H1>::new();
     let reader = NodeRef::<leptos::html::H2>::new();
     heading.on_load(|heading| {

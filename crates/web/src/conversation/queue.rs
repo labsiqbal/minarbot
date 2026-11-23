@@ -148,8 +148,15 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
             busy.set(false);
         });
     };
+    let renewing = RwSignal::new(false);
+    let renew_failed = RwSignal::new(false);
+    let renewed_at = RwSignal::new(0.0);
     let renew = move || {
-        if archived || busy.get_untracked() || pending.with_untracked(Option::is_some) {
+        if archived
+            || renewing.get_untracked()
+            || busy.get_untracked()
+            || pending.with_untracked(Option::is_some)
+        {
             return;
         }
         let Some((editor, revision)) = lease.get_untracked() else {
@@ -159,8 +166,13 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
         let path = endpoint.get_value();
         let raw = json!({"id": id, "editor": editor, "revision": revision, "action": "renew"})
             .to_string();
+        renewed_at.set(js_sys::Date::now());
+        renewing.set(true);
         leptos::task::spawn_local(async move {
-            if let Err(reason) = post::<Value>(&path, &raw).await {
+            let result = post::<Value>(&path, &raw).await;
+            renewing.try_set(false);
+            renew_failed.try_set(result.is_err());
+            if let Err(reason) = result {
                 error.try_set(reason.message);
             }
         });
@@ -181,7 +193,18 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
         if !lease.with(Option::is_some) {
             return;
         }
-        let timer = set_interval_with_handle(renew, Duration::from_secs(10)).ok();
+        // A held edit expires after 30s. Keep its write heartbeat alive
+        // and use every other tick when hidden or recovering from an error.
+        let timer = set_interval_with_handle(
+            move || {
+                let slow = document().hidden() || renew_failed.get_untracked();
+                if !slow || js_sys::Date::now() - renewed_at.get_untracked() >= 19_000.0 {
+                    renew();
+                }
+            },
+            Duration::from_secs(10),
+        )
+        .ok();
         let hide = window_event_listener(leptos::ev::pagehide, move |_| release());
         let reconnect = window_event_listener(leptos::ev::online, move |_| release());
         on_cleanup(move || {
@@ -195,16 +218,16 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     });
     if let Some(saved) = pending.get_untracked() {
         let retry = StoredValue::new(saved);
-        if let Ok(timer) = set_interval_with_handle(
+        crate::connection_ui::poll_with_backoff(
+            2000,
             move || {
-                if pending.with_untracked(|pending| pending.as_ref() == Some(&retry.get_value())) {
-                    act("save");
-                }
+                (!busy.get_untracked()
+                    && pending
+                        .with_untracked(|pending| pending.as_ref() == Some(&retry.get_value())))
+                .then(|| !error.with_untracked(String::is_empty))
             },
-            Duration::from_secs(2),
-        ) {
-            on_cleanup(move || timer.clear());
-        }
+            move || act("save"),
+        );
     }
     view! {
         <div class="queue-editor" hidden=move || archived || row.with(|turn| turn.status != "queued") && lease.with(Option::is_none) && pending.with(Option::is_none)>
@@ -546,12 +569,11 @@ fn order_dialog(
         queued.track();
         load();
     });
-    let interval = set_interval_with_handle(load, Duration::from_millis(1500)).ok();
-    on_cleanup(move || {
-        if let Some(interval) = interval {
-            interval.clear();
-        }
-    });
+    crate::connection_ui::poll_with_backoff(
+        1500,
+        move || (!loading.get_untracked()).then(|| !error.with_untracked(String::is_empty)),
+        load,
+    );
     let icons = use_context::<Icons>().unwrap_or_default();
     let up = StoredValue::new(icons.up);
     let down = StoredValue::new(icons.next);

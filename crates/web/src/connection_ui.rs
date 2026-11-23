@@ -100,6 +100,17 @@ pub(crate) fn cached_query<T: Clone + DeserializeOwned + PartialEq + Send + Sync
 }
 
 impl<T: Send + Sync + 'static> Query<T> {
+    pub fn poll(self, milliseconds: u64, enabled: impl Fn() -> bool + 'static) {
+        poll_with_backoff(
+            milliseconds,
+            move || {
+                (enabled() && !self.busy.get_untracked())
+                    .then(|| !self.error.with_untracked(String::is_empty))
+            },
+            move || self.reload.run(()),
+        );
+    }
+
     pub fn invalidate(self) {
         self.generation.update(|generation| *generation += 1);
         self.busy.set(false);
@@ -143,7 +154,7 @@ pub fn local_agents() -> Vec<crate::shell::Agent> {
 
 #[component]
 pub fn Icon(name: &'static str) -> impl IntoView {
-    let icon = use_context::<Icons>().and_then(|icons| icons.0.get(name).cloned());
+    let icon = with_context::<Icons, _>(|icons| icons.0.get(name).cloned()).flatten();
     view! { <span class="appearance-icon" aria-hidden="true" inner_html=icon.unwrap_or_default()></span> }
 }
 
@@ -670,17 +681,114 @@ pub fn redact(message: String, secret: &str) -> String {
 }
 
 pub fn poll(seconds: u64, tick: impl Fn() + 'static) {
-    use std::time::Duration;
-    if let Ok(handle) = set_interval_with_handle(
-        move || {
-            if !document().hidden() {
-                tick();
-            }
-        },
-        Duration::from_secs(seconds),
-    ) {
-        on_cleanup(move || handle.clear());
+    poll_with_backoff(seconds * 1000, || Some(false), tick);
+}
+
+type PollActions = (Box<dyn Fn() -> Option<bool>>, Box<dyn Fn()>);
+
+#[derive(Clone, Copy)]
+struct Poll {
+    interval: u64,
+    failures: StoredValue<u32>,
+    timer: StoredValue<Option<TimeoutHandle>>,
+    retry_at: StoredValue<Option<f64>>,
+    actions: StoredValue<PollActions, LocalStorage>,
+}
+
+pub(crate) fn backoff(interval: u64, failures: u32) -> u64 {
+    interval
+        .saturating_mul(1 << failures.min(5))
+        .min(interval.max(60_000))
+}
+
+impl Poll {
+    fn clear(self) {
+        if let Some(Some(timer)) = self.timer.try_update_value(Option::take) {
+            timer.clear();
+        }
     }
+
+    fn schedule(self, delay: u64, retry: bool) {
+        self.clear();
+        self.retry_at
+            .set_value(retry.then(|| js_sys::Date::now() + delay as f64));
+        if !document().hidden() {
+            self.timer.set_value(
+                set_timeout_with_handle(
+                    move || self.run(retry),
+                    std::time::Duration::from_millis(delay),
+                )
+                .ok(),
+            );
+        }
+    }
+
+    fn run(self, retry: bool) {
+        if document().hidden() {
+            return;
+        }
+        if let Some(failed) = self.actions.with_value(|(status, _)| status()) {
+            if !failed {
+                self.failures.set_value(0);
+            } else if !retry {
+                let count = (self.failures.get_value() + 1).min(5);
+                self.failures.set_value(count);
+                self.schedule(backoff(self.interval, count) - self.interval, true);
+                return;
+            }
+            self.actions.with_value(|(_, tick)| tick());
+        }
+        self.schedule(self.interval, false);
+    }
+
+    fn resume(self) {
+        self.clear();
+        if !document().hidden() {
+            if let Some(when) = self.retry_at.get_value() {
+                self.schedule((when - js_sys::Date::now()).max(0.0) as u64, true);
+            } else {
+                self.run(false);
+            }
+        }
+    }
+}
+
+/// A ready source reports whether its last read failed. A busy or inactive
+/// source returns None and keeps its generation and request ownership.
+pub fn poll_with_backoff(
+    milliseconds: u64,
+    status: impl Fn() -> Option<bool> + 'static,
+    tick: impl Fn() + 'static,
+) {
+    let poll = Poll {
+        interval: milliseconds,
+        failures: StoredValue::new(0),
+        timer: StoredValue::new(None),
+        retry_at: StoredValue::new(None),
+        actions: StoredValue::new_local((Box::new(status), Box::new(tick))),
+    };
+    poll.schedule(milliseconds, false);
+    on_visibility(move || poll.resume());
+    let focus = window_event_listener(leptos::ev::focus, move |_| poll.resume());
+    on_cleanup(move || {
+        poll.clear();
+        focus.remove();
+    });
+}
+
+pub(crate) fn on_visibility(changed: impl FnMut() + 'static) {
+    let changed = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(changed);
+    let _ = document()
+        .add_event_listener_with_callback("visibilitychange", changed.as_ref().unchecked_ref());
+    let changed = StoredValue::new_local(changed);
+    on_cleanup(move || {
+        changed.with_value(|changed| {
+            let _ = document().remove_event_listener_with_callback(
+                "visibilitychange",
+                changed.as_ref().unchecked_ref(),
+            );
+        });
+    });
 }
 
 pub fn external_url(value: &str) -> Option<String> {

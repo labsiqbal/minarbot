@@ -220,6 +220,8 @@ pub(crate) fn WorkspaceShell(
     children: Children,
 ) -> impl IntoView {
     appearance::initialize(colors);
+    #[cfg(not(feature = "hub"))]
+    crate::session::watch_device();
     let directory = RwSignal::new(None::<Result<Directory, String>>);
     provide_context(directory.read_only());
     let lifecycle = Lifecycle::new(directory);
@@ -308,9 +310,15 @@ pub(crate) fn WorkspaceShell(
     let project_commands = Commands::new(refresh_projects);
     provide_context(project_commands);
     let new_project = move || project_commands.create.set(true);
+    let machines_reading = RwSignal::new(false);
     let refresh_machines = move || {
+        if machines_reading.get_untracked() {
+            return;
+        }
+        machines_reading.set(true);
         leptos::task::spawn_local(async move {
             let next = Some(api::read("/api/machines").await);
+            machines_reading.try_set(false);
             machines.try_maybe_update(|current| {
                 if *current == next {
                     return (false, ());
@@ -333,16 +341,14 @@ pub(crate) fn WorkspaceShell(
         refresh_machines();
     };
     retry();
-    if let Ok(timer) = set_interval_with_handle(
+    crate::connection_ui::poll_with_backoff(
+        5000,
         move || {
-            if document().visibility_state() == web_sys::VisibilityState::Visible {
-                refresh_machines();
-            }
+            (!machines_reading.get_untracked())
+                .then(|| machines.with_untracked(|data| data.as_ref().is_some_and(Result::is_err)))
         },
-        std::time::Duration::from_secs(5),
-    ) {
-        on_cleanup(move || timer.clear());
-    }
+        refresh_machines,
+    );
     let agent_search = RwSignal::new(String::new());
     let project_search = RwSignal::new(String::new());
     let search = move || {

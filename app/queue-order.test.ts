@@ -28,7 +28,7 @@ test('queue order survives restart, preserves transcript order, blocks edits and
     const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const result = await res.json(); if (status) assert.equal(res.status, status, JSON.stringify(result)); else assert(res.ok, JSON.stringify(result)); return result;
   }
-  async function until(check: () => Promise<boolean>) { for (let n=0; n<200; n++) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail('Timed out'); }
+  async function until(check: () => Promise<boolean>, label = 'queue progress') { for (let n=0; n<200; n++) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail(`Timed out waiting for ${label}`); }
   try {
     const a = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'fixture', instructions: 'Help' });
     const side = await request(`/api/agents/${a.id}/threads`, { id: randomUUID(), name: 'Side' });
@@ -59,7 +59,15 @@ test('queue order survives restart, preserves transcript order, blocks edits and
     for (let n = 0; n < 45; n++) last = await request(path, { id: randomUUID(), text: `LATE ${n}` });
     await request(path.replace(/\/turns$/, '/queue'), { id: randomUUID(), target: early.id, other: last.id, revision: early.revision, otherRevision: last.revision });
     finish(held!);
-    await until(async () => (await request(path)).find((row: any) => row.id === early.id)?.status === 'done');
+    const offset = calls.length;
+    const order = ['LATE 44', ...Array.from({ length: 44 }, (_, n) => `LATE ${n}`), 'EARLY LAST'];
+    // Wait on provider progress so repeated full-history reads do not contend
+    // with every turn's completion and scheduling transactions.
+    for (const [index, text] of order.entries()) {
+      await until(async () => calls.length > offset + index, text);
+      assert.equal(calls[offset + index], text);
+    }
+    await until(async () => (await request(path)).find((row: any) => row.id === early.id)?.status === 'done', 'final commit');
     assert(summaries.some(summary => summary.messages.some((message: any) => message.id === last.id)));
     held = undefined; await request(path, { id: randomUUID(), text: 'BLOCK' }); await until(async () => !!held);
     const b = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'B', model: 'fixture', instructions: 'Help' });

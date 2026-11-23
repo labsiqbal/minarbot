@@ -99,9 +99,9 @@ in the [golden gate guide](../app/test-support/ui-smoke/PARITY.md).
 | `needs-you-notifications.test.ts` | Ported to `needs-you-notifications-smoke.mjs`. Leptos distinguishes requests on one turn from completion and suppresses duplicate notifications after reload. |
 | `next-frame.test.ts` | The tested frame queue is shared by the Leptos HTML reply and MCP app bridges. |
 | `optimistic-turns.test.ts` | Leptos conversation retry checks cover an in-flight send, stale history, reload and exact receipt reconciliation. |
-| `polling.test.ts` | Leptos stream/reconnect and profile deletion smokes check cleanup and stale updates. Download helper is still shared. React-specific polling backoff and visibility scheduling use a different implementation and need a product contract before an equivalent port. |
+| `polling.test.ts` | Leptos Usage smoke uses Chromium fake time to check hidden-tab pause, foreground refresh, exponential backoff capped at 60 s, and recovery to the normal cadence. Stream and profile smokes cover cleanup and stale updates. Download helper is still shared. |
 | `presentation.test.ts` | Appearance smoke covers local storage, palettes, mode, text size and tabs. Theme values are shared with the Leptos build. Conversation files checks dock and narrow layouts. |
-| `query-cache.test.ts` | Leptos uses route-local caches and generation checks. Model catalog smoke ports the stale-response assertion by releasing a Codex response after switching to API. React LRU and identity-clear policies have no Leptos equivalent. |
+| `query-cache.test.ts` | Leptos uses route-local caches and generation checks. Hosted Hub and paired-browser smokes exercise account and project switches, sign-out from another tab, and expired sessions. Session loss tears down the old document. The model catalog smoke releases a stale Codex response after switching to API. |
 | `right-panel-state.test.ts` | Leptos controls/files smokes exercise docking, tabs, close/reopen, history navigation and narrow overlays. |
 | `run-inspector.test.ts` | Leptos renders work logs through the shared `turnActivitySteps` adapter. Files and rich cover inspector display and API errors. |
 | `timeline-minimap.test.ts` | Shared preview utility and Leptos `timeline-minimap-smoke.mjs` cover previews, keyboard movement, pointer bounds and narrow behavior. |
@@ -112,6 +112,23 @@ in the [golden gate guide](../app/test-support/ui-smoke/PARITY.md).
 appearance smoke checks CSP, gzip, asset allowlists, retry and failed Wasm.
 Model catalog and Discord setup use disposable Leptos browser fixtures.
 Hub-link tests are owned by the parallel Hub task.
+
+### Leptos polling
+
+| Surface | Periodic reads or retries |
+| --- | --- |
+| Workspace shell | Paired browser session, machines, Quick switcher threads, local/peer update state and update receipt recovery |
+| Chat | History and active dispatch, goal state, room read position, queue order and pending edit recovery, details context/files/Git/Computer, Computer control, Guide machine pairing |
+| Agent and project screens | Agent folders, resources and sites, local project Git, Memory notes, learned material, standing questions and compaction |
+| Automation | Routine list and run lists, workflow list and run inspector, calendar and routine inspector, automation notifications, scoped routine lists, agent inbox, remote agent directory and history |
+| Settings and setup | Machines, environment, host metrics, devices, Usage, external access, Computer setup, Skills, Connected apps, Discord, WhatsApp, MCP and local Hub link |
+| Hosted Hub | Browser session and project metadata, sections, members and participants |
+
+Periodic requests pause while hidden and back off after failures. Chat uses
+shorter intervals while work is live. Queue-edit renewal is a write heartbeat
+with a 30 s lease. It slows from 10 s to about 20 s while hidden or after a
+failed renewal. SSE subscriptions retain their push and browser reconnect
+behavior. Recording, activity and token expiry timers read local clocks.
 
 ## Issue #60 turn protocol
 

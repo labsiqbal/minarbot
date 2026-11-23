@@ -354,11 +354,7 @@ pub(super) fn panel(path: String, questions: bool, archived: bool) -> impl IntoV
         }
         read.reload.run(());
     });
-    visible_poll(root, move || {
-        if !read.busy.get_untracked() && !changes.busy.get_untracked() {
-            read.reload.run(());
-        }
-    });
+    visible_poll(root, read, move || !changes.busy.get_untracked());
     let icons = kit::icons();
     let editing = Signal::derive(move || changes.edit.with(Option::is_some));
     let title: Signal<String> = Signal::derive(move || {

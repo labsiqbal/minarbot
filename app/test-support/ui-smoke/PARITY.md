@@ -85,3 +85,17 @@ unrounded products. Sources below refer to archived NUC review artifacts.
 
 Use 20 samples per timing smoke, 80 for `MINARBOT_AUTOMATION_WARM_BENCH`,
 and 60 for `MINARBOT_PROMPTS_BENCH`, matching the review sample sizes.
+
+Run the dedicated timing gate from `app/` after building both clients:
+
+```sh
+~/.cache/minarbot-node-slot.sh node --experimental-strip-types test-support/ui-smoke/timing-gate.mjs
+```
+
+The gate samples the host's one-minute load once per second and records each
+measurement and the peak load in `timing-summary.json`. On the benchmark NUC
+(16 logical CPUs), any load above 8.00 reports **host busy**, discards all
+budget verdicts for that run, and exits 2. Run without other builds or test
+jobs when measuring. Use `PARITY_GROUPS=controls,memory` for a focused run.
+A quiet run exits 1 for an incomplete benchmark, failed smoke or missed
+ceiling. The screenshot gate does not require a quiet host.

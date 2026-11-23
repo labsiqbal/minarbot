@@ -135,7 +135,7 @@ async function downloadWorkspace(path: string, name: string) {
 }
 
 function ask(title: string, text: string, label: string, signal: AbortSignal) {
-  if (signal.aborted || document.querySelector('dialog[open], [role="dialog"], [role="alertdialog"]')) return Promise.resolve(false);
+  if (signal.aborted) return Promise.resolve(false);
   return new Promise<boolean>(resolve => {
     const dialog = document.createElement('dialog');
     dialog.className = 'conversation-dialog k-stack';

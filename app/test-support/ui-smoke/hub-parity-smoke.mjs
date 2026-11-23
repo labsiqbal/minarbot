@@ -219,7 +219,39 @@ try {
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.getByRole('heading', { name: 'New project ' + client, exact: true }).waitFor();
+    assert.equal(await page.getByText(text, { exact: true }).count(), 0, 'Previous project history crossed project origins');
+    const oldProject = await context.newPage();
+    await oldProject.goto('https://' + project.host + '/');
+    await oldProject.getByText(text, { exact: true }).waitFor();
+    await oldProject.getByRole('textbox', { name: 'Message general' }).fill('Private Alice draft');
+    // Reuse one browser context across identities. A signed-out Alice page
+    // must not retain project data after Bob signs in.
+    await page.goto('https://' + central + '/');
+    await page.getByText('New project ' + client, { exact: true }).waitFor();
+    const otherTab = await context.newPage();
+    await otherTab.goto('https://' + central + '/');
+    await otherTab.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await otherTab.getByLabel('Development identity token').waitFor();
+    await page.bringToFront();
+    await page.getByLabel('Development identity token').waitFor({ timeout: 12000 });
+    assert.equal(await page.getByText('New project ' + client, { exact: true }).count(), 0);
+    await page.getByLabel('Development identity token').fill('bob');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByText('Bob', { exact: true }).waitFor();
+    assert.equal(await page.getByText('New project ' + client, { exact: true }).count(), 0);
+    await oldProject.bringToFront();
+    await oldProject.getByRole('button', { name: 'Sign in', exact: true }).waitFor({ timeout: 12000 });
+    assert.equal(await oldProject.getByText(text, { exact: true }).count(), 0);
+    assert.equal(await oldProject.getByRole('textbox', { name: 'Message general' }).count(), 0);
+    await page.bringToFront();
     assert.equal(errors.length, 0, errors.join('\n'));
+    const expire = testDatabase(dataPath);
+    try {
+      assert(expire.prepare("UPDATE hub_browser_sessions SET expires_at=0 WHERE host=? AND account_id=(SELECT id FROM accounts WHERE subject='Bob')").run(central).changes);
+    } finally { expire.close(); }
+    await page.getByLabel('Development identity token').waitFor({ timeout: 12000 });
+    assert.equal(await page.getByText('Bob', { exact: true }).count(), 0);
+    console.log('PASS signed-out and expired Hub sessions clear cached account and project data');
     console.log(client + ': HTTPS handoff, durable draft, exact replay after response loss, room SSE, invitation and project creation, dark/light');
   } finally {
     await context.close();

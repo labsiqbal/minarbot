@@ -87,20 +87,15 @@ pub(super) fn watch<T>(
     T: DeserializeOwned + PartialEq + Send + Sync + 'static,
 {
     let tick = RwSignal::new(0_u32);
-    let resume = move || {
-        if !document().hidden() {
-            tick.update(|n| *n = n.wrapping_add(1));
-        }
-    };
-    let timer =
-        leptos::leptos_dom::helpers::set_interval_with_handle(resume, Duration::from_secs(5)).ok();
-    let focus = window_event_listener(leptos::ev::focus, move |_| resume());
-    on_cleanup(move || {
-        if let Some(timer) = timer {
-            timer.clear();
-        }
-        focus.remove();
-    });
+    let running = RwSignal::new(false);
+    crate::connection_ui::poll_with_backoff(
+        5000,
+        move || {
+            (!running.get_untracked())
+                .then(|| data.with_untracked(|data| data.as_ref().is_some_and(Result::is_err)))
+        },
+        move || tick.update(|n| *n = n.wrapping_add(1)),
+    );
     let generation = StoredValue::new(0_u64);
     Effect::new(move |previous: Option<String>| {
         tick.track();
@@ -111,14 +106,16 @@ pub(super) fn watch<T>(
         }
         let id = generation.get_value().wrapping_add(1);
         generation.set_value(id);
+        running.set(!endpoint.is_empty());
         if !endpoint.is_empty() {
             let endpoint = endpoint.clone();
             leptos::task::spawn_local(async move {
                 let next = get(&endpoint).await.map_err(|error| error.message);
-                if generation.try_get_value() == Some(id)
-                    && data.with_untracked(|old| old.as_ref() != Some(&next))
-                {
-                    data.set(Some(next));
+                if generation.try_get_value() == Some(id) {
+                    running.set(false);
+                    if data.with_untracked(|old| old.as_ref() != Some(&next)) {
+                        data.set(Some(next));
+                    }
                 }
             });
         }
