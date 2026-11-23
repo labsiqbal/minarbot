@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Plug, Plus, Receipt, RefreshCw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
-import { CircleDot, Clock, Eye, EyeOff, Globe, Inbox, ListTodo, Pencil, Siren, Trash2 } from 'lucide-react';
+import { CircleDot, Eye, EyeOff, FileDiff, GitBranch, Globe, Inbox, ListTodo, Pencil, Siren, Trash2, WrapText } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -51,17 +51,6 @@ const appearanceConfig: Plugin = {
     };
     const iconMap = (icons: Record<string, LucideIcon>) => Object.fromEntries(Object.entries(icons)
       .map(([name, icon]) => [name, svg(icon, ['arrow-left', 'external-link', 'plus', 'search'].includes(name) ? 14 : name === 'server' ? 20 : 16)]));
-    const conversationIcons = {
-      attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
-      chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),
-      copy: svg(Copy, 14), fork: svg(GitFork, 14),
-      inspect: svg(Wrench, 14), close: svg(X),
-      chats: svg(MessageSquare, 14), files: svg(Files, 14), file: svg(FileText, 16), filter: svg(Filter, 15),
-      settings: svg(Settings, 16),
-      computer: svg(Monitor, 14), members: svg(Users, 14),
-      shield: svg(ShieldCheck, 18), more: svg(Ellipsis, 16), external: svg(ExternalLink, 14),
-      folder: svg(Folder), next: svg(ChevronRight, 14), alert: svg(CircleAlert, 14),
-    };
     const configs = {
       appearance: {
         ...shell,
@@ -79,15 +68,26 @@ const appearanceConfig: Plugin = {
         ...shell,
         errorIcon: svg(CircleAlert),
         systemIcons,
-        conversationIcons,
         connectionIcons: iconMap({ ...connectionIcons, workflow: Workflow, calendar: CalendarDays,
           slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot, schedule: CalendarClock }),
       },
       conversation: {
         ...shell,
         systemIcons,
-        connectionIcons: iconMap({ ...connectionIcons, clock: Clock, workflow: Workflow, schedule: CalendarClock }),
-        conversationIcons,
+        connectionIcons: iconMap(connectionIcons),
+        conversationIcons: {
+          attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
+          chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),
+          copy: svg(Copy, 14), fork: svg(GitFork, 14),
+          inspect: svg(Wrench, 14), close: svg(X),
+          chats: svg(MessageSquare, 14), files: svg(Files, 14), file: svg(FileText, 16), filter: svg(Filter, 15),
+          settings: svg(Settings, 16),
+          computer: svg(Monitor, 14), members: svg(Users, 14),
+          shield: svg(ShieldCheck, 18), more: svg(Ellipsis, 16), external: svg(ExternalLink, 14),
+          folder: svg(Folder), next: svg(ChevronRight, 14), alert: svg(CircleAlert, 14),
+          back: svg(ArrowLeft, 15), download: svg(Download, 15), globe: svg(Globe, 14), diff: svg(FileDiff, 14),
+          branch: svg(GitBranch, 14), wrap: svg(WrapText, 15),
+        },
       },
     };
     for (const [group, config] of Object.entries(configs)) {
