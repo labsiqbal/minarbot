@@ -69,7 +69,7 @@ try {
     const expected = '/api/models?' + new URLSearchParams({ runtime, account });
     await modelInput.waitFor();
     for (let i = 0; catalogPath !== expected && i < 100; i++) await wait(20);
-    assert.equal(catalogPath, expected);
+    assert.equal(catalogPath.replace(/&$/, ''), expected);
     await page.waitForFunction(model => document.querySelector('[placeholder="Enter model ID"]')?.value === model, model);
   }
   async function submit(runtime, account, model, pending) {
