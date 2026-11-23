@@ -116,7 +116,7 @@ try {
   assert(await page.getByRole('heading', { name: 'Fixture receipt' }).evaluate(el => el === document.activeElement));
   await captureThemes('inbox');
   await page.setViewportSize({ width: 390, height: 844 });
-  assert(await page.locator('main').evaluate(el => el.scrollWidth <= el.clientWidth));
+  assert(await page.getByRole('main').evaluate(el => el.scrollWidth <= el.clientWidth));
   await page.screenshot({ path: join(output, 'inbox-mobile.png'), animations: 'disabled' });
   await page.getByRole('button', { name: 'Back to message list' }).click();
   await page.getByRole('button', { name: /^Fixture receipt/ }).waitFor();

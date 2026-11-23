@@ -405,7 +405,7 @@ struct Chat {
 }
 
 impl Chat {
-    fn new(config: ConversationConfig) -> Self {
+    fn new(config: ConversationConfig, embedded: bool) -> Self {
         let key = |name| format!("minarbot:{name}:{}", config.scope);
         let raw = saved(&key("pending"));
         let pending = raw.and_then(|raw| {
@@ -427,7 +427,11 @@ impl Chat {
             .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
             .filter(|files| files.len() <= MAX_FILES && files.iter().all(|id| protocol::id(id)))
             .unwrap_or_default();
-        let result = results::current().ok().flatten();
+        let result = if embedded {
+            None
+        } else {
+            results::current().ok().flatten()
+        };
         let stored_tab = window()
             .local_storage()
             .ok()
@@ -462,7 +466,7 @@ impl Chat {
             query: RwSignal::new(String::new()),
             before: RwSignal::new(None),
             tab: RwSignal::new(tab),
-            details: RwSignal::new(result.is_some() || restore_details()),
+            details: RwSignal::new(result.is_some() || (!embedded && restore_details())),
             result: RwSignal::new(result),
             panel_upload: RwSignal::new(false),
             workspace: RwSignal::new(false),
@@ -1483,7 +1487,11 @@ fn header(
 /// Mount inside the conversation region of the Leptos shell.
 /// Key this component by conversation scope when changing routes.
 pub fn shell(config: ConversationConfig) -> impl IntoView {
-    let chat = Chat::new(config.clone());
+    conversation_view(config, false)
+}
+
+fn conversation_view(config: ConversationConfig, embedded: bool) -> impl IntoView {
+    let chat = Chat::new(config.clone(), embedded);
     let memory_open = RwSignal::new(false);
     let summary_open = RwSignal::new(false);
     let memory_path = StoredValue::new(if config.channel {

@@ -68,7 +68,7 @@ async function exercise(client) {
     });
     await context.route('**/api/remote-agents/messages**', async route => {
       if (route.request().method() === 'GET') {
-        assert.equal(new URL(route.request().url()).search, `?machine=${ids.machine}&agent=${ids.remote}`);
+        assert.deepEqual(Object.fromEntries(new URL(route.request().url()).searchParams), { machine: ids.machine, agent: ids.remote });
         return route.fulfill({ json: { messages: [...messages.values()] } });
       }
       const command = route.request().postDataJSON();
@@ -145,7 +145,7 @@ async function exercise(client) {
       const tab = details.getByRole('tab', { name: name.startsWith('section') ? 'Members' : 'Chats', exact: true });
       await tab.click();
       if (!await upcoming.getByText(digest, { exact: true }).isVisible()) {
-        await upcoming.getByRole('button', { name: /^Upcoming/ }).press('Enter');
+        await upcoming.locator('summary').or(upcoming.getByRole('button', { name: /^Upcoming/ })).first().press('Enter');
       }
       await upcoming.getByText(digest, { exact: true }).waitFor();
     }, async size => {

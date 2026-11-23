@@ -519,7 +519,7 @@ pub(crate) fn workflow_step(agent: String, thread: String) -> impl IntoView {
     load_step.run(());
     view! {
         <div class="workflow-step-chat">
-            {move || config.get().map(shell)}
+            {move || config.get().map(|config| conversation_view(config, true))}
             <Show when=move || config.with(Option::is_none)>
                 <p class="empty" role="status" hidden=move || !error.with(String::is_empty)>"Loading step conversation..."</p>
                 <p class="error" role="alert" hidden=move || error.with(String::is_empty)>{error} " "
