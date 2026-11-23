@@ -160,7 +160,7 @@ try {
     assert(reread[2].some(row => row.id === thread));
     assert.equal(reread[3].find(row => row.id === turn)?.text, 'Summarize inventory for the north greenhouse.');
     assert.equal(reread[4].id, finished.id);
-    assert.equal(reread[5].some(row => row.id === loop), true);
+    assert.equal(reread[5].id, loop);
     assert.equal(reread[6].id, routine.id);
     assert.equal(reread[7].workflows.some(row => row.id), true);
     assert.equal(reread[8].items[0].text, 'Inventory labels are in the north cabinet.');
