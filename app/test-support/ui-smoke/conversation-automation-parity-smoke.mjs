@@ -158,8 +158,9 @@ async function exercise(client) {
         }));
         assert.equal(long[1], new Date(long[0]).toLocaleString('en-US', { timeZone: 'UTC' }));
       }
-    }, async size => {
-      if (size === 'narrow' && await details.isVisible()) await button('Close details', details).click();
+    }, async () => {
+      await button('Close details', details).click();
+      await details.waitFor({ state: 'hidden' });
     });
   };
 
