@@ -1225,7 +1225,8 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
                         }
                     }
                 } else {
-                    let _ = drawer.show();
+                    // Docked details leave keyboard focus in the conversation.
+                    drawer.set_open(true);
                 }
             }
         }
