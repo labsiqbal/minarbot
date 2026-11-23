@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { request } from 'node:http';
 import { createServer } from 'node:https';
-import { mkdtemp, readFile, rm, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -12,12 +12,15 @@ import { createHubServer } from '../../hub/server.ts';
 import { createHubAuthority } from '../../hub/project-authority.ts';
 import { initializeHubSchema } from '../../hub/schema.ts';
 import { createStubVerifier } from '../../hub/sessions.ts';
+import { startRustHub } from '../hosted-hub.ts';
 
 const domain = 'hub-fixture.test';
 const central = 'accounts.' + domain;
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-hub-ui-'));
 const screenshots = process.env.MINARBOT_HUB_SCREENSHOTS;
-const db = new DatabaseSync(':memory:');
+const rustBinary = process.env.MINARBOT_HOSTED_HUB_BINARY;
+const dataPath = join(scratch, 'hub.sqlite');
+const db = new DatabaseSync(rustBinary ? dataPath : ':memory:');
 initializeHubSchema(db);
 const authority = createHubAuthority(db, { domain, mailboxKey: Buffer.alloc(32, 3) });
 const identities = new Map(['Alice', 'Bob'].map(subject => [subject.toLowerCase(), {
@@ -28,10 +31,11 @@ const account = authority.provisionAccount(identities.get('alice'), true);
 authority.provisionAccount(identities.get('bob'), true);
 const project = authority.createProject(account, 'pilot', 'Pilot project');
 if (process.env.MINARBOT_HUB_SMOKE_CLIENT !== 'react') process.env.MINARBOT_APPEARANCE_CLIENT = 'leptos';
-const hub = createHubServer({
-  authority, accountsHost: central, domain, verifier: createStubVerifier(identities),
-  web: { distPath: resolve(import.meta.dirname, '../../dist/hub'), developmentIdentity: true },
+const web = { distPath: resolve(import.meta.dirname, '../../dist/hub'), developmentIdentity: true };
+const node = rustBinary ? undefined : createHubServer({
+  authority, accountsHost: central, domain, verifier: createStubVerifier(identities), web,
 });
+let rust;
 let proxy, browser, dropMessageResponse = false;
 
 async function listen(server) {
@@ -41,7 +45,15 @@ async function listen(server) {
 }
 
 try {
-  const port = await listen(hub.server);
+  if (rustBinary) {
+    const mailboxKeyPath = join(scratch, 'mailbox.key'), tokensPath = join(scratch, 'tokens.json');
+    await writeFile(mailboxKeyPath, Buffer.alloc(32, 3), { mode: 0o600 });
+    await writeFile(tokensPath, JSON.stringify(Object.fromEntries(identities)), { mode: 0o600 });
+    db.close();
+    rust = await startRustHub(rustBinary, scratch, { domain, accountsHost: central, dataPath,
+      mailboxKeyPath, identity: { mode: 'stub', tokensPath }, web });
+  }
+  const port = rust?.port ?? await listen(node.server);
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=' + central,
     '-addext', 'subjectAltName=DNS:*.' + domain, '-keyout', join(scratch, 'tls.key'), '-out', join(scratch, 'tls.crt')], { stdio: 'ignore' });
   proxy = createServer({ key: await readFile(join(scratch, 'tls.key')), cert: await readFile(join(scratch, 'tls.crt')) }, (incoming, response) => {
@@ -164,7 +176,8 @@ try {
     proxy.closeAllConnections();
     await new Promise(resolve => proxy.close(resolve));
   }
-  await hub.close();
-  db.close();
+  await node?.close();
+  await rust?.close();
+  if (db.isOpen) db.close();
   await rm(scratch, { recursive: true });
 }
