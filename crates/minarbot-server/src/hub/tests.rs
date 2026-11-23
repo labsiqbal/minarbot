@@ -287,6 +287,24 @@ fn exact_hosts_and_immutable_project_ownership() -> Check {
         |row| row.get(0),
     )?;
     assert_eq!(owner_count, 1);
+    {
+        let transfer = db.transaction()?;
+        transfer.execute(
+            "UPDATE memberships SET role='admin' WHERE project_id=? AND account_id=?",
+            params![ctx.project, alice],
+        )?;
+        transfer.execute(
+            "UPDATE memberships SET role='owner' WHERE project_id=? AND account_id=?",
+            params![ctx.project, bob],
+        )?;
+        transfer.execute(
+            "UPDATE projects SET owner_account_id=? WHERE id=?",
+            params![bob, ctx.project],
+        )?;
+        transfer.commit()?;
+    }
+    assert_eq!(ok(authority::member(&db, &ctx, &[]))?["role"], "admin");
+    assert_eq!(ok(authority::member(&db, &context(&alpha, &bob), &[]))?["role"], "owner");
     db.execute(
         "UPDATE projects SET status='deleted' WHERE id=?",
         [ctx.project],
