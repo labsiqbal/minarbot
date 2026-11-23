@@ -11,7 +11,7 @@ const data = await mkdtemp(join(tmpdir(), 'minarbot-discord-state-'));
 const agent = '40000000-0000-4000-8000-000000000080';
 const project = '40000000-0000-4000-8000-000000000081';
 const section = '40000000-0000-4000-8000-000000000082';
-const disconnected = { generation: null, bot: null, status: 'disconnected', routes: [], deliveries: [] };
+const disconnected = { generation: 'fixture', bot: null, status: 'disconnected', routes: [], deliveries: [] };
 const discordPath = '/api/connected-apps/discord';
 let app, browser;
 try {
