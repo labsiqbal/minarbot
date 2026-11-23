@@ -70,3 +70,12 @@ async fn decode<T: DeserializeOwned>(response: gloo_net::http::Response) -> Resu
         .await
         .map_err(|_| "Minarbot returned an invalid response. Try again.".into())
 }
+
+pub fn command_id(value: &str) -> bool {
+    crate::workspace_route::valid_id(value)
+        && value.as_bytes()[14] == b'4'
+        && matches!(
+            value.as_bytes()[19].to_ascii_lowercase(),
+            b'8' | b'9' | b'a' | b'b'
+        )
+}

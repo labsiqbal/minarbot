@@ -17,6 +17,7 @@ mod general;
 mod hub;
 mod hub_connection;
 mod mcp_connections;
+mod memory;
 mod messaging_connections;
 mod onboarding;
 mod pairing;
