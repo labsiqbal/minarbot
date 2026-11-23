@@ -43,6 +43,7 @@ let gitWorkspace;
 const started = Date.now();
 const reply = 'Smoke reply: **ready**.\n\n- Local provider completed the turn.';
 const models = ['smoke-primary', 'smoke-secondary'];
+const leptosConversation = process.env.MINARBOT_SMOKE_CONVERSATION_ONLY !== '0';
 const quiet = 'Smoke Reviewer';
 const lead = 'Smoke Lead', helper = 'Smoke Helper', projectName = 'Smoke Channel', channel = 'Smoke Channel / general', skill = 'smoke-skill';
 const longName = 'Iris Editorial and Knowledge Management with a Deliberately Long Agent Name';
@@ -1014,7 +1015,7 @@ try {
   page.on('response', response => { if (new URL(response.url()).pathname.startsWith('/api/') && response.status() >= 500) receipt.failedRequests.push({ check: activeCheck, url: response.url(), method: response.request().method(), status: response.status(), atMs: Date.now() - started }); });
   receipt.timings.startupMs = Date.now() - started;
 
-  if (process.env.MINARBOT_SMOKE_CONVERSATION_ONLY === '1') {
+  if (leptosConversation) {
     const agent = await page.request.post(origin + '/api/agents', { headers: { Origin: origin }, data: { runtime: 'api', id: gitAgent, name: lead, model: models[0], instructions: 'Synthetic conversation fixture.' } });
     assert(agent.ok(), await agent.text());
     const openChat = async () => {
