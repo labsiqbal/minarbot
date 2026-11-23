@@ -8,9 +8,8 @@ import { testDatabase } from '../test-support/database.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { hubCommand, startRustHub, type HostedHubConfig } from '../test-support/hosted-hub.ts';
+import { hubCommand, startRustHub, type HostedHubConfig, type SessionIdentity } from '../test-support/hosted-hub.ts';
 import { rustBinary } from '../rust-binary.ts';
-import type { SessionIdentity } from './sessions.ts';
 
 const accounts = 'accounts.minarbot.test', issuer = 'https://clerk.example.test';
 const origin = (host: string) => `https://${host}`;

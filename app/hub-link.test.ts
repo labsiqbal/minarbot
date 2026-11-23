@@ -3,21 +3,24 @@ import { once, EventEmitter } from 'node:events';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
-import type { SessionIdentity } from './hub/sessions.ts';
 import { generateKeyPairSync, randomUUID, createPublicKey } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { markMinarbotData, testDatabase } from './test-support/database.ts';
-import { hubCommand, startRustHub } from './test-support/hosted-hub.ts';
+import { hubCommand, startRustHub, type PostInput, type SessionIdentity } from './test-support/hosted-hub.ts';
 import { rustBinary } from './rust-binary.ts';
 import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import WebSocket from 'ws';
 import { startApp } from './test-bridge.ts';
-import { signedNodeMessage, verifiedNodeMessage } from './hub/node-link.ts';
-import type { ParticipationPolicy, InvocationPolicy } from './hub/project-authority.ts';
-import type { RoutingFrame, PostMessage } from './hub/routing.ts';
+import { signedNodeMessage, verifiedNodeMessage } from './test-support/hub-node-signature.ts';
+import type { Policy as ParticipationPolicy } from './src/hub/client.ts';
 import { canonicalJson, ProtocolError, sha256 } from './shared/protocol.ts';
+type InvocationPolicy = ParticipationPolicy['invocation'];
+type RoutingFrame = {
+    kind: string; turnId: string; nodeId: string; sequence: number;
+    requesterAccountId: string; payerAccountId: string; payload: Record<string, unknown>;
+};
 type Project = { projectId: string; host: string; sectionId: string };
 type Proposal = { participationId: string; revision: number; policyDigest: string };
 type App = Awaited<ReturnType<typeof startApp>>;
@@ -213,7 +216,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         await hub.control({ now: clock + ms });
         clock += ms;
     }
-    async function queuedPost(input: PostMessage, advanceMs = 0): Promise<{ turnIds: string[] }> {
+    async function queuedPost(input: PostInput, advanceMs = 0): Promise<{ turnIds: string[] }> {
         clock += advanceMs;
         return hub.control({ now: clock, post: { projectId: project.projectId, accountId: alice, input } });
     }

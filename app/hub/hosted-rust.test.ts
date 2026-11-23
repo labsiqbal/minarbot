@@ -8,7 +8,7 @@ import test from 'node:test';
 import { rustBinary } from '../rust-binary.ts';
 import { testDatabase } from '../test-support/database.ts';
 import { hubCommand, startRustHub } from '../test-support/hosted-hub.ts';
-import { signedNodeMessage, verifiedNodeMessage } from './node-link.ts';
+import { signedNodeMessage, verifiedNodeMessage } from '../test-support/hub-node-signature.ts';
 
 test('hosted Rust reopens the frozen Hub fixture, verifies offline identity and fences durable session and peer proofs', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-hosted-rust-'));

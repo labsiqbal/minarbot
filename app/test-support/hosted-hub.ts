@@ -15,7 +15,8 @@ export type HostedHubConfig = {
   web?: { distPath: string; developmentIdentity?: boolean };
   nodeLink?: { signingKeyPath: string };
 };
-type PostInput = { requestId: string; sectionId: string; text: string; mentions: string[] };
+export type SessionIdentity = { issuer: string; subject: string; verifiedMailboxes: string[]; sessionId: string; expiresAt: number };
+export type PostInput = { requestId: string; sectionId: string; text: string; mentions: string[] };
 type Principal = { nodeId: string; accountId: string; nodeGeneration: number; connectionGeneration: number };
 type Control = {
   now: number;
