@@ -377,7 +377,7 @@ fn render_conversation(
         request_animation_frame(move || history::focus_element(".chat__pill"));
     }
     // One host lets route disposal detach the full conversation in one DOM operation.
-    Ok(view! { <div style="display: contents">{shell(config)}</div> }.into_any())
+    Ok(view! { <div class="conversation-route">{shell(config)}</div> }.into_any())
 }
 
 pub fn standalone() -> impl IntoView {
