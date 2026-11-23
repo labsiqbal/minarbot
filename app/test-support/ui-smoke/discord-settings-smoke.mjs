@@ -29,7 +29,7 @@ try {
   await page.route('**/api/**', route => {
     const { pathname } = new URL(route.request().url());
     if (pathname === '/api/agents') return route.fulfill({ json: { agents: [{ id: agent, name: 'Smoke agent', runtime: 'api' }] } });
-    if (pathname === '/api/projects') return route.fulfill({ json: { projects: [{ id: project, name: 'Smoke project', sections: [{ id: section, name: 'General' }] }] } });
+    if (pathname === '/api/projects') return route.fulfill({ json: { projects: [{ id: project, name: 'Smoke project', archived: false, sections: [{ id: section, name: 'General', archived: false }] }] } });
     if (pathname === discordPath) return route.fulfill({ json: state });
     if (!pathname.startsWith(discordPath + '/')) return route.continue();
     const body = route.request().postDataJSON();
@@ -57,7 +57,7 @@ try {
   });
   await page.goto(origin + '/settings/connected-apps');
   await page.locator('#leptos-root').waitFor({ state: 'attached' });
-  const discord = page.getByRole('region', { name: 'Discord', exact: true });
+  const discord = page.locator('section.k-section').filter({ has: page.getByRole('heading', { name: 'Discord', exact: true }) });
   const token = discord.getByLabel('Bot token');
   await token.waitFor();
   assert.equal(await token.getAttribute('type'), 'password');
