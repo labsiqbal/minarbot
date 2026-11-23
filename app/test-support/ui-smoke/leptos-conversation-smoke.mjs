@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { parityShot } from './parity-shot.mjs';
+import { assertP95 } from './timing-budgets.mjs';
+import { fixDate, parityShot } from './parity-shot.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -11,7 +12,6 @@ import { createInterface } from 'node:readline';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import sharp from 'sharp';
 import { desktopImage, installVncFixture } from './computer-smoke.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -19,7 +19,9 @@ const binary = resolve(process.env.MINARBOT_RUST_BINARY ?? join(root, 'target/de
 const output = process.env.MINARBOT_CONVERSATION_SCREENSHOTS;
 const data = await mkdtemp(join(tmpdir(), 'minarbot-leptos-chat-'));
 const calls = [];
-const agent = randomUUID();
+const agent = '40000000-0000-4000-8000-000000000001';
+// Match the time displayed in the frozen conversation screenshots.
+const captureClock = Date.UTC(2026, 10, 23, 16, 21);
 const path = '/agents/' + agent;
 const turns = '/api' + path + '/turns';
 let releaseAnswer;
@@ -51,8 +53,7 @@ try {
     child.once('exit', code => reject(new Error('Fixture exited ' + code)));
   });
   child.stdin.end(JSON.stringify({
-    database: join(data, 'state.sqlite'), port: 0, dist: join(root, 'app/dist'), appearanceClient: 'leptos',
-    baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', defaultModel: 'fixture', stream: true,
+    database: join(data, 'state.sqlite'), port: 0, dist: join(root, 'app/dist'), fixedClock: captureClock, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', defaultModel: 'fixture', stream: true,
   }));
   const origin = await Promise.race([listening, wait(90_000, null, { ref: false })]);
   assert(origin, 'Fixture readiness timed out');
@@ -70,9 +71,10 @@ try {
     if (localStorage.getItem('minarbot:details-open') === null) localStorage.setItem('minarbot:details-open', '0');
   });
   const page = await context.newPage();
+  await fixDate(page, captureClock + 60_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  const route = origin + path + '?ui=leptos';
+  const route = origin + path + '';
   const input = page.getByRole('textbox', { name: 'Message Conversation fixture' });
   const response = await page.goto(route);
   assert.equal(response.status(), 200);
@@ -143,31 +145,17 @@ try {
       ), theme);
       for (const [label, width, height] of [['desktop', 1440, 900], ['narrow', 430, 850]]) {
         await page.setViewportSize({ width, height });
-        const images = [];
-        for (const client of ['react', 'leptos']) {
-          await page.goto(origin + path + '?ui=' + client);
+        for (const client of ['leptos']) {
+          await page.goto(origin + path);
           await page.getByText('Final answer.', { exact: true }).waitFor();
           await page.evaluate(() => document.fonts.ready);
           assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
           const box = page.getByRole('textbox', { name: 'Message Conversation fixture' });
           assert.equal(await box.getAttribute('placeholder'), 'Message Conversation fixture');
-          images.push(await parityShot(page, join(output, `${label}-${theme}-${client}.png`)));
+          await parityShot(page, join(output, `${label}-${theme}-${client}.png`));
         }
-        await sharp({ create: { width: 2 * width, height, channels: 3, background: '#000' } })
-          .composite(images.map((input, i) => ({ input, left: i * width, top: 0 }))).png()
-          .toFile(join(output, `${label}-${theme}-pair.png`));
-        const [react, leptos] = await Promise.all(images.map(image => sharp(image).removeAlpha().raw().toBuffer()));
-        const diff = Buffer.alloc(react.length);
-        let pixels = 0;
-        for (let i = 0; i < diff.length; i += 3) {
-          const error = Math.max(...[0, 1, 2].map(channel => Math.abs(react[i + channel] - leptos[i + channel])));
-          if (error > 16) pixels++;
-          diff.fill(Math.min(255, error * 4), i, i + 3);
-        }
-        await sharp(diff, { raw: { width, height, channels: 3 } }).png()
-          .toFile(join(output, `${label}-${theme}-diff.png`));
-        console.log('Visual diff', label, theme, `${pixels}/${width * height} pixels differ by >16`);
+
       }
     }
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -229,9 +217,9 @@ try {
 
   const samples = Number(process.env.MINARBOT_CONVERSATION_BENCH ?? 0);
   assert(Number.isSafeInteger(samples) && samples >= 0);
-  const cold = { react: [], leptos: [] };
+  const cold = { leptos: [] };
   for (let i = 0; i < samples; i++) {
-    for (const client of i % 2 === 0 ? ['react', 'leptos'] : ['leptos', 'react']) {
+    for (const client of ['leptos']) {
       const fresh = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
       try {
         await fresh.addInitScript(() => {
@@ -244,7 +232,7 @@ try {
           observer.observe(document, { attributes: true, childList: true, subtree: true });
         });
         const bench = await fresh.newPage();
-        await bench.goto(origin + path + '?ui=' + client, { waitUntil: 'commit' });
+        await bench.goto(origin + path, { waitUntil: 'commit' });
         await bench.waitForFunction(() => performance.getEntriesByName('composer-ready').length === 1);
         cold[client].push(await bench.evaluate(() => {
           const ready = performance.getEntriesByName('composer-ready')[0];
@@ -266,10 +254,10 @@ try {
     };
   }
   const statistics = {};
-  for (const client of samples ? ['react', 'leptos'] : []) {
+  for (const client of samples ? ['leptos'] : []) {
     const bench = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
     bench.on('pageerror', error => errors.push(error.message));
-    await bench.goto(origin + path + '?ui=' + client);
+    await bench.goto(origin + path);
     const role = bench.getByRole('textbox', { name: 'Message Conversation fixture' });
     const timings = await role.evaluate(async (input, { key, samples }) => {
       if (!(input instanceof HTMLTextAreaElement) || input.readOnly) throw new Error('Composer is not ready');
@@ -293,6 +281,36 @@ try {
     await bench.close();
     statistics[client] = timingsSummary(timings);
   }
+  // Exercise the renderer called by the Wasm conversation, including the
+  // reference-link fallback and model-supplied markup.
+  const markup = await page.evaluate(scope => {
+    const { markdown, markdownBlocks } = globalThis.MinarbotConversation;
+    const id = '11111111-1111-4111-8111-111111111111';
+    const files = JSON.stringify([{ id, name: 'report.html', size: 10 }]);
+    const prefix = 'First **paragraph**.\n\n';
+    const reference = '[reference][id]\n\n[id]: https://example.com/';
+    return {
+      safe: markdown('# Heading\n\n**Bold** and *italic*\n\n- One\n- Two\n\n| A | B |\n| - | - |\n| 1 | 2 |', scope, files),
+      refused: markdown('<img src="https://tracker.test/pixel" onerror="alert(1)">\n\n<script>alert(1)</script>\n\n[evil](javascript:alert(1))\n\n![track](https://tracker.test/x)\n\n<iframe src="/api/backup"></iframe>', scope),
+      file: markdown('Review report.html.', scope, files),
+      deleted: markdown('Review report.html.', scope, JSON.stringify([{ id, name: 'report.html', size: 10, deleted: true }])),
+      ordinary: markdown('[File](' + scope + '/files/' + id + ') [Docs](https://example.test/)', scope),
+      reference: markdown(markdownBlocks(reference)[0], scope, '[]'),
+      referenceBlocks: markdownBlocks(reference),
+      prefixes: ['Second', 'Second grows', 'Second grows.\n\nThird'].map(suffix => markdownBlocks(prefix + suffix)[0]),
+    };
+  }, '/api' + path);
+  for (const tag of ['h1', 'strong', 'em', 'ul', 'table']) assert(markup.safe.includes('<' + tag), tag);
+  assert.doesNotMatch(markup.refused, /<(img|script|iframe|style)|href=/);
+  assert.match(markup.file, /data-minarbot-result/);
+  assert.equal((markup.file.match(/<a /g) ?? []).length, 1);
+  assert.match(markup.deleted, /message-muted[^>]*>.*\(deleted\)/);
+  assert.doesNotMatch(markup.deleted, /<a /);
+  assert.match(markup.ordinary, / download/);
+  assert.match(markup.ordinary, /target="_blank"/);
+  assert.match(markup.reference, /title="https:\/\/example.com\/"/);
+  assert.equal(markup.referenceBlocks.length, 1);
+  assert.deepEqual(markup.prefixes, Array(3).fill('First **paragraph**.\n\n'));
   assert.deepEqual(errors, []);
   if (samples) {
     const coldStart = Object.fromEntries(Object.entries(cold).map(([client, runs]) => [client, {
@@ -301,10 +319,9 @@ try {
     }]));
     console.log('Cold conversation TTI (ms)', JSON.stringify(coldStart));
     console.log('Warm composer latency (ms)', JSON.stringify(statistics));
-    if (samples >= 20) {
-      assert(coldStart.leptos.tti.p95 <= coldStart.react.tti.p95 * 1.2, 'Cold Leptos conversation p95 exceeds the 20% budget');
-    }
-    assert(statistics.leptos.p95 <= statistics.react.p95 * 1.1, 'Warm Leptos composer p95 exceeds the 10% budget');
+    if (samples >= 20) assertP95('conversation', 'cold', coldStart.leptos.tti.p95);
+    assertP95('conversation', 'warm', statistics.leptos.p95);
+
   }
   console.log('Conversation pilot passed');
 } finally {

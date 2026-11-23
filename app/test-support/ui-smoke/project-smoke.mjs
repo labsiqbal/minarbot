@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { fixDate, parityShot } from './parity-shot.mjs';
+import { assertP95 } from './timing-budgets.mjs';
+import { fixDate, parityShot, withFixtureText } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
-import sharp from 'sharp';
 import { startApp } from '../../test-bridge.ts';
 
 const output = resolve(process.argv[2] ?? 'test-support/ui-smoke/artifacts/projects');
@@ -14,6 +14,8 @@ await mkdir(output, { recursive: true });
 const directory = await mkdtemp(join(tmpdir(), 'minarbot-project-smoke-'));
 const workspaces = await mkdtemp(resolve('node_modules/.project-smoke-'));
 const folder = join(workspaces, 'git');
+// Only rendered fixture paths use this spelling from the golden capture.
+const displayedWorkspace = '/home/iqbal/.t3/worktrees/minarbot/t3-f37d9395-993c23ddd0f8f9df/app/node_modules/.project-smoke-fwL9iJ';
 const project = '10000000-0000-4000-8000-000000000081';
 const agent = '20000000-0000-4000-8000-000000000081';
 const connection = '30000000-0000-4000-8000-000000000081';
@@ -44,8 +46,8 @@ function timing(samples) {
 }
 
 async function run(client) {
-  const app = await startApp({ database: join(directory, client + '.sqlite'), dist: resolve('dist'), port: 0,
-    appearanceClient: 'leptos', projectRoot: join(workspaces, 'projects'), fixedClock: now, defaultModel: 'fixture', baseURL: 'http://127.0.0.1:1/v1' });
+  const app = await startApp({ appearanceClient: 'leptos', database: join(directory, client + '.sqlite'), dist: resolve('dist'), port: 0,
+    projectRoot: join(workspaces, 'projects'), fixedClock: now, defaultModel: 'fixture', baseURL: 'http://127.0.0.1:1/v1' });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' });
   const page = await context.newPage();
   await fixDate(page, now);
@@ -100,7 +102,7 @@ async function run(client) {
   });
   await context.addInitScript(() => addEventListener('securitypolicyviolation', event => console.error('CSP ' + event.effectiveDirective)));
   const go = (tab = '', path = url) => {
-    const params = new URLSearchParams(client === 'react' ? { ui: 'react' } : {});
+    const params = new URLSearchParams();
     if (tab) params.set('projectTab', tab);
     return app.origin + path + (params.size ? '?' + params : '');
   };
@@ -136,7 +138,7 @@ async function run(client) {
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         const file = name + '-' + layout + '-' + theme + (['project-messaging', 'project-whatsapp', 'restore', 'section-restore'].includes(name) ? '-diagnostic' : '') + '.png';
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), file + ' overflow');
-        await parityShot(page, join(output, client + '-' + file));
+        await withFixtureText(page, [[workspaces, displayedWorkspace]], () => parityShot(page, join(output, client + '-' + file)));
         screenshots.push(file);
       }
     }
@@ -153,7 +155,7 @@ async function run(client) {
     // Keep background indexing from racing the screenshots.
     await api(base + '/edit', { id: randomUUID(), revision: created.revision, codegraphEnabled: false });
     await page.goto(go());
-    assert.equal(await page.locator('#leptos-root').count(), client === 'leptos' ? 1 : 0);
+    assert.equal(await page.locator('#leptos-root').count(), 1);
     await text('1 changed').waitFor();
     await capture('overview');
     await page.getByRole('button', { name: /notes\.md/ }).click();
@@ -173,7 +175,7 @@ async function run(client) {
       await page.getByRole('option', { name: 'Project member', exact: true }).click();
     }
     await capture('new-project');
-    if (client === 'leptos') {
+    {
       assert(await create.evaluate(element => element.matches(':modal')), 'New project dialog must open in the top layer');
     }
     await button('Create project', dialog('New project')).click();
@@ -224,7 +226,7 @@ async function run(client) {
     await selectTab('Connected apps');
     await text('Connect apps').waitFor();
     await capture('apps');
-    if (client === 'leptos') {
+    {
       await button('Project menu').press('Enter');
       await page.getByRole('menuitem', { name: 'Discord and WhatsApp', exact: true }).press('Enter');
       const messaging = dialog('Discord and WhatsApp');
@@ -317,7 +319,7 @@ async function run(client) {
     await page.waitForURL(location => location.pathname !== url);
     const archived = await api(base);
     assert.equal(archived.archived, true);
-    if (client === 'leptos') {
+    {
       await page.goto(go());
       await page.getByText('Archived projects', { exact: true }).click();
       await menu('Menu project Updated project', 'Restore project');
@@ -327,16 +329,14 @@ async function run(client) {
       await button('Manage members & folders').waitFor({ state: 'visible' });
       await page.waitForFunction(() => document.querySelector('[aria-label="Manage members & folders"]')?.disabled === false
         || Array.from(document.querySelectorAll('button')).some(button => button.textContent === 'Manage members & folders' && !button.disabled));
-    } else if (samples) {
-      await api(base + '/restore', { id: randomUUID(), revision: archived.revision, confirmed: true });
     }
-    if (client === 'leptos' || samples) {
+    {
       const restored = await api(base);
       assert.equal(restored.archived, false);
       assert.equal(restored.sections.find(section => section.id === created.channel).archived, false);
       assert.equal(restored.sections.find(section => section.name === 'Review').archived, true);
     }
-    if (client === 'leptos') {
+    {
       await menu('Menu section Review in Updated project', 'Restore section');
       await capture('section-restore');
       await confirm('Restore section');
@@ -383,7 +383,31 @@ async function run(client) {
     }
     assert.deepEqual(errors, []);
     assert.deepEqual(csp, []);
+    assert.deepEqual(mutations.filter(([path, body]) => !path.endsWith('/restore') && body.archived !== false), [
+      ["/api/projects", {"name": "Created in browser", "description": "", "folders": [{"mode": "new"}], "members": [{"agent": "20000000-0000-4000-8000-000000000081", "write": false}], "confirmWrite": false}],
+      ["/api/projects/:id/edit", {"name": "Updated project"}],
+      ["/api/projects/:id/sections/:id/edit", {"name": "Planning"}],
+      ["/api/projects/:id/sections", {"name": "Review"}],
+      ["/api/projects/:id/sections/:id/edit", {"position": 0}],
+      ["/api/projects/:id/sections/:id/edit", {"archived": true}],
+      ["/api/projects/:id/edit", {"allowInstallationApps": true, "confirmed": true}],
+      ["/api/projects/:id/connected-apps/grant-all/github", {"confirmed": true}],
+      ["/api/projects/:id/environment", {"name": "PROJECT_FIXTURE"}],
+      ["/api/projects/:id/environment", {"name": "PROJECT_FIXTURE"}],
+      ["/api/projects/:id/environment/remove", {"name": "PROJECT_FIXTURE", "confirmed": true}],
+      ["/api/projects/:id/environment", {"name": "PROJECT_FIXTURE"}],
+      ["/api/projects/:id/environment/remove", {"name": "PROJECT_FIXTURE", "confirmed": true}],
+      ["/api/projects/:id/mcp/test", {"name": "Fixture MCP", "url": "https://example.test/mcp"}],
+      ["/api/projects/:id/mcp", {}],
+      ["/api/projects/:id/agents/:id/mcp/:id", {"connectionRevision": 1, "tools": ["echo"]}],
+      ["/api/projects/:id/mcp/:id/remove", {"confirmed": true}],
+      ["/api/projects/:id/archive", {"confirmed": true}],
+    ]);
     receipt[client] = { metrics, screenshots, mutations, consoleErrors: errors.length, cspViolations: csp.length };
+    for (const [name, timing] of Object.entries(metrics)) {
+      assertP95('projects ' + name, 'cold', timing.cold.p95);
+      assertP95('projects ' + name, 'warm', timing.warm.p95);
+    }
     console.log('PASS', client, screenshots.length, 'screenshots, zero console/CSP errors');
   } catch (error) {
     await page.screenshot({ path: join(output, client + '-failure.png'), animations: 'disabled', mask: [page.locator('input[type=password]')] });
@@ -402,26 +426,10 @@ try {
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgSign=false', 'commit', '-m', 'Initial notes');
   await writeFile(join(folder, 'notes.md'), 'Changed notes\n');
   browser = await chromium.launch({ args: ['--no-sandbox'] });
-  const clients = process.env.MINARBOT_SMOKE_UI ? [process.env.MINARBOT_SMOKE_UI] : ['react', 'leptos'];
+  const clients = ['leptos'];
   for (const client of clients) {
     await mkdir(join(workspaces, 'projects'));
     try { await run(client); } finally { await rm(join(workspaces, 'projects'), { recursive: true }); }
-  }
-  for (const name of receipt.react?.screenshots.filter(file => receipt.leptos?.screenshots.includes(file)) ?? []) {
-    const react = join(output, 'react-' + name), leptos = join(output, 'leptos-' + name);
-    const { width, height } = await sharp(react).metadata();
-    await sharp({ create: { width: width * 2, height, channels: 3, background: '#000' } })
-      .composite([{ input: react, left: 0, top: 0 }, { input: leptos, left: width, top: 0 }])
-      .png().toFile(join(output, 'side-by-side-' + name));
-  }
-  if (receipt.react && receipt.leptos) {
-    const shared = rows => rows.filter(([path, body]) => !path.endsWith('/restore') && body.archived !== false);
-    assert.deepEqual(shared(receipt.leptos.mutations), shared(receipt.react.mutations));
-    for (const [name, thresholds] of Object.entries(receipt.react.metrics)) {
-      const measured = receipt.leptos.metrics[name];
-      assert(measured.cold.p95 <= thresholds.cold.p95 * 1.2, name + ' cold p95 budget');
-      assert(measured.warm.p95 <= thresholds.warm.p95 * 1.1, name + ' warm p95 budget');
-    }
   }
 } finally {
   await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt, null, 2));

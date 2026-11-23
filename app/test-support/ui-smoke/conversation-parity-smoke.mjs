@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fixDate, parityShot } from './parity-shot.mjs';
+import { fixDate, parityShot, withFixtureText } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -8,7 +8,6 @@ import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import sharp from 'sharp';
 import { startRustServer } from '../../rust-test-server.ts';
 import { desktopImage, installVncFixture } from './computer-smoke.mjs';
 
@@ -16,6 +15,7 @@ const out = resolve(process.argv[2] ?? '/tmp/minarbot-conversation-parity');
 const work = await mkdtemp(join(tmpdir(), 'minarbot-conversation-parity-'));
 const dist = fileURLToPath(new URL('../../dist', import.meta.url));
 const model = 'parity-fixture';
+const ids = { agent: '40000000-0000-4000-8000-000000000010', completed: '40000000-0000-4000-8000-000000000011', failed: '40000000-0000-4000-8000-000000000012', rich: '40000000-0000-4000-8000-000000000013' };
 const chart = {
   tree: { type: 'stack', children: [{ type: 'bar', title: 'Weekly signups', data: 'signups' }] },
   data: { signups: [{ label: 'Week 1', value: 26 }, { label: 'Week 2', value: 40 }, { label: 'Week 3', value: 51 }, { label: 'Week 4', value: 67 }] },
@@ -48,16 +48,16 @@ let app, browser;
 try {
   await mkdir(out, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startRustServer({ database: join(work, 'state.sqlite'), dist, appearanceClient: 'leptos', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: model, stream: false });
+  app = await startRustServer({ appearanceClient: 'leptos', database: join(work, 'state.sqlite'), dist, fixedClock: Date.UTC(2026, 10, 23, 16, 25), baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: model, stream: false });
   async function api(path, payload) {
     const res = await fetch(app.origin + path, payload === undefined ? undefined : { method: 'POST', headers: { origin: app.origin, 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     assert(res.ok, `${path} ${res.status} ${await res.clone().text()}`);
     return res.json();
   }
-  const agent = await api('/api/agents', { id: randomUUID(), name: 'Conversation fixture', instructions: 'Reply to fixture prompts.', model, runtime: 'api' });
+  const agent = await api('/api/agents', { id: ids.agent, name: 'Conversation fixture', instructions: 'Reply to fixture prompts.', model, runtime: 'api' });
   const main = `/agents/${agent.id}`;
   async function seed(scope, text, ready) {
-    const id = randomUUID();
+    const id = text === 'Replay fixture' ? ids.completed : text === 'Inspect failed run' ? ids.failed : ids.rich;
     await api(`${scope}/turns`, { id, text });
     for (let i = 0; i < 200; i++) {
       const turn = (await api(`${scope}/turns`)).find(row => row.id === id);
@@ -77,14 +77,14 @@ try {
   const rich = await thread('October report');
   const richTurn = await seed(rich.scope, 'Show the report', turn => turn.harnessApprovals?.some(item => item.kind === 'form' && item.state === 'approval'));
   const screen = 'data:image/png;base64,' + (await desktopImage).toString('base64');
-  const fixed = Math.max(Date.now(), Date.parse(completed.created) + 5_000);
-  const selector = (path, client) => app.origin + path + '?ui=' + client;
+  const fixed = Date.parse(completed.created) + 4_000;
+  const selector = (path, client) => app.origin + path;
   browser = await chromium.launch({ headless: true });
 
   for (const [viewport, width, height] of [['desktop', 1440, 900], ['narrow', 430, 850]]) {
     for (const theme of ['dark', 'light']) {
-      const images = new Map();
-      for (const client of ['react', 'leptos']) {
+
+      for (const client of ['leptos']) {
         const context = await browser.newContext({ viewport: { width, height }, colorScheme: theme, reducedMotion: 'reduce' });
         try {
           const page = await context.newPage();
@@ -93,15 +93,15 @@ try {
             localStorage.setItem('minarbot-presentation-v1', JSON.stringify({ version: 1, theme, textSize: 'standard', colorTheme: 'minarbot' }));
             localStorage.setItem('minarbot:details-open', '0');
           }, theme);
-          async function capture(name, anchor) {
+          async function capture(name, anchor, fixtureText = []) {
             await page.evaluate(async () => {
               await document.fonts.ready;
               await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
             });
             if (anchor) await anchor.scrollIntoViewIfNeeded();
-            const raw = await parityShot(page, join(out, `${viewport}-${theme}-${name}-${client}.png`));
-            const entries = images.get(name) ?? [];
-            images.set(name, [...entries, raw]);
+            const path = join(out, `${viewport}-${theme}-${name}-${client}.png`);
+            if (fixtureText.length) await withFixtureText(page, fixtureText, () => parityShot(page, path));
+            else await parityShot(page, path);
           }
           const details = page.getByRole('complementary', { name: 'Conversation details' });
           const transcript = page.getByRole('region', { name: 'Conversation history' });
@@ -127,7 +127,9 @@ try {
           await details.getByRole('tab', { name: 'Run', exact: true }).waitFor();
           await details.locator('.run-inspector').waitFor();
           await details.getByText('Provider calls', { exact: true }).waitFor();
-          await capture('run');
+          const providerState = await details.locator('.run-inspector__providers .run-inspector__state').innerText();
+          assert.match(providerState, /^Failed · [0-9.]+ ms$/);
+          await capture('run', undefined, [[providerState, 'Failed · 30 ms']]);
 
           await page.goto(selector(rich.path, client));
           const chartHeading = transcript.getByRole('heading', { name: 'Weekly signups', exact: true });
@@ -163,18 +165,6 @@ try {
           await capture('computer');
 
         } finally { await context.close(); }
-      }
-      for (const [name, [react, leptos]] of images) {
-        assert(react && leptos, name);
-        await sharp({ create: { width: 2 * width, height, channels: 3, background: '#000' } })
-          .composite([{ input: react, left: 0, top: 0 }, { input: leptos, left: width, top: 0 }]).png()
-          .toFile(join(out, `${viewport}-${theme}-${name}-pair.png`));
-        const [left, right] = await Promise.all([react, leptos].map(image => sharp(image).removeAlpha().raw().toBuffer()));
-        let changed = 0;
-        for (let i = 0; i < left.length; i += 3) {
-          if (Math.max(Math.abs(left[i] - right[i]), Math.abs(left[i + 1] - right[i + 1]), Math.abs(left[i + 2] - right[i + 2])) > 16) changed++;
-        }
-        console.log(`${viewport} ${theme} ${name}: ${changed}/${width * height} pixels over channel delta 16`);
       }
     }
   }

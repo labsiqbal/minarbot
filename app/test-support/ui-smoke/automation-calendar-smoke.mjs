@@ -14,8 +14,6 @@ const output = process.argv[2] ? resolve(process.argv[2]) : mkdtempSync(join(tmp
 mkdirSync(output, { recursive: true });
 const directory = mkdtempSync(join(tmpdir(), 'minarbot-calendar-smoke-'));
 const database = join(directory, 'state.sqlite');
-const client = process.env.MINARBOT_SMOKE_UI ?? 'react';
-assert(['react', 'leptos'].includes(client));
 const zone = 'Asia/Jakarta';
 process.env.TZ = zone;
 const today = wallTime(fixtureClock, zone).date;
@@ -38,7 +36,7 @@ const provider = createServer(async (request, response) => {
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 try {
-  app = await startApp({ database, port: 0, dist: resolve('dist'), appearanceClient: client, fixedClock: fixtureClock + 1000, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
+  app = await startApp({ appearanceClient: 'leptos', database, port: 0, dist: resolve('dist'), fixedClock: fixtureClock + 1000, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
   const { origin } = app;
   async function api(path, body) {
     const response = await fetch(origin + path, body === undefined ? {} : { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -95,7 +93,7 @@ try {
     const calendarTab = page.getByRole('tab', { name: 'Calendar', exact: true });
     await overview.press('ArrowRight');
     await show(calendarTab.and(page.locator('[aria-selected=true]')));
-    assert.equal(await page.locator('#leptos-root .automation-calendar').count(), client === 'leptos' ? 1 : 0);
+    await show(page.locator('#leptos-root .automation-calendar'));
     const ics = page.getByRole('link', { name: 'Download routines' });
     const calendar = await page.request.get(new URL(await ics.getAttribute('href'), origin).href);
     assert.equal(calendar.status(), 200);
@@ -112,7 +110,7 @@ try {
     }
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
-  if (client === 'leptos') {
+  {
     await page.waitForURL('**?projectTab=calendar');
     const settings = await page.getByRole('link', { name: 'Settings', exact: true }).getAttribute('href');
     assert(new URL(settings, origin).searchParams.get('from').endsWith('?projectTab=calendar'));
@@ -243,7 +241,7 @@ try {
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   await shot('overall-agenda-light');
   await projectPage.getByRole('button', { name: /^Inventory recap, Routine, Done/ }).click();
-  await projectPage.getByRole(client === 'leptos' ? 'link' : 'button', { name: 'Open report', exact: true }).click();
+  await projectPage.getByRole('link', { name: 'Open report', exact: true }).click();
   await projectPage.waitForURL(origin + '/rooms/' + project.channel);
   await show(projectPage.getByRole('region', { name: 'Conversation history' }).getByText('Fixture report complete.', { exact: true }));
   assert.deepEqual(errors, []);

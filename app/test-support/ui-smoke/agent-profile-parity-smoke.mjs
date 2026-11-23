@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertP95 } from './timing-budgets.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -7,14 +8,14 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
 import { deleteAgentSmoke } from './delete-agent-smoke.mjs';
-import { fixDate, fixtureClock, parityChromiumArgs, parityShot } from './parity-shot.mjs';
+import { fixDate, fixtureClock, parityChromiumArgs, parityShot, withFixtureText } from './parity-shot.mjs';
 
 const output = resolve(process.argv[2] ?? 'test-support/ui-smoke/artifacts/agent-profile');
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-agent-profile-'));
 const folder = await mkdtemp(join(homedir(), '.minarbot-agent-profile-'));
 await mkdir(output, { recursive: true });
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
-const clients = process.env.MINARBOT_SMOKE_UI ? [process.env.MINARBOT_SMOKE_UI] : ['react', 'leptos'];
+const clients = ['leptos'];
 const samples = Number(process.env.MINARBOT_AGENT_BENCH ?? 0);
 assert(Number.isSafeInteger(samples) && samples >= 0);
 const agentId = '0035128a-b125-450c-a39c-1b678657d2ec';
@@ -88,7 +89,8 @@ async function captures(page, prefix) {
   const shot = async (name, panel) => {
     // The mouse position from opening a layer can overlap a field in the new layer.
     await page.mouse.move(0, 0);
-    await parityShot(page, join(output, `${prefix}-${name}.png`), panel);
+    const displayed = [scratch, folder].map(path => [path, path.replace(/-[a-zA-Z0-9]{6}$/, '-ZuiYSz')]);
+    await withFixtureText(page, displayed, () => parityShot(page, join(output, `${prefix}-${name}.png`), panel));
   };
   await createMenu(page, 'New agent');
   const create = dialog(page, 'New agent');
@@ -279,7 +281,7 @@ async function mutations(page) {
 }
 
 async function benchmark(browser, origin, client) {
-  const route = `${origin}/agents/${agentId}?ui=${client}`;
+  const route = `${origin}/agents/${agentId}`;
   const cold = [], warm = [];
   for (let index = 0; index < samples; index++) {
     const ctx = await browser.newContext({ viewport: sizes.desktop, reducedMotion: 'reduce' });
@@ -324,7 +326,7 @@ async function deletion(browser, origin, client) {
   const context = await browser.newContext({ viewport: sizes.desktop, reducedMotion: 'reduce' });
   try {
     const page = await context.newPage();
-    await page.goto(`${origin}/agents/${lead}?ui=${client}`);
+    await page.goto(`${origin}/agents/${lead}`);
     await openSidebar(page);
     await deleteAgentSmoke({ page, origin, client, evidence: join(output, `${client}-deletion`),
       check: async (name, run) => { await run(); console.log(client, name); },
@@ -337,9 +339,8 @@ const receipt = {};
 try {
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, args: parityChromiumArgs });
   for (const client of clients) {
-    const app = await startApp({
-      database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: 'leptos',
-      defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', stream: false, projectRoot: scratch, fixedClock: fixtureClock,
+    const app = await startApp({ appearanceClient: 'leptos',
+      database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', stream: false, projectRoot: scratch, fixedClock: fixtureClock,
     });
     try {
       const response = await fetch(app.origin + '/api/agents', {
@@ -362,9 +363,9 @@ try {
           page.on('pageerror', error => errors.push(error.message));
           page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
           await settingsFixture(page);
-          const document = await page.goto(`${app.origin}/agents/${agentId}?ui=${client}`);
-          assert.equal((await document.headerValue('content-security-policy')).includes('wasm-unsafe-eval'), client === 'leptos');
-          if (client === 'leptos') assert.equal(await page.locator('script[src*="/conversation-start."]').count(), 1);
+          const document = await page.goto(`${app.origin}/agents/${agentId}`);
+          assert.equal((await document.headerValue('content-security-policy')).includes('wasm-unsafe-eval'), true);
+          assert.equal(await page.locator('script[src*="/conversation-start."]').count(), 1);
           await openSidebar(page);
           await agentRow(page, 'Lifecycle fixture').waitFor();
           await captures(page, `${client}-${size}-${theme}`);
@@ -376,20 +377,30 @@ try {
         }
       }
       assert.deepEqual(errors, []);
+      assert.deepEqual(commands, [
+        {"path": "/api/agents/:id/edit", "payload": {"revision": 1, "webAccess": true, "libraryDocsAccess": false, "learnFromConversations": false, "memoryModel": "alternate", "goalJudgeModel": "alternate", "providerAccount": "", "name": "Lifecycle updated", "role": "", "model": "fixture", "backupModel": "", "instructions": "Help the user.", "threadLimit": 2, "toolBudget": 90}},
+        {"path": "/api/agents/:id/folder", "payload": {"path": folder, "mode": "read-write", "revision": 0}},
+        {"path": "/api/agents/:id/folder/reset", "payload": {"revision": 1}},
+        {"path": "/api/agents/:id/computer", "payload": {"revision": 1, "alwaysOn": true}},
+        {"path": "/api/agents/:id/sites", "payload": {"name": "Fixture site", "source": "<h1>Fixture site</h1>"}},
+        {"path": "/api/agents/:id/avatar", "payload": {"revision": 0, "image": "PNG"}},
+        {"path": "/api/agents/:id/visibility", "payload": {"revision": 0, "hidden": true}},
+        {"path": "/api/agents/:id/visibility", "payload": {"revision": 1, "hidden": false}},
+        {"path": "/api/agents", "payload": {"setup": true, "providerAccount": "", "name": "Drafted agent", "role": "", "model": "fixture", "backupModel": "", "instructions": "Draft a profile for scheduling.", "threadLimit": 2, "toolBudget": 90, "runtime": "api"}},
+        {"path": "/api/agents", "payload": {"name": "Imported fixture", "role": "", "model": "fixture", "instructions": "Help the user.", "threadLimit": 2}},
+        {"path": "/api/agents/:id/delete", "payload": {}},
+      ]);
       await deletion(browser, app.origin, client);
       receipt[client] = { timing, commands, errors };
+      if (samples) {
+        assertP95('profiles', 'cold', timing.cold.p95);
+        assertP95('profiles', 'warm', timing.warm.p95);
+      }
       console.log(`${client} browser screens, API and CSP checks passed`, timing);
     } finally { await app.close(); }
   }
   await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
-  if (receipt.react && receipt.leptos) {
-    const { react, leptos } = receipt;
-    assert.deepEqual(leptos.commands, react.commands);
-    if (samples) {
-      assert(leptos.timing.cold.p95 <= react.timing.cold.p95 * 1.2, 'cold profile p95 exceeded the budget');
-      assert(leptos.timing.warm.p95 <= react.timing.warm.p95 * 1.1, 'warm profile p95 exceeded the budget');
-    }
-  }
+
 } finally {
   await browser?.close();
   provider.closeAllConnections();

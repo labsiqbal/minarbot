@@ -1,53 +1,87 @@
-# React and Leptos screenshot parity
+# Leptos golden screenshot gate
 
-Build the React app and Leptos route bundles. Install the smoke package with
-`npm ci --prefix test-support/ui-smoke` from `app/` and install its Playwright
-Chromium. Run from `app/` with the workspace server built.
+Build the workspace server and app, then build the Leptos bundles. App build
+replaces `app/dist`, so run it before the Leptos build. Install Chromium with
+`npx playwright-core install chromium` from `app/test-support/ui-smoke`.
 
 ```sh
+~/.cache/minarbot-cargo-slot.sh cargo build --workspace
+npm ci --prefix app
+npm ci --prefix app/test-support/ui-smoke
+npm run build --prefix app
+~/.cache/minarbot-cargo-slot.sh cargo xtask leptos
+cd app
 ~/.cache/minarbot-node-slot.sh npm run parity:gate -- /tmp/minarbot-parity
 ```
 
-Set `PARITY_GROUPS` to a comma-separated list of group names (for example
-`PARITY_GROUPS=calendar,automation`) to run only those groups. The release
-review runs all groups.
+Each of 16 groups runs its Leptos smoke once against disposable data. The gate
+matches 580 captures to `baselines/<group>/<pair>.png`, frozen from `820e994`.
+It fails on missing or extra PNGs, failed smokes, mismatched dimensions, more
+than 100 changed RGB pixels, or more than 24 pixels with a channel delta above
+16. The formerly exempt ten narrow Hub baselines are Leptos captures and use
+the same thresholds as every other pair.
 
-Each smoke selects its client explicitly. Groups that accept one client run
-once per client. The remaining groups select React and Leptos inside the smoke.
-The gate ignores inherited client overrides. The Hub group uses the Rust
-hosted server unless `MINARBOT_HOSTED_HUB_BINARY` names another build.
+Use `PARITY_GROUPS=calendar,automation` to limit a run. Pass an empty artifact
+directory or omit it for a fresh temporary one. `MINARBOT_RUST_BINARY` can
+point at another server build. `pairs/` contains baseline-left side-by-sides,
+`all.tsv`, `nonidentical.tsv`, `failures.tsv`, and `summary.json`. Bounding boxes
+have exclusive right and bottom edges. Functional screenshots with a
+`-diagnostic.png` suffix stay with their smoke logs.
 
-Pass an empty output directory or omit it to use a fresh temporary directory.
-`MINARBOT_RUST_BINARY` can point at a different build of the server. The gate
-uses disposable servers and captures at least 580 pairs across 16 groups. Its
-source smokes still run their functional assertions. Each group has a log, and
-`pairs/` contains side-by-sides with React on the left, TSVs for all pairs,
-nonidentical pairs, and failures, and per-group totals in `summary.json`.
+## Updating selected baselines
 
-Each pair must have the same dimensions. A pixel counts as changed if any RGB
-channel differs. At most 100 pixels may change, and at most 24 may have a
-channel delta greater than 16. In the previous review, the settled conversation
-pairs peaked at 61 changed pixels and three over 16. These limits allow small
-raster differences while catching visible changes. Missing captures and failed
-smokes also fail the gate. The bounding box records changed pixels with an
-exclusive right and bottom edge.
+Review the capture and the side-by-side before copying each explicitly named
+PNG from the capture run. The gate never refreshes baselines during comparison.
 
-The Projects smoke also exercises Leptos-only project messaging and archive
-restoration. Conversation controls exercise Leptos-only search across chats.
-These produce diagnostic captures alongside the paired screens.
+```sh
+PARITY_GROUPS=appearance ~/.cache/minarbot-node-slot.sh npm run parity:gate -- /tmp/review-captures
+npm run parity:gate -- --update /tmp/review-captures appearance/desktop-dark.png appearance/narrow-light.png
+```
 
-Leptos keeps top navigation on narrow Hub screens so content and composer use
-the full viewport. React's narrow sidebar clips content. The gate captures and
-compares the following pairs, reports them as `intentional`, and still requires
-both captures with matching dimensions. [Owner decision, 2026-11-23](https://github.com/labsiqbal/minarbot/issues/82#issuecomment-7096356509)
+## Fixture reproducibility
 
-- `hub/room-narrow-dark.png`
-- `hub/room-narrow-light.png`
-- `hub/members-narrow-dark.png`
-- `hub/members-narrow-light.png`
-- `hub/invite-narrow-dark.png`
-- `hub/invite-narrow-light.png`
-- `hub/invitation-narrow-dark.png`
-- `hub/invitation-narrow-light.png`
-- `hub/create-project-narrow-dark.png`
-- `hub/create-project-narrow-light.png`
+Display-sensitive fixtures pin timestamps and UUIDs from the frozen images.
+The smoke displays the original synthetic loopback URL or workspace path where
+the live test uses an ephemeral port or temporary root. Assertions still use
+the real disposable fixture. Capture-only text substitutions restore the
+original values before the smoke continues, so future captures stay stable.
+
+No frozen PNG was replaced for #67. A fixture-only replacement is allowed when
+the original UUID, port, or timestamp cannot be recovered cheaply. Review the
+side-by-side and diff image for that named pair, verify every changed pixel is
+inside the fixture text bounding boxes, and record pair, regions, and reason in
+this file or a baselines manifest. Reject fixture-only replacement if any pixel
+changes outside those boxes.
+
+## Frozen timing budgets
+
+Visual runs skip timing samples by default. Set the relevant benchmark
+variable to run its Leptos timing assertions. Budgets use frozen React p95
+times 1.2 for cold and 1.1 for warm, per [`docs/full-rust-plan.md`](../../../docs/full-rust-plan.md).
+Values are in milliseconds and shown to two decimals. Code compares the
+unrounded products. Sources below refer to archived NUC review artifacts.
+
+| Timing | React cold / warm p95 | Leptos cold / warm ceiling | Source |
+| --- | ---: | ---: | --- |
+| Appearance | 750.5 / 21.2 | 900.60 / 23.32 | #82 pass 2 `final/review/appearance.log` |
+| Automation Routines | 839 / 16.8 | 1006.80 / 18.48 | #82 pass 2 `final/exact-method/automation/receipt.json` cold, #67 `oracle-main/automation/receipt.json` warm |
+| Automation Workflows | 874.2 / 16.7 | 1049.04 / 18.37 | Same automation receipts |
+| Automation Calendar | 840.2 / 16.7 | 1008.24 / 18.37 | Same automation receipts |
+| Conversation controls | 372.345429 / 21.9 | 446.81 / 24.09 | #82 pass 2 `final/exact-method/controls/receipt.json` |
+| Composer | 508 / 7 | 609.60 / 7.70 | #82 pass 2 `final/review/conversation.log` |
+| File preview | 539.9 / 36.2 | 647.88 / 39.82 | #82 pass 2 `final/review/files.log` |
+| Hub | 225.7 / 129.4 | 270.84 / 142.34 | #82 pass 2 `final/review/hub/timings.json` |
+| Memory | 957.2 / 61.4 | 1148.64 / 67.54 | #82 pass 3 `memory-timings/timings.json` |
+| Profiles | 745.836731 / 77.8 | 895.00 / 85.58 | #82 pass 2 `final/tip-review/profiles/receipt.json` |
+| Project Overview | 922.3 / 19 | 1106.76 / 20.90 | #82 pass 2 `final/review/projects/receipt.json` |
+| Project Connected apps | 932.4 / 18.6 | 1118.88 / 20.46 | Same project receipt |
+| Project Environment | 940.6 / 37 | 1128.72 / 40.70 | Same project receipt |
+| Project MCP | 957.1 / 17.5 | 1148.52 / 19.25 | Same project receipt |
+| Scoped inbox | 369.3 / 305.8 | 443.16 / 336.38 | #82 `lazy-focus/scoped/receipt.json` |
+| Scoped remote | 373.5 / 307.3 | 448.20 / 338.03 | Same scoped receipt |
+| Scoped upcoming | 442.4 / 314.2 | 530.88 / 345.62 | Same scoped receipt |
+| Scoped workflow | 118.8 / 73.5 | 142.56 / 80.85 | #67 `oracle-main/scoped/receipt.json` at `820e994` |
+| Shell prompts | 417.4 / 52.9 | 500.88 / 58.19 | #67 `oracle-main/shell/receipt.json` at `820e994` |
+
+Use 20 samples per timing smoke, 80 for `MINARBOT_AUTOMATION_WARM_BENCH`,
+and 60 for `MINARBOT_PROMPTS_BENCH`, matching the review sample sizes.

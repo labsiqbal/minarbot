@@ -23,6 +23,37 @@ export async function parityShot(page, path, region = page) {
   return region.screenshot({ path, animations: 'disabled', caret: 'hide', scale: 'css' });
 }
 
+// Substitute only values supplied by the disposable fixture during capture.
+export async function withFixtureText(page, replacements, capture) {
+  const restore = await page.evaluateHandle(replacements => {
+    const changes = [];
+    const apply = (node, field) => {
+      const before = node[field];
+      let after = before;
+      for (const [from, to] of replacements) after = after.replaceAll(from, to);
+      if (before === after) return;
+      node[field] = after;
+      changes.push([node, field, before, after]);
+    };
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: node => node.parentElement?.closest('script, style') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    while (walker.nextNode()) apply(walker.currentNode, 'data');
+    for (const input of document.querySelectorAll('input[readonly], textarea[readonly]')) apply(input, 'value');
+    return () => {
+      for (const [node, field, before, after] of changes) {
+        if (node[field] === after) node[field] = before;
+      }
+    };
+  }, replacements);
+  try {
+    return await capture();
+  } finally {
+    await restore.evaluate(restore => restore());
+    await restore.dispose();
+  }
+}
+
 export async function withFixtureId(page, id, action) {
   await page.evaluate(id => {
     crypto.randomUUID = () => {

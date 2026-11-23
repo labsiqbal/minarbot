@@ -12,7 +12,7 @@ import { fixDate, parityShot } from './parity-shot.mjs';
 
 const work = await mkdtemp(join(tmpdir(), 'minarbot-guide-'));
 const output = process.env.MINARBOT_GUIDE_SCREENSHOTS && resolve(process.env.MINARBOT_GUIDE_SCREENSHOTS);
-const client = process.env.MINARBOT_SMOKE_UI ?? 'react';
+const client = 'leptos';
 const turns = [
   ['Help me set up my workspace.', 'What work do you want to do, and when do you need the output?'],
   ['I need a Researcher that cites sources.', 'Review the Researcher profile and select Apply.', 'create_agent'],
@@ -52,10 +52,9 @@ try {
   const releasesDir = join(work, 'releases');
   await mkdir(join(releasesDir, '0.17.0-8523c26b'), { recursive: true });
   await symlink('0.17.0-8523c26b', join(releasesDir, 'current'));
-  app = await startRustServer({
+  app = await startRustServer({ appearanceClient: 'leptos',
     database: join(work, 'state.sqlite'),
     allowedOrigins: ['https://minarbot.example.test'],
-    appearanceClient: client,
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),
     baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
     apiKey: 'fixture-key',
@@ -104,7 +103,7 @@ try {
   await page.goto(app.origin);
   await page.getByRole('button', { name: `Set up with ${guide.name}` }).click();
   await page.waitForURL(url => url.pathname === `/agents/${guide.id}` && !url.search);
-  assert.equal(await page.locator('#leptos-root').count(), client === 'leptos' ? 1 : 0);
+  assert.equal(await page.locator('#leptos-root').count(), 1);
   const composer = page.getByRole('textbox', { name: `Message ${guide.name}` });
   async function send(step) {
     const [prompt, reply] = turns[step];

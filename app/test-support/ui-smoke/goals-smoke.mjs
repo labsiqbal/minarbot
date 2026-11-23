@@ -8,8 +8,8 @@ import { setTimeout } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
 
-const client = process.env.MINARBOT_SMOKE_CLIENT === 'leptos' ? 'leptos' : 'react';
-const selector = client === 'leptos' ? '?ui=leptos' : '';
+const client = 'leptos';
+const selector = '';
 
 const scratch = mkdtempSync(join(tmpdir(), 'minarbot-goal-ui-'));
 const screenshots = resolve(process.argv[2] ?? join(tmpdir(), 'minarbot-goal-screenshots'));
@@ -47,8 +47,8 @@ const provider = createServer(async (request, response) => {
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 let app, browser;
 try {
-  app = await startApp({
-    appearanceClient: client, database: join(scratch, 'test.sqlite'), dist: resolve('dist'), baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
+  app = await startApp({ appearanceClient: 'leptos',
+    database: join(scratch, 'test.sqlite'), dist: resolve('dist'), baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
     defaultModel: 'fixture', stream: false,
   });
   async function api(path, body) {

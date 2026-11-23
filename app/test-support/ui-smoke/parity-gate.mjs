@@ -1,40 +1,24 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import sharp from 'sharp';
 
-// The prior review's settled conversation pairs peaked at 61 changed pixels and 3 over delta 16.
 const maxChanged = 100, maxOver16 = 24;
-const intentionalHubPairs = new Set([
-  'room-narrow-dark.png', 'room-narrow-light.png',
-  'members-narrow-dark.png', 'members-narrow-light.png',
-  'invite-narrow-dark.png', 'invite-narrow-light.png',
-  'invitation-narrow-dark.png', 'invitation-narrow-light.png',
-  'create-project-narrow-dark.png', 'create-project-narrow-light.png',
-]);
-const failed = row => row.result !== 'pass' && row.result !== 'intentional';
-const cwd = resolve(import.meta.dirname, '../..');
-const root = process.argv[2] ? resolve(process.argv[2]) : await mkdtemp(join(tmpdir(), 'minarbot-parity-'));
-if (process.argv[2]) {
-  await mkdir(root, { recursive: true });
-  assert.equal((await readdir(root)).length, 0, `Parity output must be empty: ${root}`);
-}
-const reports = join(root, 'pairs');
-await mkdir(reports, { recursive: true });
-console.log(`Parity artifacts: ${root}`);
-
+const baselines = join(import.meta.dirname, 'baselines');
+const failed = row => row.result !== 'pass';
+const png = file => file.endsWith('.png') && !/^(side-by-side-|pair-)|-(failure|diagnostic)\.png$/.test(file);
 const groups = [
   ['appearance', 20, 'appearance', 'MINARBOT_APPEARANCE_SCREENSHOTS'],
   ['automation', 40, 'automation-parity'],
-  ['calendar', 12, 'automation-calendar', null, 'MINARBOT_SMOKE_UI'],
+  ['calendar', 12, 'automation-calendar'],
   ['connections', 36, 'settings-connections', 'MINARBOT_CONNECTION_SCREENSHOTS'],
   ['controls', 58, 'conversation-controls-parity'],
   ['conversation', 4, 'leptos-conversation', 'MINARBOT_CONVERSATION_SCREENSHOTS'],
   ['files', 52, 'conversation-files-parity'],
-  ['guide', 16, 'guide', 'MINARBOT_GUIDE_SCREENSHOTS', 'MINARBOT_SMOKE_UI'],
+  ['guide', 16, 'guide', 'MINARBOT_GUIDE_SCREENSHOTS'],
   ['hub', 26, 'hub-parity', 'MINARBOT_HUB_SCREENSHOTS'],
   ['memory', 32, 'memory'],
   ['profiles', 64, 'agent-profile-parity'],
@@ -44,6 +28,48 @@ const groups = [
   ['shell', 36, 'workspace-prompts'],
   ['system', 32, 'settings-system', 'MINARBOT_SYSTEM_SCREENSHOTS'],
 ];
+
+const args = process.argv.slice(2);
+if (args[0] === '--update') {
+  const [, captureRoot, ...pairs] = args;
+  assert(captureRoot && pairs.length && new Set(pairs).size === pairs.length,
+    'Usage: npm run parity:gate -- --update <capture-root> group/name.png [group/name.png ...]');
+  const updates = [];
+  for (const pair of pairs) {
+    assert(/^[a-z]+\/[a-zA-Z0-9_-]+\.png$/.test(pair), `Invalid pair: ${pair}`);
+    const [group, name] = pair.split('/');
+    assert(groups.some(([known]) => known === group), `Unknown group: ${group}`);
+    const baseline = join(baselines, pair);
+    assert((await stat(baseline)).isFile(), `Baseline missing: ${pair}`);
+    const capture = (await actualImages(join(resolve(captureRoot), group), group)).get(name);
+    assert(capture, `Capture missing: ${pair}`);
+    const data = await sharp(capture).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+    updates.push({ baseline, pair, data });
+  }
+  for (const { baseline, pair, data } of updates) {
+    const staged = `${baseline}.${process.pid}.tmp`;
+    await writeFile(staged, data, { flag: 'wx' });
+    try {
+      await rename(staged, baseline);
+    } catch (error) {
+      await unlink(staged);
+      throw error;
+    }
+    console.log(`Updated ${pair}`);
+  }
+  process.exit(0);
+}
+
+assert(args.length <= 1 && !args[0]?.startsWith('--'), 'Pass an empty output directory.');
+const cwd = resolve(import.meta.dirname, '../..');
+const root = process.argv[2] ? resolve(process.argv[2]) : await mkdtemp(join(tmpdir(), 'minarbot-parity-'));
+if (process.argv[2]) {
+  await mkdir(root, { recursive: true });
+  assert.equal((await readdir(root)).length, 0, `Parity output must be empty: ${root}`);
+}
+const reports = join(root, 'pairs');
+await mkdir(reports, { recursive: true });
+console.log(`Parity artifacts: ${root}`);
 
 async function smoke(script, output, env, log) {
   const stream = createWriteStream(log);
@@ -59,24 +85,31 @@ async function smoke(script, output, env, log) {
   return code;
 }
 
-function label(filename, client) {
-  const marker = new RegExp(`(^|-)${client}(?=-|\\.png$)`);
-  if (marker.test(filename)) return filename.replace(marker, '').replace(/^-/, '');
-  return null;
+async function actualImages(dir, group) {
+  const images = new Map();
+  for (const file of (await readdir(dir)).sort()) {
+    if (!png(file)) continue;
+    const marker = /(^|-)leptos(?=-|\.png$)/;
+    const name = file.replace(marker, '').replace(/^-/, '');
+    assert(!images.has(name), `Duplicate screenshot: ${group}/${name}`);
+    images.set(name, join(dir, file));
+  }
+  return images;
 }
 
 async function compare(left, right, output) {
-  const [react, leptos] = await Promise.all([left, right].map(path =>
+  const [baseline, actual] = await Promise.all([left, right].map(path =>
     sharp(path).toColourspace('srgb').removeAlpha().raw().toBuffer({ resolveWithObject: true })));
-  const { width, height } = react.info;
-  const sameSize = width === leptos.info.width && height === leptos.info.height;
-  await sharp({ create: { width: width + 8 + leptos.info.width, height: Math.max(height, leptos.info.height), channels: 3, background: '#181c24' } })
+  const { width, height } = baseline.info;
+  const sameSize = width === actual.info.width && height === actual.info.height;
+
+  await sharp({ create: { width: width + 8 + actual.info.width, height: Math.max(height, actual.info.height), channels: 3, background: '#181c24' } })
     .composite([{ input: left, left: 0, top: 0 }, { input: right, left: width + 8, top: 0 }]).png().toFile(output);
   if (!sameSize) return { changed: null, over16: null, box: '', result: 'dimensions' };
   let changed = 0, over16 = 0, minX = width, minY = height, maxX = 0, maxY = 0;
   for (let pixel = 0; pixel < width * height; pixel++) {
     const i = 3 * pixel;
-    const delta = Math.max(Math.abs(react.data[i] - leptos.data[i]), Math.abs(react.data[i + 1] - leptos.data[i + 1]), Math.abs(react.data[i + 2] - leptos.data[i + 2]));
+    const delta = Math.max(Math.abs(baseline.data[i] - actual.data[i]), Math.abs(baseline.data[i + 1] - actual.data[i + 1]), Math.abs(baseline.data[i + 2] - actual.data[i + 2]));
     if (!delta) continue;
     changed++;
     if (delta > 16) over16++;
@@ -84,12 +117,13 @@ async function compare(left, right, output) {
     minX = Math.min(minX, x); minY = Math.min(minY, y);
     maxX = Math.max(maxX, x + 1); maxY = Math.max(maxY, y + 1);
   }
-  return { changed, over16, box: changed ? `${minX},${minY},${maxX},${maxY}` : '',
-    result: changed > maxChanged || over16 > maxOver16 ? 'pixels' : 'pass' };
+  const result = changed > maxChanged || over16 > maxOver16 ? 'pixels' : 'pass';
+  return { changed, over16, box: changed ? `${minX},${minY},${maxX},${maxY}` : '', result };
 }
 
 const only = process.env.PARITY_GROUPS?.split(',').map(name => name.trim()).filter(Boolean);
 if (only) {
+  assert(only.length, 'PARITY_GROUPS must name at least one group.');
   const unknown = only.filter(name => !groups.some(([group]) => group === name));
   assert.equal(unknown.length, 0, `Unknown parity groups: ${unknown.join(', ')}`);
 }
@@ -97,52 +131,33 @@ const selected = only ? groups.filter(([group]) => only.includes(group)) : group
 
 const env = { ...process.env, MINARBOT_RUST_BINARY: resolve(process.env.MINARBOT_RUST_BINARY ?? join(cwd, '../target/debug/minarbot-server')) };
 env.MINARBOT_HOSTED_HUB_BINARY ??= env.MINARBOT_RUST_BINARY;
-// Group smokes select both clients themselves or receive one of the two
-// explicit selectors below. Ignore client overrides inherited from the shell.
-for (const key of ['MINARBOT_APPEARANCE_CLIENT', 'MINARBOT_SMOKE_UI', 'MINARBOT_SYSTEM_CLIENT', 'MINARBOT_HUB_SMOKE_CLIENT', 'MINARBOT_PROMPTS_CLIENT']) delete env[key];
-for (const key of ['MINARBOT_PROJECT_BENCH', 'MINARBOT_FILES_BENCH', 'MINARBOT_CONVERSATION_NAV_BENCH']) env[key] ??= '0';
+const expectedGroups = groups.map(([group]) => group).sort();
+assert.deepEqual((await readdir(baselines)).sort(), expectedGroups, 'Baseline group directories changed');
+for (const key of ['MINARBOT_PROJECT_BENCH', 'MINARBOT_FILES_BENCH', 'MINARBOT_CONVERSATION_NAV_BENCH', 'MINARBOT_CONVERSATION_AUTOMATION_BENCH', 'MINARBOT_PROMPTS_BENCH', 'MINARBOT_AUTOMATION_WARM_BENCH']) env[key] ??= '0';
 const rows = [], summary = [];
-for (const [group, minimum, script, screenshotEnv, clientEnv] of selected) {
+for (const [group, expectedCount, script, screenshotEnv] of selected) {
   const dir = join(root, group);
   await mkdir(dir);
-  const clients = clientEnv ? ['react', 'leptos'] : ['both'];
-  const checks = {};
-  const images = {};
-  for (const client of clients) {
-    const output = clientEnv && !screenshotEnv ? join(dir, client) : dir;
-    await mkdir(output, { recursive: true });
-    const settings = { ...env, ...(clientEnv ? { [clientEnv]: client } : {}), ...(screenshotEnv ? { [screenshotEnv]: output } : {}) };
-    checks[client] = await smoke(script, output, settings, join(dir, `${client}.log`));
-  }
-  for (const client of ['react', 'leptos']) {
-    const separate = clientEnv && !screenshotEnv;
-    const output = separate ? join(dir, client) : dir;
-    images[client] = new Map();
-    for (const file of (await readdir(output)).sort()) {
-      if (!file.endsWith('.png') || /^(side-by-side-|failure-)|-(failure|diagnostic)\.png$/.test(file)) continue;
-      const name = separate ? file : label(file, client);
-      if (!name) continue;
-      assert(!images[client].has(name), `Duplicate screenshot: ${group}/${client}/${name}`);
-      images[client].set(name, join(output, file));
-    }
-  }
+  const settings = { ...env, ...(screenshotEnv ? { [screenshotEnv]: dir } : {}) };
+  const check = await smoke(script, dir, settings, join(dir, 'smoke.log'));
+  const actual = await actualImages(dir, group);
+  const expectedDir = join(baselines, group);
+  const expected = new Set(await readdir(expectedDir));
   const groupRows = [];
-  const intentionalPairs = group === 'hub' ? intentionalHubPairs : new Set();
-  await mkdir(join(reports, group));
-  for (const name of new Set([...images.react.keys(), ...images.leptos.keys(), ...intentionalPairs])) {
-    const react = images.react.get(name), leptos = images.leptos.get(name);
-    const compared = react && leptos ? await compare(react, leptos, join(reports, group, name))
-      : { changed: null, over16: null, box: '', result: `missing ${react ? 'Leptos' : leptos ? 'React' : 'React and Leptos'}` };
-    if (intentionalPairs.has(name) && compared.changed !== null) compared.result = 'intentional';
+  const reportDir = join(reports, group);
+  await mkdir(reportDir);
+  for (const name of [...new Set([...expected, ...actual.keys()])].sort()) {
+    const capture = actual.get(name);
+    const compared = capture && expected.has(name)
+      ? await compare(join(expectedDir, name), capture, join(reportDir, name))
+      : { changed: null, over16: null, box: '', result: capture ? 'missing baseline' : 'missing capture' };
     groupRows.push({ pair: `${group}/${name}`, ...compared });
   }
   rows.push(...groupRows);
-  const pairs = groupRows.filter(row => !row.result.startsWith('missing')).length;
-  const intentional = groupRows.filter(row => row.result === 'intentional').length;
-  const failures = groupRows.filter(failed).length;
-  const stats = { group, pairs, minimum, failures, maxChanged: Math.max(0, ...groupRows.map(row => row.changed ?? 0)),
-    maxOver16: Math.max(0, ...groupRows.map(row => row.over16 ?? 0)), intentional,
-    intentionalPairs: groupRows.filter(row => row.result === 'intentional').map(row => row.pair), checks };
+  const stats = { group, pairs: groupRows.filter(row => !row.result.startsWith('missing')).length,
+    captures: actual.size, baselines: expected.size, expectedCount, failures: groupRows.filter(failed).length,
+    maxChanged: Math.max(0, ...groupRows.map(row => row.changed ?? 0)),
+    maxOver16: Math.max(0, ...groupRows.map(row => row.over16 ?? 0)), check };
   summary.push(stats);
   console.log(JSON.stringify(stats));
 }
@@ -152,4 +167,4 @@ await writeFile(join(reports, 'all.tsv'), tsv(rows));
 await writeFile(join(reports, 'nonidentical.tsv'), tsv(rows.filter(row => row.changed || row.result !== 'pass')));
 await writeFile(join(reports, 'failures.tsv'), tsv(rows.filter(failed)));
 await writeFile(join(reports, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
-if (summary.some(group => group.failures || group.pairs < group.minimum || Object.values(group.checks).some(code => code !== 0))) process.exitCode = 1;
+if (summary.some(group => group.failures || group.baselines !== group.expectedCount || group.captures !== group.expectedCount || group.check !== 0)) process.exitCode = 1;

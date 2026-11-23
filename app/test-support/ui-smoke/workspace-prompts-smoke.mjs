@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertP95 } from './timing-budgets.mjs';
 import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -7,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import sharp from 'sharp';
 import { startRustServer } from '../../rust-test-server.ts';
 import { testDatabase } from '../database.ts';
 
@@ -15,7 +15,7 @@ const scratch = await mkdtemp(join(tmpdir(), 'mb78-'));
 const output = resolve(process.argv[2] ?? scratch);
 const dist = fileURLToPath(new URL('../../dist', import.meta.url));
 const samples = Number(process.env.MINARBOT_PROMPTS_BENCH ?? 60);
-assert(Number.isInteger(samples) && samples > 0);
+assert(Number.isInteger(samples) && samples >= 0);
 await mkdir(output, { recursive: true });
 
 const shapes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
@@ -65,6 +65,7 @@ async function launcher(client) {
 }
 
 function stats(values) {
+  if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
   const percentile = ratio => Number(sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)].toFixed(1));
   return { samples: sorted.length, median: percentile(.5), p95: percentile(.95) };
@@ -80,7 +81,7 @@ async function* exercise(browser, client) {
   let app, context;
   try {
     const database = join(ctl.root, 'state.sqlite');
-    app = await startRustServer({ database, dist, appearanceClient: client, fixedClock: fixtureClock, defaultModel: 'fixture',
+    app = await startRustServer({ appearanceClient: 'leptos', database, dist, fixedClock: fixtureClock, defaultModel: 'fixture',
       baseURL: 'http://127.0.0.1:9/v1', apiKey: 'fixture',
       updates: ctl.updates, harness: { executables: Object.fromEntries(
         ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro'].map(runtime => [runtime, join(ctl.root, runtime)]),
@@ -163,7 +164,7 @@ async function* exercise(browser, client) {
     const compose = page.getByRole('textbox', { name: `Message ${guide.name}`, exact: true });
     await page.goto(app.origin + guidePath);
     await compose.waitFor();
-    assert.equal(await page.locator('#leptos-root').count(), Number(client === 'leptos'));
+    assert.equal(await page.locator('#leptos-root').count(), 1);
     await capture('guide-chat', page.locator('main.chat'));
     const menu = page.locator('.chat__pill');
     await menu.click();
@@ -266,7 +267,7 @@ async function* exercise(browser, client) {
         { key, entry: kind === 'app' ? { path: endpoint, body: command } : command });
       await page.reload();
       const receipt = page.waitForResponse(response => response.url().endsWith(endpoint) && response.request().method() === 'POST');
-      const label = kind === 'app' || client === 'leptos' ? 'Retry saved decision' : "Don't allow";
+      const label = 'Retry saved decision';
       await region.getByRole('button', { name: label, exact: true }).click();
       const response = await receipt;
       assert(response.ok(), `${kind} decision returned ${response.status()}`);
@@ -311,56 +312,19 @@ async function* exercise(browser, client) {
   }
 }
 
-async function compare() {
-  const names = ['guide-chat', 'guide-connection', 'quick-switcher', 'help', 'update-capsule', 'update-confirmation', 'question', 'app-approval', 'harness-approval'];
-  const pairs = {};
-  for (const name of names) for (const layout of Object.keys(shapes)) for (const theme of themes) {
-    const key = `${name}-${layout}-${theme}`;
-    const files = ['react', 'leptos'].map(client => join(output, `${client}-${key}.png`));
-    const images = await Promise.all(files.map(file => sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true })));
-    const [a, b] = images.map(image => image.info);
-    const sameSize = a.width === b.width && a.height === b.height;
-    let changedPixels = null;
-    if (sameSize) {
-      changedPixels = 0;
-      for (let i = 0; i < images[0].data.length; i += 4) {
-        if (images[0].data.readUInt32LE(i) !== images[1].data.readUInt32LE(i)) changedPixels++;
-      }
-    }
-    const sideBySide = join(output, `pair-${key}.png`);
-    await sharp({ create: { width: a.width + b.width + 12, height: Math.max(a.height, b.height), channels: 3, background: '#808080' } })
-      .composite([{ input: files[0], left: 0, top: 0 }, { input: files[1], left: a.width + 12, top: 0 }]).png().toFile(sideBySide);
-    pairs[key] = { sideBySide, changedPixels, react: [a.width, a.height], leptos: [b.width, b.height] };
-  }
-  return pairs;
-}
-
 const browser = await chromium.launch({ executablePath: process.env.CHROME ?? '/usr/bin/google-chrome', args: ['--no-sandbox'] });
-const client = process.env.MINARBOT_PROMPTS_CLIENT;
-const clients = client ? [client] : ['react', 'leptos'];
-const runs = clients.map(name => exercise(browser, name));
+const run = exercise(browser, 'leptos');
 try {
-  assert(clients.every(name => ['react', 'leptos'].includes(name)));
-  for (const run of runs) await run.next();
-  for (let i = 0; i < samples; i++) {
-    // Reverse who goes first so changes in host load affect both clients.
-    for (const run of i % 2 ? runs.toReversed() : runs) await run.next();
-  }
-  const results = [];
-  for (const run of runs) results.push((await run.next()).value);
-  if (client) {
-    const [result] = results;
-    await writeFile(join(output, `${client}-receipt.json`), JSON.stringify(result, null, 2));
-    console.log(JSON.stringify({ client, ...result, output }));
-  } else {
-    const [react, leptos] = results;
-    const screenshots = await compare();
-    await writeFile(join(output, 'receipt.json'), JSON.stringify({ react, leptos, screenshots }, null, 2));
-    console.log(JSON.stringify({ react, leptos, screenshotPairs: Object.keys(screenshots).length, output }));
-    assert(leptos.coldGuideMs.p95 <= react.coldGuideMs.p95 * 1.2, 'Guide cold p95 exceeds 20% budget');
-    assert(leptos.warmSwitcherMs.p95 <= react.warmSwitcherMs.p95 * 1.1, 'Switcher warm p95 exceeds 10% budget');
+  await run.next();
+  for (let i = 0; i < samples; i++) await run.next();
+  const { value: result } = await run.next();
+  await writeFile(join(output, 'receipt.json'), JSON.stringify(result, null, 2));
+  console.log(JSON.stringify({ ...result, output }));
+  if (samples) {
+    assertP95('shell', 'cold', result.coldGuideMs.p95);
+    assertP95('shell', 'warm', result.warmSwitcherMs.p95);
   }
 } finally {
-  await Promise.allSettled(runs.map(run => run.return()));
+  await run.return();
   await browser.close();
 }

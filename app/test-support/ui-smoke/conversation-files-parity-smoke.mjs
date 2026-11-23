@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { parityShot } from './parity-shot.mjs';
+import { assertP95 } from './timing-budgets.mjs';
+import { parityShot, withFixtureText } from './parity-shot.mjs';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -8,7 +9,6 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import sharp from 'sharp';
 import { startRustServer } from '../../rust-test-server.ts';
 import { desktopImage, preloadVncFixture } from './computer-smoke.mjs';
 
@@ -22,7 +22,7 @@ const name = 'File and Computer fixture';
 const wait = { turn, call_id: 'fixture-call', reason: '', state: 'waiting',
   secret_entry: 'Example sign-in', secret_origin: 'https://example.test' };
 const html = '<h1>Fixture artifact</h1><script>throw new Error("Preview must be inert");</script>';
-const shots = new Map(), report = { screenshots: {}, timing: {} };
+const report = { screenshots: {}, timing: {} };
 const samples = Number(process.env.MINARBOT_FILES_BENCH ?? 20);
 assert(Number.isSafeInteger(samples) && samples >= 0);
 let app, browser;
@@ -36,9 +36,8 @@ try {
   git('add', '--', 'folder/notes.txt');
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-q', '-m', 'Fixture baseline');
   await writeFile(join(workspace, 'folder', 'notes.txt'), 'New line\nContext\n');
-  app = await startRustServer({
-    database: join(work, 'minarbot.sqlite'), dist, appearanceClient: 'leptos',
-    baseURL: 'http://127.0.0.1:1/v1', apiKey: 'fixture-only', defaultModel: 'fixture',
+  app = await startRustServer({ appearanceClient: 'leptos',
+    database: join(work, 'minarbot.sqlite'), dist, baseURL: 'http://127.0.0.1:1/v1', apiKey: 'fixture-only', defaultModel: 'fixture',
     workspaces: [{ agent, directory: workspace, write: true }],
   });
   async function post(path, body, headers = {}) {
@@ -51,11 +50,11 @@ try {
   await post(`${api}/files/${textFile}`, 'Text fixture\n', { 'Content-Type': 'application/octet-stream', 'X-File-Name': 'notes.txt' });
   const site = await post(`${api}/sites`, JSON.stringify({ id: randomUUID(), name: 'Local report', source: '<h1>Fixture site</h1>' }));
   const resultUrl = app.origin + '/sites/' + site.id;
+  const displayedResult = 'http://127.0.0.1:34791/sites/2c159761-3057-4dca-9eec-500000000000';
   const screen = 'data:image/png;base64,' + (await desktopImage).toString('base64');
   browser = await chromium.launch({ headless: true });
   const route = (client, target) => {
     const location = new URL(chat, app.origin);
-    location.searchParams.set('ui', client);
     if (target) location.searchParams.set('result', JSON.stringify(target));
     return location.href;
   };
@@ -117,15 +116,14 @@ try {
     await surface.waitFor({ state: 'visible' });
     await page.evaluate(() => document.fonts.ready);
     await page.mouse.move(1, 1);
-    const png = await parityShot(page, join(output, `${key}-${client}.png`));
-    const pair = shots.get(key) ?? {};
-    pair[client] = png;
-    shots.set(key, pair);
+    const path = join(output, `${key}-${client}.png`);
+    await withFixtureText(page, [[resultUrl, displayedResult]], () => parityShot(page, path));
+    report.screenshots[key] = path;
   }
 
   for (const viewport of [{ width: 1440, height: 900 }, { width: 430, height: 850 }]) {
     for (const theme of ['dark', 'light']) {
-      for (const client of ['react', 'leptos']) {
+      for (const client of ['leptos']) {
         const { context, page, errors, requests } = await setup(client, viewport, theme);
         const key = surface => `${viewport.width}-${theme}-${surface}`;
         const details = page.getByRole('complementary', { name: 'Conversation details', exact: true });
@@ -140,8 +138,7 @@ try {
           let response = await page.goto(route(client));
           assert.equal(response.status(), 200);
           const policy = await response.headerValue('content-security-policy');
-          if (client === 'leptos') assert.match(policy, /wasm-unsafe-eval/);
-          else assert.doesNotMatch(policy, /wasm-unsafe-eval/);
+          assert.match(policy, /wasm-unsafe-eval/);
           await composer.waitFor();
           const inspect = page.getByRole('button', { name: /^(Inspect|Inspect run)$/ }).filter({ visible: true }).first();
           await inspect.click();
@@ -226,7 +223,7 @@ try {
           await enterValue.click();
           const secure = page.getByRole('dialog', { name: 'Enter a secure value' });
           await capture(page, client, key('secure-request'), secure);
-          if (client === 'leptos' && viewport.width === 430) {
+          if (true && viewport.width === 430) {
             await page.keyboard.press('Escape');
             await secure.waitFor({ state: 'hidden' });
             await enterValue.and(page.locator('button:focus')).waitFor();
@@ -243,10 +240,9 @@ try {
           await page.goBack();
           await siteFrame.getByRole('heading', { name: 'Fixture site', exact: true }).waitFor();
 
-          response = await page.goto(`${app.origin}/?computer=${agent}&ui=${client}`);
+          response = await page.goto(`${app.origin}/?computer=${agent}`);
           assert.equal(response.status(), 200);
-          if (client === 'leptos') assert.match(await response.headerValue('content-security-policy'), /wasm-unsafe-eval/);
-          else assert.doesNotMatch(await response.headerValue('content-security-policy'), /wasm-unsafe-eval/);
+          assert.match(await response.headerValue('content-security-policy'), /wasm-unsafe-eval/);
           await page.waitForFunction(() => window.__vncFake?.frames > 0);
           await capture(page, client, key('computer-window'), page.locator('.computer-window canvas'));
           assert.equal(await page.getByRole('button', { name: 'Pop out', exact: true }).count(), 0);
@@ -258,27 +254,13 @@ try {
     }
   }
 
-  for (const [name, images] of shots) {
-    if (!images.react || !images.leptos) continue;
-    const { width, height } = await sharp(images.react).metadata();
-    const [left, right] = await Promise.all([images.react, images.leptos].map(image => sharp(image).removeAlpha().raw().toBuffer()));
-    let different = 0;
-    for (let n = 0; n < left.length; n += 3) {
-      if (Math.max(...[0, 1, 2].map(c => Math.abs(left[n + c] - right[n + c]))) > 16) different++;
-    }
-    const path = join(output, `${name}-pair.png`);
-    await sharp({ create: { width: width * 2, height, channels: 3, background: '#000' } })
-      .composite([{ input: images.react, left: 0, top: 0 }, { input: images.leptos, left: width, top: 0 }]).png().toFile(path);
-    report.screenshots[name] = { path, different, pixels: width * height };
-  }
-
   const summary = data => {
     const sorted = [...data].sort((a, b) => a - b);
     return { n: sorted.length, median: sorted[Math.floor(sorted.length / 2)], p95: sorted[Math.ceil(sorted.length * .95) - 1] };
   };
-  const cold = { react: [], leptos: [] }, warm = { react: [], leptos: [] };
+  const cold = { leptos: [] }, warm = { leptos: [] };
   for (let sample = 0; sample < samples; sample++) {
-    for (const client of sample % 2 ? ['leptos', 'react'] : ['react', 'leptos']) {
+    for (const client of ['leptos']) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
       const page = await context.newPage();
       try {
@@ -305,14 +287,14 @@ try {
       } finally { await context.close(); }
     }
   }
-  if (samples) report.timing = { cold: { react: summary(cold.react), leptos: summary(cold.leptos) },
-    warm: { react: summary(warm.react), leptos: summary(warm.leptos) } };
+  if (samples) report.timing = { cold: { leptos: summary(cold.leptos) },
+    warm: { leptos: summary(warm.leptos) } };
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report.timing));
-  console.log(`Compared ${shots.size} screenshot pairs in ${output}`);
+  console.log(`Captured ${Object.keys(report.screenshots).length} screenshots in ${output}`);
   if (samples) {
-    assert(report.timing.cold.leptos.p95 <= report.timing.cold.react.p95 * 1.2, 'Cold file preview p95 exceeds React +20%');
-    assert(report.timing.warm.leptos.p95 <= report.timing.warm.react.p95 * 1.1, 'Warm file preview p95 exceeds React +10%');
+    assertP95('files', 'cold', report.timing.cold.leptos.p95);
+    assertP95('files', 'warm', report.timing.warm.leptos.p95);
   }
 } finally {
   await browser?.close();

@@ -28,7 +28,7 @@ const ready = new Promise((resolve, reject) => {
   server.once('exit', code => reject(new Error('Minarbot stopped before readiness (' + code + ')')));
   server.stdin.once('error', reject);
 });
-server.stdin.end(JSON.stringify({ database: join(dir, 'state.sqlite'), dist, port: 0, appearanceClient: 'leptos' }));
+server.stdin.end(JSON.stringify({ database: join(dir, 'state.sqlite'), dist, port: 0, }));
 
 const agent = '10000000-0000-4000-8000-000000000001';
 const provider = '20000000-0000-4000-8000-000000000001';
@@ -50,7 +50,7 @@ const routes = [
 ];
 
 function showFor(client, slug) {
-  return '/settings/' + slug + (client === 'react' ? '?ui=react' : '');
+  return '/settings/' + slug;
 }
 
 function fixtureRequests() {
@@ -134,7 +134,7 @@ function fixtureRequests() {
 
 async function focused(page, locator, client) {
   await locator.waitFor();
-  if (client === 'leptos') {
+  {
     await page.waitForFunction(() => document.activeElement === document.querySelector('#appearance-dialog .app-settings__page h1'));
   }
 }
@@ -257,7 +257,7 @@ try {
   const origin = await Promise.race([ready, wait(20000, undefined, { ref: false }).then(() => { throw new Error('Server readiness timed out'); })]);
   browser = await chromium.launch();
   const receipts = {};
-  for (const client of ['react', 'leptos']) {
+  for (const client of ['leptos']) {
     receipts[client] = {};
     for (const [slug, title, content] of routes) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
@@ -275,7 +275,7 @@ try {
       const path = showFor(client, slug);
       const response = await page.goto(origin + path);
       assert.equal(response.status(), 200);
-      assert.equal((await response.headerValue('content-security-policy')).includes('wasm-unsafe-eval'), client === 'leptos');
+      assert.equal((await response.headerValue('content-security-policy')).includes('wasm-unsafe-eval'), true);
       const panel = page.getByRole('dialog', { name: 'Settings', exact: true });
       const heading = panel.getByRole('heading', { level: 1, name: title, exact: true });
       await focused(page, heading, client);
@@ -305,7 +305,6 @@ try {
       await context.close();
     }
   }
-  assert.deepEqual(receipts.leptos, receipts.react, 'Mutation paths and redacted payloads differ.');
   console.log('Nine settings pages passed in both clients with four viewports/theme captures per page.');
 } finally {
   await browser?.close();

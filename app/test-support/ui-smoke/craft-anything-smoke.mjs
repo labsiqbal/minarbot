@@ -14,7 +14,7 @@ const agent = randomUUID();
 const project = randomUUID();
 let app, browser;
 try {
-  app = await startApp({ database: join(directory, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
+  app = await startApp({ appearanceClient: 'leptos', database: join(directory, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
   const create = await fetch(app.origin + '/api/agents', {
     method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: agent, name: 'Website agent', instructions: 'Study public pages.', model: 'fixture', runtime: 'api' }),

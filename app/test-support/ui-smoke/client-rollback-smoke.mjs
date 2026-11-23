@@ -46,9 +46,9 @@ async function until(check, label) {
   assert.fail(label);
 }
 
-async function start(client) {
+async function start() {
   const providerEnv = `OPENAI_BASE_URL=http://127.0.0.1:${provider.address().port}/v1\nOPENAI_API_KEY=synthetic\nOPENAI_MODEL=fixture\nMINARBOT_AGENT_DESKTOP=0\n`;
-  await writeFile(envFile, providerEnv + (client ? `MINARBOT_APPEARANCE_CLIENT=${client}\n` : ''), { mode: 0o600 });
+  await writeFile(envFile, providerEnv, { mode: 0o600 });
   child = spawn(join(releasesDir, releaseId, 'bin/minarbot-launcher'), ['--config', config], {
     env: { PATH: '/usr/bin:/bin', HOME: scratch, TMPDIR: scratch }, stdio: ['ignore', 'ignore', 'pipe'],
   });
@@ -125,18 +125,18 @@ try {
   const draft = 'Draft: compare supplies before Friday.';
   const uncertain = 'Check the north cabinet before ordering labels.';
   const storage = key => page.evaluate(key => sessionStorage.getItem(key), key);
-  async function open(path, client) {
+  async function open(path) {
     const response = await page.goto(origin + path);
     assert(response.ok());
     const html = await response.text();
-    assert.equal(html.includes('id="leptos-root"'), client === 'leptos', path);
+    assert.equal(html.includes('id="leptos-root"'), true, path);
     await composer.waitFor();
   }
 
-  await open(named, 'leptos');
+  await open(named);
   await composer.fill(draft);
   assert.equal(await storage(draftKey), draft);
-  await open(conversation, 'leptos');
+  await open(conversation);
   await page.route(origin + agent + '/turns', route => route.request().method() === 'POST' ? route.abort('connectionreset') : route.continue());
   await composer.fill(uncertain);
   await composer.press('Enter');
@@ -145,17 +145,16 @@ try {
   assert.equal(JSON.parse(journal).text, uncertain);
   assert.equal(postAttempts.length, 1);
 
-  for (const [label, selector, query] of [['visit-react', null, '?ui=react'], ['restart-react', 'react', ''], ['restart-leptos', '', '']]) {
-    if (selector !== null) {
+  for (const [label, restart] of [['before-restart', false], ['restart-leptos', true]]) {
+    if (restart) {
       await stop(child, closed);
-      await start(selector);
+      await start();
       assert.equal((await api(second + '/goal')).status, 'interrupted');
       await projectReady();
     }
-    const client = label.endsWith('react') ? 'react' : 'leptos';
-    await open(named + query, client);
+    await open(named);
     assert.equal(await composer.inputValue(), draft);
-    await open(conversation + query, client);
+    await open(conversation);
     await retry.waitFor();
     assert.equal(await composer.inputValue(), uncertain);
     assert.equal(await storage(pendingKey), journal);
@@ -165,7 +164,7 @@ try {
     assert.equal(postAttempts.length, 1);
     assert.equal(calls, previousCalls);
   }
-  console.log(JSON.stringify({ releaseId, clients: ['leptos', 'visit-react', 'restart-react', 'restart-leptos'], persistedEndpoints: persisted.length, draftRetained: true, journalRetained: true, providerCalls: calls, automaticReplay: 0, runningGoalAfterRestart: 'interrupted' }));
+  console.log(JSON.stringify({ releaseId, restarts: 1, persistedEndpoints: persisted.length, draftRetained: true, journalRetained: true, providerCalls: calls, automaticReplay: 0, runningGoalAfterRestart: 'interrupted' }));
 } finally {
   await browser?.close();
   if (child) await stop(child, closed);
