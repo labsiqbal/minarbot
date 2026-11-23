@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { parityShot } from './parity-shot.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -151,7 +152,7 @@ try {
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
           const box = page.getByRole('textbox', { name: 'Message Conversation fixture' });
           assert.equal(await box.getAttribute('placeholder'), 'Message Conversation fixture');
-          images.push(await page.screenshot({ path: join(output, `${label}-${theme}-${client}.png`), animations: 'disabled' }));
+          images.push(await parityShot(page, join(output, `${label}-${theme}-${client}.png`)));
         }
         await sharp({ create: { width: 2 * width, height, channels: 3, background: '#000' } })
           .composite(images.map((input, i) => ({ input, left: i * width, top: 0 }))).png()

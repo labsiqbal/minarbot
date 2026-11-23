@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { parityShot } from './parity-shot.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -103,6 +104,7 @@ function fixtureRequests() {
     if (path === '/api/provider-accounts/test') return http.fulfill({ json: { models: ['fixture/model'] } });
     if (path === '/api/engine-logins/' + login + '/check') {
       const changed = { ...fixtures['/api/engine-logins'][0], signedIn: true };
+      fixtures['/api/engine-logins'][0] = changed;
       return http.fulfill({ json: changed });
     }
     if (path === '/api/skills') {
@@ -285,7 +287,7 @@ try {
             await document.fonts.ready;
           }, theme);
           assert(await page.locator('.app-settings__main').evaluate(main => main.scrollWidth <= main.clientWidth + 1), 'Settings content overflows.');
-          if (output) await page.screenshot({ path: join(output, [slug, client, size, theme].join('-') + '.png'), animations: 'disabled' });
+          if (output) await parityShot(page, join(output, [slug, client, size, theme].join('-') + '.png'));
         }
       }
       await page.setViewportSize({ width: 1440, height: 900 });

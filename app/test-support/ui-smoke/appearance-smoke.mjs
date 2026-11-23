@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { parityShot } from './parity-shot.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -137,7 +138,7 @@ async function exercise(page, origin, client) {
         for (const mode of ['Dark', 'Light']) {
           await radio(page, mode).click();
           await page.evaluate(() => document.fonts.ready.then(() => document.activeElement?.blur()));
-          await page.screenshot({ path: join(screenshots, [client, label, mode.toLowerCase()].join('-') + '.png'), animations: 'disabled' });
+          await parityShot(page, join(screenshots, [client, label, mode.toLowerCase()].join('-') + '.png'));
           assert.equal(await page.locator('.app-settings__main').evaluate(element => element.scrollWidth === element.clientWidth), true);
         }
       }
@@ -401,7 +402,7 @@ async function generalParity(context, origin, client) {
           await docs.getByText('Optional', { exact: true }).waitFor();
           await docs.getByRole('button', { name: 'Check status', disabled: false }).waitFor();
           await page.evaluate(() => document.fonts.ready);
-          await page.screenshot({ path: join(screenshots, `general-${client}-${label}-${mode.toLowerCase()}.png`), animations: 'disabled' });
+          await parityShot(page, join(screenshots, `general-${client}-${label}-${mode.toLowerCase()}.png`));
         }
       }
     }
@@ -506,7 +507,7 @@ async function setupAndDirectory(origin, client) {
         await page.reload();
         await ready();
         await page.evaluate(() => document.fonts.ready);
-        await page.screenshot({ path: join(screenshots, `${routeName}-${client}-${width}-${theme}.png`), animations: 'disabled' });
+        await parityShot(page, join(screenshots, `${routeName}-${client}-${width}-${theme}.png`));
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       }
     }
@@ -584,7 +585,7 @@ async function pairing(client) {
         await page.goto(origin + '/pair');
         if (client === 'leptos') await page.locator('#leptos-root form').waitFor();
         await pairingForm.waitFor();
-        if (screenshots) await page.screenshot({ path: join(screenshots, `pairing-${client}-${width}-${theme}.png`) });
+        if (screenshots) await parityShot(page, join(screenshots, `pairing-${client}-${width}-${theme}.png`));
       }
     }
     await page.keyboard.press('Tab');

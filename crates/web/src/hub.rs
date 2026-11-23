@@ -511,9 +511,13 @@ fn Projects(actor: Session, config: StoredValue<Config>) -> impl IntoView {
                 }
             }).collect_view()}</div> }.into_any(),
         }}
-        <dialog class="k-dialog hub-dialog" node_ref=create aria-labelledby="hub-create-title">
-            <h2 id="hub-create-title">"Create project"</h2>
-            <form class="hub-form" method="post" action="/api/projects" on:submit=submit>
+        <dialog class="k-dialog k-dialog--md bs-root hub-form-dialog" node_ref=create aria-labelledby="hub-create-title"
+            on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
+            <div class="k-dialog__head">
+                <h2 class="k-dialog__title" id="hub-create-title">"Create project"</h2>
+                <button type="button" class="k-icon-btn" aria-label="Close" disabled=busy on:click=move |_| close_dialog(create)><Icon name="close" /></button>
+            </div>
+            <div class="k-dialog__body"><form id="hub-create" class="hub-form" method="post" action="/api/projects" on:submit=submit>
                 <label class="k-field"><span class="k-field__label">"Project name"</span><input class="k-input" name="name" required maxlength="120" autofocus /></label>
                 <div class="k-field"><label class="k-field__label" for="hub-project-address">"Project address"</label>
                     <input class="k-input" id="hub-project-address" name="slug" required minlength="3" maxlength="63" pattern=r"[a-z][a-z0-9\-]{1,61}[a-z0-9]"
@@ -521,8 +525,11 @@ fn Projects(actor: Session, config: StoredValue<Config>) -> impl IntoView {
                     <span id="hub-address-preview" class="k-field__hint">{move || format!("{}.{}", slug.with(|s| if s.is_empty() { "your-project".into() } else { s.clone() }), config.with_value(|c| c.domain.clone()))}</span>
                 </div>
                 {alert(error)}
-                <div class="hub-actions"><button class=BUTTON type="button" disabled=busy on:click=move |_| close_dialog(create)>"Cancel"</button><button class=PRIMARY type="submit" disabled=busy>"Create project"</button></div>
-            </form>
+            </form></div>
+            <div class="k-dialog__foot">
+                <button class=BUTTON type="button" disabled=busy on:click=move |_| close_dialog(create)>"Cancel"</button>
+                <button class=PRIMARY type="submit" form="hub-create" disabled=busy>"Create project"</button>
+            </div>
         </dialog>
     </div> }
 }

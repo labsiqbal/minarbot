@@ -1,0 +1,20 @@
+export const fixtureClock = Date.UTC(2026, 10, 23, 7);
+
+export function fixDate(page, time = fixtureClock, { tick = false } = {}) {
+  return page.addInitScript(({ time, tick }) => {
+    const now = () => time + (tick ? Math.floor(performance.now()) : 0);
+    globalThis.Date = new Proxy(Date, {
+      apply: target => new target(now()).toString(),
+      construct: (target, args, constructor) => Reflect.construct(target, args.length ? args : [now()], constructor),
+      get: (target, key, receiver) => key === 'now' ? now : Reflect.get(target, key, receiver),
+    });
+  }, { time, tick });
+}
+
+export async function parityShot(page, path, region = page) {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  return region.screenshot({ path, animations: 'disabled', caret: 'hide', scale: 'css' });
+}

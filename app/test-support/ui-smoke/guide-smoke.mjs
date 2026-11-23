@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, symlink } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { startRustServer } from '../../rust-test-server.ts';
 import { routeReadiness } from './route-readiness.mjs';
+import { fixDate, parityShot } from './parity-shot.mjs';
 
 const work = await mkdtemp(join(tmpdir(), 'minarbot-guide-'));
 const output = process.env.MINARBOT_GUIDE_SCREENSHOTS && resolve(process.env.MINARBOT_GUIDE_SCREENSHOTS);
@@ -19,7 +20,7 @@ const turns = [
   ['How do I change AI providers?', 'Open Providers in Settings and add a provider account.', 'open_guide_screen'],
   ['Add my test machine.', 'Review the machine and select Apply.', 'add_guide_machine'],
 ];
-let agentId = '';
+const agentId = '82000000-0000-4000-8000-000000000001';
 let guidePrompt = false;
 let toolIsolation = false;
 const model = 'guide-fixture';
@@ -53,6 +54,7 @@ try {
   await symlink('0.17.0-8523c26b', join(releasesDir, 'current'));
   app = await startRustServer({
     database: join(work, 'state.sqlite'),
+    allowedOrigins: ['https://minarbot.example.test'],
     appearanceClient: client,
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),
     baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
@@ -81,11 +83,12 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROME ?? '/usr/bin/google-chrome', args: ['--no-sandbox'] });
   const viewport = { width: 1280, height: 820 };
   const page = await browser.newPage({ viewport, reducedMotion: 'reduce' });
+  await fixDate(page);
   await page.addInitScript(() => localStorage.setItem('minarbot:details-open', '0'));
   const failures = [];
   page.on('pageerror', error => failures.push(error.message));
   page.on('console', event => { if (event.type() === 'error') failures.push(event.text()); });
-  async function capture(label, region, mask = []) {
+  async function capture(label, region) {
     if (!output) return;
     await mkdir(output, { recursive: true });
     for (const [layout, size] of Object.entries({ desktop: viewport, narrow: { width: 390, height: 844 } })) {
@@ -93,7 +96,7 @@ try {
       for (const theme of ['dark', 'light']) {
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         await region.evaluate(element => element.scrollIntoView({ block: 'center' }));
-        await region.screenshot({ path: join(output, `${client}-${label}-${layout}-${theme}.png`), animations: 'disabled', mask });
+        await parityShot(page, join(output, `${client}-${label}-${layout}-${theme}.png`), region);
       }
     }
     await page.setViewportSize(viewport);
@@ -136,8 +139,8 @@ try {
   const agents = (await api('/api/agents')).agents;
   assert.equal(agents.length, 1);
   assert.equal(agents[0].instructions, 'Cite primary sources and flag gaps.');
-  agentId = agents[0].id;
   await api(confirm, { action: 'apply', change: proposal.change }, 409);
+  await api('/api/agents', { id: agentId, name: 'Routine owner fixture', runtime: 'api', model, instructions: 'Check sources.' }, 201);
 
   await send(2);
   const routineChange = page.getByRole('article', { name: 'Create routine' });
@@ -167,6 +170,22 @@ try {
     await page.screenshot({ path: join(work, 'guide-infra-' + theme + '.png'), animations: 'disabled' });
   }
   await capture('guide-machine-proposal', machineChange);
+  if (output) {
+    await page.route('**/api/install/tokens', async route => {
+      const body = route.request().postDataJSON();
+      assert.match(body.digest, /^[A-Za-z0-9_-]{43}$/);
+      const response = await route.fetch({ postData: { ...body, digest: randomBytes(32).toString('base64url') } });
+      await route.fulfill({ response });
+    }, { times: 1 });
+    await page.evaluate(() => {
+      const original = crypto.getRandomValues;
+      crypto.getRandomValues = array => {
+        if (!(array instanceof Uint8Array) || array.length !== 32) return original.call(crypto, array);
+        crypto.getRandomValues = original;
+        return array.fill(0x33);
+      };
+    });
+  }
   const installReceipt = page.waitForResponse(response => response.url().endsWith('/api/install/tokens') && response.request().method() === 'POST');
   await machineChange.getByRole('button', { name: 'Apply', exact: true }).press('Enter');
   const issued = await installReceipt;
@@ -176,7 +195,7 @@ try {
   const command = await machineChange.getByRole('textbox', { name: 'Run on the new machine' }).inputValue();
   assert(command.includes('--name \'Test machine\'') && /\bbsi_[A-Za-z0-9_-]{43}\b/.test(command), 'Install command invalid');
   assert(!/\bbsi_[A-Za-z0-9_-]{43}\b/.test(JSON.stringify(await api(path))), 'Install credential leaked in transcript');
-  await capture('guide-machine-install', machineChange, [machineChange.getByRole('textbox', { name: 'Run on the new machine' })]);
+  await capture('guide-machine-install', machineChange);
   const samples = Number(process.env.MINARBOT_GUIDE_BENCH ?? 0);
   assert(Number.isSafeInteger(samples) && samples >= 0);
   if (samples) {

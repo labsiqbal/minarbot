@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { createServer as socketServer } from 'node:net';
@@ -79,7 +80,7 @@ async function exercise(browser, client) {
   let app, context;
   try {
     const database = join(ctl.root, 'state.sqlite');
-    app = await startRustServer({ database, dist, appearanceClient: client, defaultModel: 'fixture',
+    app = await startRustServer({ database, dist, appearanceClient: client, fixedClock: fixtureClock, defaultModel: 'fixture',
       baseURL: 'http://127.0.0.1:9/v1', apiKey: 'fixture',
       updates: ctl.updates, harness: { executables: Object.fromEntries(
         ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro'].map(runtime => [runtime, join(ctl.root, runtime)]),
@@ -123,6 +124,8 @@ async function exercise(browser, client) {
       addEventListener('securitypolicyviolation', event => window.promptViolations.push(event.effectiveDirective));
     });
     const page = observer(await context.newPage(), errors);
+    // Update polling measures elapsed wall time.
+    await fixDate(page, fixtureClock, { tick: true });
     const guidePath = `/agents/${guide.id}`;
     const action = label => page.getByRole('button', { name: label, exact: true });
     const dialog = label => page.getByRole('dialog', { name: label, exact: true });
@@ -133,7 +136,7 @@ async function exercise(browser, client) {
         for (const theme of themes) {
           await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
           assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-          await region.screenshot({ path: join(output, `${client}-${name}-${layout}-${theme}.png`), animations: 'disabled' });
+          await parityShot(page, join(output, `${client}-${name}-${layout}-${theme}.png`), region);
         }
         if (needsSidebar && layout === 'narrow') await page.keyboard.press('Escape');
       }

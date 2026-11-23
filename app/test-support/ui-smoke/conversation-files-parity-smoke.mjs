@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { parityShot } from './parity-shot.mjs';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -116,7 +117,7 @@ try {
     await surface.waitFor({ state: 'visible' });
     await page.evaluate(() => document.fonts.ready);
     await page.mouse.move(1, 1);
-    const png = await page.screenshot({ path: join(output, `${key}-${client}.png`), animations: 'disabled' });
+    const png = await parityShot(page, join(output, `${key}-${client}.png`));
     const pair = shots.get(key) ?? {};
     pair[client] = png;
     shots.set(key, pair);

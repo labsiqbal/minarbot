@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -35,6 +36,7 @@ async function exercise(client) {
   const leptos = client === 'leptos';
   const app = await startApp({
     database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: client,
+    fixedClock: fixtureClock,
     defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
     stream: false,
   });
@@ -82,6 +84,7 @@ async function exercise(client) {
   }
   const primary = await context();
   const page = await primary.newPage();
+  await fixDate(page);
   page.setDefaultTimeout(15_000);
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', event => { if (event.type() === 'error') errors.push(event.text()); });
@@ -115,8 +118,7 @@ async function exercise(client) {
       for (const theme of ['dark', 'light']) {
         await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${client} ${name} overflows ${size}`);
-        await page.screenshot({ path: join(output, `${client}-${name}-${size}-${theme}.png`), animations: 'disabled',
-          mask: [page.locator('[data-private-token]'), page.locator('input[type=password]')] });
+        await parityShot(page, join(output, `${client}-${name}-${size}-${theme}.png`));
       }
       await reset(size);
     }
@@ -251,7 +253,7 @@ async function exercise(client) {
     const step = linkOrButton('Open step work');
     await step.waitFor();
     await page.locator('.workflow-run-node').filter({ hasText: /work.*Completed/s }).waitFor();
-    await capture('workflow-inspector', () => step.scrollIntoViewIfNeeded());
+    await capture('workflow-inspector', () => heading('Run history').evaluate(node => node.scrollIntoView({ block: 'center', inline: 'nearest' })));
     await step.press('Enter');
     const stepBack = button('Back to run ' + wfName);
     await stepBack.waitFor();

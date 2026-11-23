@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -271,6 +272,7 @@ async function exercise(page, client, route, panel, state, commands) {
       await button(panel, 'Open').press('Enter');
       const restore = modal(page, 'Restore backup');
       await visible(restore.getByRole('region', { name: 'Backup restore command' }));
+      await page.waitForFunction(element => element.contains(document.activeElement), await restore.elementHandle());
       await page.keyboard.press('Escape');
       await hidden(restore);
       await button(panel, 'Download').click();
@@ -356,7 +358,7 @@ try {
             assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
             await page.evaluate(() => document.fonts.ready);
             assert.equal(await page.locator('.app-settings__main').evaluate(element => element.scrollWidth <= element.clientWidth), true);
-            if (output) await page.screenshot({ path: join(output, `${route}-${viewport}-${theme}-${client}.png`), animations: 'disabled' });
+            if (output) await parityShot(page, join(output, `${route}-${viewport}-${theme}-${client}.png`));
           }
         }
         await page.setViewportSize({ width: 1440, height: 900 });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixDate, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -145,7 +146,7 @@ try {
             page.setDefaultTimeout(15000);
             page.on('pageerror', error => faults.push({ client, error: error.message }));
             page.on('console', message => { if (message.type() === 'error') faults.push({ client, error: message.text() }); });
-            await page.clock.setFixedTime(new Date(date + 10_000));
+            await fixDate(page, date + 10_000);
             const actions = [];
             let rows = recent;
             let roomRows = [roomRoot, roomChild];
@@ -190,12 +191,11 @@ try {
               if (path === projectScope + '/turns') return route.fulfill({ json: roomRows });
               return route.continue();
             });
-            const capture = async (name, mask = []) => {
+            const capture = async name => {
               assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), name + ' overflows');
               assert.deepEqual(await page.evaluate(() => window.fixtureCsp), [], name);
-              await page.evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
               const file = join(output, `${size}-${theme}-${name}-${client}.png`);
-              const image = await page.screenshot({ path: file, animations: 'disabled', mask });
+              const image = await parityShot(page, file);
               if (client === 'react') {
                 images.set(name, image);
                 return;
@@ -282,7 +282,7 @@ try {
             const secret = message(waiting.id).getByLabel('Signing secret');
             await secret.waitFor();
             await secret.evaluate(input => input.scrollIntoView({ block: 'center' }));
-            await capture('signed-event', [secret]);
+            await capture('signed-event');
             await message(waiting.id).getByRole('button', { name: 'Hide connection' }).click();
             assert.equal(await secret.count(), 0);
 
@@ -333,7 +333,7 @@ try {
               await all.getByRole('searchbox').press('Enter');
               const result = all.getByRole('link', { name: 'Fork source message', exact: true });
               await result.waitFor();
-              await page.screenshot({ path: join(output, `${size}-${theme}-search-chat-history-leptos.png`), animations: 'disabled' });
+              await page.screenshot({ path: join(output, `${size}-${theme}-search-chat-history-leptos-diagnostic.png`), animations: 'disabled' });
               await result.click();
               await message(realTurn).waitFor();
               await page.goBack();

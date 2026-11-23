@@ -373,6 +373,24 @@ pub(super) fn panel(
         format!("{}?{params}", path.get_value())
     });
     if let Some(open) = dialog_open {
+        Effect::new(move |_| {
+            if open.get() && editor.get().is_some() {
+                request_animation_frame(move || {
+                    if open.try_get_untracked() != Some(true) {
+                        return;
+                    }
+                    if let Some(editor) = editor.try_get_untracked().flatten() {
+                        let dialog = editor.closest("dialog[open]").ok().flatten();
+                        if dialog.is_some()
+                            && dialog == document().active_element()
+                            && !editor.disabled()
+                        {
+                            let _ = editor.focus();
+                        }
+                    }
+                });
+            }
+        });
         Effect::new(move |previous| {
             let open = open.get();
             if !open {

@@ -377,8 +377,8 @@ fn Members(page: ProjectPage) -> impl IntoView {
         }).collect_view()}</div>
         {manager.then(|| view! { <Section title="Invitations">
             {move || match invites.get() {
-                None => view! { <p role="status">"Loading invitations…"</p> }.into_any(),
-                Some(rows) if rows.is_empty() => view! { <p>"No invitations"</p> }.into_any(),
+                None => view! { <crate::connection_ui::Loading label="Loading invitations…" /> }.into_any(),
+                Some(rows) if rows.is_empty() => view! { <crate::connection_ui::Empty title="No invitations" /> }.into_any(),
                 Some(rows) => view! { <div class="k-card">{rows.into_iter().map(|invite| {
                     let title = format!("Invitation {}", invite.id.chars().take(8).collect::<String>());
                     let expires = js_sys::Date::new(&invite.expires_at.into()).to_locale_string("en", &wasm_bindgen::JsValue::UNDEFINED).as_string().unwrap_or_default();
@@ -396,23 +396,32 @@ fn Members(page: ProjectPage) -> impl IntoView {
                 }).collect_view()}</div> }.into_any(),
             }}
         </Section> })}
-        <dialog class="k-dialog hub-dialog" node_ref=invite_dialog aria-labelledby="hub-invite-title" on:close=move |_| link.set(None)>
-            <h2 id="hub-invite-title">{move || if link.get().is_some() { "Invitation ready" } else { "Invite member" }}</h2>
-            <Show when=move || link.get().is_some() fallback=move || view! {
-                <form class="hub-form" method="post" action="/api/invitations" on:submit=submit>
+        <dialog class="k-dialog k-dialog--md bs-root hub-form-dialog" node_ref=invite_dialog aria-labelledby="hub-invite-title"
+            on:close=move |_| link.set(None) on:cancel=move |event: web_sys::Event| { if page.busy.get_untracked() { event.prevent_default(); } }>
+            <div class="k-dialog__head">
+                <h2 class="k-dialog__title" id="hub-invite-title">{move || if link.get().is_some() { "Invitation ready" } else { "Invite member" }}</h2>
+                <button class="k-icon-btn" type="button" aria-label="Close" disabled=page.busy on:click=move |_| close_dialog(invite_dialog)><Icon name="close" /></button>
+            </div>
+            <div class="k-dialog__body"><Show when=move || link.get().is_some() fallback=move || view! {
+                <form id="hub-invite" class="hub-form" method="post" action="/api/invitations" on:submit=submit>
                     <label class="k-field"><span class="k-field__label">"Email"</span><input class="k-input" name="mailbox" type="email" required maxlength="254" autofocus /></label>
-                    <label class="k-field"><span class="k-field__label">"Role"</span><select class="k-input k-select" name="role">
-                        {manager_roles(owner).map(|role| view! { <option value=role>{role}</option> }).collect_view()}
-                    </select></label>
-                    <div class="hub-actions"><button class=BUTTON type="button" disabled=page.busy on:click=move |_| close_dialog(invite_dialog)>"Cancel"</button><button class=PRIMARY type="submit" disabled=page.busy>"Create invitation"</button></div>
+                    <label class="k-field"><span class="k-field__label">"Role"</span><span class="hub-dialog-select">
+                        <select class="k-input k-select" name="role">
+                            {manager_roles(owner).map(|role| view! { <option value=role>{match role { "admin" => "Admin", "viewer" => "Viewer", _ => "Member" }}</option> }).collect_view()}
+                        </select><span class="k-select__chev"><Icon name="chevron-down" /></span>
+                    </span></label>
                 </form>
             }>
                 <div class="k-field"><label class="k-field__label" for="hub-invite-link">"Private invitation link"</label>
-                    <textarea id="hub-invite-link" class="k-input k-textarea" readonly prop:value=move || link.get().unwrap_or_default() aria-describedby="hub-invite-hint"></textarea>
-                    <span id="hub-invite-hint" class="k-field__hint">"Send privately to the invited email address. Shown once."</span>
+                    <textarea id="hub-invite-link" class="k-input k-textarea" rows="4" readonly
+                        on:focus=move |event| { event_target::<web_sys::HtmlTextAreaElement>(&event).select(); }
+                        prop:value=move || link.get().unwrap_or_default() aria-describedby="hub-invite-hint"></textarea>
+                    <span id="hub-invite-hint" class="k-field__hint">"Send this link privately to the invited email address. Shown once."</span>
                 </div>
-                <div><button class=BUTTON type="button" on:click=move |_| close_dialog(invite_dialog)>"Done"</button></div>
-            </Show>
+            </Show></div>
+            <div class="k-dialog__foot"><Show when=move || link.get().is_some() fallback=move || view! {
+                <button class=PRIMARY type="submit" form="hub-invite" disabled=page.busy>"Create invitation"</button>
+            }><button class=BUTTON type="button" on:click=move |_| close_dialog(invite_dialog)>"Done"</button></Show></div>
         </dialog>
     </div> }
 }

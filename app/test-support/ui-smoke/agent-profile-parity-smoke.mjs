@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
 import { deleteAgentSmoke } from './delete-agent-smoke.mjs';
+import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
 
 const output = resolve(process.argv[2] ?? 'test-support/ui-smoke/artifacts/agent-profile');
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-agent-profile-'));
@@ -83,13 +84,8 @@ function settingsFixture(page) {
   });
 }
 
-async function screenshot(panel, path) {
-  await panel.evaluate(node => document.fonts.ready.then(() => node.getBoundingClientRect().width));
-  await panel.screenshot({ path, animations: 'disabled', caret: 'hide' });
-}
-
 async function captures(page, prefix) {
-  const shot = (name, panel) => screenshot(panel, join(output, `${prefix}-${name}.png`));
+  const shot = (name, panel) => parityShot(page, join(output, `${prefix}-${name}.png`), panel);
   await createMenu(page, 'New agent');
   const create = dialog(page, 'New agent');
   await shot('new', create);
@@ -333,7 +329,7 @@ try {
   for (const client of clients) {
     const app = await startApp({
       database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: 'leptos',
-      defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', stream: false, projectRoot: scratch,
+      defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', stream: false, projectRoot: scratch, fixedClock: fixtureClock,
     });
     try {
       const response = await fetch(app.origin + '/api/agents', {
@@ -352,6 +348,7 @@ try {
             addEventListener('securitypolicyviolation', event => console.error('CSP', event.effectiveDirective, event.blockedURI));
           }, theme);
           const page = await context.newPage();
+          await fixDate(page);
           page.on('pageerror', error => errors.push(error.message));
           page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
           await settingsFixture(page);

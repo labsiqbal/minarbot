@@ -651,6 +651,7 @@ fn number_field(label: &'static str, name: &'static str, max: u32, value: u32) -
 
 fn goal_chip(chat: Chat) -> impl IntoView {
     let result = RwSignal::new(Value::Null);
+    let busy = RwSignal::new(false);
     fn refresh(chat: Chat, result: RwSignal<Value>) {
         if result.is_disposed() {
             return;
@@ -671,7 +672,6 @@ fn goal_chip(chat: Chat) -> impl IntoView {
             let target = goal["target"].as_str()?.to_owned();
             let turn = goal["current_turn"].as_str().unwrap_or_default().to_owned();
             let status = goal["status"].as_str().unwrap_or_default();
-            let busy = RwSignal::new(false);
             let endpoint = format!("{}/goal/stop", chat.base());
             let goal_id = goal["id"].clone();
             let active = matches!(status, "active" | "judging" | "needs_you" | "paused");
@@ -688,7 +688,7 @@ fn goal_chip(chat: Chat) -> impl IntoView {
                     <span>{format!("{}/{} tokens", goal["tokens"], goal["max_tokens"])}</span>
                 </div>
                 {active.then(|| view! { <button type="button" class="k-btn k-btn--sm k-btn--ghost" aria-label="Stop goal" disabled=busy
-                    on:click=move |_| mutate(endpoint.clone(), json!({"goalId": goal_id}), busy, chat.error)>"Stop"</button> })}
+                    on:click=move |_| mutate_then(endpoint.clone(), json!({"goalId": goal_id}), busy, chat.error, move || chat.refresh())>"Stop"</button> })}
             </div> })
         })}
     }

@@ -496,34 +496,19 @@ struct ArchivedProject {
 }
 
 pub fn archived_projects(commands: Commands) -> impl IntoView {
-    let open = RwSignal::new(false);
-    let archive = query::<Archive>(move || {
-        if open.get_untracked() {
-            "/api/projects?archived=1".into()
-        } else {
-            String::new()
+    let archive = query::<Archive>(|| "/api/projects?archived=1".into());
+    Effect::new(move |previous: Option<u64>| {
+        let version = commands.version.get();
+        if previous.is_some_and(|previous| previous != version) {
+            archive.reload.run(());
         }
-    });
-    Effect::new(move |_| {
-        commands.version.get();
-        open.get();
-        archive.reload.run(());
+        version
     });
     view! {
-        <details class="project-navigation__archive" on:toggle=move |event| {
-            if let Some(element) = event.target().and_then(|node| wasm_bindgen::JsCast::dyn_into::<web_sys::HtmlDetailsElement>(node).ok()) {
-                open.set(element.open());
-            }
-        }>
+        <ErrorNotice error=archive.error.into() retry=archive.reload />
+        <details class="project-navigation__archive" hidden=move || archive.data.with(|data| data.as_ref().is_none_or(|data| data.projects.is_empty()))>
             <summary class="project-navigation__new">"Archived projects"</summary>
-            <ErrorNotice error=archive.error.into() retry=archive.reload />
-            <Show when=move || archive.busy.get() && archive.data.with(Option::is_none)>
-                <p class="machine-group__note" role="status">"Loading archived projects…"</p>
-            </Show>
             {move || archive.data.get().map(|data| {
-                if data.projects.is_empty() {
-                    return view! { <p class="machine-group__note">"No archived projects."</p> }.into_any();
-                }
                 data.projects.into_iter().map(|row| {
                     let href = format!("/projects/{}", row.id);
                     let command = change(&row.id, row.revision, "restore", json!({"confirmed":true}));

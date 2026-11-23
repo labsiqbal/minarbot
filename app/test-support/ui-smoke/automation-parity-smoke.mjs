@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -35,6 +36,7 @@ const fixtureIds = { agent: randomUUID(), other: randomUUID(), workflow: randomU
 
 async function exercise(client) {
   const app = await startApp({ database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: client,
+    fixedClock: fixtureClock,
     defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', stream: false });
   const context = await browser.newContext({ viewport: sizes.desktop, timezoneId: 'UTC' });
   const errors = [], failedExpected = [];
@@ -43,6 +45,7 @@ async function exercise(client) {
     addEventListener('securitypolicyviolation', event => window.automationCsp.push(event.effectiveDirective));
   });
   const page = await context.newPage();
+  await fixDate(page);
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', event => {
     if (event.type() !== 'error') return;
@@ -70,13 +73,14 @@ async function exercise(client) {
     assert(response.ok, `${path} returned ${response.status}`);
     return response.json();
   }
-  const capture = async name => {
+  const capture = async (name, anchor) => {
     for (const [viewport, size] of Object.entries(sizes)) {
       await page.setViewportSize(size);
+      if (anchor) await anchor.evaluate(node => node.scrollIntoView({ block: 'center', inline: 'nearest' }));
       for (const theme of ['dark', 'light']) {
         await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${client} ${name} overflows ${viewport}`);
-        await page.screenshot({ path: join(output, `${client}-${name}-${viewport}-${theme}.png`), animations: 'disabled', mask: [page.locator('input[type=password]')] });
+        await parityShot(page, join(output, `${client}-${name}-${viewport}-${theme}.png`));
       }
     }
     await page.setViewportSize(sizes.desktop);
@@ -170,6 +174,8 @@ async function exercise(client) {
     assert.match(await page.evaluate(() => document.activeElement?.querySelector('legend')?.textContent ?? ''), /Step work/);
     await button('Back to graph work').click();
     assert(await node.evaluate(element => document.activeElement === element));
+    await inspectGraph('editor');
+    await capture('workflow-editor');
     if (client === 'leptos') {
       const download = page.waitForEvent('download');
       await button('Export graph').click();
@@ -184,8 +190,6 @@ async function exercise(client) {
       await button('Import graph', importer).click();
       await importer.waitFor({ state: 'hidden' });
     }
-    await inspectGraph('editor');
-    await capture('workflow-editor');
     await button('Save workflow').click();
     await heading('Daily summary').waitFor();
     const webhook = page.waitForRequest(request => request.url().endsWith(`/api/workflows/${workflow.id}/webhook`) && request.method() === 'POST');
@@ -222,7 +226,7 @@ async function exercise(client) {
     await page.locator('.workflow-run-node').filter({ hasText: 'Completed' }).first().waitFor();
     await page.locator('main .markdown strong').filter({ hasText: 'Automation fixture completed.' }).first().waitFor();
     await inspectGraph('completed run');
-    await capture('workflow-run');
+    await capture('workflow-run', heading('Run history'));
     if (client === 'leptos') {
       const step = page.getByRole('link', { name: 'Open step work', exact: true });
       await step.press('Enter');
@@ -244,8 +248,7 @@ async function exercise(client) {
     }
     await issue1Smoke({ page,
       check: async (name, run) => { if (name.startsWith('Routine templates')) await run(); },
-      screenshot: name => page.screenshot({ path: join(output, `${client}-${name}.png`),
-        animations: 'disabled', mask: [page.locator('input[type=password]')] }),
+      screenshot: name => parityShot(page, join(output, `${client}-${name}.png`)),
     });
     await open('/workflows', 'Workflows');
     await button('Workflow options').click();
@@ -291,6 +294,7 @@ async function coldNavigation(origin) {
       const context = await browser.newContext({ viewport: sizes.desktop, timezoneId: 'UTC' });
       try {
         const page = await context.newPage();
+        await fixDate(page);
         const response = await page.goto(origin + path, { waitUntil: 'commit' });
         assert.equal(response.status(), 200);
         await page.locator(ready).first().waitFor({ state: 'visible' });

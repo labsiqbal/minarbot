@@ -158,7 +158,7 @@ fn install_command(install: Install, token: String, target: Value) -> impl IntoV
         <span role="status">{move || if online.get() { "Machine paired and online." } else if expired.get() { "Install command expired." } else { "Waiting for the machine to pair." }}</span>
         <Show when=move || !online.get() && !expired.get()>
             <label class="k-field"><span class="k-field__label">"Run on the new machine"</span>
-                <textarea class="k-textarea" rows="3" readonly spellcheck="false" autocomplete="off" prop:value=command.get_value()></textarea>
+                <textarea class="k-input k-textarea" rows="3" readonly spellcheck="false" autocomplete="off" prop:value=command.get_value()></textarea>
             </label>
             <div class="k-row-actions"><button class="k-btn k-btn--sm k-btn--secondary" type="button" on:click=move |_| {
                 let text = command.get_value();

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -15,9 +16,10 @@ const client = process.env.MINARBOT_SMOKE_UI ?? 'react';
 assert(['react', 'leptos'].includes(client));
 const zone = 'Asia/Jakarta';
 process.env.TZ = zone;
-const today = wallTime(Date.now(), zone).date;
+const today = wallTime(fixtureClock, zone).date;
 const tomorrow = addDays(today, 1);
 const future = addDays(today, 2);
+const fixtureId = number => `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`;
 let app, browser;
 let release;
 const blocked = new Promise(resolve => { release = resolve; });
@@ -34,7 +36,7 @@ const provider = createServer(async (request, response) => {
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 try {
-  app = await startApp({ database: join(directory, 'state.sqlite'), port: 0, dist: resolve('dist'), appearanceClient: client, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
+  app = await startApp({ database: join(directory, 'state.sqlite'), port: 0, dist: resolve('dist'), appearanceClient: client, fixedClock: fixtureClock, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
   const { origin } = app;
   async function api(path, body) {
     const response = await fetch(origin + path, body === undefined ? {} : { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -42,19 +44,20 @@ try {
     assert(response.ok, path + ': ' + JSON.stringify(value));
     return value;
   }
-  const agent = await api('/api/agents', { id: randomUUID(), runtime: 'api', name: 'Calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
-  const other = await api('/api/agents', { id: randomUUID(), runtime: 'api', name: 'Other calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
-  const project = await api('/api/projects', { id: randomUUID(), name: 'Field Operations', members: [{ agent: agent.id, write: false }] });
+  const agent = await api('/api/agents', { id: fixtureId(12), runtime: 'api', name: 'Calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
+  const other = await api('/api/agents', { id: fixtureId(13), runtime: 'api', name: 'Other calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
+  const project = await api('/api/projects', { id: fixtureId(14), name: 'Field Operations', members: [{ agent: agent.id, write: false }] });
   const scope = { project: project.id, zone, trigger: 'schedule', enabled: true };
   const once = (date, time) => ({ kind: 'once', date, time });
-  const seeded = await api('/api/agents/' + agent.id + '/routines', { ...scope, id: randomUUID(), name: 'Morning digest', prompt: 'Wait for the calendar check.', schedule: once(tomorrow, '09:00') });
-  const finished = await api('/api/agents/' + agent.id + '/routines', { ...scope, id: randomUUID(), name: 'Inventory recap', prompt: 'Finish the recap.', schedule: once(future, '10:30'), enabled: false, reportTo: project.channel });
+  const seeded = await api('/api/agents/' + agent.id + '/routines', { ...scope, id: fixtureId(15), name: 'Morning digest', prompt: 'Wait for the calendar check.', schedule: once(tomorrow, '09:00') });
+  const finished = await api('/api/agents/' + agent.id + '/routines', { ...scope, id: fixtureId(16), name: 'Inventory recap', prompt: 'Finish the recap.', schedule: once(future, '10:30'), enabled: false, reportTo: project.channel });
   await api('/api/routines/' + finished.id + '/test', { id: randomUUID(), revision: finished.revision });
-  await api('/api/agents/' + agent.id + '/workflows', { id: randomUUID(), revision: 0, name: 'Daily summary', graph: { entry: 'out', maxSteps: 8, nodes: [{ id: 'out', kind: 'output' }] } });
+  await api('/api/agents/' + agent.id + '/workflows', { id: fixtureId(17), revision: 0, name: 'Daily summary', graph: { entry: 'out', maxSteps: 8, nodes: [{ id: 'out', kind: 'output' }] } });
 
   browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'America/Los_Angeles' });
   const page = await context.newPage();
+  await fixDate(page);
   const errors = [], consoleErrors = [];
   function inspect(target) {
     target.on('pageerror', error => errors.push(error.message));
@@ -74,7 +77,7 @@ try {
   const cell = day => page.getByRole('region', { name: dateLabel(day), exact: true }).and(page.locator('.calendar-cell'));
   const shot = async name => {
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Calendar page overflows viewport');
-    await page.screenshot({ path: join(output, name + '.png'), animations: 'disabled' });
+    await parityShot(page, join(output, name + '.png'));
   };
   async function openProject() {
     await page.goto(origin + '/projects/' + project.id);
@@ -171,6 +174,7 @@ try {
   await page.getByRole('combobox', { name: 'Filter by agent' }).click();
   await page.getByRole('option', { name: 'All agents', exact: true }).click();
   const projectPage = await context.newPage();
+  await fixDate(projectPage);
   inspect(projectPage);
   await projectPage.goto(origin + '/projects/' + project.id);
   await projectPage.getByRole('tab', { name: 'Calendar', exact: true }).click();
@@ -189,7 +193,7 @@ try {
   await show(projectPage.getByRole('button', { name: /^Morning digest, Routine, Running/ }));
   await show(projectPage.getByRole('button', { name: /^Inventory recap, Routine, Done/ }));
   await show(projectPage.getByRole('button', { name: /^Daily summary, Workflow, Scheduled/ }).first());
-  await projectPage.screenshot({ path: join(output, 'project-month-running-dark.png'), animations: 'disabled' });
+  await parityShot(projectPage, join(output, 'project-month-running-dark.png'));
 
   await page.bringToFront();
   await shot('overall-month-running-dark');

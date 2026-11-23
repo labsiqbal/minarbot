@@ -228,10 +228,20 @@ pub(crate) fn WorkspaceShell(
     let projects = RwSignal::new(None::<Result<Projects, String>>);
     let summaries = RwSignal::new(Vec::<Summary>::new());
     let machines = RwSignal::new(None::<Result<Machines, String>>);
-    let projects_tab = RwSignal::new(
-        (base_path.starts_with("/projects/") || base_path.starts_with("/rooms/"))
-            || preference(TAB).as_deref() == Some("projects"),
-    );
+    let route_tab = if base_path.starts_with("/projects/") || base_path.starts_with("/rooms/") {
+        Some("projects")
+    } else if base_path.starts_with("/agents/") || base_path.starts_with("/machines/") {
+        Some("agents")
+    } else {
+        None
+    };
+    if let Some(tab) = route_tab {
+        save_preference(TAB, tab);
+    }
+    let projects_tab = RwSignal::new(route_tab.map_or_else(
+        || preference(TAB).as_deref() == Some("projects"),
+        |tab| tab == "projects",
+    ));
     let collapsed = RwSignal::new(preference(COLLAPSED).as_deref() == Some("1"));
     let narrow = || {
         window()
@@ -407,6 +417,10 @@ pub(crate) fn WorkspaceShell(
                 narrow_open.set(false);
                 if path.starts_with("/rooms/") {
                     projects_tab.set(true);
+                    save_preference(TAB, "projects");
+                } else if path.starts_with("/agents/") || path.starts_with("/machines/") {
+                    projects_tab.set(false);
+                    save_preference(TAB, "agents");
                 }
             }
             path
@@ -862,7 +876,7 @@ pub(crate) fn WorkspaceShell(
                                 <button type="button" class="project-navigation__new" on:click=move |_| new_project()>
                                     <crate::connection_ui::Icon name="plus" /><span>"New project"</span>
                                 </button>
-                                {management::archived_projects(project_commands)}
+                                <Show when=move || projects_tab.get()>{move || management::archived_projects(project_commands)}</Show>
                                 {project_commands.recovery()}
                             </nav>
                         </div>

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { request } from 'node:http';
 import { createServer } from 'node:https';
-import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -14,6 +14,7 @@ import { initializeHubSchema } from '../../hub/schema.ts';
 import { createStubVerifier } from '../../hub/sessions.ts';
 import { startRustHub } from '../hosted-hub.ts';
 import { routeReadiness } from './route-readiness.mjs';
+import { fixtureClock, parityShot } from './parity-shot.mjs';
 
 const domain = 'hub-fixture.test';
 const central = 'accounts.' + domain;
@@ -22,8 +23,8 @@ const screenshots = process.env.MINARBOT_HUB_SCREENSHOTS;
 const samples = Number(process.env.MINARBOT_HUB_BENCH ?? 0);
 assert(Number.isSafeInteger(samples) && samples >= 0);
 const rustBinary = process.env.MINARBOT_HOSTED_HUB_BINARY;
-const dataPath = join(scratch, 'hub.sqlite');
-const db = new DatabaseSync(rustBinary ? dataPath : ':memory:');
+const seedPath = join(scratch, 'seed.sqlite');
+const db = new DatabaseSync(seedPath);
 initializeHubSchema(db);
 const authority = createHubAuthority(db, { domain, mailboxKey: Buffer.alloc(32, 3) });
 const identities = new Map(['Alice', 'Bob'].map(subject => [subject.toLowerCase(), {
@@ -32,17 +33,13 @@ const identities = new Map(['Alice', 'Bob'].map(subject => [subject.toLowerCase(
 }]));
 const account = authority.provisionAccount(identities.get('alice'), true);
 authority.provisionAccount(identities.get('bob'), true);
-const projects = {
-  react: authority.createProject(account, 'workspace-react', 'Pilot project'),
-  leptos: authority.createProject(account, 'workspace-leptos', 'Pilot project'),
-};
+const fixtureProject = authority.createProject(account, 'workspace-fixture', 'Pilot project');
+db.close();
 if (process.env.MINARBOT_HUB_SMOKE_CLIENT !== 'react') process.env.MINARBOT_APPEARANCE_CLIENT = 'leptos';
 const web = { distPath: resolve(import.meta.dirname, '../../dist/hub'), developmentIdentity: true };
-const node = rustBinary ? undefined : createHubServer({
-  authority, accountsHost: central, domain, verifier: createStubVerifier(identities), web,
-});
-let rust;
+let rust, node, activeDatabase, port;
 let proxy, browser, dropMessageResponse = false;
+const inviteFixture = { invitationId: '10000000-0000-4000-8000-000000000082', token: 'synthetic-invitation-fixture' };
 
 async function listen(server) {
   server.listen(0, '127.0.0.1');
@@ -51,26 +48,37 @@ async function listen(server) {
 }
 
 try {
+  const tokensPath = join(scratch, 'tokens.json');
+  const mailboxKeyPath = join(scratch, 'mailbox.key');
   if (rustBinary) {
-    const mailboxKeyPath = join(scratch, 'mailbox.key'), tokensPath = join(scratch, 'tokens.json');
     await writeFile(mailboxKeyPath, Buffer.alloc(32, 3), { mode: 0o600 });
     await writeFile(tokensPath, JSON.stringify(Object.fromEntries(identities)), { mode: 0o600 });
-    db.close();
-    rust = await startRustHub(rustBinary, scratch, { domain, accountsHost: central, dataPath,
-      mailboxKeyPath, identity: { mode: 'stub', tokensPath }, web });
   }
-  const port = rust?.port ?? await listen(node.server);
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=' + central,
     '-addext', 'subjectAltName=DNS:*.' + domain, '-keyout', join(scratch, 'tls.key'), '-out', join(scratch, 'tls.crt')], { stdio: 'ignore' });
   proxy = createServer({ key: await readFile(join(scratch, 'tls.key')), cert: await readFile(join(scratch, 'tls.crt')) }, (incoming, response) => {
     const connection = request({ host: '127.0.0.1', port, path: incoming.url, method: incoming.method, headers: incoming.headers });
     incoming.pipe(connection);
-    connection.on('response', upstream => {
+    connection.on('response', async upstream => {
       if (dropMessageResponse && incoming.url === '/api/messages' && upstream.statusCode === 200) {
         dropMessageResponse = false;
         upstream.resume();
         response.writeHead(503, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({ error: { code: 'fixture_lost_response', message: 'Success response lost in fixture.' } }));
+        return;
+      }
+      if (screenshots && incoming.url === '/api/invitations' && upstream.statusCode === 200) {
+        let body = '';
+        for await (const chunk of upstream) body += chunk;
+        const json = JSON.parse(body);
+        const url = `https://${fixtureProject.host}/invite#${new URLSearchParams(inviteFixture)}`;
+        const fixture = incoming.method === 'POST' ? { ...json, url } : json.map(row => ({
+          ...row, id: inviteFixture.invitationId, expiresAt: fixtureClock + 86_400_000,
+        }));
+        const headers = { ...upstream.headers };
+        delete headers['content-length'];
+        response.writeHead(200, headers);
+        response.end(JSON.stringify(fixture));
         return;
       }
       response.writeHead(upstream.statusCode, upstream.headers);
@@ -87,9 +95,21 @@ try {
   if (screenshots) await mkdir(screenshots, { recursive: true });
   const timings = {};
   for (const client of process.env.MINARBOT_HUB_SMOKE_CLIENT ? [process.env.MINARBOT_HUB_SMOKE_CLIENT] : ['react','leptos']) {
-    const project = projects[client];
+    const dataPath = join(scratch, client + '.sqlite');
+    await copyFile(seedPath, dataPath);
+    if (rustBinary) {
+      rust = await startRustHub(rustBinary, scratch, { domain, accountsHost: central, dataPath,
+        mailboxKeyPath, identity: { mode: 'stub', tokensPath }, web });
+      port = rust.port;
+    } else {
+      activeDatabase = new DatabaseSync(dataPath);
+      node = createHubServer({ authority: createHubAuthority(activeDatabase, { domain, mailboxKey: Buffer.alloc(32, 3) }),
+        accountsHost: central, domain, verifier: createStubVerifier(identities), web });
+      port = await listen(node.server);
+    }
+    const project = fixtureProject;
     const viewport = { width: 1280, height: 860 };
-    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport, reducedMotion: 'reduce' });
+    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport, reducedMotion: 'reduce', timezoneId: 'UTC', locale: 'en-US' });
     if (client === 'react') {
       await context.route(/^https:\/\/[^/]+\/(?:login|invite|join|nodes\/link)?(?:\?.*)?$/, async route => {
         if (!route.request().isNavigationRequest()) return route.continue();
@@ -100,13 +120,13 @@ try {
       });
     }
     const page = await context.newPage();
-    async function capture(label, mask = []) {
+    async function capture(label) {
       if (!screenshots) return;
       for (const [layout, size] of Object.entries({ desktop: viewport, narrow: { width: 390, height: 844 } })) {
         await page.setViewportSize(size);
         for (const theme of ['dark', 'light']) {
           await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-          await page.screenshot({ path: join(screenshots, `${client}-${label}-${layout}-${theme}.png`), animations: 'disabled', mask });
+          await parityShot(page, join(screenshots, `${client}-${label}-${layout}-${theme}.png`));
         }
       }
       await page.setViewportSize(viewport);
@@ -160,14 +180,14 @@ try {
       assert.equal(await page.getByText(text, { exact: true }).count(), 1);
       if (screenshots) {
         assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
-        await page.screenshot({ path: join(screenshots, client + '-room-dark.png') });
+        await parityShot(page, join(screenshots, client + '-room-dark.png'));
         await page.evaluate(() => localStorage.setItem('minarbot-presentation-v1', JSON.stringify({
           version: 1, theme: 'light', textSize: 'standard', colorTheme: 'minarbot',
         })));
         await page.reload();
         await page.getByText(text, { exact: true }).waitFor();
         assert.equal(await page.locator('html').getAttribute('data-theme'), 'light');
-        await page.screenshot({ path: join(screenshots, client + '-room-light.png') });
+        await parityShot(page, join(screenshots, client + '-room-light.png'));
         await capture('room');
       }
       if (samples) {
@@ -177,6 +197,7 @@ try {
       }
       await page.getByRole('link', { name: 'Members', exact: true }).click();
       await page.getByRole('button', { name: 'Invite member', exact: true }).waitFor();
+      await page.getByText('No invitations', { exact: true }).waitFor();
       await capture('members');
       await page.getByRole('button', { name: 'Invite member', exact: true }).click();
       const invite = page.getByRole('dialog', { name: 'Invite member' });
@@ -186,7 +207,8 @@ try {
       await invite.getByRole('button', { name: 'Create invitation' }).click();
       await page.getByRole('heading', { name: 'Invitation ready' }).waitFor();
       await page.getByLabel('Private invitation link', { exact: true }).waitFor();
-      await capture('invitation', [page.getByLabel('Private invitation link', { exact: true })]);
+      await page.getByText(/^Invitation [a-f0-9]{8}$/).waitFor();
+      await capture('invitation');
       await page.goto('https://' + central + '/');
       await page.getByRole('button', { name: 'Create project', exact: true }).click();
       const create = page.getByRole('dialog', { name: 'Create project' });
@@ -203,6 +225,10 @@ try {
       console.log(client + ': HTTPS handoff, durable draft, exact replay after response loss, room SSE, invitation and project creation, dark/light');
     } finally {
       await context.close();
+      await node?.close();
+      await rust?.close();
+      activeDatabase?.close();
+      node = rust = activeDatabase = undefined;
     }
   }
   if (samples) {
@@ -221,6 +247,6 @@ try {
   }
   await node?.close();
   await rust?.close();
-  if (db.isOpen) db.close();
+  activeDatabase?.close();
   await rm(scratch, { recursive: true });
 }

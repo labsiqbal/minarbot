@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixDate, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -19,6 +20,7 @@ const connection = '30000000-0000-4000-8000-000000000081';
 const base = '/api/projects/' + project;
 const url = '/projects/' + project;
 const secret = 'fixture-only-environment-secret';
+const now = Date.UTC(2026, 0, 1);
 const variants = [['desktop', 1440, 900], ['narrow', 390, 844]];
 const screens = [
   ['Overview', '', 'Members'],
@@ -43,9 +45,10 @@ function timing(samples) {
 
 async function run(client) {
   const app = await startApp({ database: join(directory, client + '.sqlite'), dist: resolve('dist'), port: 0,
-    appearanceClient: 'leptos', projectRoot: join(workspaces, client), fixedClock: Date.UTC(2026, 0, 1), defaultModel: 'fixture', baseURL: 'http://127.0.0.1:1/v1' });
+    appearanceClient: 'leptos', projectRoot: join(workspaces, 'projects'), fixedClock: now, defaultModel: 'fixture', baseURL: 'http://127.0.0.1:1/v1' });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' });
   const page = await context.newPage();
+  await fixDate(page, now);
   const errors = [], csp = [], screenshots = [], mutations = [];
   const mcp = { id: connection, name: 'Fixture MCP', url: 'https://example.test/mcp', revision: 1, enabled: 1, hasToken: true };
   const tools = [{ name: 'echo', description: 'Fixture tool', inputSchema: { type: 'object' } }];
@@ -75,7 +78,7 @@ async function run(client) {
     mutations.push([path.replace(/[0-9a-f-]{36}/gi, ':id'), body]);
     switch (path) {
       case base + '/mcp/test':
-        return route.fulfill({ json: { id: connection, expires: Date.now() + 600_000, tools } });
+        return route.fulfill({ json: { id: connection, expires: now + 600_000, tools } });
       case base + '/mcp':
         installed = true;
         return route.fulfill({ json: mcp });
@@ -130,9 +133,9 @@ async function run(client) {
       if (await activeTab.isVisible()) await activeTab.scrollIntoViewIfNeeded();
       for (const theme of ['dark', 'light']) {
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-        const file = name + '-' + layout + '-' + theme + '.png';
+        const file = name + '-' + layout + '-' + theme + (['project-messaging', 'project-whatsapp', 'restore', 'section-restore'].includes(name) ? '-diagnostic' : '') + '.png';
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), file + ' overflow');
-        await page.screenshot({ path: join(output, client + '-' + file), animations: 'disabled', mask: [page.locator('input[type=password]')], maskColor: theme === 'dark' ? '#252525' : '#eee' });
+        await parityShot(page, join(output, client + '-' + file));
         screenshots.push(file);
       }
     }
@@ -167,6 +170,9 @@ async function run(client) {
       await page.getByRole('option', { name: 'Project member', exact: true }).click();
     }
     await capture('new-project');
+    if (client === 'leptos') {
+      assert(await create.evaluate(element => element.matches(':modal')), 'New project dialog must open in the top layer');
+    }
     await button('Create project', dialog('New project')).click();
     await page.waitForURL(/\/rooms\//);
     const fromBrowser = (await api('/api/projects')).projects.find(project => project.name === 'Created in browser');
@@ -392,7 +398,10 @@ try {
   await writeFile(join(folder, 'notes.md'), 'Changed notes\n');
   browser = await chromium.launch({ args: ['--no-sandbox'] });
   const clients = process.env.MINARBOT_SMOKE_UI ? [process.env.MINARBOT_SMOKE_UI] : ['react', 'leptos'];
-  for (const client of clients) await run(client);
+  for (const client of clients) {
+    await mkdir(join(workspaces, 'projects'));
+    try { await run(client); } finally { await rm(join(workspaces, 'projects'), { recursive: true }); }
+  }
   for (const name of receipt.react?.screenshots.filter(file => receipt.leptos?.screenshots.includes(file)) ?? []) {
     const react = join(output, 'react-' + name), leptos = join(output, 'leptos-' + name);
     const { width, height } = await sharp(react).metadata();

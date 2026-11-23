@@ -1151,7 +1151,7 @@ fn FlowEditor(
                     let revision=query.data.with_untracked(|value|value.as_ref().map_or(0,|value|number(&value["revision"])));
                     journal.submit(Request::new(path.get_value(),json!({"revision":revision,"links":links.get_untracked()}),Value::clone),done);
                 } />
-            })><p class="k-field__hint">"Connect routine results to the next agent. Changes apply to new runs."</p></kit::Section>
+            })><p class="k-field__hint">"Connect routine results to the next agent. Multiple inputs wait for all results; branches without a successful result are skipped. Changes apply only to new runs."</p></kit::Section>
             <Recovery journal done confirm />
             <ReadError query label="Reload flow" />
             {kit::error(error)}
@@ -1179,6 +1179,7 @@ fn FlowEditor(
                         }>{kit::icon(kit::icons().close)}</button>
                     }) /> }
                 }).collect_view()}</kit::Card>
+                <p class="k-field__hint">"Removing a relationship also removes branches no longer connected to the origin."</p>
             </Show>
             <kit::Section title="Execution steps">
                 <ReadError query=runs />

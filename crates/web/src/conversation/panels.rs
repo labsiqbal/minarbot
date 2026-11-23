@@ -243,8 +243,19 @@ pub fn exchanges(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
 fn run_panel(chat: Chat) -> impl IntoView {
     let data = RwSignal::new(None::<Result<Value, String>>);
     let refresh = RwSignal::new(0_u32);
+    let status = Memo::new(move |_| {
+        chat.run.with(|id| {
+            chat.latest.with(|turns| {
+                turns
+                    .iter()
+                    .find(|turn| &turn.id == id)
+                    .map(|turn| turn.status.clone())
+            })
+        })
+    });
     files::watch(
         move || {
+            status.track();
             let id = chat.run.get();
             if protocol::id(&id) {
                 format!("/api/turns/{id}/inspect")

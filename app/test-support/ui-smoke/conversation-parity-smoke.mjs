@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixDate, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -76,7 +77,7 @@ try {
   const rich = await thread('October report');
   const richTurn = await seed(rich.scope, 'Show the report', turn => turn.harnessApprovals?.some(item => item.kind === 'form' && item.state === 'approval'));
   const screen = 'data:image/png;base64,' + (await desktopImage).toString('base64');
-  const fixed = new Date(Math.max(Date.now(), Date.parse(completed.created) + 5_000));
+  const fixed = Math.max(Date.now(), Date.parse(completed.created) + 5_000);
   const selector = (path, client) => app.origin + path + '?ui=' + client;
   browser = await chromium.launch({ headless: true });
 
@@ -87,7 +88,7 @@ try {
         const context = await browser.newContext({ viewport: { width, height }, colorScheme: theme, reducedMotion: 'reduce' });
         try {
           const page = await context.newPage();
-          await page.clock.setFixedTime(fixed);
+          await fixDate(page, fixed);
           await page.addInitScript(theme => {
             localStorage.setItem('minarbot-presentation-v1', JSON.stringify({ version: 1, theme, textSize: 'standard', colorTheme: 'minarbot' }));
             localStorage.setItem('minarbot:details-open', '0');
@@ -98,7 +99,7 @@ try {
               await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
             });
             if (anchor) await anchor.scrollIntoViewIfNeeded();
-            const raw = await page.screenshot({ animations: 'disabled', path: join(out, `${viewport}-${theme}-${name}-${client}.png`) });
+            const raw = await parityShot(page, join(out, `${viewport}-${theme}-${name}-${client}.png`));
             const entries = images.get(name) ?? [];
             images.set(name, [...entries, raw]);
           }

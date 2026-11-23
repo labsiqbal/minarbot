@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixDate, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -75,6 +76,7 @@ try {
 
   async function makePage(client, theme, size) {
     const page = await browser.newPage({ viewport: sizes[size], reducedMotion: 'reduce', timezoneId: 'UTC' });
+    await fixDate(page);
     page.on('response', response => {
       if (response.status() >= 400) errors.push(`${client}: HTTP ${response.status()} ${new URL(response.url()).pathname}`);
     });
@@ -140,7 +142,7 @@ try {
       assert(await region.evaluate(el => el.scrollWidth <= el.clientWidth + 1), `${name} overflow`);
       const key = `${name}-${theme}-${size}`;
       const file = join(output, `${client}-${key}.png`);
-      await region.screenshot({ path: file, animations: 'disabled' });
+      await parityShot(page, file, region);
       images.set(key, { ...images.get(key), [client]: file });
     }
     try {

@@ -9,13 +9,19 @@
 
 #leptos-root { height: 100%; }
 #appearance-fallback[hidden], #leptos-root [hidden], #leptos-root dialog:not([open]) { display: none; }
-.hub-center .hub-brand { padding-inline: 0; }
 #leptos-root dialog { inset: 50% auto auto 50%; margin: 0; color: var(--color-text-primary); }
-#leptos-root dialog::backdrop { background: var(--color-bg-scrim); }
+#leptos-root dialog:modal { overscroll-behavior: contain; }
+#leptos-root dialog::backdrop { background: var(--color-bg-scrim); overflow: hidden; overscroll-behavior: contain; }
 #leptos-root .system-dialog { padding: 0; }
 .hub-dialog { width: min(440px, calc(100% - 32px)); padding: 24px; }
 .hub-dialog h2 { margin: 0 0 20px; font-size: 18px; }
 .hub-dialog form + button, .hub-dialog > label + div { margin-top: 16px; }
+.hub-form-dialog { padding: 0; }
+.hub-form-dialog .k-icon-btn svg { width: 16px; height: 16px; }
+.hub-dialog-select { position: relative; }
+.hub-dialog-select select { appearance: none; padding-right: 28px; }
+.hub-dialog-select .k-select__chev { position: absolute; right: 11px; top: 50%; translate: 0 -50%; pointer-events: none; }
+.hub-dialog-select svg { width: 14px; height: 14px; }
 .hub-main > .k-alert { margin: 12px 24px; }
 .hub-menu { position: relative; }
 .hub-menu summary { list-style: none; cursor: pointer; }

@@ -567,21 +567,34 @@ pub fn Modal(
     });
     Effect::new(move |_| {
         if let Some(dialog) = node.get() {
-            let _ = dialog.show_modal();
+            if dialog.open() {
+                return;
+            }
+            let connected = dialog.is_connected();
             let selector = if confirm {
                 ".k-dialog__foot button"
             } else {
                 ".k-dialog__body :is(input:not([type=hidden]):not([type=number]), textarea):not([readonly]):not(:disabled), .k-dialog__body [role=tab][data-state=active]"
             };
-            if let Some(first) = dialog
-                .query_selector(selector)
-                .ok()
-                .flatten()
-                .and_then(|node| node.dyn_into::<HtmlElement>().ok())
-            {
-                let _ = first.focus();
+            let show = move || {
+                if !dialog.is_connected() || dialog.open() || dialog.show_modal().is_err() {
+                    return;
+                }
+                if let Some(first) = dialog
+                    .query_selector(selector)
+                    .ok()
+                    .flatten()
+                    .and_then(|node| node.dyn_into::<HtmlElement>().ok())
+                {
+                    let _ = first.focus();
+                } else {
+                    let _ = dialog.focus();
+                }
+            };
+            if connected {
+                show();
             } else {
-                let _ = dialog.focus();
+                request_animation_frame(show);
             }
         }
     });

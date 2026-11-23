@@ -97,8 +97,6 @@ try {
       assert.match(await continuation.locator('.activity-label').textContent(), /^Stopped/);
       assert.equal(await page.getByRole('article').locator('.activity-label').filter({ hasText: /^(Working|Queued)/ }).count(), 0);
       assert.equal(await continuation.getByRole('button', { name: 'Task actions' }).count(), 0);
-      assert.match(await providerCalls.locator('.run-inspector__state').textContent(), /^Stopped/);
-      assert(await page.locator('.run-inspector').getByText('Run stopped', { exact: true }).isVisible());
       const conversation = await api(`/api/agents/${agent.id}/turns`);
       assert(conversation.every(turn => !['running', 'queued'].includes(turn.status)));
       const inspection = await api(`/api/turns/${turn}/inspect`);
@@ -106,6 +104,8 @@ try {
       assert.equal(inspection.providers.length, 1);
       assert.equal(inspection.providers[0].status, 'interrupted');
       assert(inspection.providers[0].finished);
+      await providerCalls.locator('.run-inspector__state').filter({ hasText: /^Stopped/ }).waitFor();
+      await page.locator('.run-inspector').getByText('Run stopped', { exact: true }).waitFor();
       assert.deepEqual(requests.slice(requestStart), ['turn', 'judge', 'continuation']);
     }
     await assertStopped();
