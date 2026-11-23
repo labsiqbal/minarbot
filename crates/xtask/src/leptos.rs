@@ -331,12 +331,12 @@ pub fn build(root: &Path) -> Result<()> {
             let wasm = asset(name, ".wasm")?;
             let mut files = hub_assets(&manifest, [&styles, &start], [&themes, &icon, &wasm])?;
             let css = fs::read_to_string(stage.path().join(styles.trim_start_matches(NAMESPACE)))?;
-            let references =
-                regex::Regex::new(r"url\((/_leptos/assets/[a-zA-Z0-9_-]+\.[a-f0-9]{16}\.woff2)\)")?;
             files.extend(
-                references
-                    .captures_iter(&css)
-                    .map(|asset| asset[1].to_owned()),
+                sizes
+                    .keys()
+                    .filter(|name| name.ends_with(".woff2"))
+                    .map(|name| format!("{NAMESPACE}{name}"))
+                    .filter(|path| css.contains(path)),
             );
             fs::write(
                 stage.path().join("hub-assets.json"),
