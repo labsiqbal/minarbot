@@ -162,6 +162,8 @@ async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
 
 pub fn standalone() -> impl IntoView {
     let config = RwSignal::new(None);
+    let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
+    let deleting = move || lifecycle.is_some_and(|lifecycle| lifecycle.deleting_current());
     let error = RwSignal::new(String::new());
     leptos::task::spawn_local(async move {
         let result = match window()
@@ -182,13 +184,13 @@ pub fn standalone() -> impl IntoView {
         }
     });
     view! {
-        {move || config.get().map(shell)}
+        {move || if deleting() { view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any() } else { config.get().map(shell).into_any() }}
         <p class="conversation-startup" role="status" hidden=move || config.with(Option::is_some) || !error.with(String::is_empty)>"Loading conversation…"</p>
         <p class="conversation-startup message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
     }
 }
 
-pub fn chats(chat: Chat, edit_profile: NodeRef<leptos::html::Dialog>) -> impl IntoView {
+pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
     let config = chat.config.get_value();
     if config.channel {
         return view! {
@@ -384,7 +386,7 @@ pub fn chats(chat: Chat, edit_profile: NodeRef<leptos::html::Dialog>) -> impl In
                             let from = link(&base);
                             view! { <a class="k-menu__item" href=crate::settings::section_url("/settings/providers", &from)>"AI connection"</a> }.into_any()
                         } else {
-                            view! { <button class="k-menu__item" type="button" on:click=move |_| controls::dialog_open(edit_profile)>"Edit profile"</button> }.into_any()
+                            view! { <button class="k-menu__item" type="button" on:click=move |_| edit_profile.run(())>"Edit profile"</button> }.into_any()
                         }}
                     </div>
                 </details>

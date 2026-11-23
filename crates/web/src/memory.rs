@@ -4,6 +4,7 @@ mod notes;
 use crate::{connection_ui as ui, system::kit};
 use leptos::{html, prelude::*};
 use serde::Deserialize;
+#[cfg(feature = "conversation")]
 use wasm_bindgen::JsCast;
 
 const TABS: [(&str, &str); 3] = [
@@ -178,17 +179,17 @@ pub(crate) fn dialog(path: String, open: RwSignal<bool>) -> impl IntoView {
 pub(crate) fn profile_resources(agent: String) -> impl IntoView {
     let open = RwSignal::new(false);
     let base = format!("/api/agents/{agent}");
-    let history = use_context::<super::Icons>().unwrap_or_default();
     view! {
         <button type="button" class="panel-row panel-row--link" on:click=move |_| open.set(true)>
-            {kit::icon(history.brain)}<span class="panel-row__title">"Agent memory"</span>{kit::icon(history.next)}
+            <ui::Icon name="brain" /><span class="panel-row__title">"Agent memory"</span><ui::Icon name="chevron-right" />
         </button>
         {dialog(format!("{base}/memory"), open)}
         {summary(format!("{base}/compaction"))}
     }
 }
 
-pub(super) fn context_dialog(base: String, open: RwSignal<bool>) -> impl IntoView {
+#[cfg(feature = "conversation")]
+pub(crate) fn context_dialog(base: String, open: RwSignal<bool>) -> impl IntoView {
     let path = StoredValue::new(format!("{base}/compaction"));
     view! {
         <kit::Dialog id="conversation-context" title=kit::text("Conversation context") open=Signal::from(open)
@@ -244,18 +245,16 @@ fn summary(path: String) -> impl IntoView {
         }
     });
     let available = move || read.data.with(|data| matches!(data, Some(Some(_))));
-    let icons = use_context::<super::Icons>().unwrap_or_default();
-    let history = icons.history.clone();
     view! {
         <div node_ref=root class="bs-root summary-row">
             <div class="details-list-row">
                 <button type="button" class="panel-row panel-row--link" hidden=move || !available()
                     on:click=move |_| { disclosure.set(true); open.set(true); }>
-                    {kit::icon(icons.history.clone())}<span class="panel-row__title">"History summary"</span>
-                    {kit::badge("neutral", "Up to date")}{kit::icon(icons.next)}
+                    <ui::Icon name="history" /><span class="panel-row__title">"History summary"</span>
+                    {kit::badge("neutral", "Up to date")}<ui::Icon name="chevron-right" />
                 </button>
                 <div class="panel-row" hidden=available>
-                    {kit::icon(history)}<span class="panel-row__title">"History summary"</span>
+                    <ui::Icon name="history" /><span class="panel-row__title">"History summary"</span>
                     {kit::badge("neutral", move || if !read.error.with(String::is_empty) { "Unavailable" } else if read.data.with(Option::is_some) { "None yet" } else { "Loading" })}
                 </div>
             </div>
@@ -290,7 +289,8 @@ fn summary(path: String) -> impl IntoView {
     }
 }
 
-pub(super) fn focus_chat_menu() {
+#[cfg(feature = "conversation")]
+pub(crate) fn focus_chat_menu() {
     request_animation_frame(|| {
         if let Ok(Some(menu)) = document().query_selector(".chat__pill") {
             if let Ok(menu) = menu.dyn_into::<web_sys::HtmlElement>() {

@@ -1,5 +1,5 @@
 use super::{pager, params, retry, visible_poll, Page};
-use crate::{api, connection_ui as ui, conversation::protocol, system::kit};
+use crate::{api, connection_ui as ui, system::kit};
 use leptos::{html, prelude::*, task::spawn_local};
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -28,7 +28,7 @@ struct Entry {
 
 impl Entry {
     fn valid(&self) -> bool {
-        protocol::command_id(&self.id)
+        api::command_id(&self.id)
             && !self.text.trim().is_empty()
             && self.text.encode_utf16().count() <= 2000
             && self.essential <= 1
@@ -110,8 +110,8 @@ struct Command {
 impl Command {
     fn valid(&self) -> bool {
         let restore = self.restore == Some(true);
-        protocol::command_id(&self.id)
-            && protocol::command_id(&self.entry)
+        api::command_id(&self.id)
+            && api::command_id(&self.entry)
             && self.revision <= MAX_REVISION
             && self.text.encode_utf16().count() <= 2000
             && !(self.remove && restore)

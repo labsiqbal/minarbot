@@ -10,9 +10,11 @@ import { startApp } from '../../test-bridge.ts';
 const directory = await mkdtemp(join(tmpdir(), 'minarbot-docs-ui-'));
 const output = process.env.MINARBOT_DOCS_SCREENSHOTS ?? await mkdtemp(join(tmpdir(), 'minarbot-docs-shots-'));
 const agent = randomUUID();
+const appearanceClient = process.env.MINARBOT_SMOKE_UI === 'leptos' ? 'leptos' : 'react';
+const agentQuery = appearanceClient === 'leptos' ? '?ui=leptos' : '';
 let app, browser;
 try {
-  app = await startApp({ database: join(directory, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
+  app = await startApp({ database: join(directory, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture', appearanceClient });
   const create = await fetch(app.origin + '/api/agents', {
     method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: agent, name: 'Docs agent', instructions: 'Help with library APIs.', model: 'fixture', runtime: 'api' }),
@@ -41,7 +43,7 @@ try {
     await page.close();
   }
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await page.goto(`${app.origin}/agents/${agent}`);
+  await page.goto(`${app.origin}/agents/${agent}${agentQuery}`);
   const showDetails = page.getByRole('button', { name: 'Show details', exact: true });
   if (await showDetails.isVisible()) await showDetails.click();
   await page.getByRole('button', { name: 'Edit profile', exact: true }).first().click();

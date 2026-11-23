@@ -45,10 +45,13 @@ project Calendar tab also use Leptos. The three automation routes share a mounte
 workspace shell and load the `workflows` bundle. The project Calendar link loads
 the same bundle. Setup and Settings use `appearance`, and the Guide uses the `conversation` bundle on its ordinary URL.
 The #63 agent, named conversation and room pilot uses that same bundle when
-its URL includes `?ui=leptos`. Settings return links and browser history retain the selected route.
-Agent profiles, named conversations, and rooms load Memory and History summary
-from the conversation bundle. Memory uses the same API and session-storage
-journals as React, including recovery of a note save after switching clients.
+its URL includes `?ui=leptos`. The workspace shell mounts agent creation, profile
+editing and template dialogs inside the selected route group. Agent creation and
+import open the conversation bundle through the existing pilot selector. Settings
+return links and browser history retain the selected route. Advanced profile
+mounts Agent memory and History summary inside the selected route group. Named
+conversations and rooms mount their Memory and History summary controls from
+the conversation bundle. Both clients share the note recovery journal format.
 React remains the default for the staged rollout in #67.
 
 ## React inventory for #67
@@ -60,7 +63,6 @@ issue.
 | Issue group | React screens and dialogs | React sources |
 | --- | --- | --- |
 | Conversation routing and remaining chat controls | Post-setup `/`, agent Main chat, named and project conversations, and rooms use React on ordinary links. The explicit #63 pilot covers the core transcript, composer, rich replies, queue, approvals, Goals/Loops, chat list and Computer panel. Still on the React path are timeline minimap, historical paging and task-family navigation, speech playback, chat history search across conversations, fork history/origin, checkpoint restore, signed event connection, room management and the remaining dispatch controls. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `ui/AgentConversation.tsx`, `ui/ChatPrimitives.tsx`, `ui/MessageFind.tsx`, `ui/TimelineMinimap.tsx`, `ui/TurnActivity.tsx`, `ui/RunControls.tsx`, `SourceControl.tsx`, `SpeechPlayback.tsx`, `EventConnection.tsx` |
-| Agent lifecycle and profile | New agent, Draft with AI, full Profile, Model and Advanced tabs, avatar and look editor, availability/hidden agent restore and deletion, model/provider/runtime and access controls, working folder and Computer settings, Sites and template import/export. The #63 pilot has a basic profile form. | `App.tsx`, `AgentProfileDialog.tsx`, `AgentActions.tsx`, `AgentSidebar.tsx`, `AgentAvatar.tsx`, `AgentVisibility.tsx`, `AgentFolderSettings.tsx`, `AgentComputerSettings.tsx`, `SitesPanel.tsx`, `AgentTemplateImport.tsx` |
 | Memory and history summary | Agent and section Memory, including Notes, Learned and Standing questions, search, source links, edit, pin, forget and undo. History summary and compaction controls from chat and profile. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
 | Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. New agent and New project hand off to their staged creation forms pending #76 and #81. Remote agent detail remains React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
 | Agent inbox and remote agent detail | Agent email inbox and message content at `/agents/:id/inbox`, and paired-machine agent detail at `/machines/:id/agents/:id`. | `App.tsx`, `AgentEmail.tsx`, `MachinesPanel.tsx`, `AgentActions.tsx` |
@@ -119,9 +121,9 @@ node --experimental-strip-types test-support/ui-smoke/workspace-prompts-smoke.mj
 MINARBOT_SMOKE_UI=leptos node --experimental-strip-types test-support/ui-smoke/guide-smoke.mjs
 ```
 
-Run Memory and History summary parity after packaging. This smoke seeds private
-and section banks on a disposable server, compares both clients in dark and
-light at desktop and narrow widths, and verifies note recovery and source paging.
+Run Memory and History summary parity after packaging. The smoke seeds private
+and section banks on a disposable server, checks note recovery and source
+paging, and compares desktop and narrow screenshots in both themes.
 
 ```sh
 MINARBOT_MEMORY_BENCH=20 node --experimental-strip-types test-support/ui-smoke/memory-smoke.mjs /tmp/minarbot-memory-parity
@@ -151,3 +153,13 @@ NUC, Chromium 156.0.8078.4, optimized Axum build, loopback, no throttling. Twent
 The original warm-navigation p95 exceeded the 10% regression budget. General-to-Appearance navigation now stays within the Leptos document, preserving the settings rail and workspace queries.
 
 Packaged WASM plus startup glue measured 349,332 bytes raw and 129,079 bytes gzip. Release build wall time was 1,365.09 s for native Cargo, 38.83 s for the React build, 87.57 s for the incremental WASM build and 15.49 s for asset packaging. Build slot wait and network setup are outside those measurements.
+
+## Verify agent lifecycle
+
+Package Leptos, then run from `app/` with `MINARBOT_RUST_BINARY` pointing to
+the built server. Use `MINARBOT_AGENT_BENCH=20` for cold and warm profile
+timings, and pass a screenshot directory.
+
+```sh
+node --experimental-strip-types test-support/ui-smoke/agent-profile-parity-smoke.mjs /tmp/minarbot-agent-profile
+```

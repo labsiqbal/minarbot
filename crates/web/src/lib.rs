@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod agent_profile;
 mod api;
 mod appearance;
 #[cfg(feature = "workflows")]
@@ -14,6 +15,7 @@ mod engines;
 mod general;
 mod hub_connection;
 mod mcp_connections;
+mod memory;
 mod messaging_connections;
 mod onboarding;
 mod pairing;
@@ -72,6 +74,7 @@ pub fn mount_appearance() -> Result<(), JsValue> {
     if let Some(route) = routes::SettingsRoute::from_path(&path) {
         let mount = mount_to(root, move || {
             let colors = StoredValue::new(config.colors.clone());
+            provide_context(config.connection_icons.clone());
             provide_context(config.system_icons.clone());
             view! {
                 <shell::WorkspaceShell base_path=return_to.clone() colors=colors icons=icons.clone()>
@@ -89,6 +92,7 @@ pub fn mount_appearance() -> Result<(), JsValue> {
     {
         mount_to(root, move || {
             let colors = StoredValue::new(config.colors);
+            provide_context(config.connection_icons);
             provide_context(config.system_icons);
             view! {
                 <shell::WorkspaceShell base_path=path colors=colors icons=icons>
@@ -161,6 +165,7 @@ pub fn mount_conversation() -> Result<(), JsValue> {
         colors: Vec<appearance::ColorTheme>,
         workspace_icons: shell::Icons,
         conversation_icons: conversation::Icons,
+        connection_icons: connection_ui::Icons,
         system_icons: system::kit::Icons,
     }
     let config = document
@@ -172,6 +177,7 @@ pub fn mount_conversation() -> Result<(), JsValue> {
     mount_to(root, move || {
         let colors = StoredValue::new(config.colors);
         provide_context(config.conversation_icons);
+        provide_context(config.connection_icons);
         provide_context(config.system_icons);
         view! {
             <shell::WorkspaceShell base_path=path colors=colors icons=config.workspace_icons conversation_navigation=true>

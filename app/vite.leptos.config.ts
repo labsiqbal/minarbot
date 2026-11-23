@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Plug, Plus, Receipt, RefreshCw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
-import { Brain, CircleDot, History, ListRestart, ListTodo, Siren } from 'lucide-react';
+import { Brain, CircleDot, Eye, EyeOff, Globe, History, Inbox, ListRestart, ListTodo, Pencil, Siren, Trash2 } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -42,10 +42,11 @@ const appearanceConfig: Plugin = {
           more: svg(Ellipsis), refresh: svg(RefreshCw, 15),
     };
     const connectionIcons = {
-          'arrow-left': ArrowLeft, blocks: Blocks, book: BookOpen, bot: Bot,
+          'arrow-left': ArrowLeft, blocks: Blocks, book: BookOpen, bot: Bot, brain: Brain, history: History,
           'chevron-down': ChevronDown, 'chevron-left': ChevronLeft, 'chevron-right': ChevronRight,
-          close: X, copy: Copy, ellipsis: Ellipsis, error: CircleAlert, 'external-link': ExternalLink,
+          close: X, copy: Copy, ellipsis: Ellipsis, error: CircleAlert, 'external-link': ExternalLink, globe: Globe, check: Check,
           file: FileText, info: Info, key: KeyRound, link: Link, message: MessageCircle, package: Package, plug: Plug, plus: Plus,
+          download: Download, edit: Pencil, inbox: Inbox, eye: Eye, 'eye-off': EyeOff, trash: Trash2,
           search: Search, server: Server, shield: ShieldCheck, warn: AlertTriangle,
     };
     const iconMap = (icons: Record<string, LucideIcon>) => Object.fromEntries(Object.entries(icons)
@@ -73,6 +74,7 @@ const appearanceConfig: Plugin = {
       conversation: {
         ...shell,
         systemIcons,
+        connectionIcons: iconMap(connectionIcons),
         conversationIcons: {
           attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
           chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),
@@ -83,7 +85,7 @@ const appearanceConfig: Plugin = {
           computer: svg(Monitor, 14), members: svg(Users, 14),
           shield: svg(ShieldCheck, 18), more: svg(Ellipsis, 16), external: svg(ExternalLink, 14),
           folder: svg(Folder), next: svg(ChevronRight, 14), alert: svg(CircleAlert, 14),
-          book: svg(BookOpen, 15), brain: svg(Brain), history: svg(History), summary: svg(ListRestart, 15),
+          book: svg(BookOpen, 15), summary: svg(ListRestart, 15),
         },
       },
     };

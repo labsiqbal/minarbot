@@ -1,5 +1,5 @@
 use super::{pager, params, retry, visible_poll, Page};
-use crate::{api, connection_ui as ui, conversation::protocol, system::kit};
+use crate::{api, connection_ui as ui, system::kit, workspace_route::valid_id};
 use leptos::{html, prelude::*, task::spawn_local};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -48,7 +48,7 @@ struct Source {
 
 impl Source {
     fn href(&self) -> Option<String> {
-        let valid = |id: &String| protocol::id(id);
+        let valid = |id: &String| valid_id(id);
         if let Some(id) = self.channel.as_ref().filter(|id| valid(id)) {
             return Some(format!("/rooms/{id}"));
         }
