@@ -118,10 +118,18 @@ cd minarbot/app
 npm ci
 npm run build
 cd ..
+cargo xtask leptos
 cargo run --release -p minarbot-server
 ```
 
-Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_DIR` to keep data somewhere other than `~/.local/share/minarbot/new-app`. Rebuild the UI with `npm run build` in `app/` after changing it.
+Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_DIR` to keep data somewhere other than `~/.local/share/minarbot/new-app`. Rebuild with `npm run build` in `app/`, then `cargo xtask leptos` from the repository root. The npm build clears `app/dist`.
+
+Leptos serves the web UI by default across app, settings, conversation,
+automation, projects, Memory, Guide, setup, and hosted Hub route groups. The
+launcher passes `MINARBOT_APPEARANCE_CLIENT` from `launcher.env`. Set it to
+`react` and restart for a release rollback. Add `?ui=react` for one visit.
+React stays packaged during the two-release fallback window. If Leptos cannot
+start in the browser, use **Open standard** on the recovery page.
 
 ## How it fits together
 
@@ -129,7 +137,8 @@ Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_
 |---|---|
 | `crates/minarbot-server` | Rust server (Tokio, Axum, SQLite): agents, turns, engines, tools, automation, machines |
 | `crates/minarbot-launcher` | Rust launcher that starts the server, installs updates and rolls back |
-| `app/src` | React and TypeScript UI, built with Vite |
+| `app/src` | React and TypeScript rollback UI, built with Vite |
+| `crates/web` | Leptos route groups, WASM bootstrap, and hosted Hub assets |
 | `app/*.test.ts` | Node test suite that drives the Rust server end to end |
 | `desktop` | Electron desktop app (AppImage, DMG, NSIS) |
 | `crates/xtask` | Release, packaging, smoke tests and gates |

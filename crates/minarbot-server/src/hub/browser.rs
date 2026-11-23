@@ -72,8 +72,12 @@ impl Assets {
         }
         let react = fs::read_to_string(dist.join("hub.html"))?;
         let leptos_root = dist.join("../_leptos");
-        let selected = std::env::var("MINARBOT_APPEARANCE_CLIENT").as_deref() == Ok("leptos");
-        let leptos = if selected && leptos_root.join("hub-assets.json").try_exists()? {
+        let selected = matches!(
+            std::env::var("MINARBOT_APPEARANCE_CLIENT").as_deref(),
+            Ok("leptos") | Err(std::env::VarError::NotPresent)
+        );
+        let load_leptos = || -> crate::db::Result<_> {
+            let mut assets = HashMap::new();
             let manifest: Vec<String> =
                 serde_json::from_slice(&fs::read(leptos_root.join("hub-assets.json"))?)?;
             for path in manifest {
@@ -100,7 +104,7 @@ impl Assets {
                 } else {
                     None
                 };
-                files.insert(
+                assets.insert(
                     path,
                     Asset {
                         bytes: fs::read(file)?,
@@ -109,7 +113,24 @@ impl Assets {
                     },
                 );
             }
-            Some(fs::read_to_string(leptos_root.join("hub.html"))?)
+            let html = fs::read_to_string(leptos_root.join("hub.html"))?;
+            if !crate::appearance::startup_asset(&html).is_some_and(|src| assets.contains_key(src))
+            {
+                return Err("Leptos hub startup module is missing from the asset manifest.".into());
+            }
+            Ok((html, assets))
+        };
+        let leptos = if selected && leptos_root.join("hub-assets.json").is_file() {
+            match load_leptos() {
+                Ok((html, assets)) => {
+                    files.extend(assets);
+                    Some(html)
+                }
+                Err(error) => {
+                    eprintln!("Leptos hub build unavailable, serving React: {error}");
+                    None
+                }
+            }
         } else {
             None
         };

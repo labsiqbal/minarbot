@@ -151,6 +151,8 @@ try {
       await go(page, client, main);
       // Open from conversation details in both clients so the same layers are visible.
       const parent = await profile(page, client, false);
+      // React fetches the summary when its row intersects the profile viewport.
+      await parent.locator('.summary-row').scrollIntoViewIfNeeded();
       await button(parent, 'History summary Up to date').waitFor();
       await button(parent, 'Agent memory').scrollIntoViewIfNeeded();
       const memory = await openMemory(page, parent);

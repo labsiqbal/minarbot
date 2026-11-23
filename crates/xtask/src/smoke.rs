@@ -328,8 +328,16 @@ echo "$!" > "$HOME/launcher.pid"
         return Err("Installed version mismatch".into());
     }
     let html = client.get(&origin).send()?.error_for_status()?.text()?;
-    if !html.contains("<title>Minarbot</title>") {
-        return Err("Missing Minarbot HTML title".into());
+    if !html.contains("id=\"leptos-root\"") {
+        return Err("Installed UI did not select Leptos by default".into());
+    }
+    let react = client
+        .get(format!("{origin}/?ui=react"))
+        .send()?
+        .error_for_status()?
+        .text()?;
+    if !react.contains("<title>Minarbot</title>") || react.contains("id=\"leptos-root\"") {
+        return Err("Installed UI did not select React for ?ui=react".into());
     }
     let pattern: Regex = release::pattern(r#"<script[^>]+src="([^"\s]+)""#);
     let bundle = pattern

@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { rustBinary } from '../rust-binary.ts';
 
 function testFiles(root, prefix = '') {
   return readdirSync(join(root, prefix), { withFileTypes: true }).flatMap(entry => {
@@ -33,7 +34,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const files = discoverTests(root);
   assertTestCoverage(root, files);
   if (!files.length) throw new Error('No tests discovered. Restore app test files before running npm test.');
-  const result = spawnSync(process.execPath, ['--experimental-strip-types', '--test', '--test-concurrency=2', ...files], { cwd: root, stdio: 'inherit' });
-  if (result.error) throw result.error;
-  process.exitCode = result.status ?? 1;
+  const server = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
+  const { MINARBOT_HOSTED_HUB_BINARY: hosted = server, ...env } = process.env;
+  env.MINARBOT_RUST_BINARY = server;
+  const run = (tests, env) => {
+    const result = spawnSync(process.execPath, ['--experimental-strip-types', '--test', '--test-concurrency=2', ...tests], { cwd: root, env, stdio: 'inherit' });
+    if (result.error) throw result.error;
+    return result.status ?? 1;
+  };
+  const node = run(files, env);
+  const rust = run(['hub-link.test.ts'], { ...env, MINARBOT_HOSTED_HUB_BINARY: hosted });
+  process.exitCode = node || rust;
 }

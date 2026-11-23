@@ -3,7 +3,7 @@ import { parityShot } from './parity-shot.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -614,7 +614,7 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   const page = await context.newPage();
   page.setDefaultTimeout(12000);
-  let origin = await startup();
+  let origin = await startup('react');
   const port = Number(new URL(origin).port);
   const reactCalls = await generalParity(context, origin, 'react');
   const reactTokens = await exercise(page, origin, 'react');
@@ -652,6 +652,19 @@ try {
     await pairing(client);
   }
   console.log('First-run, project navigation and browser pairing passed in both clients.');
+  const incomplete = join(data, 'incomplete-dist');
+  await mkdir(join(incomplete, '_leptos'), { recursive: true });
+  await copyFile(join(dist, 'index.html'), join(incomplete, 'index.html'));
+  origin = await startup('leptos', 0, { dist: incomplete });
+  const assertReactFallback = async () => {
+    const response = await fetch(origin + route);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /id="root"/);
+  };
+  await assertReactFallback();
+  await writeFile(join(incomplete, '_leptos/appearance.html'), '<html>Incomplete Leptos document</html>');
+  await assertReactFallback();
+  console.log('Missing and incomplete Leptos documents served React.');
 } finally {
   await browser?.close();
   await stop();

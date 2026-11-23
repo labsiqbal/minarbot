@@ -30,6 +30,7 @@ enum Destination {
     Restore(String, u64),
     NewConversation,
     NewAgent,
+    NewProject,
 }
 
 #[derive(Clone, PartialEq)]
@@ -68,6 +69,7 @@ pub(super) struct Data {
     pub projects: RwSignal<Option<Result<Projects, String>>>,
     pub base_path: Signal<String>,
     pub new_conversation: Signal<bool>,
+    pub new_project: RwSignal<bool>,
     pub online: RwSignal<bool>,
     pub attention: RwSignal<bool>,
 }
@@ -233,14 +235,15 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
         item.destination = Destination::NewAgent;
         items.push(item);
     }
-    // ponytail: use the staged client's project form until #81 owns this entry point.
-    items.push(Item::link(
+    let mut item = Item::link(
         "New project",
         "Create",
         "",
         icons.plus.clone(),
-        "/?ui=react&create=project".into(),
-    ));
+        String::new(),
+    );
+    item.destination = Destination::NewProject;
+    items.push(item);
     items
 }
 
@@ -365,6 +368,7 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
                 let _ = window().location().assign(&path);
             }
             Destination::NewConversation => super::start_conversation(),
+            Destination::NewProject => data.new_project.set(true),
             Destination::NewAgent => {
                 if let Some(lifecycle) = lifecycle {
                     lifecycle.open(crate::agent_profile::DialogTarget::Create);

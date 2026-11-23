@@ -19,13 +19,16 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
   if (options.concurrency !== undefined && (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 32)) throw new Error('MINARBOT_CONCURRENCY must be 1..32');
   const supported = new Set(['appearanceClient', 'testMemoryExtraction', 'pdfFault', 'testPathPrefix', 'testCanonicalBridge', 'hubLink', 'composio', 'mailApiKey', 'mailEndpoint', 'agentLimits', 'imageProvider', 'transcriptionProvider', 'scriptToken', 'scriptDirectory', 'installationId', 'mailFrom', 'mailOrigin', 'testKeyring', 'testKeyringLocked', 'updates', 'desktop', 'peerTokenIssuer', 'machines', 'database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock', 'baseURL', 'apiKey', 'defaultModel', 'provider', 'accounts', 'timeout', 'concurrency', 'workspaces', 'projectRoot', 'harness', 'stream', 'streamTermination', 'maxTokens']);
   for (const key of Object.keys(options)) if (!supported.has(key)) throw new Error(`not ported: option ${key}`);
-  for (const key of Object.keys(options.hubLink ?? {})) if (!['origin', 'hubSigningPublicKey', 'development', 'entry', 'fetch', 'webSocket', 'reconnectMs', 'now'].includes(key)) throw new Error(`not ported: option hubLink.${key}`);
+  for (const key of Object.keys(options.hubLink ?? {})) if (!['origin', 'hubSigningPublicKey', 'development', 'entry', 'fetch', 'webSocket', 'receive', 'reconnectMs', 'now'].includes(key)) throw new Error(`not ported: option hubLink.${key}`);
   const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   const bridge = await computerTestBridge(options);
   const connectors = await connectorsTestBridge(options).catch(async error => { await bridge.close(); throw error; });
   const pdfBridge = await pdfTestBridge(options.pdfFault);
   const harnessBridge = await harnessTestBridge(options.harness as Parameters<typeof harnessTestBridge>[0]);
+  // UI tests choose Leptos explicitly. Legacy Node tests stay on React so a
+  // server default flip cannot silently change their client coverage.
   const { peerTokenIssuer: unusedIssuer, machines, desktop, testPathPrefix, pdfFault: unusedPdfFault, ...serializable } = options;
+  serializable.appearanceClient ??= 'react';
   let config: string;
   try { config = JSON.stringify({ ...serializable, hubLink: options.hubLink ? { origin: options.hubLink.origin, hubSigningPublicKey: options.hubLink.hubSigningPublicKey, development: options.hubLink.development, reconnectMs: options.hubLink.reconnectMs } : undefined, harness: options.harness ? { ...options.harness, issuer: undefined } : undefined, testHarnessBridge: harnessBridge.config, testPdfBridge: pdfBridge.config, desktop: desktop ? { ...desktop, runtime: undefined, now: undefined, testRuntime: !!desktop.runtime } : undefined, machines: machines ? { healthIntervalMs: machines.healthIntervalMs } : undefined, testConnectorBridge: connectors.config, testComputerBridge: bridge.config }, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key}`); return value; }); } catch (error) { await bridge.close(); await connectors.close(); await harnessBridge.close(); await pdfBridge.close(); throw error; }
   const root = fileURLToPath(new URL('../', import.meta.url));

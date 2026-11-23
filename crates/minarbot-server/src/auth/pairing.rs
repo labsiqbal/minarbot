@@ -166,8 +166,8 @@ async fn page(
         && state.config.appearance_client == crate::config::AppearanceClient::Leptos
         && !crate::appearance::react_override(query)
     {
-        if let Ok(document) =
-            tokio::fs::read_to_string(state.config.dist.join(crate::appearance::DOCUMENT)).await
+        if let Some(document) =
+            crate::appearance::load_document(&state.config.dist, crate::appearance::DOCUMENT).await
         {
             if let Some(src) = crate::appearance::startup_asset(&document) {
                 script = format!(r#"<script type="module" src="{src}"></script>"#);
