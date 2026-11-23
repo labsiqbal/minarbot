@@ -219,6 +219,15 @@ try {
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.getByRole('heading', { name: 'New project ' + client, exact: true }).waitFor();
+    // Reuse one browser context across identities. A signed-out Alice page
+    // must not retain project data after Bob signs in.
+    await page.goto('https://' + central + '/');
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByLabel('Development identity token').fill('bob');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByText('Bob', { exact: true }).waitFor();
+    assert.equal(await page.getByText('New project ' + client, { exact: true }).count(), 0);
     assert.equal(errors.length, 0, errors.join('\n'));
     console.log(client + ': HTTPS handoff, durable draft, exact replay after response loss, room SSE, invitation and project creation, dark/light');
   } finally {
