@@ -81,7 +81,12 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         if (loseEnrollmentResponse && String(input).endsWith('/enrollment/poll')) { loseEnrollmentResponse = false; throw new Error('Injected response loss'); }
         return response;
     };
-    const webSocket = (url: string, settings: import('ws').ClientOptions) => new WebSocket(url.replace(origin.replace('https', 'wss'), localOrigin.replace('http', 'ws')), { ...settings, headers: { ...settings.headers, Host: accountsHost } });
+    const frames = new EventEmitter();
+    const webSocket = (url: string, settings: import('ws').ClientOptions) => {
+        const socket = new WebSocket(url.replace(origin.replace('https', 'wss'), localOrigin.replace('http', 'ws')), { ...settings, headers: { ...settings.headers, Host: accountsHost } });
+        socket.on('message', data => frames.emit('frame', String(data)));
+        return socket;
+    };
     async function browser(host: string, path: string, body?: unknown, session?: { cookies: string; csrf: string }, bearer?: string, expected = 200) {
         const response = await localFetch(localOrigin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Host: host, Origin: `https://${host}`, 'Content-Type': 'application/json', ...(session ? { Cookie: session.cookies, 'X-CSRF-Token': session.csrf } : {}), ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
         const data = await response.json();
@@ -166,7 +171,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         return (await browser(project.host, '/api/messages', { requestId: randomUUID(), sectionId: project.sectionId, text: 'Mention from authenticated project browser', mentions }, session)).data;
     }
     const post = (account: string, mentions: string[]) => r.post(ctx(account), { requestId: randomUUID(), sectionId: project.sectionId, text: 'Explain transport', mentions });
-    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, now: () => clock, advance(ms: number) { clock += ms; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
+    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, frames, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, now: () => clock, advance(ms: number) { clock += ms; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
 }
 test('signed envelopes reject forged payloads, keys and directions', () => {
     const pair = generateKeyPairSync('ed25519'), key = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'), body = { kind: 'heartbeat' };
@@ -763,13 +768,14 @@ test('signed pending requests stay node-scoped; approval, stale revision, offlin
     await until(() => bob.app.hubLink!.status().pendingWithdrawals === 0, 'offline decline reconciled');
     assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', declined.participationId)!.state, 'revoked');
     assert.equal(bob.app.hubLink!.requests().length, 0); assert.equal(f.calls, 0);
-    const original = WebSocket.prototype.send; let chunked = false;
-    WebSocket.prototype.send = function(data: any, ...args: any[]) {
-        const body = JSON.parse(String(data)).body;
-        if (body?.kind === 'participation.requests') { assert(Buffer.byteLength(String(data)) <= 65536); if (!body.complete) chunked = true; }
-        return Reflect.apply(original, this, [data, ...args]);
-    };
-    t.after(() => { WebSocket.prototype.send = original; });
+    let chunked = false;
+    f.frames.on('frame', (frame: string) => {
+        const body = JSON.parse(frame).body;
+        if (body?.kind === 'participation.requests') {
+            assert(Buffer.byteLength(frame) <= 65536);
+            if (!body.complete) chunked = true;
+        }
+    });
     for (let index = 0; index < 90; index++) {
         const agentId = randomUUID(); web.registerAgent(f.bob, { agentId, nodeId: bob.nodeId, name: `Pending ${index}` });
         web.propose(f.ctx(f.bob), { agentId, policy, providerMaxCostMicros: 100 });
