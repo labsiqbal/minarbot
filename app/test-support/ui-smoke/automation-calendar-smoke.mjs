@@ -7,11 +7,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
+import { testDatabase } from '../database.ts';
 import { addDays, dateLabel, wallTime } from '../../src/automation-calendar.ts';
 
 const output = process.argv[2] ? resolve(process.argv[2]) : mkdtempSync(join(tmpdir(), 'minarbot-calendar-screenshots-'));
 mkdirSync(output, { recursive: true });
 const directory = mkdtempSync(join(tmpdir(), 'minarbot-calendar-smoke-'));
+const database = join(directory, 'state.sqlite');
 const client = process.env.MINARBOT_SMOKE_UI ?? 'react';
 assert(['react', 'leptos'].includes(client));
 const zone = 'Asia/Jakarta';
@@ -36,7 +38,7 @@ const provider = createServer(async (request, response) => {
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 try {
-  app = await startApp({ database: join(directory, 'state.sqlite'), port: 0, dist: resolve('dist'), appearanceClient: client, fixedClock: fixtureClock, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
+  app = await startApp({ database, port: 0, dist: resolve('dist'), appearanceClient: client, fixedClock: fixtureClock + 1000, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
   const { origin } = app;
   async function api(path, body) {
     const response = await fetch(origin + path, body === undefined ? {} : { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -51,7 +53,15 @@ try {
   const once = (date, time) => ({ kind: 'once', date, time });
   const seeded = await api('/api/agents/' + agent.id + '/routines', { ...scope, id: fixtureId(15), name: 'Morning digest', prompt: 'Wait for the calendar check.', schedule: once(tomorrow, '09:00') });
   const finished = await api('/api/agents/' + agent.id + '/routines', { ...scope, id: fixtureId(16), name: 'Inventory recap', prompt: 'Finish the recap.', schedule: once(future, '10:30'), enabled: false, reportTo: project.channel });
-  await api('/api/routines/' + finished.id + '/test', { id: randomUUID(), revision: finished.revision });
+  const recap = await api('/api/routines/' + finished.id + '/test', { id: randomUUID(), revision: finished.revision });
+  // Give the prior run its earlier start time even though the server clock is frozen.
+  const db = testDatabase(database);
+  try {
+    assert.equal(db.prepare('UPDATE turns SET created = ? WHERE id = ?')
+      .run(new Date(fixtureClock).toISOString(), recap.turn).changes, 1);
+  } finally {
+    db.close();
+  }
   await api('/api/agents/' + agent.id + '/workflows', { id: fixtureId(17), revision: 0, name: 'Daily summary', graph: { entry: 'out', maxSteps: 8, nodes: [{ id: 'out', kind: 'output' }] } });
 
   browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
@@ -85,15 +95,6 @@ try {
     const calendarTab = page.getByRole('tab', { name: 'Calendar', exact: true });
     await overview.press('ArrowRight');
     await show(calendarTab.and(page.locator('[aria-selected=true]')));
-    if (client === 'leptos') {
-      await page.waitForURL('**?projectTab=calendar');
-      const settings = await page.getByRole('link', { name: 'Settings', exact: true }).getAttribute('href');
-      assert(new URL(settings, origin).searchParams.get('from').endsWith('?projectTab=calendar'));
-      await page.goBack();
-      await show(overview.and(page.locator('[aria-selected=true]')));
-      await page.goForward();
-      await show(calendarTab.and(page.locator('[aria-selected=true]')));
-    }
     assert.equal(await page.locator('#leptos-root .automation-calendar').count(), client === 'leptos' ? 1 : 0);
     const ics = page.getByRole('link', { name: 'Download routines' });
     const calendar = await page.request.get(new URL(await ics.getAttribute('href'), origin).href);
@@ -111,6 +112,15 @@ try {
     }
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
+  if (client === 'leptos') {
+    await page.waitForURL('**?projectTab=calendar');
+    const settings = await page.getByRole('link', { name: 'Settings', exact: true }).getAttribute('href');
+    assert(new URL(settings, origin).searchParams.get('from').endsWith('?projectTab=calendar'));
+    await page.goBack();
+    await show(page.getByRole('tab', { name: 'Overview', exact: true, selected: true }));
+    await page.goForward();
+    await show(page.getByRole('tab', { name: 'Calendar', exact: true, selected: true }));
+  }
   await button('Add automation on ' + dateLabel(future), cell(future)).click();
   await dialog().getByLabel('Name', { exact: true }).fill('Calendar maintenance');
   await dialog().getByLabel('Prompt', { exact: true }).fill('Check the calendar.');

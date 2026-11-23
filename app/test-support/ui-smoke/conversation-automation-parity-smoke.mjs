@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
+import { fixDate, fixtureClock, parityShot, withFixtureId } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -30,6 +30,7 @@ assert(Number.isSafeInteger(samples) && samples >= 0);
 const fixture = { id: ids.mail, subject: 'Fixture receipt', from: 'sender@example.test', to: 'owner@example.test', text: 'The fixture arrived. <b>Plain text.</b>', received: now };
 const digest = 'Morning digest';
 const wfName = 'Owner workflow';
+const workflowRunId = randomUUID();
 let browser;
 
 async function exercise(client) {
@@ -241,6 +242,7 @@ async function exercise(client) {
     await heading('Edit workflow').waitFor();
     const node = page.getByRole('region', { name: /Workflow graph/ }).getByRole('button', { name: /work Agent/ });
     await node.press('Alt+ArrowRight');
+    await page.getByText(/^Saved, version \d+\.$/).waitFor();
     await capture('workflow-editor');
     await linkOrButton('Back').click();
     const leave = page.getByRole('alertdialog');
@@ -249,7 +251,11 @@ async function exercise(client) {
     await heading(wfName).waitFor();
     await page.getByLabel('Workflow start time', { exact: true }).waitFor();
     await capture('workflow-forms');
-    await page.getByRole('button', { name: /^Run version / }).click();
+    await withFixtureId(page, workflowRunId, () => page.getByRole('button', { name: /^Run version / }).click());
+    const runHistory = page.locator('.k-section').filter({ has: heading('Run history') });
+    await runHistory.getByText('Done', { exact: true }).waitFor();
+    const ownerPreview = page.locator('.bot-row').filter({ has: page.getByText('Routine owner', { exact: true }) }).locator('.bot-row__preview');
+    await ownerPreview.filter({ hasText: /^Fixture result ready\.$/ }).waitFor();
     const step = linkOrButton('Open step work');
     await step.waitFor();
     await page.locator('.workflow-run-node').filter({ hasText: /work.*Completed/s }).waitFor();
@@ -305,6 +311,8 @@ async function exercise(client) {
     await page.locator('.message-body .markdown strong').getByText('Remote reply ready.').waitFor();
     assert.deepEqual(attempts[0], attempts[1]);
     assert.equal(await page.locator('.human-bubble').count(), 1);
+    await button('Send message').waitFor();
+    await page.getByRole('main').click({ position: { x: 16, y: 400 } });
     await capture('remote-reply');
     machine.status = 'offline';
     await page.getByText('Offline. Reconnect the machine before sending.', { exact: true }).waitFor();

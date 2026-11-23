@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { withFixtureId } from './parity-shot.mjs';
 
-export async function issue1Smoke({ page, check, agentChat, screenshot }) {
+export async function issue1Smoke({ page, check, agentChat, screenshot, routineId }) {
   const capture = async name => {
     for (const theme of ['dark', 'light']) {
       await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
@@ -74,7 +75,9 @@ export async function issue1Smoke({ page, check, agentChat, screenshot }) {
     await form.waitFor();
     assert.equal(await form.getByLabel('Name', { exact: true }).inputValue(), 'GitHub issue');
     assert.equal(await form.getByRole('combobox', { name: 'Trigger', exact: true }).textContent(), 'GitHub issue');
-    await form.getByRole('button', { name: 'Save routine', exact: true }).click();
+    const save = () => form.getByRole('button', { name: 'Save routine', exact: true }).click();
+    if (routineId) await withFixtureId(page, routineId, save);
+    else await save();
     await page.getByRole('heading', { name: 'GitHub issue webhook', exact: true }).waitFor();
     const url = page.getByLabel('Webhook URL', { exact: true });
     assert.match(await url.inputValue(), /\/api\/webhooks\/[\w-]+$/);

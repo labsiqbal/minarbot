@@ -232,7 +232,7 @@ pub(crate) fn workflows_page() -> impl IntoView {
                             cursors.set(Vec::new()); query.data.set(None); refresh.run(());
                         }) },
                 ];
-                view! { <div class="k-page bs-root">
+                view! { <div class="k-page bs-root workflow-index">
                     <PageHead title="Workflows" actions=kit::content(move || view! {
                         <kit::Menu name="Workflow options".into() items=menu>{kit::icon(kit::icons().more)}</kit::Menu>
                         <Show when=move || !available.with(Vec::is_empty)>
@@ -1020,17 +1020,24 @@ fn select_field(
     change: Callback<String>,
     required: bool,
 ) -> impl IntoView {
-    field(
-        label,
-        view! {
-            <span class="connection-select"><select class="k-input k-select" aria-label=label required=required on:change=move |event| change.run(event_target_value(&event))>
-                {move || options.get().into_iter().map(|(id,label)| {
-                    let selected = id.clone();
-                    view! { <option value=id prop:selected=move || value.get()==selected>{label}</option> }
-                }).collect_view()}
-            </select><span class="k-select__chev"><ui::Icon name="chevron-down" /></span></span>
-        },
-    )
+    field(label, select_input(label, value, options, change, required))
+}
+
+fn select_input(
+    label: &'static str,
+    value: Signal<String>,
+    options: Signal<Vec<(String, String)>>,
+    change: Callback<String>,
+    required: bool,
+) -> impl IntoView {
+    view! {
+        <span class="connection-select"><select class="k-input k-select" aria-label=label required=required on:change=move |event| change.run(event_target_value(&event))>
+            {move || options.get().into_iter().map(|(id,label)| {
+                let selected = id.clone();
+                view! { <option value=id prop:selected=move || value.get()==selected>{label}</option> }
+            }).collect_view()}
+        </select><span class="k-select__chev"><ui::Icon name="chevron-down" /></span></span>
+    }
 }
 
 #[component]
@@ -1056,6 +1063,14 @@ fn NodeSettings(
     });
     let kind = Memo::new(move |_| value.with(|value| text(&value["kind"]).to_owned()));
     let owner_select = Signal::derive(directory);
+    let agent_hint = move || {
+        value.with(|value| {
+            directory()
+                .into_iter()
+                .find(|(id, _)| value["agent"] == *id)
+                .map(|(_, name)| name)
+        })
+    };
     let field_value = move |field: &'static str| {
         Signal::derive(move || value.with(|value| text(&value[field]).to_owned()))
     };
@@ -1164,7 +1179,10 @@ fn NodeSettings(
             }),change_kind,true)}
             <Show when=unsupported><kit::Alert tone="warn">"Choose a supported type or delete this step."</kit::Alert></Show>
             <Show when=move || kind.get()=="agent">
-                {select_field("Executing agent",field_value("agent"),owner_select,update("agent"),true)}
+                {field("Executing agent",view! {
+                    {select_input("Executing agent",field_value("agent"),owner_select,update("agent"),true)}
+                    {move || agent_hint().map(|name| view! { <span class="k-field__hint">{name}</span> })}
+                })}
             </Show>
             <Show when=move || kind.get()=="model">{input("model","Model",200,true)}</Show>
             <Show when=move || kind.get()=="parallel"><Branches value history node owner /></Show>
@@ -1210,6 +1228,7 @@ fn NodeSettings(
                     <ReadError query=channels label="Reload destination sections" />
                 </Show>
                 <Show when=move || output_kind.get()=="discord">{input("discordChannel","Discord output channel ID",20,true)}</Show>
+                <p class="k-field__hint">"Complete the workflow with the last step result."</p>
             </Show>
             <kit::Menu name=format!("Step {name} actions") disabled=Signal::derive(move || locked.get() || graph.with(|graph| rows(&graph["nodes"]).len()<=1))
                 items=vec![kit::MenuItem{label:format!("Delete step {name}"),danger:true,action:Callback::new(move |_| remove())}]>{kit::icon(kit::icons().more)}</kit::Menu>
@@ -1606,7 +1625,10 @@ fn WorkflowSchedule(
                                 <div id="workflow-interval-hint" class="k-field__hint">"Leave empty to run once."</div>
                             })}
                             {field("Scheduled input",view! { <textarea class="k-input k-textarea" name="input" maxlength="16000" readonly=locked>{input}</textarea> })}
-                            <label class="k-check"><input name="enabled" type="checkbox" checked=enabled disabled=locked />"Workflow schedule active"</label>
+                            <label class="k-check" class:is-disabled=locked>
+                                <input class="k-check__box" name="enabled" type="checkbox" checked=enabled disabled=locked />
+                                <span class="k-check__label">"Workflow schedule active"</span>
+                            </label>
                             <Show when=move || conflict.get()><kit::Alert tone="warn">"Schedule has changed. Reload before saving again."</kit::Alert></Show>
                             <div class="k-inline"><button type="submit" class="k-btn k-btn--md k-btn--secondary" disabled=locked>"Save workflow schedule"</button></div>
                         </form>
@@ -1694,7 +1716,7 @@ fn WorkflowWebhook(
         <kit::Section title="Workflow webhook" actions=kit::content(move || view! {
             <button type="button" class="k-icon-btn" aria-label="Reload webhook" disabled=move || journal.locked() on:click=move |_| reload()>{kit::icon(kit::icons().refresh)}</button>
         })>
-            <kit::Alert>"Send signed events to run the workflow. Active workflows skip incoming events."</kit::Alert>
+            <kit::Alert>"Send signed events to run the workflow. Events received while the workflow is still active are skipped and will not run again."</kit::Alert>
             <Show when=move || conflict.get()><kit::Alert tone="warn">"Webhook has changed. Reload settings before saving again."</kit::Alert></Show>
             <ReadError query=hook label="Reload webhook" />
             {move || match hook.data.get() {
@@ -1723,7 +1745,10 @@ fn WorkflowWebhook(
                                 {field("Workflow webhook secret",view! { <input class="k-input" readonly type="password" autocomplete="off" prop:value=secret /> })}
                                 <p class="k-field__hint">"Save this secret before leaving."</p>
                             </Show>
-                            <label class="k-check"><input name="enabled" type="checkbox" checked=enabled disabled=locked />"Workflow webhook active"</label>
+                            <label class="k-check" class:is-disabled=locked>
+                                <input class="k-check__box" name="enabled" type="checkbox" checked=enabled disabled=locked />
+                                <span class="k-check__label">"Workflow webhook active"</span>
+                            </label>
                             {saved.then(|| view! {
                                 <label class="k-check"><input name="rotate" type="checkbox" disabled=locked />"Replace secret. Senders must use the new secret."</label>
                             })}

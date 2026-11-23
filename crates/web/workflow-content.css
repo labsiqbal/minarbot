@@ -11,10 +11,15 @@
 }
 .leptos-workspace .system-dialog::backdrop { background: var(--color-bg-scrim); }
 .leptos-workspace .system-dialog .k-dialog__foot { flex-wrap: wrap; }
-.leptos-workspace .system-dialog:has(.calendar-run) { max-width: 680px; }
+.leptos-workspace .system-dialog:has(.calendar-run) {
+  max-width: 680px;
+  /* Composite the footer and its fractional border with the dialog. */
+  perspective: 1000px;
+  transform: translate(-50%, -50%);
+}
 .leptos-workspace .system-menu { position: fixed; inset: auto; margin: 0; }
 .leptos-workspace .system-menu .k-menu__item { width: 100%; }
-.leptos-workspace .workflow-node {
+.leptos-workspace .page.legacy .workflow-node {
   padding: 16px;
   border: .5px solid var(--color-border-secondary);
   border-radius: 14px;
@@ -24,14 +29,64 @@
 .leptos-workspace__outlet:has(> .automation-calendar-route) { position: relative; }
 .leptos-workspace .automation-calendar-route { position: absolute; inset: 0; }
 .leptos-workspace .automation-calendar-route[hidden] { display: flex; visibility: hidden; }
-.leptos-workspace .run-inspector details[open] > summary > .appearance-icon svg { transform: rotate(90deg); }
-.leptos-workspace .routine-avatar { width: 24px; height: 24px; font-size: 11px; }
+.leptos-workspace .routine-avatar { width: 24px; height: 24px; font-size: 10px; }
 .leptos-workspace .page-view .k-check input[type=checkbox] { accent-color: var(--color-brand); width: 18px; height: 18px; margin: 1px 0 0; flex: none; }
 .leptos-workspace .automation-select { overflow-y: auto; }
-.leptos-workspace .flow-canvas { overflow-x: auto; max-width: 100%; margin-block: 20px; padding: 8px; border: .5px solid var(--color-border-tertiary); border-radius: 14px; background: var(--color-bg-chrome); }
-.leptos-workspace .flow-canvas svg { display: block; min-width: 360px; }
-.leptos-workspace .flow-canvas text { font: 13px var(--font-stack); }
-.leptos-workspace .automation-select .k-menu__item:is(:hover, :focus-visible) {
-  background: var(--color-bg-hover);
+.leptos-workspace .flow-canvas { overflow-x: auto; max-width: 100%; padding: 8px; border: .5px solid var(--color-border-tertiary); border-radius: 14px; background: var(--color-bg-chrome); }
+.leptos-workspace #routine-flow { padding-block-start: 16px; }
+.leptos-workspace :is(.calendar-actions, .calendar-page) .k-btn--primary .appearance-icon svg { width: 15px; height: 15px; }
+.leptos-workspace .calendar-actions a svg { width: 14px; height: 14px; }
+.leptos-workspace .calendar-period__nav .appearance-icon svg { width: 17px; height: 17px; }
+.leptos-workspace .calendar-filters .k-select__chev svg { width: 14px; height: 14px; }
+.leptos-workspace .calendar-view .k-btn:hover:not(:disabled) { background: var(--color-bg-hover); }
+.leptos-workspace .calendar-event__main .appearance-icon svg { width: 13px; height: 13px; }
+.leptos-workspace :is(.routines-hub, .routine-detail, .workflow-page) .k-select__chev svg { width: 14px; height: 14px; }
+.leptos-workspace .routine-flow .k-section__actions .k-icon-btn svg { width: 15px; height: 15px; }
+.leptos-workspace .routine-flow .k-card .k-icon-btn svg { width: 14px; height: 14px; }
+.leptos-workspace dialog[aria-labelledby="routine-template-picker-title"] .k-card { background: var(--color-bg-chrome); }
+.leptos-workspace :is(dialog[aria-labelledby="routine-template-picker-title"], .workflow-index) .k-row__chev { display: inline-flex; }
+.leptos-workspace dialog[aria-labelledby="routine-editor-title"] .k-select__chev svg { width: 14px; height: 14px; }
+.leptos-workspace dialog[aria-labelledby="routine-editor-title"] .k-input { font-size: 13.5px; }
+.leptos-workspace dialog[aria-labelledby="routine-editor-title"] .k-input:focus { transform: translateZ(0); }
+.leptos-workspace .routine-preview { line-height: 20px; }
+.leptos-workspace #workflow-editor .k-inline .appearance-icon svg { width: 14px; height: 14px; }
+.leptos-workspace #workflow-editor .workflow-node .connection-select .k-select__chev { right: 12px; }
+.leptos-workspace #workflow-editor .connection-select select:is([aria-label="Continue to"], [aria-label="If approved"], [aria-label="If matched"], [aria-label="If not matched"], [aria-label="Destination section"]) {
+  appearance: auto;
+  padding-inline-end: 11px;
 }
+.leptos-workspace #workflow-editor .connection-select select:is([aria-label="Continue to"], [aria-label="If approved"], [aria-label="If matched"], [aria-label="If not matched"], [aria-label="Destination section"]) + .k-select__chev { display: none; }
+.leptos-workspace .workflow-page .k-alert__icon svg { width: 16px; height: 16px; flex-shrink: 0; margin-block-start: 1px; }
+.leptos-workspace .workflow-page .k-check { font-size: 13px; line-height: 20px; }
+.leptos-workspace :is(dialog[aria-labelledby="routine-editor-title"], .workflow-page) .k-check > input.k-check__box {
+  appearance: none;
+  border: 0;
+  border-radius: 5px;
+}
+.leptos-workspace :is(dialog[aria-labelledby="routine-editor-title"], .workflow-page) .k-check > input.k-check__box:checked { background: var(--color-brand); box-shadow: none; }
+.leptos-workspace :is(dialog[aria-labelledby="routine-editor-title"], .workflow-page) .k-check > input.k-check__box:checked::after {
+  content: "";
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m20 6-11 11-5-5' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  transform: translateY(-1px);
+}
+.leptos-workspace .calendar-run .run-inspector { padding: 16px; line-height: 20px; }
+.leptos-workspace .calendar-run .run-inspector summary { gap: 6px; }
+.leptos-workspace .calendar-run .run-inspector summary::before { content: none; }
+.leptos-workspace .calendar-run .run-inspector summary svg { width: 14px; height: 14px; flex: none; }
+.leptos-workspace .calendar-run .run-inspector details[open] > summary > .appearance-icon svg { transform: rotate(90deg); }
+.leptos-workspace .calendar-run .run-inspector__details dl {
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 12px;
+  background: none;
+}
+.leptos-workspace .calendar-run .run-inspector__details :is(dt, dd) { padding: 0; border: 0; text-align: start; }
+.leptos-workspace .automation-select .k-menu__item:is(:hover, :focus-visible) { background: var(--color-bg-hover); }
+.leptos-workspace .flow-canvas text { font: 13px var(--font-stack); }
 .routine-detail .k-page-head__actions .k-btn .appearance-icon svg { width: 14px; height: 14px; }

@@ -21,6 +21,7 @@ const provider = createServer(async (request, response) => {
     : { choices: [{ finish_reason: 'stop', message: { content: '**Automation fixture completed.**' } }] }));
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
+let appPort = 0;
 let browser;
 const receipts = {};
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
@@ -32,12 +33,14 @@ const routes = [
   { path: '/workflows', title: 'Workflows', ready: 'main .k-row__title' },
   { path: '/calendar', title: 'Automation calendar', ready: 'main .calendar-grid .calendar-event' },
 ];
-const fixtureIds = { agent: randomUUID(), other: randomUUID(), workflow: randomUUID(), routine: randomUUID() };
+const fixtureIds = { agent: randomUUID(), other: randomUUID(), workflow: randomUUID(), routine: randomUUID(), webhookRoutine: randomUUID() };
 
 async function exercise(client) {
-  const app = await startApp({ database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: client,
+  const app = await startApp({ database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: appPort, appearanceClient: client,
     fixedClock: fixtureClock,
     defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', stream: false });
+  // Both clients display the server's full webhook URL.
+  appPort = Number(new URL(app.origin).port);
   const context = await browser.newContext({ viewport: sizes.desktop, timezoneId: 'UTC' });
   const errors = [], failedExpected = [];
   await context.addInitScript(() => {
@@ -175,6 +178,7 @@ async function exercise(client) {
     await button('Back to graph work').click();
     assert(await node.evaluate(element => document.activeElement === element));
     await inspectGraph('editor');
+    await page.getByText(/^Saved, version \d+\.$/).waitFor();
     await capture('workflow-editor');
     if (client === 'leptos') {
       const download = page.waitForEvent('download');
@@ -246,7 +250,7 @@ async function exercise(client) {
       await page.goForward();
       await heading('Automation calendar').waitFor();
     }
-    await issue1Smoke({ page,
+    await issue1Smoke({ page, routineId: fixtureIds.webhookRoutine,
       check: async (name, run) => { if (name.startsWith('Routine templates')) await run(); },
       screenshot: name => parityShot(page, join(output, `${client}-${name}.png`)),
     });

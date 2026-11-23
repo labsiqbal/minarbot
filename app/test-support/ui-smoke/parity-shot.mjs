@@ -18,3 +18,17 @@ export async function parityShot(page, path, region = page) {
   });
   return region.screenshot({ path, animations: 'disabled', caret: 'hide', scale: 'css' });
 }
+
+export async function withFixtureId(page, id, action) {
+  await page.evaluate(id => {
+    crypto.randomUUID = () => {
+      delete crypto.randomUUID;
+      return id;
+    };
+  }, id);
+  try {
+    await action();
+  } finally {
+    await page.evaluate(() => { delete crypto.randomUUID; });
+  }
+}

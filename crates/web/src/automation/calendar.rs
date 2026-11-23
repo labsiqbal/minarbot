@@ -498,15 +498,7 @@ pub(crate) fn Calendar(
                 on:click=move |_| add.run((day_key(focused()),"09:00".into()))><ui::Icon name="plus" />"Add automation"</button>
         }
     });
-    view! {
-        {match download {
-            Some(download) => view! {
-                <div class="calendar-actions">{actions()}
-                    <a class="k-btn k-btn--secondary k-btn--sm" href=download download="minarbot-routines.ics">{kit::icon(kit::icons().download)}"Download routines"</a>
-                </div>
-            }.into_any(),
-            None => view! { <PageHead title="Automation calendar" actions /> }.into_any(),
-        }}
+    let main = view! {
         <section class="automation-calendar" aria-labelledby="calendar-period-title">
             <div class="calendar-toolbar"><div class="calendar-period"><div class="calendar-period__nav">
                 <button type="button" class="k-icon-btn" aria-label=move || format!("Previous {}",period.get().name().to_lowercase())
@@ -560,6 +552,17 @@ pub(crate) fn Calendar(
                     }) /> }
             })}
         </section>
+    };
+    match download {
+        Some(download) => view! {
+            <div class="calendar-in-project">
+                <div class="calendar-actions">{actions()}
+                    <a class="k-btn k-btn--secondary k-btn--sm" href=download download="minarbot-routines.ics">{kit::icon(kit::icons().download)}"Download routines"</a>
+                </div>
+                {main}
+            </div>
+        }.into_any(),
+        None => view! { <PageHead title="Automation calendar" actions />{main} }.into_any(),
     }
 }
 

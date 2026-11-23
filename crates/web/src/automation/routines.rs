@@ -667,8 +667,8 @@ fn RoutineEditor(
             size="lg" on_close=move || close.run(()) locked=journal.busy
             description=kit::text(if preset.is_some() { "" } else { "Each run opens a separate conversation and can share its result. Minarbot must be running for schedules." })
             footer=kit::content(move || view! {
-                <span class="k-dialog__foot-start"><label class="k-check"><input type="checkbox" prop:checked=enabled disabled=locked
-                    on:change=move |event| enabled.set(event_target_checked(&event)) />"Enabled"</label></span>
+                <span class="k-dialog__foot-start"><ui::Check label="Enabled" checked=enabled disabled=locked
+                    change=Callback::new(move |checked| enabled.set(checked)) /></span>
                 <kit::Button label=Signal::derive(move || if journal.error.with(|error|error.contains("changed")) {"Discard changes and reload"} else {"Cancel"})
                     disabled=journal.busy on_click=move || close.run(()) />
                 <button type="submit" form="routine-editor-form" class="k-btn k-btn--primary k-btn--md"
@@ -856,7 +856,15 @@ fn RoutineDetail(
                             <kit::Row title=kit::text("Next run") meta=kit::content(move || move || routine.with(|row| {
                                 if !enabled(&row["enabled"]) {"Paused".into()} else if row["trigger"]=="schedule" {date_text(number(&row["next_at"]))} else {"On demand".into()}
                             })) />
-                            <kit::Row title=kit::text("Last run") meta=kit::content(move || move || routine.with(last_run_link)) />
+                            <kit::Row title=kit::text("Last run") meta=kit::content(move || move || routine.with(|row| {
+                                row["last_created"].as_str().map_or_else(|| "Never run".into(), |created| {
+                                    format!("{} · {}", routine_status(row, true), relative(js_sys::Date::parse(created) as i64))
+                                })
+                            })) trailing=kit::content(move || move || routine.with(|row| {
+                                row["last_thread"].as_str().filter(|thread| valid_id(thread)).map(|thread| {
+                                    view! { <a class="k-btn k-btn--sm k-btn--secondary" href=conversation(text(&row["agent"]),thread)>"Open last run"</a> }
+                                })
+                            })) />
                             <kit::Row title=kit::text("Flow") meta=kit::content(move || move || routine.with(|row| {
                                 let count=number(&row["flow_agents"]);
                                 if count>1 {format!("{count} agents")}else{"Single agent".into()}
@@ -1159,10 +1167,12 @@ fn FlowEditor(
             <Show when=move || loaded.get()>
                 <FlowDiagram root=agent links=links />
                 <div class="k-grid-2">
-                    <kit::Field id="flow-from" label="From agent"><Select name="flow-from" value=from.into() options=from_options
-                        disabled=locked change=Callback::new(move |next: String| {if to.get_untracked()==next{to.set(String::new());}from.set(next);}) /></kit::Field>
-                    <kit::Field id="flow-to" label="To agent"><Select name="flow-to" value=to.into() options=to_options
-                        disabled=locked change=Callback::new(move |next|to.set(next)) /></kit::Field>
+                    <kit::Field id="flow-from" label="From agent"><Select name="flow-from" value=from.into() options=from_options described_by=Some("flow-from-hint")
+                        disabled=locked change=Callback::new(move |next: String| {if to.get_untracked()==next{to.set(String::new());}from.set(next);}) />
+                        <span id="flow-from-hint" class="k-field__hint">{move || from.with(|id| name(id))}</span></kit::Field>
+                    <kit::Field id="flow-to" label="To agent"><Select name="flow-to" value=to.into() options=to_options described_by=Some("flow-to-hint")
+                        disabled=locked change=Callback::new(move |next|to.set(next)) />
+                        <span id="flow-to-hint" class="k-field__hint">{move || to.with(|id| if id.is_empty() { "Not selected".into() } else { name(id) })}</span></kit::Field>
                 </div>
                 <div><kit::Button label=kit::text("Connect") disabled=Signal::derive(move || locked.get() || to.with(String::is_empty)) on_click=connect /></div>
                 <kit::Card>{move || links.get().into_iter().map(|link| {
@@ -1342,7 +1352,8 @@ fn Webhook(row: Value, back: Callback<()>, confirm: kit::Confirm) -> impl IntoVi
                         <form class="k-fieldset" on:submit=save>
                             {if native {
                                 view! { <kit::Field id="routine-signed-secret" label="Signing secret"><input id="routine-signed-secret" node_ref=signing_secret name="signingSecret"
-                                    class="k-input" type="password" autocomplete="new-password" minlength="16" maxlength="512" required=!configured disabled=locked /></kit::Field> }.into_any()
+                                    class="k-input" type="password" autocomplete="new-password" minlength="16" maxlength="512" required=!configured disabled=locked
+                                    placeholder=if configured { "Enter new secret to rotate" } else { "Paste the secret from the source" } /></kit::Field> }.into_any()
                             } else {
                                 view! { <kit::Field id="routine-event-name" label="Event name"><input id="routine-event-name" name="eventName"
                                     class="k-input" maxlength="256" value=event_name readonly=locked /></kit::Field> }.into_any()
@@ -1362,7 +1373,12 @@ fn Webhook(row: Value, back: Callback<()>, confirm: kit::Confirm) -> impl IntoVi
             }}
             <kit::Section title="Received events">
                 {move || events.data.get().map(|events| {
-                    if rows(&events).is_empty(){return kit::empty("No saved events",String::new()).into_any();}
+                    if rows(&events).is_empty(){
+                        return view! { <div class="k-empty">
+                            <div class="k-empty__title">"No saved events"</div>
+                            <div class="k-empty__text">"Reload to see new events."</div>
+                        </div> }.into_any();
+                    }
                     view! { <kit::Card>{rows(&events).iter().map(|event| {
                         let received=date_text(number(&event["received"]));
                         let state=if event["result"]["outcome"]=="queued" {"Accepted for execution"}else{"Ignored"};

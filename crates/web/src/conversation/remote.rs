@@ -470,7 +470,7 @@ pub(super) fn page(machine: String, agent: String) -> impl IntoView {
                                     title=move || reason.get().unwrap_or_else(|| if retry() { "Retry send".into() } else { "Send (Enter)".into() })
                                     disabled=move || busy.get() || reason.with(Option::is_some) || text.with(|text| text.trim().is_empty())>
                                     <span class="step__spin" aria-hidden="true" hidden=move || !busy.get()></span>
-                                    <span hidden=busy>{kit::icon(icons.send.clone())}</span>
+                                    <span class="appearance-icon" aria-hidden="true" hidden=busy inner_html=icons.send.clone()></span>
                                 </button>
                             </div>
                         </div>

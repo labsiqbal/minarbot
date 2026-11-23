@@ -219,6 +219,7 @@ const TABS: &[(&str, &str)] = &[
     ("environment", "Environment"),
     ("mcp", "MCP"),
 ];
+const TAB_FOCUS_KEY: &str = "minarbot:project-tab-focus";
 
 fn overview(project: Project) -> impl IntoView {
     let agents = directory();
@@ -256,8 +257,19 @@ fn overview(project: Project) -> impl IntoView {
     };
     let tab = RwSignal::new(current_tab());
     let same_document = move |next: &str| (next == "calendar") == cfg!(feature = "workflows");
+    let location = window().location();
+    let focus_tab = window()
+        .session_storage()
+        .ok()
+        .flatten()
+        .and_then(|storage| {
+            let target = storage.get_item(TAB_FOCUS_KEY).ok().flatten()?;
+            let _ = storage.remove_item(TAB_FOCUS_KEY);
+            let path = format!("{}{}", location.pathname().ok()?, location.search().ok()?);
+            (target == path).then_some(tab.get_untracked())
+        });
     let project_url = StoredValue::new(project_url);
-    let select_tab = move |next: &'static str| {
+    let navigate_tab = move |next: &'static str, keyboard: bool| {
         if archived || next == tab.get_untracked() {
             return;
         }
@@ -276,9 +288,15 @@ fn overview(project: Project) -> impl IntoView {
         {
             tab.set(next);
         } else {
+            if keyboard {
+                if let Some(storage) = window().session_storage().ok().flatten() {
+                    let _ = storage.set_item(TAB_FOCUS_KEY, &url);
+                }
+            }
             let _ = window().location().assign(&url);
         }
     };
+    let select_tab = move |next| navigate_tab(next, false);
     let listener = window_event_listener(leptos::ev::popstate, move |_| tab.set(current_tab()));
     on_cleanup(move || listener.remove());
     let commands = expect_context::<Commands>();
@@ -415,7 +433,7 @@ fn overview(project: Project) -> impl IntoView {
     #[cfg(feature = "workflows")]
     let calendar_panel = view! {
                 <Show when=move || tab.get() == "calendar">
-                    <div id="project-calendar-panel" class="k-tabs__panel calendar-in-project" role="tabpanel" aria-labelledby="project-calendar-tab">
+                    <div id="project-calendar-panel" class="k-tabs__panel" role="tabpanel" aria-labelledby="project-calendar-tab">
                         {crate::automation::project_calendar(project.with_value(|row| json!({"id":row.id,"archived":row.archived,"members":row.members})))}
                     </div>
                 </Show>
@@ -449,13 +467,17 @@ fn overview(project: Project) -> impl IntoView {
                     on:keydown=move |event| crate::settings::move_focus(&event, "[role=tablist]", true)>
                     {TABS.iter().map(|&(id, label)| {
                         let selected = move || tab.get() == id;
+                        let button = NodeRef::<leptos::html::Button>::new();
+                        if focus_tab == Some(id) {
+                            button.on_load(|button| request_animation_frame(move || { let _ = button.focus(); }));
+                        }
                         view! {
-                            <button type="button" class="k-tabs__tab" role="tab" id=format!("project-{id}-tab")
+                            <button type="button" class="k-tabs__tab" role="tab" id=format!("project-{id}-tab") node_ref=button
                                 aria-controls=format!("project-{id}-panel") aria-selected=move || selected().to_string()
                                 tabindex=move || if selected() { 0 } else { -1 }
                                 disabled=archived && id != "overview"
                                 data-state=move || if selected() { "active" } else { "inactive" }
-                                on:click=move |_| select_tab(id)>{label}</button>
+                                on:click=move |event: web_sys::MouseEvent| navigate_tab(id, event.detail() == 0)>{label}</button>
                         }
                     }).collect_view()}
                 </div>

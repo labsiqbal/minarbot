@@ -295,7 +295,8 @@ pub(super) fn Graph(
                             on:click=move |_| {
                                 if suppress.get_untracked() { suppress.set(false); } else { clicked.run(node.get_value()); }
                             }>
-                            <strong>{node.get_value()}</strong><span>{label}</span><small>{detail}</small>
+                            <strong>{node.get_value()}</strong><span>{label}</span>
+                            {move || detail().map(|detail| view! { <small>{detail}</small> })}
                         </button>
                     }
                 } />
