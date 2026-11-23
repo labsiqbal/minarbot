@@ -129,6 +129,28 @@ enum Screen {
     Inbox,
 }
 
+#[leptos::wasm_split::wasm_split(workflow_editor, wasm_split_path = leptos::wasm_split, fallible)]
+fn workflow_editor(
+    owner: String,
+    workflow: Value,
+    back: Callback<()>,
+    select: Callback<Value>,
+    confirm: kit::Confirm,
+) -> crate::lazy_view::ChunkView {
+    Ok(view! { <Editor owner workflow back select confirm /> }.into_any())
+}
+
+#[leptos::wasm_split::wasm_split(workflow_detail, wasm_split_path = leptos::wasm_split, fallible)]
+fn workflow_detail(
+    workflow: Value,
+    back: Callback<()>,
+    editor: Callback<Value>,
+    confirm: kit::Confirm,
+    inline: bool,
+) -> crate::lazy_view::ChunkView {
+    Ok(view! { <Detail initial=workflow back editor confirm inline /> }.into_any())
+}
+
 pub(crate) fn workflows_page(active: Signal<bool>) -> impl IntoView {
     let search = window().location().search().unwrap_or_default();
     if let Some((owner, back)) = crate::lazy_route::workflow_scope(&format!("/workflows{search}")) {
@@ -324,8 +346,12 @@ pub(crate) fn workflows_page(active: Signal<bool>) -> impl IntoView {
                     }).collect_view()}
                 </div> }.into_any()
             }
-            Screen::Editor { owner,workflow } => view! { <Editor owner workflow back select confirm /> }.into_any(),
-            Screen::Detail(workflow) => view! { <Detail initial=workflow back editor confirm /> }.into_any(),
+            Screen::Editor { owner,workflow } => crate::lazy_view::load("workflow editor", move || {
+                workflow_editor(owner.clone(), workflow.clone(), back, select, confirm)
+            }).into_any(),
+            Screen::Detail(workflow) => crate::lazy_view::load("workflow details", move || {
+                workflow_detail(workflow.clone(), back, editor, confirm, false)
+            }).into_any(),
             Screen::Inbox => inbox(back).into_any(),
         }}
         {confirmation}
@@ -424,8 +450,15 @@ pub(crate) fn agent_library(
     let (confirm, confirmation) = kit::confirmation();
     route_page(view! {
         {move || match screen.get() {
-            Screen::Editor { owner, workflow } => view! { <Editor owner workflow back=library select=Callback::new(move |_| library.run(())) confirm /> }.into_any(),
-            Screen::Detail(workflow) => view! { <Detail initial=workflow back=library editor=edit confirm inline=true /> }.into_any(),
+            Screen::Editor { owner, workflow } => {
+                let select = Callback::new(move |_| library.run(()));
+                crate::lazy_view::load("workflow editor", move || {
+                    workflow_editor(owner.clone(), workflow.clone(), library, select, confirm)
+                }).into_any()
+            },
+            Screen::Detail(workflow) => crate::lazy_view::load("workflow details", move || {
+                workflow_detail(workflow.clone(), library, edit, confirm, true)
+            }).into_any(),
             _ => {
                 let href = back.clone();
                 view! { <div class="k-page bs-root workflow-page">
@@ -662,6 +695,13 @@ fn Editor(
     select: Callback<Value>,
     confirm: kit::Confirm,
 ) -> impl IntoView {
+    if use_context::<ReadSignal<Option<Result<crate::shell::Directory, String>>>>().is_none() {
+        let directory = RwSignal::new(None::<Result<crate::shell::Directory, String>>);
+        provide_context(directory.read_only());
+        spawn_local(async move {
+            directory.try_set(Some(api::read("/api/agents").await));
+        });
+    }
     let new = workflow.is_null();
     let current = RwSignal::new(workflow.clone());
     let owner = StoredValue::new(owner);
