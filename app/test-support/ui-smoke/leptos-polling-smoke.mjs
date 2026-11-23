@@ -46,7 +46,7 @@ try {
   }
   await page.goto(app.origin + '/settings/usage', { waitUntil: 'commit' });
   await rendered('Fixture poll failure 1');
-  for (const delay of [2000, 4000, 8000, 16000, 32000, 60000]) {
+  for (const delay of [10000, 20000, 40000, 60000, 60000]) {
     const previous = reads;
     await page.clock.runFor(delay - 1);
     assert.equal(reads, previous, 'Read before its backoff deadline');
