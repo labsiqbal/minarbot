@@ -10,7 +10,7 @@ import { testDatabase } from '../test-support/database.ts';
 import { hubCommand, startRustHub } from '../test-support/hosted-hub.ts';
 import { signedNodeMessage, verifiedNodeMessage } from './node-link.ts';
 
-test('hosted Rust reopens Node authority, verifies offline identity and fences durable session and peer proofs', async t => {
+test('hosted Rust reopens the frozen Hub fixture, verifies offline identity and fences durable session and peer proofs', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-hosted-rust-'));
   let hub: Awaited<ReturnType<typeof startRustHub>> | undefined;
   t.after(async () => {
