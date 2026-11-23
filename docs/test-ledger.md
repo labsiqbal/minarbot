@@ -1,5 +1,48 @@
 # Test migration ledger
 
+## #67 hosted Hub test migration
+
+The app test runner discovers Hub Link once and starts the Rust hosted listener.
+Hub Link keeps all 41 cases. The Rust operator command admits accounts, and
+browser routes create projects, invite members, post turns, propose and consent
+to grants, and withdraw access. Durable row checks read SQLite opened by Rust.
+The fixture clock and atomic queue admission preserve timeout boundaries.
+The signed withdrawal remains an on-wire check. Two additional scope and
+revision assertions call the same Rust withdrawal handler via the isolated
+fixture. Fault injection still intercepts the member transport.
+
+| Previous suite | Replacement and matched assertions |
+| --- | --- |
+| `app/hub-link.test.ts` | Same 41 case names. Public Hub HTTP, Rust clock, and read-only DB observations replace Node authority, routing, web adapters and direct writes. Enrollment, attribution, key custody, dispatch limits, exact replay, expiry, revocation, result order, and fault injection remain. |
+| `app/hub/gateway-sessions.test.ts` | All 20 cases use Rust HTTP, pinned JWKS, private tokens, files and ephemeral listeners. Coverage includes duplicate and missing Host, trusted forwarding, browser-bound single-use handoff, session expiry and rotation, exact Origin, CSRF, duplicate JSON/cookies, membership changes during partial body reads, SSE no-store and authorization fences, logout and restart denial, callback CSP, local-only route denial, node credential and path fences, JWT claim/signature rejection, and oversized JSON. Rust configuration with and without a signer replaces the removed Node mount hook. |
+| `app/hub/hosted-rust.test.ts` | Seed the frozen pre-collapse Hub schema with typed SQL. Pinned identity, concurrent single-use handoff, session reopen, signed nonce replay, global logout, private backup, and restore/fence/activate assertions remain. |
+| `app/hub/web.test.ts` adapter case | The gateway suite checks the original outsider reads, mailbox proof, secret-free invitation lists, owner node/agent binding, exact registration retries and consent roles through Rust HTTP. The React draft/join/grant parser case stays in `web.test.ts`. |
+| `app/schema.test.ts` fresh Hub startup | Rust creates a fresh database. Its schema, data marker, user version and migration ledger match the frozen `85373b3` snapshot with the Rust Hub extensions. |
+| `app/release-runtime-imports.test.ts` | Staging excludes Node Hub source and npm shims. Native `skills list` and `restore` preserve result and diagnostic assertions. |
+
+### Former Node authority and routing cases
+
+Rust unit coverage lives in `crates/minarbot-server/src/hub/tests.rs`. Tests
+call the Rust authority and routing functions with private databases. The
+schema initializes through Rust storage and the routing writes use the shared
+transaction boundary.
+
+| Original case or cases | Rust checks |
+| --- | --- |
+| Role permission matrix and administrator limits | `roles_fence_reads_posts_and_membership_changes` checks role gates, outsider reads, viewer writes and admin edits. |
+| Immutable UUID/host/slug and ownership transfer | `exact_hosts_and_immutable_project_ownership` covers exact hosts, reserved slugs, foreign sections, immutable IDs and tombstones, invalid owner edits, and the transactional one-owner database constraint. Transfer and delete remain absent from the HTTP API. |
+| Identity pluggability, mailbox identity and admission | Gateway pinned-JWKS and stub cases authenticate into admitted account IDs, check verified mailbox evidence, reject absent subjects and bad proof, and refuse implicit provisioning. |
+| Invite proof scope, expiry, hash storage, replay and issuer status | `invitation_binding_hashes_expiry_replay_and_issuer_membership` checks mailbox, account, project, hash redaction, expiry, replay, revocation and demotion. |
+| Fixed home and exact dual consent | `fixed_home_and_exact_dual_consent` and the adapter case check immutable node and agent identity, exact registration, participation revision, policy digest and authenticated owner-node and project approvals. |
+| Invocation modes, foreign IDs and idempotency | `invocation_scope_idempotency_and_tenant_isolation` checks owner default, member selection, viewer denial, cross-project section/turn and participation IDs, exact replay, changed input, and requester/project receipt isolation. |
+| Section events and payer attribution | `section_event_and_attribution_stay_scoped_to_active_participants` checks delivery only to active matching nodes, independent requester/payer, and scoped grant snapshots. |
+| Ordered result receipts and per-effect leases | `ordered_results_preserve_receipts_and_reject_conflicts` and `action_lease_and_result_receipts_recheck_authority` cover frame scope, admission ordering, replay, digest and sequence, immutable intent, lease expiry, exact action identity, and fabricated receipt rejection. |
+| Member/requester removal, viewer demotion, archive, node revoke and account block | Rust revocation cases preserve unaffected projects and requester/owner separation, deny fresh invocation and late results, and filter queued deliveries. Archived state is a DB fixture because the old archive helper had no mounted route. |
+| Offline admission and outbox ACK | Rust offline and ACK cases check atomic refusal, durable uncertainty, connection generations, exact event and digest, revocation before retry, and empty stale delivery. |
+| Invalid policy, malformed keys/frames, expiry, publication bounds and lost approval ACK | Rust policy, node signature, and frame tests cover invalid section/requester, untrusted payer references, keys, extra fields, oversized UTF-16 payloads, forged fences, outbound rollback, publication budget, and exact expired-approval receipt replay. |
+| Data marker, migrations, exclusive writer and restore | Rust storage cases cover fresh marker, unmarked/foreign/future/checksum/partial refusal, v0 ledger and reopen, WAL and foreign keys, writer exclusivity and filesystem aliases, private snapshots, restore generation and activation, held invites, unknown work and stale principal. |
+| Node production import graph | The app boundary case checks that the Node Hub has no executable modules or npm entrypoint. Staging checks exclude Node Hub source. Rust gateway cases preserve local-owner endpoint and privilege isolation. |
+
 ## #67 UI coverage ledger
 
 The route ownership ledger lists each public surface and its default document.
@@ -265,7 +308,7 @@ Rust integration file `crates/minarbot-launcher/tests/launcher.rs` covers eight 
 | `csp.test.ts` | 1 | Actual built asset compression and matching style nonce in the shipped SPA. |
 | `http.test.ts` | 4 | TypeScript browser HTTP parsing and presentation errors. |
 | `rust-hermes-probe.test.ts` | 1 | Fake Hermes inspection of a private install tree. The test needs a fixture that can prove host files stay unchanged. |
-| `hub-link.test.ts` and `hub/*.test.ts` | 90 | Node hub owns its authority, gateway and web entrypoint in phase 6. Keep mixed Rust-node signed sessions, transport, grant withdrawal and durable replay until both halves have equivalent coverage. |
+| `hub-link.test.ts` and `hub/*.test.ts` | 90 | Historical phase 6 inventory before the hosted Hub cutover. See the #67 migration above for the current Rust coverage. |
 
 The retained bridge consumers include `test-bridge.ts` for canonical fixtures,
 `rust-test-server.ts` for the harness, connector, hub and Computer bridges, and

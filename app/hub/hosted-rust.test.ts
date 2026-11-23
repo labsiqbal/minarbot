@@ -1,19 +1,16 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
-import { mkdtempSync, statSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { rustBinary } from '../rust-binary.ts';
 import { testDatabase } from '../test-support/database.ts';
-import { startRustHub } from '../test-support/hosted-hub.ts';
-import { signedNodeMessage, verifiedNodeMessage } from './node-link.ts';
-import { createHubAuthority } from './project-authority.ts';
-import { initializeHubSchema } from './schema.ts';
+import { hubCommand, startRustHub } from '../test-support/hosted-hub.ts';
+import { signedNodeMessage, verifiedNodeMessage } from '../test-support/hub-node-signature.ts';
 
-test('hosted Rust reopens Node authority, verifies offline identity and fences durable session and peer proofs', async t => {
+test('hosted Rust reopens the frozen Hub fixture, verifies offline identity and fences durable session and peer proofs', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-hosted-rust-'));
   let hub: Awaited<ReturnType<typeof startRustHub>> | undefined;
   t.after(async () => {
@@ -33,18 +30,24 @@ test('hosted Rust reopens Node authority, verifies offline identity and fences d
   writeFileSync(mailboxKeyPath, mailboxKey, { mode: 0o600 });
   writeFileSync(jwksPath, JSON.stringify({ keys: [{ ...identity.publicKey.export({ format: 'jwk' }), kid: 'fixture', alg: 'RS256', use: 'sig' }] }), { mode: 0o600 });
   writeFileSync(signingKeyPath, signer.privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
-  const db = testDatabase(dataPath);
-  initializeHubSchema(db);
-  const authority = createHubAuthority(db, { domain, mailboxKey });
   const subject = 'pilot';
-  const account = authority.provisionAccount({ issuer, subject, verifiedMailboxes: [] }, true);
-  const project = authority.createProject(account, 'pilot', 'Fixture pilot');
-  const nodeId = authority.registerNode(account, {
-    id: randomUUID(), installationId: randomUUID(), signingPublicKey: publicKey(nodeKeys.publicKey),
-    encryptionPublicKey: publicKey(encryption.publicKey), capabilities: ['chat'],
-  });
-  const generation = authority.generation();
-  db.close();
+  const account = randomUUID(), nodeId = randomUUID(), generation = randomUUID();
+  const project = { id: randomUUID(), host: `pilot.${domain}` };
+  writeFileSync(dataPath, '', { mode: 0o600 });
+  const db = testDatabase(dataPath);
+  try {
+    db.exec(readFileSync(new URL('../test-support/fixtures/hub-pre-collapse.sql', import.meta.url), 'utf8'));
+    db.exec('BEGIN');
+    db.prepare("INSERT INTO hub_state(id,authority_generation,state) VALUES(1,?,'active')").run(generation);
+    db.prepare("INSERT INTO accounts(id,issuer,subject,status,pilot_admitted) VALUES(?,?,?,'active',1)").run(account, issuer, subject);
+    db.prepare("INSERT INTO projects(id,owner_account_id,slug,name) VALUES(?,?,'pilot','Fixture pilot')").run(project.id, account);
+    db.prepare("INSERT INTO memberships(project_id,account_id,role) VALUES(?,?,'owner')").run(project.id, account);
+    db.prepare('INSERT INTO host_bindings(host,project_id) VALUES(?,?)').run(project.host, project.id);
+    db.prepare("INSERT INTO sections(id,project_id,name) VALUES(?,?,'general')").run(randomUUID(), project.id);
+    db.prepare('INSERT INTO nodes(id,owner_account_id,installation_id,signing_public_key,encryption_public_key,capabilities_json) VALUES(?,?,?,?,?,?)')
+      .run(nodeId, account, randomUUID(), publicKey(nodeKeys.publicKey), publicKey(encryption.publicKey), '["chat"]');
+    db.exec('COMMIT');
+  } finally { db.close(); }
   const config = { dataPath, mailboxKeyPath, accountsHost, domain, identity: { mode: 'clerk' as const, issuer, jwksPath, audience: 'hub-fixture' }, nodeLink: { signingKeyPath } };
   hub = await startRustHub(binary, dir, config);
   const send = (host: string, path: string, body?: unknown, headers: Record<string, string> = {}, browser = true) => new Promise<{ status: number; value: Record<string, unknown>; cookie: string }>((resolve, reject) => {
@@ -118,18 +121,14 @@ test('hosted Rust reopens Node authority, verifies offline identity and fences d
   await hub.close();
 
   const copy = join(dir, 'restore.sqlite');
-  const configPath = join(dir, 'hub-config.json');
-  const command = (...args: string[]) => execFileSync(binary, ['--hub', ...args], {
-    env: { ...process.env, MINARBOT_HUB_CONFIG: configPath }, encoding: 'utf8',
-  });
-  command('backup', copy);
+  hubCommand(binary, dir, config, 'backup', copy);
   assert.equal(statSync(copy).mode & 0o777, 0o600);
-  writeFileSync(configPath, JSON.stringify({ ...config, dataPath: copy, port: 0 }));
-  const recovery = JSON.parse(command('fence-restore'));
+  const restored = { ...config, dataPath: copy };
+  const recovery = JSON.parse(hubCommand(binary, dir, restored, 'fence-restore'));
   assert.notEqual(recovery.authorityGeneration, generation);
   assert.equal(recovery.state, 'recovery');
-  command('activate', recovery.authorityGeneration);
-  hub = await startRustHub(binary, dir, { ...config, dataPath: copy });
+  hubCommand(binary, dir, restored, 'activate', recovery.authorityGeneration);
+  hub = await startRustHub(binary, dir, restored);
   assert.equal((await login(jwt())).status, 401, 'restored database must preserve session denial');
   assert.equal((await login(jwt({ sid: 'post-restore-sid' }))).status, 200);
 });

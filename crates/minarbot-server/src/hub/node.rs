@@ -63,6 +63,49 @@ fn verify(envelope: &Value, encoded_key: &str) -> Result<Value> {
         .map_err(|_| invalid())?;
     Ok(body.clone())
 }
+
+#[cfg(test)]
+#[test]
+fn verifies_node_payload_key_and_signature_direction() -> crate::db::Result<()> {
+    let signer = Ed25519KeyPair::from_seed_unchecked(&[17; 32])
+        .map_err(|_| "invalid fixture signing key")?;
+    let mut key = ED_PREFIX.to_vec();
+    key.extend_from_slice(signer.public_key().as_ref());
+    let public = URL_SAFE_NO_PAD.encode(&key);
+    let body = json!({"kind":"heartbeat"});
+    let envelope = |direction| {
+        let signed =
+            signer.sign(format!("minarbot.{direction}.v1\n{}", canonical(&body)).as_bytes());
+        json!({"v":1,"keyId":hash(&key),"body":body,"signature":URL_SAFE_NO_PAD.encode(signed.as_ref())})
+    };
+    let valid = envelope("node");
+    assert_eq!(verify(&valid, &public).ok(), Some(body.clone()));
+    assert!(verify(&envelope("hub"), &public).is_err());
+    for (key, value) in [
+        ("signature", json!("x")),
+        ("body", json!({"kind":"turn.request"})),
+        ("keyId", json!("0".repeat(64))),
+    ] {
+        let mut forged = valid.clone();
+        forged[key] = value;
+        assert!(verify(&forged, &public).is_err());
+    }
+    let installation = Ed25519KeyPair::from_seed_unchecked(&[18; 32])
+        .map_err(|_| "invalid fixture installation key")?;
+    let mut installation_der = ED_PREFIX.to_vec();
+    installation_der.extend_from_slice(installation.public_key().as_ref());
+    let mut encryption_der = ED_PREFIX.to_vec();
+    encryption_der[8] = 0x6e;
+    encryption_der.extend_from_slice(&[19; 32]);
+    let mut value = json!({"nodeId":new_id(),"installationId":new_id(),
+        "installationPublicKey":URL_SAFE_NO_PAD.encode(installation_der),"signingPublicKey":public,
+        "encryptionPublicKey":URL_SAFE_NO_PAD.encode(encryption_der),"label":"fixture",
+        "nonce":URL_SAFE_NO_PAD.encode([0;32]),"capabilities":["chat"]});
+    assert!(candidate(&value).is_ok());
+    value["signingPublicKey"] = json!("bad");
+    assert!(candidate(&value).is_err());
+    Ok(())
+}
 fn signed(hub: &Hub, body: &Value) -> Result<Value> {
     let signer = hub.signer.as_ref().ok_or_else(deny)?;
     let mut public = ED_PREFIX.to_vec();

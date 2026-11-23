@@ -54,6 +54,7 @@ pub(super) fn start(hub: &Arc<Hub>) -> oneshot::Receiver<crate::db::Result<()>> 
 struct Command {
     now: i64,
     post: Option<Post>,
+    withdraw_node: Option<Withdrawal>,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +62,13 @@ struct Command {
 struct Post {
     project_id: String,
     account_id: String,
+    input: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Withdrawal {
+    principal: Value,
     input: Value,
 }
 
@@ -76,6 +84,15 @@ fn control(hub: &Hub, line: &str) -> Result<Value> {
         return Err(denied());
     }
     CLOCK.store(command.now, Ordering::Relaxed);
+    if let Some(withdrawal) = command.withdraw_node {
+        if command.post.is_some() {
+            return Err(denied());
+        }
+        return transaction(&mut db, |db| {
+            authority::withdraw_node(db, &withdrawal.principal, &withdrawal.input)?;
+            Ok(Value::Null)
+        });
+    }
     let Some(post) = command.post else {
         return Ok(Value::Null);
     };

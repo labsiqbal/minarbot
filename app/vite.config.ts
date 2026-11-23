@@ -19,7 +19,7 @@ export default defineConfig({
           if (!path.includes('/node_modules/')) return;
           if (path.includes('/react/') || path.includes('/react-dom/')) return 'react-vendor';
           if (path.includes('/radix-ui/')) return 'radix-vendor';
-          if (path.includes('/marked/') || path.includes('/sanitize-html/') || path.includes('/entities/')) return 'markdown-vendor';
+          if (path.includes('/marked/') || path.includes('/entities/')) return 'markdown-vendor';
         },
       },
       onwarn(warning, warn) {

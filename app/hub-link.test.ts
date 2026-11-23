@@ -3,23 +3,26 @@ import { once, EventEmitter } from 'node:events';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
-import { createHubServer } from './hub/server.ts';
-import { createStubVerifier, type SessionIdentity } from './hub/sessions.ts';
 import { generateKeyPairSync, randomUUID, createPublicKey } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { testDatabase } from './test-support/database.ts';
-import { startRustHub } from './test-support/hosted-hub.ts';
+import { markMinarbotData, testDatabase } from './test-support/database.ts';
+import { hubCommand, startRustHub, type PostInput, type SessionIdentity } from './test-support/hosted-hub.ts';
+import { rustBinary } from './rust-binary.ts';
 import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import WebSocket from 'ws';
 import { startApp } from './test-bridge.ts';
-import { signedNodeMessage, verifiedNodeMessage } from './hub/node-link.ts';
-import { initializeHubSchema } from './hub/schema.ts';
-import { createHubAuthority, type ParticipationPolicy, type InvocationPolicy } from './hub/project-authority.ts';
-import { createHubWebApi } from './hub/web.ts';
-import { createHubRouting, type RoutingFrame } from './hub/routing.ts';
+import { signedNodeMessage, verifiedNodeMessage } from './test-support/hub-node-signature.ts';
+import type { Policy as ParticipationPolicy } from './src/hub/client.ts';
 import { canonicalJson, ProtocolError, sha256 } from './shared/protocol.ts';
+type InvocationPolicy = ParticipationPolicy['invocation'];
+type RoutingFrame = {
+    kind: string; turnId: string; nodeId: string; sequence: number;
+    requesterAccountId: string; payerAccountId: string; payload: Record<string, unknown>;
+};
+type Project = { projectId: string; host: string; sectionId: string };
+type Proposal = { participationId: string; revision: number; policyDigest: string };
 type App = Awaited<ReturnType<typeof startApp>>;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check: () => unknown | Promise<unknown>, label = 'condition') {
@@ -34,43 +37,33 @@ async function until(check: () => unknown | Promise<unknown>, label = 'condition
 async function api(app: App, path: string, body?: unknown, status = 200): Promise<any> { const response = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json', Connection: 'close' }, body: body === undefined ? undefined : JSON.stringify(body) }); const result = await response.json(); assert.equal(response.status, status, JSON.stringify(result)); return result; }
 const who = (subject: string) => ({ issuer: 'https://identity.test', subject, verifiedMailboxes: [`${subject}@example.test`] });
 async function fixture(t: test.TestContext, providerScript?: (body: any) => unknown | Promise<unknown>, stream = false) {
-    const dir = mkdtempSync(join(tmpdir(), 'minarbot-hub-link-')), hubDb = testDatabase(join(dir, 'hub.sqlite'));
-    initializeHubSchema(hubDb);
+    const dir = mkdtempSync(join(tmpdir(), 'minarbot-hub-link-'));
+    const dataPath = join(dir, 'hub.sqlite');
     let clock = Date.now();
-    const rustBinary = process.env.MINARBOT_HOSTED_HUB_BINARY;
+    const binary = rustBinary('minarbot-server', process.env.MINARBOT_HOSTED_HUB_BINARY ?? process.env.MINARBOT_RUST_BINARY);
     const now = () => clock;
-    const a = createHubAuthority(hubDb, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now });
-    const r = createHubRouting(a), signer = generateKeyPairSync('ed25519').privateKey, hubKey = createPublicKey(signer).export({ type: 'spki', format: 'der' }).toString('base64url');
-    const alice = a.provisionAccount(who('alice'), true), bob = a.provisionAccount(who('bob'), true), eve = a.provisionAccount(who('eve'), true), project = a.createProject(alice, 'alpha', 'Alpha');
-    const ctx = (account: string) => a.resolveProject(project.host, account, project.projectId);
-    const invitation = a.invite(ctx(alice), { mailbox: 'bob@example.test', role: 'member', expiresAt: clock + 60000 });
-    a.acceptInvite(ctx(bob), invitation.invitationId, invitation.token, who('bob'));
+    const signer = generateKeyPairSync('ed25519').privateKey;
+    const hubKey = createPublicKey(signer).export({ type: 'spki', format: 'der' }).toString('base64url');
     const accountsHost = 'accounts.minarbot.test', origin = `https://${accountsHost}`;
-    const identities = new Map(['alice', 'bob', 'eve'].map(subject => [subject, { ...who(subject), sessionId: `${subject}-session`, expiresAt: clock + 3600000 } satisfies SessionIdentity]));
-    async function startFixtureHub() {
-        if (rustBinary) {
-            const mailboxKeyPath = join(dir, 'mailbox.key'), tokensPath = join(dir, 'tokens.json'), signingKeyPath = join(dir, 'signer.pem');
-            writeFileSync(mailboxKeyPath, Buffer.alloc(32, 8), { mode: 0o600 });
-            writeFileSync(tokensPath, JSON.stringify(Object.fromEntries(identities)), { mode: 0o600 });
-            writeFileSync(signingKeyPath, signer.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
-            const rust = await startRustHub(rustBinary, dir, { domain: 'minarbot.test', accountsHost, dataPath: join(dir, 'hub.sqlite'),
-                mailboxKeyPath, identity: { mode: 'stub', tokensPath }, nodeLink: { signingKeyPath } }, 0, true);
-            try {
-                await rust.control({ now: clock });
-            } catch (error) {
-                await rust.close();
-                throw error;
-            }
-            return { ...rust, transport: { flush() { /* Hosted Rust polls its own outbox. */ } } };
-        }
-        const node = createHubServer({ authority: a, verifier: createStubVerifier(identities), accountsHost, domain: 'minarbot.test', nodeLink: { origin, signingKey: signer, now } });
-        await new Promise<void>(resolve => node.server.listen(0, '127.0.0.1', resolve));
-        const address = node.server.address();
-        assert(address && typeof address !== 'string');
-        return { port: address.port, close: node.close, transport: node.nodeLink!, control: undefined };
-    }
-    const hub = await startFixtureHub();
-    const { transport } = hub;
+    const subjects = ['alice', 'bob', 'eve'] as const;
+    const identities = Object.fromEntries(subjects.map(subject => [subject, { ...who(subject), sessionId: `${subject}-session`, expiresAt: clock + 3600000 } satisfies SessionIdentity]));
+    const mailboxKeyPath = join(dir, 'mailbox.key'), tokensPath = join(dir, 'tokens.json'), signingKeyPath = join(dir, 'signer.pem');
+    const config = { domain: 'minarbot.test', accountsHost, dataPath, mailboxKeyPath, identity: { mode: 'stub' as const, tokensPath }, nodeLink: { signingKeyPath } };
+    writeFileSync(mailboxKeyPath, Buffer.alloc(32, 8), { mode: 0o600 });
+    writeFileSync(tokensPath, JSON.stringify(identities), { mode: 0o600 });
+    writeFileSync(signingKeyPath, signer.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+    writeFileSync(dataPath, '', { mode: 0o600 });
+    const marker = testDatabase(dataPath);
+    markMinarbotData(marker);
+    marker.close();
+    const ids = Object.fromEntries(subjects.map(subject => [subject,
+        String(JSON.parse(hubCommand(binary, dir, config, 'admit', identities[subject].issuer, subject)).accountId)]));
+    const { alice, bob, eve } = ids;
+    const hub = await startRustHub(binary, dir, config, 0, true);
+    t.after(() => hub.close());
+    await hub.control({ now: clock });
+    const hubDb = testDatabase(dataPath, { readOnly: true });
+    const one = (sql: string, ...args: (string | number)[]) => hubDb.prepare(sql).get(...args);
     const localOrigin = `http://127.0.0.1:${hub.port}`;
     // Test transport dials disposable loopback; production URL/Host and signed origin stay exact.
     const localFetch: typeof fetch = (input, init) => new Promise((resolve, reject) => {
@@ -95,16 +88,28 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         socket.on('message', data => frames.emit('frame', String(data)));
         return socket;
     };
-    async function browser(host: string, path: string, body?: unknown, session?: { cookies: string; csrf: string }, bearer?: string, expected = 200) {
+    async function browser(host: string, path: string, body?: unknown, session?: { cookies: string; csrf: string }, bearer?: string, expected?: number) {
         const response = await localFetch(localOrigin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Host: host, Origin: `https://${host}`, 'Content-Type': 'application/json', ...(session ? { Cookie: session.cookies, 'X-CSRF-Token': session.csrf } : {}), ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
         const data = await response.json();
-        assert.equal(response.status, expected, JSON.stringify(data));
+        if (expected === undefined && !response.ok) throw new ProtocolError(response.status, data.error.code, data.error.message);
+        assert.equal(response.status, expected ?? 200, JSON.stringify(data));
         return { data, cookies: response.headers.getSetCookie().map(value => value.split(';')[0]).join('; '), csrf: data.csrf };
     }
     async function login(account: string) {
         const subject = account === alice ? 'alice' : account === bob ? 'bob' : 'eve';
         const boot = await browser(accountsHost, '/auth/bootstrap');
         return browser(accountsHost, '/auth/session', {}, boot, subject);
+    }
+    const sessions = new Map<string, Awaited<ReturnType<typeof login>>>();
+    async function centralSession(account: string) {
+        const prior = sessions.get(account);
+        if (prior && prior.data.expiresAt > clock) return prior;
+        const session = await login(account);
+        sessions.set(account, session);
+        return session;
+    }
+    async function createProject(account: string, slug: string, name: string): Promise<Project> {
+        return (await browser(accountsHost, '/api/projects', { slug, name }, await centralSession(account))).data;
     }
     let providerCalls = 0;
     const provider = createServer(async (req, res) => {
@@ -138,7 +143,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         assert.match(started.humanCode, /^[A-F0-9]{12}$/);
         assert.equal(started.deviceCode, undefined);
         assert.equal(started.privateKey, undefined);
-        const session = await login(account);
+        const session = await centralSession(account);
         await browser(accountsHost, '/api/nodes/enrollment/approve', { humanCode: started.humanCode, fingerprint: '0'.repeat(64) }, undefined, undefined, 401);
         const { data: inspected } = await browser(accountsHost, `/api/nodes/enrollment?humanCode=${started.humanCode}`, undefined, session);
         assert.equal(inspected.nodeId, started.nodeId);
@@ -148,47 +153,99 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         await api(app, '/api/hub-link/enrollment/poll', {});
         await until(() => app.hubLink!.status().connected, 'node online');
         const agentId = randomUUID();
-        if (rustBinary) await browser(accountsHost, '/api/agents', { agentId, nodeId: started.nodeId, name }, session);
-        else a.registerAgent(account, String(started.nodeId), agentId, name);
-        return { get app() { return app; }, agent, agentId, nodeId: String(started.nodeId), database, account, options, async restart() { await app.close().catch(() => {}); app = await startApp(options); apps.push(app); await until(() => app.hubLink!.status().connected, 'reconnected'); }, async participate(invocation: InvocationPolicy = { mode: 'owner' }) { const policy: ParticipationPolicy = { sectionIds: [project.sectionId], invocation, scopes: ['read', 'invoke'], localPolicyDigest: (await api(app, `/api/hub-link/agents/${agent.id}/policy`)).localPolicyDigest, payerBindingRef: 'local_provider', maxCostMicros: 10000 }; const proposal = rustBinary
-            ? (await browser(accountsHost, '/api/participations', { projectHost: project.host, agentId, policy, providerMaxCostMicros: 100 }, session)).data
-            : a.propose(ctx(account), agentId, policy);
-        if (rustBinary) {
-            await browser(project.host, '/api/participants/consent', proposal, await projectSession(alice));
-        } else {
-            a.consent(ctx(alice), proposal.participationId, proposal.revision, proposal.policyDigest, 'project');
-        } await api(app, '/api/hub-link/grants/approve', { projectId: project.projectId, participationId: proposal.participationId, agentId, localAgentId: agent.id, revision: proposal.revision, policy, providerMaxCostMicros: 100 }); await until(() => r.grants({ nodeId: String(started.nodeId), accountId: account, nodeGeneration: 1, connectionGeneration: Number(a.one('SELECT connection_generation FROM nodes WHERE id=?', String(started.nodeId))!.connection_generation) }).some(g => g.participationId === proposal.participationId)); return proposal; } };
+        await browser(accountsHost, '/api/agents', { agentId, nodeId: started.nodeId, name }, session);
+        return {
+            get app() { return app; }, agent, agentId, nodeId: String(started.nodeId), database, account, options,
+            async restart() {
+                await app.close().catch(() => {});
+                app = await startApp(options);
+                apps.push(app);
+                await until(() => app.hubLink!.status().connected, 'reconnected');
+            },
+            async participate(invocation: InvocationPolicy = { mode: 'owner' }, target = project) {
+                const policy: ParticipationPolicy = {
+                    sectionIds: [target.sectionId], invocation, scopes: ['read', 'invoke'],
+                    localPolicyDigest: (await api(app, `/api/hub-link/agents/${agent.id}/policy`)).localPolicyDigest,
+                    payerBindingRef: 'local_provider', maxCostMicros: 10000,
+                };
+                const proposal = await propose(account, agentId, policy, 100, target);
+                await consent(proposal, target);
+                await api(app, '/api/hub-link/grants/approve', {
+                    projectId: target.projectId, participationId: proposal.participationId, agentId,
+                    localAgentId: agent.id, revision: proposal.revision, policy, providerMaxCostMicros: 100,
+                });
+                await until(() => one("SELECT 1 FROM participations WHERE id=? AND state='active'", proposal.participationId), 'grant active');
+                return proposal;
+            },
+        };
     }
     t.after(async () => {
         for (const app of apps)
             await app.close().catch(() => { });
-        await hub.close();
         provider.closeAllConnections();
         await new Promise<void>(resolve => provider.close(() => resolve()));
         hubDb.close();
         rmSync(dir, { recursive: true, force: true });
     });
-    async function projectSession(account: string) {
-        const central = await login(account), started = await browser(project.host, '/auth/start');
+    async function projectSession(account: string, target = project) {
+        const central = await centralSession(account), started = await browser(target.host, '/auth/start');
         const handoff = await browser(accountsHost, '/auth/handoff', { state: started.data.state }, central);
         const fragment = new URLSearchParams(new URL(handoff.data.callback).hash.slice(1));
-        return browser(project.host, '/auth/redeem', { state: fragment.get('state'), code: fragment.get('code') }, { ...started, csrf: fragment.get('state')! });
+        return browser(target.host, '/auth/redeem', { state: fragment.get('state'), code: fragment.get('code') }, { ...started, csrf: fragment.get('state')! });
     }
-    async function browserPost(account: string, mentions: string[]) {
-        const session = await projectSession(account);
-        return (await browser(project.host, '/api/messages', { requestId: randomUUID(), sectionId: project.sectionId, text: 'Mention from authenticated project browser', mentions }, session)).data;
+    const project = await createProject(alice, 'alpha', 'Alpha');
+    const { data: invitation } = await browser(project.host, '/api/invitations', { mailbox: 'bob@example.test', role: 'member' }, await projectSession(alice));
+    const proof = Object.fromEntries(new URLSearchParams(new URL(invitation.url).hash.slice(1)));
+    await browser(project.host, '/api/invitations/accept', proof, await projectSession(bob));
+    async function post(account: string, mentions: string[], target = project, text = 'Explain transport') {
+        const session = await projectSession(account, target);
+        return (await browser(target.host, '/api/messages', { requestId: randomUUID(), sectionId: target.sectionId, text, mentions }, session)).data as { turnIds: string[] };
     }
-    const post = (account: string, mentions: string[]) => r.post(ctx(account), { requestId: randomUUID(), sectionId: project.sectionId, text: 'Explain transport', mentions });
+    const browserPost = (account: string, mentions: string[]) =>
+        post(account, mentions, project, 'Mention from authenticated project browser');
+    const registerAgent = async (account: string, agentId: string, nodeId: string, name: string) =>
+        browser(accountsHost, '/api/agents', { agentId, nodeId, name }, await centralSession(account));
+    async function propose(account: string, agentId: string, policy: ParticipationPolicy, providerMaxCostMicros = 100, target = project): Promise<Proposal> {
+        return (await browser(accountsHost, '/api/participations', { projectHost: target.host, agentId, policy, providerMaxCostMicros }, await centralSession(account))).data;
+    }
+    const consent = async (proposal: Proposal, target = project) =>
+        browser(target.host, '/api/participants/consent', proposal, await projectSession(alice, target));
+    const withdraw = async (participationId: string) =>
+        browser(project.host, '/api/participants/withdraw', { participationId }, await projectSession(alice));
     async function advance(ms: number) {
-        if (hub.control) await hub.control({ now: clock + ms });
+        await hub.control({ now: clock + ms });
         clock += ms;
     }
-    async function queuedPost(input: Parameters<typeof r.post>[1], advanceMs = 0): Promise<ReturnType<typeof r.post>> {
+    async function queuedPost(input: PostInput, advanceMs = 0): Promise<{ turnIds: string[] }> {
         clock += advanceMs;
-        return hub.control ? hub.control({ now: clock, post: { projectId: project.projectId, accountId: alice, input } }) : r.post(ctx(alice), input);
+        return hub.control({ now: clock, post: { projectId: project.projectId, accountId: alice, input } });
     }
-    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, frames, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, advance, queuedPost, receiveFrames(intercept?: HubLinkOptions['receive']) { receive = intercept; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
+    const turn = (turnId: string, target = project) =>
+        one('SELECT * FROM turns WHERE project_id=? AND id=?', target.projectId, turnId)!;
+    const results = (): RoutingFrame[] => hubDb.prepare(`SELECT r.frame_json FROM node_results r
+        JOIN turns t ON t.project_id=r.project_id AND t.id=r.turn_id WHERE t.project_id=? AND t.section_id=? ORDER BY t.rowid,r.sequence`)
+        .all(project.projectId, project.sectionId).map(row => JSON.parse(String(row.frame_json)));
+    const withdrawNode = (principal: { nodeId: string; accountId: string; nodeGeneration: number; connectionGeneration: number }, participationId: string, revision: number) =>
+        hub.control({ now: clock, withdraw_node: { principal, input: { projectId: project.projectId, participationId, revision } } });
+    return {
+        dir, one, turn, results, alice, bob, eve, project, createProject, node, post, browserPost, projectSession, request: localFetch,
+        keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, frames, advance, queuedPost,
+        registerAgent, propose, consent, withdraw, withdrawNode,
+        loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; },
+        receiveFrames(intercept?: HubLinkOptions['receive']) { receive = intercept; },
+        async done(turnId: string, account = alice) {
+            const session = await projectSession(account);
+            await until(async () => {
+                const { data } = await browser(project.host, `/api/turn?turnId=${turnId}`, undefined, session);
+                assert(!['failed', 'unknown', 'revoked'].includes(data.state), `Unexpected hub turn state: ${data.state}`);
+                return data.state === 'done';
+            }, 'hub final');
+            const { data } = await browser(project.host, `/api/history?sectionId=${project.sectionId}`, undefined, session);
+            return (data.results as RoutingFrame[]).filter(frame => frame.turnId === turnId);
+        },
+    };
 }
+
 test('signed envelopes reject forged payloads, keys and directions', () => {
     const pair = generateKeyPairSync('ed25519'), key = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'), body = { kind: 'heartbeat' };
     const envelope = signedNodeMessage(body, pair.privateKey, 'hub');
@@ -221,7 +278,7 @@ test('browser-approved enrollment, two real local engines, attribution and local
     }
     assert.equal(f.keys.size, 6);
 });
-test('owner-only default, specific-member and all-member grants; offline refuses without hub execution', async (t) => { const f = await fixture(t), bob = await f.node('Bob', f.bob), p = await bob.participate(); assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError && e.code === 'authority_denied'); let post = f.post(f.bob, [p.participationId]); await f.done(post.turnIds[0], f.bob); const specific = await bob.participate({ mode: 'members', accountIds: [f.alice] }); post = f.post(f.alice, [specific.participationId]); await f.done(post.turnIds[0]); const all = await bob.participate({ mode: 'all-members' }); post = f.post(f.alice, [all.participationId]); await f.done(post.turnIds[0]); await bob.app.close(); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', bob.nodeId)!.status === 'offline'); assert.throws(() => f.post(f.alice, [all.participationId]), e => e instanceof ProtocolError && e.code === 'node_offline'); assert.equal(f.calls, 3); assert.throws(() => f.post(f.eve, []), e => e instanceof ProtocolError); });
+test('owner-only default, specific-member and all-member grants; offline refuses without hub execution', async (t) => { const f = await fixture(t), bob = await f.node('Bob', f.bob), p = await bob.participate(); await assert.rejects(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError && e.code === 'authority_denied'); let post = await f.post(f.bob, [p.participationId]); await f.done(post.turnIds[0], f.bob); const specific = await bob.participate({ mode: 'members', accountIds: [f.alice] }); post = await f.post(f.alice, [specific.participationId]); await f.done(post.turnIds[0]); const all = await bob.participate({ mode: 'all-members' }); post = await f.post(f.alice, [all.participationId]); await f.done(post.turnIds[0]); await bob.app.close(); await until(() => f.one('SELECT status FROM nodes WHERE id=?', bob.nodeId)!.status === 'offline'); await assert.rejects(() => f.post(f.alice, [all.participationId]), e => e instanceof ProtocolError && e.code === 'node_offline'); assert.equal(f.calls, 3); await assert.rejects(() => f.post(f.eve, []), e => e instanceof ProtocolError); });
 test('dangerous tool waits for exact local owner approval; hub/browser roles cannot approve it', async (t) => {
     let toolCalls = 0;
     const f = await fixture(t, body => {
@@ -229,7 +286,7 @@ test('dangerous tool waits for exact local owner approval; hub/browser roles can
             return 'Tool finished';
         toolCalls++;
         return { id: 'write-once', type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify({ name: 'result.txt', text: 'Private file created locally.' }) } };
-    }), node = await f.node('Writer', f.alice), p = await node.participate(), post = f.post(f.alice, [p.participationId]);
+    }), node = await f.node('Writer', f.alice), p = await node.participate(), post = await f.post(f.alice, [p.participationId]);
     await until(() => node.app.hubLink!.approvals().length === 1, 'owner approval wait');
     const prompt = node.app.hubLink!.approvals()[0];
     assert.equal(f.calls, 1);
@@ -256,7 +313,7 @@ test('duplicate delivery, final ACK loss and restart never execute twice', async
             return [data, data];
         }
         if (wire.body.kind === 'response' && wire.body.result?.accepted && !dropped) {
-            const result = f.a.one('SELECT frame_json FROM node_results WHERE project_id=? AND sequence=?', f.project.projectId, wire.body.result.sequence);
+            const result = f.one('SELECT frame_json FROM node_results WHERE project_id=? AND sequence=?', f.project.projectId, wire.body.result.sequence);
             if (result && JSON.parse(String(result.frame_json)).kind === 'turn.final') {
                 dropped = true;
                 socket.close(4409, 'Injected ACK loss');
@@ -268,16 +325,16 @@ test('duplicate delivery, final ACK loss and restart never execute twice', async
     const post = await f.browserPost(f.alice, [p.participationId]);
     await until(() => f.calls === 1);
     await until(() => dropped, 'result ACK dropped');
-    assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'done');
-    await until(() => f.a.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation !== 1, 'generation fenced');
+    assert.equal(f.turn(post.turnIds[0]).state, 'done');
+    await until(() => f.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation !== 1, 'generation fenced');
     await node.restart();
     await sleep(400);
     assert.equal(f.calls, 1);
     assert(duplicated);
-    const turn = f.r.turn(f.ctx(f.alice), post.turnIds[0]);
+    const turn = f.turn(post.turnIds[0]);
     assert(['done', 'unknown'].includes(String(turn.state)));
 });
-test('revocation mid-stream stops local work before another effect and does not execute offline', async (t) => { let release: (text: string) => void = () => { }; const f = await fixture(t, () => new Promise<string>(resolve => { release = resolve; })), node = await f.node('Held', f.alice), p = await node.participate(), post = f.post(f.alice, [p.participationId]); await until(() => f.calls === 1); f.a.withdraw(f.ctx(f.alice), p.participationId); f.transport.flush(); await until(async () => { const status = await api(node.app, '/api/hub-link'); return !status.connected || f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown'; }); release('Late answer'); await sleep(300); assert.equal(f.calls, 1); assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'unknown'); assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError); });
+test('revocation mid-stream stops local work before another effect and does not execute offline', async (t) => { let release: (text: string) => void = () => { }; const f = await fixture(t, () => new Promise<string>(resolve => { release = resolve; })), node = await f.node('Held', f.alice), p = await node.participate(), post = await f.post(f.alice, [p.participationId]); await until(() => f.calls === 1); await f.withdraw(p.participationId); await until(async () => { const status = await api(node.app, '/api/hub-link'); return !status.connected || f.turn(post.turnIds[0]).state === 'unknown'; }); release('Late answer'); await sleep(300); assert.equal(f.calls, 1); assert.equal(f.turn(post.turnIds[0]).state, 'unknown'); await assert.rejects(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError); });
 test('foreign project and forged signed hub frames never reach local engine', async (t) => {
     const f = await fixture(t), node = await f.node('Isolated', f.alice), p = await node.participate();
     const forged = generateKeyPairSync('ed25519').privateKey;
@@ -296,12 +353,12 @@ test('foreign project and forged signed hub frames never reach local engine', as
         });
         const post = await f.browserPost(f.alice, [p.participationId]);
         await until(() => injected, scenario);
-        await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown');
+        await until(() => f.turn(post.turnIds[0]).state === 'unknown');
         assert.equal(f.calls, 0);
         await node.restart();
     }
 });
-test('local owner endpoints require exact Origin and refuse bearer callers; unenrolled app stays idle', async (t) => { const f = await fixture(t), node = await f.node('Boundary', f.alice); const r = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: 'https://foreign.test', Connection: 'close' } }); assert.equal(r.status, 403); const bearer = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: node.app.origin, Authorization: 'Bearer rejected', Connection: 'close' } }); assert.equal(bearer.status, 403); assert.equal(f.calls, 0); await api(node.app, '/api/hub-link/revoke', {}); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'revoked'); assert.equal(node.app.hubLink!.status().disabled, true); });
+test('local owner endpoints require exact Origin and refuse bearer callers; unenrolled app stays idle', async (t) => { const f = await fixture(t), node = await f.node('Boundary', f.alice); const r = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: 'https://foreign.test', Connection: 'close' } }); assert.equal(r.status, 403); const bearer = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: node.app.origin, Authorization: 'Bearer rejected', Connection: 'close' } }); assert.equal(bearer.status, 403); assert.equal(f.calls, 0); await api(node.app, '/api/hub-link/revoke', {}); await until(() => f.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'revoked'); assert.equal(node.app.hubLink!.status().disabled, true); });
 test('node revocation drains its signed frame before closing transport', async t => {
     const f = await fixture(t), node = await f.node('Delayed revoke', f.alice);
     const original = WebSocket.prototype.send;
@@ -320,7 +377,7 @@ test('node revocation drains its signed frame before closing transport', async t
     t.after(() => { WebSocket.prototype.send = original; });
     await api(node.app, '/api/hub-link/revoke', {});
     assert(delayed);
-    await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'revoked');
+    await until(() => f.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'revoked');
     assert.equal(node.app.hubLink!.status().disabled, true);
     assert.equal(f.calls, 0);
 });
@@ -332,13 +389,13 @@ test('SIGKILL after dispatch and before result ACK keeps durable uncertainty wit
     await until(() => f.calls === 1, 'provider dispatched');
     await node.app.crash();
     release();
-    await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown', 'durable uncertainty');
+    await until(() => f.turn(post.turnIds[0]).state === 'unknown', 'durable uncertainty');
     await node.restart();
     await sleep(500);
     assert.equal(f.calls, 1);
-    assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'unknown');
+    assert.equal(f.turn(post.turnIds[0]).state, 'unknown');
 });
-test('provider partial snapshots stream over real WebSockets before final', async (t) => { const f = await fixture(t, () => ({ streamText: 'Streamed local answer' }), true), node = await f.node('Stream', f.alice), p = await node.participate(), post = f.post(f.alice, [p.participationId]); const results = await f.done(post.turnIds[0]); assert(results.some(frame => frame.kind === 'turn.partial' && frame.payload.text === 'Streamed local answer')); assert.equal(results.at(-1)!.kind, 'turn.final'); assert.equal(results.at(-1)!.payload.text, 'Streamed local answer'); assert.equal(f.calls, 1); });
+test('provider partial snapshots stream over real WebSockets before final', async (t) => { const f = await fixture(t, () => ({ streamText: 'Streamed local answer' }), true), node = await f.node('Stream', f.alice), p = await node.participate(), post = await f.post(f.alice, [p.participationId]); const results = await f.done(post.turnIds[0]); assert(results.some(frame => frame.kind === 'turn.partial' && frame.payload.text === 'Streamed local answer')); assert.equal(results.at(-1)!.kind, 'turn.final'); assert.equal(results.at(-1)!.payload.text, 'Streamed local answer'); assert.equal(f.calls, 1); });
 test('browser code alone cannot redeem enrollment; node upgrade rejects browser credentials', async (t) => {
     const f = await fixture(t);
     for (const path of ['/api/nodes/enrollment/poll', '/api/nodes/session']) {
@@ -353,27 +410,26 @@ test('reconnect fences old generation; session expiry renews with node key and n
     const f = await fixture(t), node = await f.node('Renew', f.alice), p = await node.participate();
     const post = await f.browserPost(f.alice, [p.participationId]);
     await f.done(post.turnIds[0]);
-    const connectionGeneration = () => Number(f.a.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation);
-    const session = () => f.a.one('SELECT expires_at FROM node_link_sessions WHERE node_id=?', node.nodeId)!.expires_at;
+    const connectionGeneration = () => Number(f.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation);
+    const session = () => f.one('SELECT expires_at FROM node_link_sessions WHERE node_id=?', node.nodeId)!.expires_at;
     const before = connectionGeneration(), expiresAt = session();
     await f.advance(900001);
-    f.transport.flush();
     await until(() => connectionGeneration() > before && node.app.hubLink!.status().connected, 'signed renewal');
     assert(Number(session()) > Number(expiresAt));
     assert.equal(f.calls, 1);
-    assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'done');
+    assert.equal(f.turn(post.turnIds[0]).state, 'done');
 });
 test('local provider spend ceiling refuses next request before dispatch', async (t) => {
     const f = await fixture(t, body => body.messages.some((m: any) => m.role === 'tool') ? 'Second paid call' : ({ id: 'budget-tool', type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify({ name: 'budget.txt', text: 'One local file' }) } })), node = await f.node('Budget', f.alice);
     const policy: ParticipationPolicy = { sectionIds: [f.project.sectionId], invocation: { mode: 'owner' }, scopes: ['read', 'invoke'], localPolicyDigest: (await api(node.app, `/api/hub-link/agents/${node.agent.id}/policy`)).localPolicyDigest, payerBindingRef: 'local_provider', maxCostMicros: 100 };
-    const p = f.a.propose(f.ctx(f.alice), node.agentId, policy);
-    f.a.consent(f.ctx(f.alice), p.participationId, p.revision, p.policyDigest, 'project');
+    const p = await f.propose(f.alice, node.agentId, policy);
+    await f.consent(p);
     await api(node.app, '/api/hub-link/grants/approve', { projectId: f.project.projectId, participationId: p.participationId, agentId: node.agentId, localAgentId: node.agent.id, revision: p.revision, policy, providerMaxCostMicros: 100 });
-    const post = f.post(f.alice, [p.participationId]);
+    const post = await f.post(f.alice, [p.participationId]);
     await until(() => node.app.hubLink!.approvals().length === 1);
     const prompt = node.app.hubLink!.approvals()[0];
     await api(node.app, '/api/hub-link/approvals', { actionId: prompt.actionId, actionDigest: prompt.actionDigest, approved: true });
-    await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'failed');
+    await until(() => f.turn(post.turnIds[0]).state === 'failed');
     assert.equal(f.calls, 1);
 });
 test('lost enrollment redemption response recovers with signed node proof', async (t) => {
@@ -386,66 +442,69 @@ test('lost enrollment redemption response recovers with signed node proof', asyn
 test('changed local agent policy rejects an existing hub grant before provider dispatch', async (t) => {
     const f = await fixture(t), node = await f.node('Changed', f.alice), p = await node.participate();
     await api(node.app, `/api/agents/${node.agent.id}/edit`, { id: randomUUID(), revision: node.agent.revision, name: 'Changed config', model: 'Changed', instructions: 'Updated policy' });
-    const post = f.post(f.alice, [p.participationId]);
-    await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown');
+    const post = await f.post(f.alice, [p.participationId]);
+    await until(() => f.turn(post.turnIds[0]).state === 'unknown');
     assert.equal(f.calls, 0);
 });
 
 test('revoking alpha preserves simultaneous beta work on the same node',async t=>{
   const held:((value:string)=>void)[]=[];
   const f=await fixture(t,()=>new Promise<string>(resolve=>held.push(resolve))),node=await f.node('TwoProjects',f.alice),alpha=await node.participate();
-  const beta=f.a.createProject(f.alice,'beta','Beta'),betaCtx=f.a.resolveProject(beta.host,f.alice,beta.projectId);
-  const policy:ParticipationPolicy={sectionIds:[beta.sectionId],invocation:{mode:'owner'},scopes:['read','invoke'],localPolicyDigest:(await api(node.app,`/api/hub-link/agents/${node.agent.id}/policy`)).localPolicyDigest,payerBindingRef:'local_provider',maxCostMicros:10_000};
-  const bp=f.a.propose(betaCtx,node.agentId,policy);f.a.consent(betaCtx,bp.participationId,bp.revision,bp.policyDigest,'project');
-  await api(node.app,'/api/hub-link/grants/approve',{projectId:beta.projectId,participationId:bp.participationId,agentId:node.agentId,localAgentId:node.agent.id,revision:bp.revision,policy,providerMaxCostMicros:100});
-  const a=f.post(f.alice,[alpha.participationId]);await until(()=>held.length===1);
-  const b=f.r.post(betaCtx,{requestId:randomUUID(),sectionId:beta.sectionId,text:'Beta work',mentions:[bp.participationId]});await until(()=>held.length===2);
-  const generation=f.a.one('SELECT connection_generation FROM nodes WHERE id=?',node.nodeId)!.connection_generation;
+  const beta = await f.createProject(f.alice, 'beta', 'Beta');
+  const bp = await node.participate({ mode: 'owner' }, beta);
+  const a = await f.post(f.alice, [alpha.participationId]);
+  await until(() => held.length === 1);
+  const b = await f.post(f.alice, [bp.participationId], beta, 'Beta work');
+  await until(() => held.length === 2);
+  const generation=f.one('SELECT connection_generation FROM nodes WHERE id=?',node.nodeId)!.connection_generation;
   // Revoke when Alpha's result is already in flight, before the hub accepts it.
   const send=WebSocket.prototype.send;
+  let finalSent: Promise<void> | undefined;
   WebSocket.prototype.send=function(data:unknown,...args:unknown[]){
     const message=typeof data==='string'?JSON.parse(data).body:undefined;
     if(message?.kind==='turn.result'&&message.frame.kind==='turn.final'&&message.frame.turnId===a.turnIds[0]){
-      f.a.withdraw(f.ctx(f.alice),alpha.participationId);
-      f.transport.flush();
+      finalSent = f.withdraw(alpha.participationId).then(() => { Reflect.apply(send, this, [data, ...args]); });
+      return;
     }
     return Reflect.apply(send,this,[data,...args]);
   };
   try {
     held[0]('Late alpha');
-    await until(()=>f.r.turn(f.ctx(f.alice),a.turnIds[0]).state==='unknown','Alpha revoked during result delivery');
+    await until(() => finalSent !== undefined, 'Alpha final in flight');
+    await finalSent;
+    await until(()=>f.turn(a.turnIds[0]).state==='unknown','Alpha revoked during result delivery');
     held[1]('Beta stays connected');
     await until(()=>{
-      const state=f.r.turn(betaCtx,b.turnIds[0]).state;
+      const state=f.turn(b.turnIds[0], beta).state;
       assert(['admitted','done'].includes(String(state)),`Unexpected Beta turn state: ${state}`);
       return state==='done';
     },'Beta result after Alpha revocation');
   } finally {
     WebSocket.prototype.send=send;
   }
-  assert(!f.r.history(f.ctx(f.alice),f.project.sectionId).results.some(frame=>frame.kind==='turn.final'));
-  assert.equal(f.a.one('SELECT connection_generation FROM nodes WHERE id=?',node.nodeId)!.connection_generation,generation);assert.equal(node.app.hubLink!.status().connected,true);assert.equal(f.calls,2);
+  assert(!f.results().some(frame=>frame.kind==='turn.final'));
+  assert.equal(f.one('SELECT connection_generation FROM nodes WHERE id=?',node.nodeId)!.connection_generation,generation);assert.equal(node.app.hubLink!.status().connected,true);assert.equal(f.calls,2);
 });
 
 test('offline local withdrawal survives restart and reaches hub before reconnect admits work', async t => {
     const f = await fixture(t), node = await f.node('WithdrawOffline', f.alice), p = await node.participate();
     await node.app.hubLink!.close();
-    await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'offline');
+    await until(() => f.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'offline');
     await api(node.app, '/api/hub-link/grants/revoke', { projectId: f.project.projectId, participationId: p.participationId });
     await node.restart();
-    await until(() => f.a.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state === 'revoked', 'durable withdrawal');
-    assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError);
+    await until(() => f.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state === 'revoked', 'durable withdrawal');
+    await assert.rejects(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError);
     assert.equal(f.calls, 0);
 });
 
 test('hub-side withdrawal waits offline beyond turn deadline and disables local grant before new work', async t => {
     const f = await fixture(t), node = await f.node('HubWithdrawOffline', f.bob), p = await node.participate();
     await node.app.close();
-    await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'offline');
+    await until(() => f.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'offline');
     await f.browser(f.project.host, '/api/participants/withdraw', { participationId: p.participationId }, await f.projectSession(f.alice));
     await f.advance(600001);
     await node.restart();
-    await until(() => f.a.one("SELECT acked FROM outbox WHERE participation_id=? AND kind='grant.revoked'", p.participationId)?.acked === 1, 'durable control ACK');
+    await until(() => f.one("SELECT acked FROM outbox WHERE participation_id=? AND kind='grant.revoked'", p.participationId)?.acked === 1, 'durable control ACK');
     await node.app.close();
     const db = testDatabase(node.database);
     try { assert.equal(db.prepare('SELECT enabled FROM hub_link_grants WHERE participation_id=?').get(p.participationId)!.enabled, 0); } finally { db.close(); }
@@ -454,7 +513,7 @@ test('hub-side withdrawal waits offline beyond turn deadline and disables local 
 
 test('withdrawal ACK loss retries same revision and cannot withdraw another node or newer consent', async t => {
     const f = await fixture(t), node = await f.node('WithdrawReceipt', f.alice), other = await f.node('OtherOwner', f.bob), p = await node.participate(), foreign = await other.participate();
-    const before = Number(f.a.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation);
+    const before = Number(f.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation);
     const original = WebSocket.prototype.send;
     let dropped = false;
     WebSocket.prototype.send = function(data: any, ...args: any[]) {
@@ -469,14 +528,14 @@ test('withdrawal ACK loss retries same revision and cannot withdraw another node
     };
     t.after(() => { WebSocket.prototype.send = original; });
     await api(node.app, '/api/hub-link/grants/revoke', { projectId: f.project.projectId, participationId: p.participationId });
-    await until(() => node.app.hubLink!.status().connected && node.app.hubLink!.status().pendingWithdrawals === 0 && Number(f.a.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation) > before);
+    await until(() => node.app.hubLink!.status().connected && node.app.hubLink!.status().pendingWithdrawals === 0 && Number(f.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation) > before);
     assert(dropped);
-    assert.equal(f.a.one('SELECT revision FROM participations WHERE id=?', p.participationId)!.revision, p.revision + 1);
-    const principal = { nodeId: node.nodeId, accountId: f.alice, nodeGeneration: 1, connectionGeneration: Number(f.a.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation) };
-    assert.throws(() => f.a.withdrawNode(principal, f.project.projectId, foreign.participationId, foreign.revision), e => e instanceof ProtocolError && e.code === 'authority_denied');
+    assert.equal(f.one('SELECT revision FROM participations WHERE id=?', p.participationId)!.revision, p.revision + 1);
+    const principal = { nodeId: node.nodeId, accountId: f.alice, nodeGeneration: 1, connectionGeneration: Number(f.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation) };
+    await assert.rejects(() => f.withdrawNode(principal, foreign.participationId, foreign.revision), e => e instanceof ProtocolError && e.code === 'authority_denied');
     const renewed = await node.participate();
-    f.a.withdrawNode(principal, f.project.projectId, renewed.participationId, p.revision);
-    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', renewed.participationId)!.state, 'active');
+    await f.withdrawNode(principal, renewed.participationId, p.revision);
+    assert.equal(f.one('SELECT state FROM participations WHERE id=?', renewed.participationId)!.state, 'active');
     assert.equal(f.calls, 0);
 });
 
@@ -528,15 +587,15 @@ test('computer input requires local approval and action lease; revoke leaves unc
     const results = await f.done(first.turnIds[0]);
     assert.equal(effects, 1);
     assert(results.some(result => result.kind === 'turn.effect.receipt' && result.payload.actionId === approval.actionId && result.payload.outcome === 'succeeded'));
-    assert(f.a.one('SELECT 1 FROM action_leases WHERE action_id=?', approval.actionId));
+    assert(f.one('SELECT 1 FROM action_leases WHERE action_id=?', approval.actionId));
     hold = true;
-    const second = f.post(f.alice, [p.participationId]);
+    const second = await f.post(f.alice, [p.participationId]);
     await until(() => node.app.hubLink!.approvals().length === 1);
     const pending = node.app.hubLink!.approvals()[0];
     await api(node.app, '/api/hub-link/approvals', { actionId: pending.actionId, actionDigest: pending.actionDigest, approved: true });
     await until(() => effects === 2, 'computer effect dispatched');
-    f.a.withdraw(f.ctx(f.alice), p.participationId); f.transport.flush();
-    await until(() => node.app.hubLink!.approvals().length === 0 && f.r.turn(f.ctx(f.alice), second.turnIds[0]).state === 'unknown');
+    await f.withdraw(p.participationId);
+    await until(() => node.app.hubLink!.approvals().length === 0 && f.turn(second.turnIds[0]).state === 'unknown');
     release();
     await node.restart();
     await sleep(200);
@@ -544,7 +603,7 @@ test('computer input requires local approval and action lease; revoke leaves unc
     await node.app.close();
     const db = testDatabase(node.database);
     try { assert.equal(db.prepare('SELECT state FROM hub_link_actions WHERE action_id=?').get(pending.actionId)!.state, 'unknown'); } finally { db.close(); }
-    assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError);
+    await assert.rejects(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError);
 });
 
 test('connected app calls require local approval and lease; revocation after dispatch is uncertain and never replayed', async t => {
@@ -572,7 +631,7 @@ test('connected app calls require local approval and lease; revocation after dis
     const node = await f.node('ConnectedBoundary', f.alice, { composio: { baseURL: `http://127.0.0.1:${address.port}/api/v3.1` } });
     await api(node.app, '/api/connected-apps/key', { id: randomUUID(), revision: 0, key: 'synthetic-composio-fixture-only' });
     await api(node.app, `/api/agents/${node.agent.id}/connected-apps/gmail`, { id: randomUUID(), revision: 0, enabled: true });
-    const p = await node.participate(), first = f.post(f.alice, [p.participationId]);
+    const p = await node.participate(), first = await f.post(f.alice, [p.participationId]);
     await until(() => node.app.hubLink!.approvals().length === 1, 'hub tool approval');
     const approval = node.app.hubLink!.approvals()[0]; assert.equal(effects, 0);
     await api(node.app, '/api/hub-link/approvals', { actionId: approval.actionId, actionDigest: approval.actionDigest, approved: true });
@@ -588,9 +647,9 @@ test('connected app calls require local approval and lease; revocation after dis
     const resume = node.app.hubLink!.approvals()[0];
     await api(node.app, '/api/hub-link/approvals', { actionId: resume.actionId, actionDigest: resume.actionDigest, approved: true });
     await f.done(first.turnIds[0]); assert.equal(effects, 1);
-    assert(f.a.one('SELECT 1 FROM action_leases WHERE action_id=?', resume.actionId));
+    assert(f.one('SELECT 1 FROM action_leases WHERE action_id=?', resume.actionId));
     lose = true;
-    const second = f.post(f.alice, [p.participationId]);
+    const second = await f.post(f.alice, [p.participationId]);
     await until(() => node.app.hubLink!.approvals().length === 1);
     const next = node.app.hubLink!.approvals()[0];
     await api(node.app, '/api/hub-link/approvals', { actionId: next.actionId, actionDigest: next.actionDigest, approved: true });
@@ -601,10 +660,10 @@ test('connected app calls require local approval and lease; revocation after dis
     const nextResume = node.app.hubLink!.approvals()[0];
     await api(node.app, '/api/hub-link/approvals', { actionId: nextResume.actionId, actionDigest: nextResume.actionDigest, approved: true });
     await until(() => effects === 2);
-    f.a.withdraw(f.ctx(f.alice), p.participationId); f.transport.flush(); release();
-    await until(() => f.r.turn(f.ctx(f.alice), second.turnIds[0]).state === 'unknown');
+    await f.withdraw(p.participationId); release();
+    await until(() => f.turn(second.turnIds[0]).state === 'unknown');
     await node.restart(); await sleep(200); assert.equal(effects, 2);
-    assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError);
+    await assert.rejects(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError);
 });
 
 test('MCP async discovery cannot dispatch after revoke; lost result remains uncertain across restart', async t => {
@@ -643,20 +702,20 @@ test('MCP async discovery cannot dispatch after revoke; lost result remains unce
         await api(node.app, '/api/hub-link/approvals', { actionId: approval.actionId, actionDigest: approval.actionDigest, approved: true });
         return approval;
     };
-    const first = f.post(f.alice, [p.participationId]); await approve(); await f.done(first.turnIds[0]); assert.equal(effects, 1);
+    const first = await f.post(f.alice, [p.participationId]); await approve(); await f.done(first.turnIds[0]); assert.equal(effects, 1);
     holdCatalogue = true;
-    const second = f.post(f.alice, [p.participationId]); await approve(); await until(() => held);
-    f.a.withdraw(f.ctx(f.alice), p.participationId); f.transport.flush();
-    await until(() => f.r.turn(f.ctx(f.alice), second.turnIds[0]).state === 'unknown');
+    const second = await f.post(f.alice, [p.participationId]); await approve(); await until(() => held);
+    await f.withdraw(p.participationId);
+    await until(() => f.turn(second.turnIds[0]).state === 'unknown');
     // Wait for node's local cancellation, not just synchronous hub state change.
     await until(() => { try { node.app.hubLink!.check(second.turnIds[0]); return false; } catch { return true; } });
     release(); holdCatalogue = false; await sleep(100); assert.equal(effects, 1);
     await node.restart();
     const renewed = await node.participate(); loseResult = true;
-    const third = f.post(f.alice, [renewed.participationId]), action = await approve();
-    await until(() => f.r.turn(f.ctx(f.alice), third.turnIds[0]).state === 'failed');
+    const third = await f.post(f.alice, [renewed.participationId]), action = await approve();
+    await until(() => f.turn(third.turnIds[0]).state === 'failed');
     assert.equal(effects, 2);
-    const receipts = f.r.history(f.ctx(f.alice), f.project.sectionId).results;
+    const receipts = f.results();
     assert(receipts.some(row => row.kind === 'turn.effect.receipt' && row.payload.actionId === action.actionId && row.payload.outcome === 'unknown'));
     await node.restart(); await sleep(150); assert.equal(effects, 2);
 });
@@ -672,9 +731,9 @@ for (const runtime of ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi',
     const status = await api(node.app, '/api/hub-link');
     assert.deepEqual(status.supportedRuntimes, ['api']);
     assert.equal(status.unsupportedRuntimes[runtime], 'native_effect_fencing_unavailable');
-    const p = await node.participate(), post = f.post(f.alice, [p.participationId]);
-    await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'failed');
-    const results = f.r.history(f.ctx(f.alice), f.project.sectionId).results.filter(row => row.turnId === post.turnIds[0]);
+    const p = await node.participate(), post = await f.post(f.alice, [p.participationId]);
+    await until(() => f.turn(post.turnIds[0]).state === 'failed');
+    const results = f.results().filter(row => row.turnId === post.turnIds[0]);
     assert.equal(results.at(-1)!.payload.code, 'local_engine_unsupported_or_unavailable');
     assert.equal(f.calls, 0);
     await node.restart(); assert.equal(f.calls, 0);
@@ -685,16 +744,17 @@ test('two session-enrolled nodes answer browser mention; revoking one live strea
     const alice = await f.node('HeldStream', f.alice), bob = await f.node('OtherStream', f.bob);
     const pa = await alice.participate(), pb = await bob.participate({ mode: 'all-members' });
     const post = await f.browserPost(f.alice, [pa.participationId, pb.participationId]);
-    const revokedTurn = post.turnIds.find((id: string) => f.r.turn(f.ctx(f.alice), id).node_id === alice.nodeId);
+    const revokedTurn = post.turnIds.find((id: string) => f.turn(id).node_id === alice.nodeId);
     const otherTurn = post.turnIds.find((id: string) => id !== revokedTurn);
-    await until(() => f.r.history(f.ctx(f.alice), f.project.sectionId).results.some(row => row.turnId === revokedTurn && row.kind === 'turn.partial'), 'live partial before revoke');
-    f.a.withdraw(f.ctx(f.alice), pa.participationId); f.transport.flush();
+    assert(revokedTurn && otherTurn);
+    await until(() => f.results().some(row => row.turnId === revokedTurn && row.kind === 'turn.partial'), 'live partial before revoke');
+    await f.withdraw(pa.participationId);
     await until(() => { try { alice.app.hubLink!.check(revokedTurn); return false; } catch { return true; } });
     const results = await f.done(otherTurn);
     assert.equal(results.at(-1)!.nodeId, bob.nodeId);
     assert.equal(results.at(-1)!.payload.text, 'Partial from OtherStream');
-    assert.equal(f.r.turn(f.ctx(f.alice), revokedTurn).state, 'unknown');
-    assert(!f.r.history(f.ctx(f.alice), f.project.sectionId).results.some(row => row.turnId === revokedTurn && row.kind === 'turn.final'));
+    assert.equal(f.turn(revokedTurn).state, 'unknown');
+    assert(!f.results().some(row => row.turnId === revokedTurn && row.kind === 'turn.final'));
     assert.equal(f.calls, 2);
 });
 
@@ -702,10 +762,10 @@ test('offline withdrawal is acknowledged even after owner loses project membersh
     const f = await fixture(t), node = await f.node('RemovedOwner', f.bob), p = await node.participate();
     await node.app.hubLink!.close();
     await api(node.app, '/api/hub-link/grants/revoke', { projectId: f.project.projectId, participationId: p.participationId });
-    f.a.editMember(f.ctx(f.alice), f.bob, 1, 'revoked');
+    await f.browser(f.project.host, '/api/members', { accountId: f.bob, revision: 1, role: 'revoked' }, await f.projectSession(f.alice));
     await node.restart();
     assert.equal(node.app.hubLink!.status().pendingWithdrawals, 0);
-    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state, 'revoked');
+    assert.equal(f.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state, 'revoked');
     assert.equal(f.calls, 0);
 });
 
@@ -718,7 +778,7 @@ test('project queue admission is atomic, idempotent and expires without executin
     for (let i = 1; i < 100; i++) await f.queuedPost({ ...input, requestId: randomUUID() });
     await assert.rejects(f.queuedPost({ ...input, requestId: randomUUID() }), e => e instanceof ProtocolError && e.status === 429 && e.code === 'project_queue_full');
     assert.deepEqual(await f.queuedPost(input), first);
-    assert.equal(f.a.one('SELECT count(*) AS n FROM turns WHERE project_id=?', f.project.projectId)!.n, 100);
+    assert.equal(f.one('SELECT count(*) AS n FROM turns WHERE project_id=?', f.project.projectId)!.n, 100);
     assert.equal((await f.queuedPost({ ...input, requestId: randomUUID() }, 600001)).turnIds.length, 1);
     await node.restart();
     f.receiveFrames();
@@ -728,7 +788,7 @@ test('project queue admission is atomic, idempotent and expires without executin
 test('connected app resume requires exactly one ready action before issuing any lease', async t => {
     let release: (value: string) => void = () => {};
     const f = await fixture(t, () => new Promise<string>(resolve => { release = resolve; })), node = await f.node('BatchBoundary', f.alice), p = await node.participate();
-    const post = f.post(f.alice, [p.participationId]);
+    const post = await f.post(f.alice, [p.participationId]);
     await until(() => f.calls === 1);
     await assert.rejects(node.app.hubLink!.beforeEffect(post.turnIds[0], 'tool', { kind: 'composio.resume' }), e => e instanceof ProtocolError && e.code === 'hub_effect_batch_unsupported');
     assert.equal(node.app.hubLink!.approvals().length, 0);
@@ -740,7 +800,7 @@ test('human post rate leaves capacity for withdrawal controls', async t => {
     for (let i = 0; i < 60; i++) await f.browser(f.project.host, '/api/messages', { requestId: randomUUID(), sectionId: f.project.sectionId, text: 'Bounded human post', mentions: [] }, session);
     await f.browser(f.project.host, '/api/messages', { requestId: randomUUID(), sectionId: f.project.sectionId, text: 'Over limit', mentions: [] }, session, undefined, 429);
     await api(node.app, '/api/hub-link/grants/revoke', { projectId: f.project.projectId, participationId: p.participationId });
-    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state, 'revoked');
+    assert.equal(f.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state, 'revoked');
     assert.equal(f.calls, 0);
 });
 
@@ -748,14 +808,15 @@ test('withdrawal drains its control frame before queued section delivery closes 
     const f = await fixture(t), node = await f.node('Queued withdrawal', f.alice), p = await node.participate();
     const original = WebSocket.prototype.send;
     let delayed = false;
+    let queued: Promise<unknown> | undefined;
     WebSocket.prototype.send = function(data: any, ...args: any[]) {
         const wire = typeof data === 'string' ? JSON.parse(data) : undefined;
         if (wire?.body?.kind === 'participation.withdraw') {
             delayed = true;
-            f.post(f.alice, []);
-            setTimeout(() => {
+            queued = f.post(f.alice, []);
+            void queued.then(() => setTimeout(() => {
                 if (this.readyState === WebSocket.OPEN) Reflect.apply(original, this, [data, ...args]);
-            }, 500);
+            }, 500));
             return;
         }
         return Reflect.apply(original, this, [data, ...args]);
@@ -763,39 +824,40 @@ test('withdrawal drains its control frame before queued section delivery closes 
     t.after(() => { WebSocket.prototype.send = original; });
     await api(node.app, '/api/hub-link/grants/revoke', { projectId: f.project.projectId, participationId: p.participationId });
     assert(delayed);
-    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state, 'revoked');
+    await queued;
+    assert.equal(f.one('SELECT state FROM participations WHERE id=?', p.participationId)!.state, 'revoked');
     assert.equal(f.calls, 0);
 });
 
 test('signed pending requests stay node-scoped; approval, stale revision, offline decline and reconnect preserve consent', async t => {
-    const f = await fixture(t), bob = await f.node('Pending Bob', f.bob), alice = await f.node('Other Alice', f.alice), web = createHubWebApi(f.a);
-    web.registerAgent(f.bob, { agentId: bob.agent.id, nodeId: bob.nodeId, name: 'Bob local' });
+    const f = await fixture(t), bob = await f.node('Pending Bob', f.bob), alice = await f.node('Other Alice', f.alice);
+    await f.registerAgent(f.bob, bob.agent.id, bob.nodeId, 'Bob local');
     const policy: ParticipationPolicy = { sectionIds: [f.project.sectionId], scopes: ['read','invoke'], invocation: { mode: 'all-members' }, payerBindingRef: 'local', localPolicyDigest: bob.app.hubLink!.localPolicyDigest(bob.agent.id), maxCostMicros: 10000 };
-    const propose = () => web.propose(f.ctx(f.bob), { agentId: bob.agent.id, policy, providerMaxCostMicros: 100 });
-    assert.throws(() => web.propose(f.ctx(f.bob), { agentId: bob.agent.id, policy, providerMaxCostMicros: 10001 }));
-    const first = propose();
+    const propose = () => f.propose(f.bob, bob.agent.id, policy);
+    await assert.rejects(f.propose(f.bob, bob.agent.id, policy, 10001));
+    const first = await propose();
     await until(() => bob.app.hubLink!.requests().length === 1, 'pending request delivered');
     const pending = bob.app.hubLink!.requests()[0];
     assert.equal(pending.projectName, 'Alpha'); assert.equal(pending.requesterAccountId, f.bob);
     assert.equal(pending.sections[0].id, f.project.sectionId); assert.equal(pending.grant.providerMaxCostMicros, 100);
     assert.equal(alice.app.hubLink!.requests().length, 0); assert.equal(f.calls, 0);
-    const changed = propose(); assert(changed.revision > first.revision);
+    const changed = await propose(); assert(changed.revision > first.revision);
     await until(() => bob.app.hubLink!.requests()[0]?.grant.revision === changed.revision, 'new revision delivered');
     await api(bob.app, '/api/hub-link/grants/approve', pending.grant, 409);
     const current = bob.app.hubLink!.requests()[0].grant;
     await api(bob.app, '/api/hub-link/grants/approve', current);
-    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', changed.participationId)!.state, 'proposed');
+    assert.equal(f.one('SELECT state FROM participations WHERE id=?', changed.participationId)!.state, 'proposed');
     assert.equal(bob.app.hubLink!.requests().length, 0); assert.equal(f.calls, 0);
-    f.a.consent(f.ctx(f.alice), changed.participationId, changed.revision, changed.policyDigest, 'project');
-    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', changed.participationId)!.state, 'active');
-    const declined = propose();
+    await f.consent(changed);
+    assert.equal(f.one('SELECT state FROM participations WHERE id=?', changed.participationId)!.state, 'active');
+    const declined = await propose();
     await until(() => bob.app.hubLink!.requests()[0]?.grant.revision === declined.revision);
     await bob.app.hubLink!.close();
     await api(bob.app, '/api/hub-link/grants/revoke', { projectId: f.project.projectId, participationId: declined.participationId });
     assert.equal(bob.app.hubLink!.status().pendingWithdrawals, 1); assert.equal(bob.app.hubLink!.requests().length, 0);
     await bob.restart();
     await until(() => bob.app.hubLink!.status().pendingWithdrawals === 0, 'offline decline reconciled');
-    assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', declined.participationId)!.state, 'revoked');
+    assert.equal(f.one('SELECT state FROM participations WHERE id=?', declined.participationId)!.state, 'revoked');
     assert.equal(bob.app.hubLink!.requests().length, 0); assert.equal(f.calls, 0);
     let chunked = false;
     f.frames.on('frame', (frame: string) => {
@@ -806,8 +868,10 @@ test('signed pending requests stay node-scoped; approval, stale revision, offlin
         }
     });
     for (let index = 0; index < 90; index++) {
-        const agentId = randomUUID(); web.registerAgent(f.bob, { agentId, nodeId: bob.nodeId, name: `Pending ${index}` });
-        web.propose(f.ctx(f.bob), { agentId, policy, providerMaxCostMicros: 100 });
+        if (index % 25 === 0) await f.advance(60_001);
+        const agentId = randomUUID();
+        await f.registerAgent(f.bob, agentId, bob.nodeId, `Pending ${index}`);
+        await f.propose(f.bob, agentId, policy);
     }
     await until(() => bob.app.hubLink!.requests().length === 90, 'bounded multi-frame snapshot');
     assert(chunked); assert.equal(bob.app.hubLink!.status().connected, true);
@@ -816,7 +880,7 @@ test('signed pending requests stay node-scoped; approval, stale revision, offlin
 test('local owner deletes linked agent, withdraws hub participation and removes local transport journals', async t => {
     const f = await fixture(t), node = await f.node('Delete linked', f.alice), p = await node.participate();
     await api(node.app, '/api/agents', { runtime: 'api', id: randomUUID(), name: 'Keep', model: 'fixture', instructions: 'Help' }, 201);
-    const post = f.post(f.alice, [p.participationId]); await f.done(post.turnIds[0]);
+    const post = await f.post(f.alice, [p.participationId]); await f.done(post.turnIds[0]);
     await api(node.app, `/api/agents/${node.agent.id}/delete`, { id: randomUUID() });
     assert(!(await api(node.app, '/api/agents')).agents.some((agent: any) => agent.id === node.agent.id));
     assert.deepEqual(await api(node.app, '/api/hub-link/history'), []);
