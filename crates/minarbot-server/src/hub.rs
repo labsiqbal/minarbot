@@ -5,6 +5,8 @@ mod node;
 mod routing;
 mod session;
 mod storage;
+#[cfg(test)]
+mod tests;
 
 use crate::{
     db::{canonical, digest},
