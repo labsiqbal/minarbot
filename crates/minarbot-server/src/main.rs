@@ -283,9 +283,11 @@ async fn static_ui(
     let leptos_page = pilot
         .then(|| appearance::route_title(state, path, query))
         .flatten();
-    let conversation_page = state.config.appearance_client == config::AppearanceClient::Leptos
+    let conversation_page = spa
+        && state.config.appearance_client == config::AppearanceClient::Leptos
         && !appearance::react_override(query)
         && appearance::conversation_route(path, query)
+        && (path != "/" || appearance::route_title(state, path, query).is_none())
         && tokio::fs::try_exists(state.config.dist.join(appearance::CONVERSATION_DOCUMENT))
             .await
             .unwrap_or(false);

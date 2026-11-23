@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
-export async function roomControlsSmoke({ check, page, origin, screenshot, visible, hidden, agentChat, release }) {
+export async function roomControlsSmoke({ check, page, origin, screenshot, visible, hidden, agentChat, release, leptos = false }) {
   const post = async (path, data) => {
     const response = await page.request.post(origin + path, { headers: { Origin: origin }, data });
     assert(response.ok(), await response.text()); return response.json();
@@ -14,7 +14,7 @@ export async function roomControlsSmoke({ check, page, origin, screenshot, visib
     const path = `/api/channels/${project.sections[0].id}/turns`, root = randomUUID();
     await post(path, { id: root, text: '@HRC Alpha @HRC Coder HRC APPROVE' });
     await page.reload(); await page.getByRole('tab', { name: /^Projects/ }).press('Enter');
-    await page.getByRole('button', { name: /^# general in HRC Controls/ }).press('Enter');
+    await page.getByRole(leptos ? 'link' : 'button', { name: /^# general in HRC Controls/ }).press('Enter');
     await visible(page.getByRole('main', { name: 'Conversation HRC Controls / general', exact: true }));
     const approval = page.getByRole('region', { name: 'Coding harness approval', exact: true });
     await visible(page.getByText('Room control preview.', { exact: true }));

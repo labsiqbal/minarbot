@@ -46,6 +46,7 @@ pub fn thread(db: &Connection, id: &str) -> Result<Value> {
 }
 pub fn thread_info(db: &Connection, id: &str) -> Result<Value> {
     let mut row = thread(db, id)?;
+    row["fork"] = fork_header(db, id)?;
     if let Some(context) = one(
         db,
         "SELECT project,folder FROM local_project_threads WHERE thread=?",

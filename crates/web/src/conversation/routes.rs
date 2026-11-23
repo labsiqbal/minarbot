@@ -24,6 +24,16 @@ pub struct Agent {
     pub builtin: bool,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ForkOrigin {
+    pub source_name: String,
+    pub source_id: String,
+    pub source_kind: String,
+    pub source_agent: String,
+    pub cutoff_turn: String,
+    pub created: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Thread {
     pub id: String,
@@ -39,24 +49,41 @@ pub struct Thread {
     pub active: bool,
     #[serde(default)]
     pub deleted: u8,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub fork: Option<ForkOrigin>,
 }
 
 #[derive(Deserialize)]
-struct Directory {
-    agents: Vec<Agent>,
+pub(super) struct Directory {
+    pub(super) agents: Vec<Agent>,
     guide: Option<Agent>,
 }
 
-#[derive(Deserialize)]
-struct Channel {
-    id: String,
-    name: String,
-    section_name: Option<String>,
-    members: Vec<String>,
-    archived: u8,
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct Channel {
+    pub id: String,
+    pub name: String,
+    pub section_name: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+    pub members: Vec<String>,
+    #[serde(default)]
+    pub lead: Option<String>,
+    #[serde(default)]
+    pub instructions: String,
+    pub archived: u8,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub activity: u64,
+    #[serde(default)]
+    pub read_position: u64,
 }
 
 enum Route {
+    Default,
     Agent(String, Option<String>),
     Channel(String),
 }
@@ -64,6 +91,7 @@ enum Route {
 fn route(path: &str) -> Option<Route> {
     let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
     match parts.as_slice() {
+        [""] => Some(Route::Default),
         ["agents", agent] if protocol::id(agent) => {
             Some(Route::Agent(agent.to_ascii_lowercase(), None))
         }
@@ -83,7 +111,7 @@ fn route(path: &str) -> Option<Route> {
 }
 
 pub fn link(path: &str) -> String {
-    format!("{path}?ui=leptos")
+    path.to_owned()
 }
 
 fn load_error(message: &str) -> ApiError {
@@ -93,29 +121,78 @@ fn load_error(message: &str) -> ApiError {
     }
 }
 
-async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
-    let directory: Directory = get("/api/agents").await?;
-    let agents: Vec<_> = directory
-        .agents
-        .into_iter()
-        .chain(directory.guide)
-        .collect();
-    match route {
+type ThreadCache = RwSignal<Option<(f64, Thread)>>;
+
+async fn load(
+    route: Route,
+    directory_cache: RwSignal<Option<(f64, Vec<Agent>)>>,
+    thread_cache: ThreadCache,
+) -> Result<ConversationConfig, ApiError> {
+    let fresh = directory_cache.get_untracked().filter(|(loaded, agents)| {
+        js_sys::Date::now() - loaded <= 10_000.0
+            && match &route {
+                Route::Agent(id, _) => agents.iter().any(|agent| agent.id == *id),
+                Route::Default | Route::Channel(_) => true,
+            }
+    });
+    let agents = if let Some((_, agents)) = fresh {
+        agents
+    } else {
+        let directory: Directory = get("/api/agents").await?;
+        let agents = directory
+            .agents
+            .into_iter()
+            .chain(directory.guide)
+            .collect::<Vec<_>>();
+        directory_cache.try_set(Some((js_sys::Date::now(), agents.clone())));
+        agents
+    };
+    Ok(match route {
+        Route::Default => {
+            let agent = agents
+                .iter()
+                .find(|agent| !agent.hidden && !agent.builtin && agent.runnable)
+                .cloned()
+                .ok_or_else(|| load_error("Set up an agent before opening chat."))?;
+            let id = agent.id.clone();
+            ConversationConfig {
+                base: format!("/api/agents/{id}"),
+                scope: id,
+                name: agent.name.clone(),
+                archived: false,
+                can_send: agent.runnable,
+                agent: Some(agent),
+                thread: None,
+                members: Vec::new(),
+                channel: false,
+                room: None,
+            }
+        }
         Route::Agent(id, thread_id) => {
             let agent = agents
-                .into_iter()
+                .iter()
                 .find(|agent| agent.id == id)
+                .cloned()
                 .ok_or_else(|| load_error("Agent not found."))?;
             let thread = if let Some(id) = thread_id {
-                let thread: Thread = get(&format!("/api/threads/{id}")).await?;
-                if thread.agent != agent.id {
+                let cached = thread_cache.get_untracked().filter(|(loaded, thread)| {
+                    thread.id == id && js_sys::Date::now() - loaded <= 10_000.0
+                });
+                let thread = if let Some((_, thread)) = cached {
+                    thread
+                } else {
+                    let thread: Thread = get(&format!("/api/threads/{id}")).await?;
+                    thread_cache.try_set(Some((js_sys::Date::now(), thread.clone())));
+                    thread
+                };
+                if thread.id != id || thread.agent != agent.id || thread.deleted != 0 {
                     return Err(load_error("Conversation not found."));
                 }
                 Some(thread)
             } else {
                 None
             };
-            Ok(ConversationConfig {
+            ConversationConfig {
                 scope: thread
                     .as_ref()
                     .map_or_else(|| id.clone(), |thread| format!("thread:{}", thread.id)),
@@ -133,7 +210,8 @@ async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
                 thread,
                 members: Vec::new(),
                 channel: false,
-            })
+                room: None,
+            }
         }
         Route::Channel(id) => {
             let channels: Vec<Channel> = get("/api/channels").await?;
@@ -141,56 +219,232 @@ async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
                 .into_iter()
                 .find(|row| row.id == id)
                 .ok_or_else(|| load_error("Section not found."))?;
+            let project: Option<Value> =
+                if let Some(project) = channel.project.as_deref().filter(|id| protocol::id(id)) {
+                    get(&format!("/api/projects/{project}")).await.ok()
+                } else {
+                    None
+                };
+            let section_name = project
+                .as_ref()
+                .and_then(|project| project["sections"].as_array())
+                .and_then(|sections| sections.iter().find(|section| section["id"] == channel.id))
+                .and_then(|section| section["name"].as_str());
+            let name = project
+                .as_ref()
+                .and_then(|project| project["name"].as_str())
+                .zip(section_name)
+                .map_or_else(
+                    || channel.name.clone(),
+                    |(project, section)| format!("{project} / {section}"),
+                );
+            let channel = Channel {
+                section_name: section_name.map(str::to_owned).or(channel.section_name),
+                ..channel
+            };
             let members: Vec<_> = agents
-                .into_iter()
-                .filter(|agent| channel.members.contains(&agent.id))
+                .iter()
+                .filter(|agent| !agent.hidden && channel.members.contains(&agent.id))
+                .cloned()
                 .collect();
-            Ok(ConversationConfig {
+            ConversationConfig {
                 base: format!("/api/channels/{id}"),
                 scope: format!("channel:{id}"),
                 channel: true,
-                name: channel.section_name.unwrap_or(channel.name),
+                name,
                 archived: channel.archived != 0,
                 can_send: !members.is_empty() && members.iter().all(|agent| agent.runnable),
                 agent: None,
                 thread: None,
                 members,
+                room: Some(channel),
+            }
+        }
+    })
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Navigation(pub RwSignal<String>);
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProjectConversation(pub RwSignal<bool>);
+
+fn location() -> String {
+    let url = window().location();
+    format!(
+        "{}{}",
+        url.pathname().unwrap_or_default(),
+        url.search().unwrap_or_default()
+    )
+}
+
+fn conversation_scope(url: &str) -> (&str, Option<String>) {
+    let (path, query) = url.split_once('?').unwrap_or((url, ""));
+    let focus = web_sys::UrlSearchParams::new_with_str(query)
+        .ok()
+        .and_then(|params| params.get("focus"));
+    (path, focus)
+}
+
+fn internal(path: &str) -> bool {
+    let (path, query) = path.split_once('?').unwrap_or((path, ""));
+    let Some(route) = route(path) else {
+        return false;
+    };
+    !matches!(route, Route::Default)
+        && web_sys::UrlSearchParams::new_with_str(query).is_ok_and(|params| {
+            !params.has("computer")
+                && !params
+                    .get_all("ui")
+                    .iter()
+                    .any(|value| value.as_string().as_deref() == Some("react"))
+        })
+}
+
+pub(super) fn open(nav: Option<Navigation>, path: &str) {
+    if let Some(nav) = nav.filter(|_| internal(path)) {
+        if window()
+            .history()
+            .and_then(|history| {
+                history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path))
             })
+            .is_ok()
+        {
+            nav.0.set(location());
+            return;
         }
     }
+    let _ = window().location().assign(path);
 }
 
 pub fn standalone() -> impl IntoView {
     let config = RwSignal::new(None);
+    let directory_cache = RwSignal::new(None);
+    let thread_cache = RwSignal::new(None::<(f64, Thread)>);
+    provide_context(thread_cache);
+    let generation = RwSignal::new(0_u64);
     let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
     let deleting = move || lifecycle.is_some_and(|lifecycle| lifecycle.deleting_current());
     let error = RwSignal::new(String::new());
-    leptos::task::spawn_local(async move {
-        if results::current().is_err() {
-            error.set("Page not found.".into());
+    let nav = use_context::<Navigation>().unwrap_or_else(|| Navigation(RwSignal::new(location())));
+    let project_conversation = use_context::<ProjectConversation>();
+    let pop = window_event_listener(leptos::ev::popstate, move |_| {
+        let location = location();
+        if results::current().is_err()
+            || !error.with_untracked(String::is_empty)
+            || nav.0.with_untracked(|current| {
+                conversation_scope(current) != conversation_scope(&location)
+            })
+        {
+            nav.0.set(location);
+        }
+    });
+    let click = window_event_listener(leptos::ev::click, move |event| {
+        if event.default_prevented()
+            || event.button() != 0
+            || event.ctrl_key()
+            || event.meta_key()
+            || event.shift_key()
+            || event.alt_key()
+        {
             return;
         }
-        let result = match window()
-            .location()
-            .pathname()
-            .ok()
-            .and_then(|path| route(&path))
-        {
-            Some(route) => load(route).await,
-            None => Err(load_error("Conversation not found.")),
+        let Some(anchor) = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .and_then(|element| element.closest("a[href]").ok().flatten())
+            .and_then(|element| element.dyn_into::<web_sys::HtmlAnchorElement>().ok())
+        else {
+            return;
         };
-        match result {
-            Ok(value) => {
-                document().set_title(&format!("{} · Minarbot", value.name));
-                config.set(Some(value));
-            }
-            Err(reason) => error.set(reason.message),
+        if anchor.has_attribute("download")
+            || !anchor.target().is_empty()
+            || !anchor.hash().is_empty()
+            || window().location().origin().ok().as_deref() != Some(anchor.origin().as_str())
+            || anchor.has_attribute("data-minarbot-result")
+                && window().location().pathname().ok().as_deref()
+                    == Some(anchor.pathname().as_str())
+        {
+            return;
         }
+        let path = format!("{}{}", anchor.pathname(), anchor.search());
+        if internal(&path) {
+            event.prevent_default();
+            if path != location() {
+                open(Some(nav), &path);
+            }
+        }
+    });
+    on_cleanup(move || {
+        click.remove();
+        pop.remove();
+    });
+    let revision = RwSignal::new(0_u64);
+    Effect::new(move |_| {
+        let path = nav.0.get();
+        revision.track();
+        generation.update(|value| *value += 1);
+        let version = generation.get_untracked();
+        config.set(None);
+        error.set(String::new());
+        leptos::task::spawn_local(async move {
+            let result = match (
+                results::current(),
+                route(path.split('?').next().unwrap_or_default()),
+            ) {
+                (Ok(_), Some(route)) => load(route, directory_cache, thread_cache).await,
+                _ => Err(load_error("Conversation not found.")),
+            };
+            if generation.try_get_untracked() != Some(version) {
+                return;
+            }
+            match result {
+                Ok(value) => {
+                    if path.split('?').next() == Some("/") {
+                        if let Some(agent) = &value.agent {
+                            let search = window().location().search().unwrap_or_default();
+                            let url = format!("/agents/{}{search}", agent.id);
+                            if window()
+                                .history()
+                                .and_then(|history| {
+                                    history.replace_state_with_url(
+                                        &wasm_bindgen::JsValue::NULL,
+                                        "",
+                                        Some(&url),
+                                    )
+                                })
+                                .is_ok()
+                            {
+                                nav.0.set(url);
+                                return;
+                            }
+                        }
+                    }
+                    document().set_title(&format!("{} · Minarbot", value.name));
+                    if let Some(ProjectConversation(active)) = project_conversation {
+                        active.set(
+                            value
+                                .thread
+                                .as_ref()
+                                .is_some_and(|thread| thread.project.is_some()),
+                        );
+                    }
+                    config.set(Some(value));
+                }
+                Err(reason) => error.set(reason.message),
+            }
+        });
     });
     view! {
         {move || if deleting() { view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any() } else { config.get().map(shell).into_any() }}
         <p class="conversation-startup" role="status" hidden=move || config.with(Option::is_some) || !error.with(String::is_empty)>"Loading conversation…"</p>
-        <p class="conversation-startup message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
+        <div class="conversation-startup" hidden=move || error.with(String::is_empty)>
+            <p class="message-error" role="alert">{error}</p>
+            <button type="button" class="k-btn k-btn--sm" on:click=move |_| {
+                directory_cache.set(None); thread_cache.set(None); revision.update(|n| *n += 1);
+            }>"Retry"</button>
+            <a class="k-link" href="/">"Back to chats"</a>
+        </div>
     }
 }
 
@@ -234,10 +488,12 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
     let key = StoredValue::new(format!("minarbot:thread-command:{}", owner.get_value()));
     let pending = RwSignal::new(saved(&key.get_value()));
     let selected = StoredValue::new(current.clone());
+    let nav = use_context::<Navigation>();
+    let thread_cache = use_context::<ThreadCache>();
     let dialog = NodeRef::<leptos::html::Dialog>::new();
     let editing = RwSignal::new(None::<(Thread, &'static str)>);
     let new_name = RwSignal::new(String::new());
-    let open = move |thread: Thread, action| {
+    let open_action = move |thread: Thread, action| {
         if thread.active && action == "delete" {
             error.set("Stop unfinished turns before deleting this conversation.".into());
             return;
@@ -297,6 +553,9 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
             busy.set(false);
             match result {
                 Ok(thread) => {
+                    if let Some(cache) = thread_cache {
+                        cache.set(None);
+                    }
                     if remove(&key) {
                         pending.set(None);
                     }
@@ -309,7 +568,11 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
                         } else {
                             format!("/agents/{agent}/conversations/{}", thread.id)
                         };
-                        let _ = window().location().assign(&link(&route));
+                        if create {
+                            open(nav, &route);
+                        } else {
+                            let _ = window().location().assign(&route);
+                        }
                     } else {
                         load();
                     }
@@ -417,11 +680,11 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
                         <details class="chat-pilot-menu chat-list-menu"><summary class="k-icon-btn" aria-label=label title="More actions">
                             <span class="appearance-icon" inner_html=more.get_value()></span></summary>
                             <div class="k-pop k-menu">
-                                <button class="k-btn k-btn--sm k-btn--ghost" type="button" disabled=move || busy.get() || pending.with(Option::is_some) on:click=move |_| open(rename.clone(), "rename")>"Rename"</button>
+                                <button class="k-btn k-btn--sm k-btn--ghost" type="button" disabled=move || busy.get() || pending.with(Option::is_some) on:click=move |_| open_action(rename.clone(), "rename")>"Rename"</button>
                                 <button class="k-btn k-btn--sm k-btn--ghost" type="button" disabled=move || busy.get() || pending.with(Option::is_some)
-                                    on:click=move |_| open(archive.clone(), if archived { "restore" } else { "archive" })>{if archived { "Restore" } else { "Archive" }}</button>
+                                    on:click=move |_| open_action(archive.clone(), if archived { "restore" } else { "archive" })>{if archived { "Restore" } else { "Archive" }}</button>
                                 <button class="k-btn k-btn--sm k-btn--ghost" type="button" disabled=move || busy.get() || pending.with(Option::is_some)
-                                    on:click=move |_| open(delete.clone(), "delete")>"Delete"</button>
+                                    on:click=move |_| open_action(delete.clone(), "delete")>"Delete"</button>
                             </div>
                         </details>
                     </div>

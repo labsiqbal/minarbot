@@ -69,6 +69,24 @@ pub fn query<T: DeserializeOwned + PartialEq + Send + Sync + 'static>(
     }
 }
 
+// Keep only the initial page for warm project tab navigation. Always revalidate it.
+pub(crate) fn cached_query<T: Clone + DeserializeOwned + PartialEq + Send + Sync + 'static>(
+    path: impl Fn() -> String + Copy + Send + Sync + 'static,
+    cache: Option<StoredValue<Option<T>>>,
+) -> Query<T> {
+    let state = query(path);
+    if let Some(cache) = cache {
+        let initial_path = path();
+        state.data.set(cache.get_value());
+        Effect::new(move |_| {
+            if !state.busy.get() && state.error.with(String::is_empty) && path() == initial_path {
+                cache.set_value(state.data.get_untracked());
+            }
+        });
+    }
+    state
+}
+
 impl<T: Send + Sync + 'static> Query<T> {
     pub fn invalidate(self) {
         self.generation.update(|generation| *generation += 1);
@@ -658,6 +676,46 @@ pub fn agent_options(hide_hidden: bool) -> Vec<(String, String)> {
         .filter(|agent| !hide_hidden || !agent.hidden)
         .map(|agent| (agent.id, agent.name))
         .collect()
+}
+
+pub fn scoped_agents(
+    hide_hidden: bool,
+    members: Option<StoredValue<Vec<String>>>,
+) -> Signal<Vec<(String, String)>> {
+    let directory = use_context::<ReadSignal<Option<Result<crate::shell::Directory, String>>>>();
+    Signal::derive(move || {
+        directory
+            .and_then(|directory| directory.get())
+            .and_then(Result::ok)
+            .map_or_else(Vec::new, |directory| {
+                directory
+                    .agents
+                    .into_iter()
+                    .filter(|agent| {
+                        (!hide_hidden || !agent.hidden)
+                            && members.is_none_or(|members| {
+                                members.with_value(|ids| ids.contains(&agent.id))
+                            })
+                    })
+                    .map(|agent| (agent.id, agent.name))
+                    .collect()
+            })
+    })
+}
+
+pub fn selected_agent(options: Signal<Vec<(String, String)>>) -> RwSignal<String> {
+    let agent = RwSignal::new(String::new());
+    Effect::new(move |_| {
+        let rows = options.get();
+        if agent.with_untracked(|id| !rows.iter().any(|(candidate, _)| candidate == id)) {
+            agent.set(
+                rows.into_iter()
+                    .next()
+                    .map_or_else(String::new, |(id, _)| id),
+            );
+        }
+    });
+    agent
 }
 
 pub fn agent_selection(hide_hidden: bool) -> RwSignal<String> {

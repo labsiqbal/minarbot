@@ -21,9 +21,13 @@ mod memory;
 mod messaging_connections;
 mod onboarding;
 mod pairing;
+mod project_integrations;
 mod projects;
 mod providers;
 mod routes;
+#[cfg(any(feature = "conversation", feature = "workflows"))]
+#[path = "automation/select.rs"]
+mod select;
 mod settings;
 mod settings_recovery;
 mod shell;
@@ -221,6 +225,9 @@ pub fn mount_conversation() -> Result<(), JsValue> {
         provide_context(config.conversation_icons);
         provide_context(config.connection_icons);
         provide_context(config.system_icons);
+        let search = window().location().search().unwrap_or_default();
+        provide_context(conversation::Navigation(RwSignal::new(format!("{path}{search}"))));
+        provide_context(conversation::ProjectConversation(RwSignal::new(false)));
         view! {
             <shell::WorkspaceShell base_path=path colors=colors icons=config.workspace_icons conversation_navigation=true>
                 {conversation::standalone()}

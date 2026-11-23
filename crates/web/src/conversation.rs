@@ -2,11 +2,15 @@ mod changes;
 mod controls;
 mod files;
 mod guide;
+mod history;
 mod input;
+mod message_actions;
+mod minimap;
 mod panels;
 mod protocol;
 mod queue;
 mod results;
+mod rooms;
 mod routes;
 
 use std::{collections::HashMap, time::Duration};
@@ -23,6 +27,7 @@ use web_sys::{EventSource, MessageEvent, Storage};
 
 pub(crate) use panels::computer_window;
 pub use routes::{standalone, Agent, Thread};
+pub(crate) use routes::{Navigation, ProjectConversation};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct Icons {
@@ -33,6 +38,10 @@ pub(crate) struct Icons {
     pub chevron: String,
     pub panel: String,
     pub search: String,
+    pub up: String,
+    pub listen: String,
+    pub restore: String,
+    pub edit: String,
     pub copy: String,
     pub fork: String,
     pub inspect: String,
@@ -71,14 +80,16 @@ pub struct ConversationConfig {
     pub channel: bool,
     pub archived: bool,
     pub can_send: bool,
+    pub room: Option<routes::Channel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, serde::Serialize)]
 struct Segment {
     seq: u64,
     id: String,
     kind: String,
     text: String,
+    state: Option<String>,
     #[serde(rename = "final")]
     finished: u8,
 }
@@ -98,6 +109,7 @@ struct Activity {
     stream: Vec<Segment>,
     tools: Vec<Value>,
     harness: Vec<Value>,
+    dispatch: Vec<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -137,9 +149,11 @@ struct Reply {
     height: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 struct Turn {
     id: String,
+    #[serde(default)]
+    agent: String,
     #[serde(default)]
     created: String,
     seq: u64,
@@ -150,14 +164,14 @@ struct Turn {
     #[serde(default)]
     paused: u8,
     agent_name: Option<String>,
-    agent: Option<String>,
-    #[serde(rename = "computerWait")]
-    computer_wait: Option<panels::ComputerWait>,
     parent: Option<String>,
     reply: Option<String>,
     error: Option<String>,
     partial: Option<Partial>,
     dispatch_label: Option<String>,
+    dispatch_mode: Option<String>,
+    dispatch_target: Option<String>,
+    recipient: Option<String>,
     #[serde(default)]
     editing: bool,
     #[serde(default)]
@@ -189,6 +203,21 @@ struct Turn {
     room: Option<Value>,
     #[serde(default, rename = "goalContinuation")]
     goal_continuation: bool,
+    history_page: Option<u8>,
+    checkpoint: Option<Value>,
+    #[serde(default)]
+    events: Vec<Value>,
+    #[serde(rename = "computerWait")]
+    computer_wait: Option<panels::ComputerWait>,
+    #[serde(rename = "messageOrigin")]
+    origin: Option<Value>,
+    #[serde(rename = "routineReport")]
+    routine_report: Option<Value>,
+    waiting_for: Option<String>,
+    workflow_run: Option<String>,
+    routing: Option<String>,
+    #[serde(default)]
+    coordination: Vec<Value>,
 }
 
 impl Turn {
@@ -257,6 +286,8 @@ struct Dispatch {
 #[derive(Clone, Deserialize, PartialEq)]
 struct Capabilities {
     steer: bool,
+    #[serde(default)]
+    restart: bool,
 }
 
 struct ApiError {
@@ -297,7 +328,14 @@ async fn read<T: DeserializeOwned>(
 }
 
 async fn get<T: DeserializeOwned>(path: &str) -> Result<T, ApiError> {
-    read(Request::get(path).send().await).await
+    get_with_signal(path, None).await
+}
+
+async fn get_with_signal<T: DeserializeOwned>(
+    path: &str,
+    signal: Option<&web_sys::AbortSignal>,
+) -> Result<T, ApiError> {
+    read(Request::get(path).abort_signal(signal).send().await).await
 }
 
 async fn post<T: DeserializeOwned>(path: &str, raw: &str) -> Result<T, ApiError> {
@@ -349,12 +387,18 @@ struct Chat {
     error: RwSignal<String>,
     read_error: RwSignal<String>,
     turns: RwSignal<Option<Vec<Turn>>>,
+    latest: RwSignal<Vec<Turn>>,
+    optimistic: RwSignal<Vec<Turn>>,
     active: RwSignal<Vec<Dispatch>>,
     addressed: RwSignal<String>,
     focus: RwSignal<String>,
+    refresh: RwSignal<u64>,
     focus_card: StoredValue<String>,
     query: RwSignal<String>,
-    before: RwSignal<Option<u64>>,
+    finding: RwSignal<bool>,
+    history: RwSignal<Vec<u64>>,
+    searched: RwSignal<bool>,
+    move_focus: RwSignal<bool>,
     tab: RwSignal<&'static str>,
     details: RwSignal<bool>,
     result: RwSignal<Option<results::ResultTarget>>,
@@ -378,9 +422,15 @@ impl Chat {
         });
         let blocked = pending.is_none() && saved(&key("pending")).is_some();
         let focus_key = key("focus");
-        let focus = saved(&focus_key)
-            .filter(|id| protocol::id(id))
-            .unwrap_or_default();
+        let focus = web_sys::UrlSearchParams::new_with_str(
+            &window().location().search().unwrap_or_default(),
+        )
+        .ok()
+        .and_then(|params| params.get("focus"))
+        .filter(|id| protocol::id(id))
+        .or_else(|| saved(&focus_key))
+        .filter(|id| protocol::id(id))
+        .unwrap_or_default();
         let _ = remove(&focus_key);
         let card_key = key("focus-card");
         let focus_card = saved(&card_key).unwrap_or_default();
@@ -417,12 +467,18 @@ impl Chat {
             error: RwSignal::new(String::new()),
             read_error: RwSignal::new(String::new()),
             turns: RwSignal::new(None),
+            latest: RwSignal::new(Vec::new()),
+            optimistic: RwSignal::new(Vec::new()),
             active: RwSignal::new(Vec::new()),
             addressed: RwSignal::new(String::new()),
-            focus: RwSignal::new(focus),
+            focus: RwSignal::new(focus.clone()),
             focus_card: StoredValue::new(focus_card),
+            refresh: RwSignal::new(0),
             query: RwSignal::new(String::new()),
-            before: RwSignal::new(None),
+            finding: RwSignal::new(false),
+            history: RwSignal::new(Vec::new()),
+            searched: RwSignal::new(false),
+            move_focus: RwSignal::new(!focus.is_empty()),
             tab: RwSignal::new(tab),
             details: RwSignal::new(result.is_some() || restore_details()),
             result: RwSignal::new(result),
@@ -478,6 +534,23 @@ impl Chat {
             }
             config.can_send
         })
+    }
+
+    fn queued(self, turn: &Turn) -> bool {
+        !self.config.with_value(|config| config.channel)
+            && self
+                .active
+                .with(|active| active.iter().any(|active| active.id != turn.id))
+            && turn.status == "queued"
+            && turn.paused == 0
+            && !turn.needs_you()
+            && turn.parent.is_none()
+            && turn.waiting_for.is_none()
+            && turn.routine_report.is_none()
+            && turn.workflow_run.is_none()
+            && turn.activity.calls.is_empty()
+            && turn.exchanges.is_empty()
+            && !turn.events.iter().any(|event| event["status"] == "waiting")
     }
 
     fn draft(self, text: String) {
@@ -580,9 +653,31 @@ impl Chat {
         self.busy.set(true);
         self.error.set(String::new());
         self.pending.set(Some(pending.clone()));
+        let queued = self.target().is_some();
+        let local = Turn {
+            id: pending.command.id.clone(),
+            text: pending.command.text.clone(),
+            status: if queued { "queued" } else { "running" }.into(),
+            created: js_sys::Date::new_0()
+                .to_iso_string()
+                .as_string()
+                .unwrap_or_default(),
+            agent: config
+                .agent
+                .as_ref()
+                .map_or_else(String::new, |agent| agent.id.clone()),
+            dispatch_mode: pending.command.dispatch_mode.clone(),
+            ..Turn::default()
+        };
+        self.optimistic.update(|rows| {
+            if !rows.iter().any(|row| row.id == local.id) {
+                rows.push(local);
+            }
+        });
         self.query.set(String::new());
         self.focus.set(String::new());
-        self.before.set(None);
+        self.history.set(Vec::new());
+        self.finding.set(false);
         let path = format!("{}/turns", config.base);
         leptos::task::spawn_local(async move {
             let result = post::<Value>(&path, &pending.raw).await;
@@ -590,10 +685,15 @@ impl Chat {
                 return;
             }
             match result {
-                Ok(_) => self.finish(),
+                Ok(_) => {
+                    self.finish();
+                    self.refresh();
+                }
                 Err(error) => {
                     if error.definitive && remove(&key) {
                         self.pending.set(None);
+                        self.optimistic
+                            .update(|rows| rows.retain(|row| row.id != pending.command.id));
                     }
                     self.error.set(error.message);
                 }
@@ -626,6 +726,28 @@ impl Chat {
                 let _ = storage.set_item(&self.key("right-panel"), &format!("\"{tab}\""));
             }
         }
+    }
+
+    fn focus_turn(self, id: &str) {
+        if protocol::id(id) {
+            self.finding.set(false);
+            self.searched.set(false);
+            self.query.set(String::new());
+            self.history.set(Vec::new());
+            self.move_focus.set(true);
+            if self.focus.get_untracked() != id {
+                self.turns.set(None);
+                self.focus.set(id.into());
+            }
+        }
+    }
+
+    fn refresh(self) {
+        self.refresh.update(|value| *value += 1);
+    }
+
+    fn before(self) -> Option<u64> {
+        self.history.with(|pages| pages.last().copied())
     }
 
     fn send_from_app(self, text: &str) {
@@ -723,73 +845,102 @@ fn restore_details() -> bool {
         && preference("minarbot:details-open").map_or(viewport >= 1280.0, |open| open == "1")
 }
 
-fn turn_query(chat: Chat) -> String {
-    let base = chat.base();
-    let focus = chat.focus.get_untracked();
-    let query = chat.query.get_untracked();
-    let before = chat.before.get_untracked();
-    if protocol::id(&focus) {
-        return format!("{base}/turns?focus={focus}");
-    }
-    let Ok(params) = web_sys::UrlSearchParams::new() else {
-        return format!("{base}/turns");
-    };
-    if let Some(before) = before {
-        params.set("before", &before.to_string());
-    }
-    if !query.is_empty() {
-        params.set("q", &query);
-    }
-    let query = params.to_string().as_string().unwrap_or_default();
-    format!("{base}/turns?{query}")
-}
-
 fn polling(
     chat: Chat,
     snapshots: StoredValue<HashMap<String, Partial>>,
+    generation: RwSignal<u64>,
+    epoch: u64,
     abort: StoredValue<Option<web_sys::AbortController>, LocalStorage>,
     dispatch_busy: RwSignal<bool>,
 ) {
-    if chat.turns.is_disposed() {
+    let current = move || generation.try_get_untracked() == Some(epoch);
+    if !current() {
         return;
     }
-    let path = turn_query(chat);
+    let base = chat.base();
+    let focus = chat.focus.get_untracked();
+    let before = chat.history.with_untracked(|pages| pages.last().copied());
+    let finding = chat.finding.get_untracked();
+    let path = if protocol::id(&focus) {
+        format!("{base}/turns?focus={focus}")
+    } else if let Some(before) = before {
+        format!("{base}/turns?before={before}")
+    } else {
+        format!("{base}/turns")
+    };
     let signal =
         abort.with_value(|controller| controller.as_ref().map(web_sys::AbortController::signal));
     if !dispatch_busy.get_untracked() {
         dispatch_busy.set(true);
         let dispatch_signal = signal.clone();
-        let dispatch_path = format!("{}/dispatch", chat.base());
+        let dispatch_path = format!("{base}/dispatch");
         leptos::task::spawn_local(async move {
-            let response = Request::get(&dispatch_path)
-                .abort_signal(dispatch_signal.as_ref())
-                .send()
-                .await;
-            let result = read::<Vec<Dispatch>>(response).await;
-            if dispatch_busy.try_set(false).is_none() {
+            let result =
+                get_with_signal::<Vec<Dispatch>>(&dispatch_path, dispatch_signal.as_ref()).await;
+            if current() {
+                dispatch_busy.set(false);
                 if let Ok(active) = result {
-                    chat.active.maybe_update(|previous| {
-                        if *previous == active {
-                            return false;
-                        }
-                        *previous = active;
-                        true
-                    });
+                    if chat.active.with_untracked(|old| *old != active) {
+                        chat.active.set(active);
+                    }
                 }
             }
         });
     }
     leptos::task::spawn_local(async move {
-        let response = Request::get(&path)
-            .abort_signal(signal.as_ref())
-            .send()
-            .await;
-        let result = read::<Vec<Turn>>(response).await;
-        if chat.turns.is_disposed() {
+        let result = get_with_signal::<Vec<Turn>>(&path, signal.as_ref()).await;
+        if !current() {
             return;
         }
         let mut delay = Duration::from_millis(1200);
-        if path == turn_query(chat) {
+        let result = if let Ok(page) = &result {
+            let history_mode = !focus.is_empty() || before.is_some();
+            if history_mode {
+                if let Ok(latest) =
+                    get_with_signal::<Vec<Turn>>(&format!("{base}/turns"), signal.as_ref()).await
+                {
+                    if !current() {
+                        return;
+                    }
+                    if chat.latest.with_untracked(|old| *old != latest) {
+                        chat.latest.set(latest);
+                    }
+                }
+                result
+            } else {
+                if chat.latest.with_untracked(|old| old != page) {
+                    chat.latest.set(page.clone());
+                }
+                if chat.optimistic.with_untracked(|pending| {
+                    pending
+                        .iter()
+                        .any(|turn| page.iter().any(|row| row.id == turn.id))
+                }) {
+                    chat.optimistic.update(|pending| {
+                        pending.retain(|turn| !page.iter().any(|row| row.id == turn.id))
+                    });
+                }
+                if chat.searched.get_untracked() {
+                    let previous = chat
+                        .turns
+                        .with_untracked(|rows| rows.clone().unwrap_or_default());
+                    Ok(history::merge(previous, page.clone()))
+                } else if finding {
+                    history::all_turns(&base, page.clone(), current, signal.as_ref()).await
+                } else {
+                    result
+                }
+            }
+        } else {
+            result
+        };
+        if !current() {
+            return;
+        }
+        if finding && result.is_ok() {
+            chat.searched.set(true);
+        }
+        {
             match result {
                 Ok(mut rows) => {
                     snapshots.update_value(|snapshots| {
@@ -838,11 +989,9 @@ fn polling(
                 }
                 Err(error) => chat.read_error.set(error.message),
             }
-        } else {
-            delay = Duration::ZERO;
         }
         set_timeout(
-            move || polling(chat, snapshots, abort, dispatch_busy),
+            move || polling(chat, snapshots, generation, epoch, abort, dispatch_busy),
             delay,
         );
     });
@@ -869,8 +1018,8 @@ fn subscribe(chat: Chat, snapshots: StoredValue<HashMap<String, Partial>>) {
             return;
         };
         if !chat.focus.get_untracked().is_empty()
-            || !chat.query.get_untracked().is_empty()
-            || chat.before.get_untracked().is_some()
+            || chat.finding.get_untracked()
+            || !chat.history.with_untracked(Vec::is_empty)
         {
             return;
         }
@@ -916,6 +1065,12 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = markdownBlocks)]
     fn markdown_blocks(text: &str) -> js_sys::Array;
+
+    #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = bindTurnTabStops)]
+    fn bind_turn_tab_stops(transcript: &web_sys::HtmlElement) -> js_sys::Function;
+
+    #[wasm_bindgen(js_namespace = MinarbotConversation, js_name = postKeepalive)]
+    fn post_keepalive(path: &str, body: &str);
 }
 
 fn body(text: String, base: String) -> impl IntoView {
@@ -978,7 +1133,8 @@ fn copy_action(text: impl Fn() -> String + 'static, label: &'static str) -> impl
     let icon = use_context::<Icons>().unwrap_or_default().copy;
     let feedback = RwSignal::new("");
     view! {
-        <button type="button" class="k-icon-btn" aria-label=label title=label on:click=move |_| {
+        <span class="chat-action-tooltip">
+        <button type="button" class="k-icon-btn" aria-label=label on:click=move |_| {
             let text = text();
             leptos::task::spawn_local(async move {
                 match write_clipboard(&text).await {
@@ -988,6 +1144,8 @@ fn copy_action(text: impl Fn() -> String + 'static, label: &'static str) -> impl
                 set_timeout(move || { feedback.try_set(""); }, Duration::from_secs(2));
             });
         }><span class="appearance-icon" inner_html=icon></span></button>
+        <span class="k-tooltip" role="tooltip">{label}</span>
+        </span>
         {move || match feedback.get() {
             "" => None,
             "Copied" => Some(view! { <span class="sr-only" role="status">"Copied"</span> }.into_any()),
@@ -1000,6 +1158,7 @@ pub(super) fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let icons = use_context::<Icons>().unwrap_or_default();
     let turn_id = row.with_untracked(|turn| turn.id.clone());
     let endpoint = format!("{}/turns/{turn_id}/fork", chat.base());
+    let nav = use_context::<Navigation>();
     let key = format!("minarbot:fork:{turn_id}");
     let finished = move || {
         row.with(|turn| {
@@ -1016,7 +1175,8 @@ pub(super) fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
         <div class="answer-actions" role="group" aria-label="Reply actions"
             hidden=move || !row.with(|turn| matches!(turn.status.as_str(), "done" | "cancelled" | "failed" | "interrupted"))>
             {copy_action(move || row.with(|turn| turn.reply.clone().or_else(|| turn.partial.as_ref().map(|partial| partial.text.clone())).or_else(|| turn.error.clone()).unwrap_or_default()), "Copy reply")}
-            <button type="button" class="k-icon-btn" aria-label="Fork from here" title="Fork from here" disabled=busy on:click=move |_| {
+            <span class="chat-action-tooltip">
+            <button type="button" class="k-icon-btn" aria-label="Fork from here" disabled=busy on:click=move |_| {
                 if busy.get_untracked() { return }
                 let Some(id) = saved(&key).or_else(uuid).filter(|id| protocol::id(id)) else { error.set("Fork recovery could not be read.".into()); return };
                 if !save(&key, &id) { error.set("Fork request could not be saved.".into()); return }
@@ -1027,7 +1187,7 @@ pub(super) fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
                     match post::<Thread>(&endpoint, &serde_json::json!({"id": id}).to_string()).await {
                         Ok(thread) if protocol::id(&thread.agent) && protocol::id(&thread.id) => {
                             let _ = remove(&key);
-                            let _ = window().location().set_href(&routes::link(&format!("/agents/{}/conversations/{}", thread.agent, thread.id)));
+                            routes::open(nav, &format!("/agents/{}/conversations/{}", thread.agent, thread.id));
                         }
                         Ok(_) => { error.try_set("Fork response was invalid.".into()); }
                         Err(reason) => { error.try_set(reason.message); }
@@ -1035,6 +1195,8 @@ pub(super) fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
                     busy.try_set(false);
                 });
             }><span class="appearance-icon" inner_html=icons.fork.clone()></span></button>
+            <span class="k-tooltip" role="tooltip">"Fork from here"</span>
+            </span>
             <time class="message-time" datetime=finished>{move || message_time(&finished())}</time>
             {move || (!error.with(String::is_empty)).then(|| view! { <span class="message-error" role="alert">{error}</span> })}
         </div>
@@ -1043,6 +1205,13 @@ pub(super) fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
 
 fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) -> impl IntoView {
     let inspect_id = id.clone();
+    let room_root = move || {
+        row.with(|turn| {
+            turn.room
+                .as_ref()
+                .is_some_and(|room| room["root"] == turn.id)
+        })
+    };
     let icons = use_context::<Icons>().unwrap_or_default();
     let now = RwSignal::new(js_sys::Date::now());
     Effect::new(move |_| {
@@ -1076,15 +1245,20 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
     let computer_wait = Memo::new(move |_| {
         row.with(|turn| {
             let wait = turn.computer_wait.clone()?;
-            let agent = turn.agent.clone()?;
+            if !protocol::id(&turn.agent) {
+                return None;
+            }
             let name = turn
                 .agent_name
                 .clone()
                 .unwrap_or_else(|| chat.config.with_value(|config| config.name.clone()));
-            Some((wait, agent, name))
+            Some((wait, turn.agent.clone(), name))
         })
     });
     let answer = Memo::new(move |_| {
+        if room_root() {
+            return String::new();
+        }
         row.with(|turn| {
             turn.reply
                 .clone()
@@ -1111,6 +1285,9 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
         })
     });
     let activity = Memo::new(move |_| {
+        if room_root() {
+            return Vec::new();
+        }
         row.with(|turn| {
             let mut steps = turn
                 .activity
@@ -1126,6 +1303,42 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                 })
                 .map(|step| (step.kind == "text", step.text.clone()))
                 .collect::<Vec<_>>();
+            if turn.room.is_none() {
+                if let Some(routing) = turn.routing.as_deref() {
+                    let label = match routing {
+                        "pending" => "Selecting recipient".into(),
+                        "clarify" => "Requested routing clarification".into(),
+                        "none" => "No task needed".into(),
+                        "released" => "Waiting for an available recipient".into(),
+                        _ => format!(
+                            "Recipient selected: {}",
+                            turn.agent_name.as_deref().unwrap_or("Agent")
+                        ),
+                    };
+                    steps.push((false, label));
+                } else if turn.recipient.is_some() {
+                    steps.push((
+                        false,
+                        format!(
+                            "Recipient selected: {}",
+                            turn.agent_name.as_deref().unwrap_or("Agent")
+                        ),
+                    ));
+                }
+            }
+            if let Some(model) = &turn.activity.fallback_model {
+                steps.push((false, format!("Fallback model used: {model}")));
+            }
+            steps.extend(turn.coordination.iter().map(|action| {
+                let owner = action["owner_name"].as_str().unwrap_or("Agent");
+                let target = action["target_name"].as_str().unwrap_or("Agent");
+                let verb = if action["kind"] == "delegate_task" {
+                    "delegated to"
+                } else {
+                    "transferred to"
+                };
+                (false, format!("{owner} {verb} {target}"))
+            }));
             for tool in turn.activity.tools.iter().chain(&turn.activity.harness) {
                 let name = tool["name"].as_str().unwrap_or_default();
                 if name.is_empty()
@@ -1156,23 +1369,59 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
             steps
         })
     });
-    let prompt =
-        Memo::new(move |_| row.with(|turn| turn.parent.is_none().then(|| turn.text.clone())));
+    let prompt = Memo::new(move |_| row.with(|turn| turn.text.clone()));
     view! {
-        <article class="turn-block" class:is-latest=move || latest.get() id=format!("turn-{id}") tabindex="0">
+        <article class="turn-block" class:is-latest=move || latest.get() id=format!("turn-{id}") tabindex="0"
+            on:keydown=move |event| {
+                if !matches!(event.key().as_str(), "ArrowLeft" | "ArrowRight" | "Home" | "End")
+                    || event.target().and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                        .is_some_and(|target| target.closest("input,textarea,select,[contenteditable=true],[role=menu],[role=dialog],[role=listbox],dialog").ok().flatten().is_some())
+                { return; }
+                let Some(article) = event.current_target().and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok()) else { return; };
+                let Ok(actions) = article.query_selector_all("button:not(:disabled),a[href],input:not(:disabled),textarea:not(:disabled),select:not(:disabled),[contenteditable=true],summary") else { return; };
+                let actions = (0..actions.length()).filter_map(|index| actions.item(index))
+                    .filter_map(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+                    .filter(|node| node.get_bounding_client_rect().width() > 0.0 && window().get_computed_style(node).ok().flatten().is_none_or(|style| style.get_property_value("visibility").ok().as_deref() != Some("hidden")))
+                    .collect::<Vec<_>>();
+                if actions.is_empty() { return; }
+                event.prevent_default();
+                let current = document().active_element().and_then(|node| actions.iter().position(|action| action.is_same_node(Some(&node))));
+                let next = match event.key().as_str() {
+                    "Home" => 0,
+                    "End" => actions.len() - 1,
+                    "ArrowRight" => current.map_or(0, |index| (index + 1) % actions.len()),
+                    _ => current.map_or(actions.len() - 1, |index| (index + actions.len() - 1) % actions.len()),
+                };
+                let _ = actions[next].focus();
+            }>
             <div class="human-message" tabindex="-1" aria-label="Your message"
-                hidden=move || row.with(|turn| turn.goal_continuation || turn.parent.is_some())>
-                <div class="human-bubble message-plain" hidden=move || prompt.with(|text| text.as_ref().is_none_or(|text| text.trim().is_empty()))>{prompt}</div>
+                hidden=move || row.with(|turn| turn.goal_continuation)>
+                <div class="human-bubble message-plain" hidden=move || prompt.with(|text| text.trim().is_empty())>{prompt}</div>
                 {move || row.with(|turn| turn.files.iter().filter(|file| !file.deleted).cloned().map(|file| attachment(file, base.clone())).collect_view())}
                 <div class="turn-meta human-meta">
                     <time class="message-time" datetime=move || row.with(|turn| turn.created.clone())>{move || row.with(|turn| message_time(&turn.created))}</time>
+                    {move || row.with(|turn| {
+                        if let Some(name) = turn.origin.as_ref().filter(|origin| origin["kind"] == "peer").and_then(|origin| origin["name"].as_str()) {
+                            Some(format!("From {name}"))
+                        } else if turn.workflow_run.is_some() { Some("Workflow".to_owned()) }
+                        else if turn.parent.is_some() { Some("Subtask".to_owned()) }
+                        else { None }
+                    }).map(|label| view! { <span class="message-origin">{label}</span> })}
+                    {move || row.with(|turn| turn.parent.clone().filter(|id| protocol::id(id)).filter(|_| turn.origin.is_none())).map(|parent| {
+                        let href = format!("#turn-{parent}");
+                        view! { <a class="link-btn link-btn--small" href=href on:click=move |event| { event.prevent_default(); chat.focus_turn(&parent); }>"View parent task"</a> }
+                    })}
+                    {move || row.with(|turn| turn.origin.as_ref().and_then(|origin| history::destination(origin["agent"].as_str().unwrap_or_default(), origin["thread"].as_str(), origin["channel"].as_str()))).map(|href| {
+                        view! { <a class="link-btn link-btn--small" href=href>"Open requester conversation"</a> }
+                    })}
                     {copy_action(move || row.with_untracked(|turn| turn.text.clone()), "Copy message")}
                 </div>
             </div>
             <Show when=move || row.with(|turn| turn.goal_continuation)>
                 <p class="message-muted goal-continuation">"Goal continued"</p>
             </Show>
-            <div class="agent-message">
+            <Show when=room_root>{rooms::discussion(chat, row)}</Show>
+            <div class="agent-message" hidden=room_root>
                 <div class="message-column">
                     <div class="agent-identity" hidden=move || chat.config.with_value(|config| !config.channel || config.members.len() < 2)>
                         <strong class="message-name">{move || row.with(|turn| turn.agent_name.clone()).unwrap_or_else(|| chat.config.with_value(|c| c.name.clone()))}</strong>
@@ -1192,7 +1441,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                             } else {
                                 view! {
                                     <details class="turn-activity__details">
-                                        <summary class="turn-activity__header">
+                                        <summary class="turn-activity__header" role="button">
                                             <span class="k-collapsible__trigger">
                                             <span class="activity-label">
                                                 <span class="activity-working" aria-hidden="true" hidden=move || !working()></span>
@@ -1219,9 +1468,14 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                             <span class="appearance-icon" inner_html=inspect_icon.get_value()></span>
                         </button>
                     </div>
-                    <div class="message-body" hidden=move || answer.with(String::is_empty) && outputs.with(Vec::is_empty) && row.with(|turn| turn.html.is_empty() && turn.apps.is_empty() && turn.components.is_empty() && turn.error.is_none() && turn.dispatch_label.is_none() && turn.approval_subject().is_none())>
+                    <div class="message-body" hidden=move || answer.with(String::is_empty) && outputs.with(Vec::is_empty) && row.with(|turn| turn.html.is_empty() && turn.apps.is_empty() && turn.components.is_empty() && turn.error.is_none() && turn.dispatch_label.is_none() && turn.approval_subject().is_none() && turn.events.is_empty() && turn.waiting_for.is_none())>
                         {panels::rich_replies(chat, row)}
-                        {move || row.with(|turn| turn.dispatch_label.clone()).map(|text| view! { <p class="dispatch-receipt">{text}</p> })}
+                        {move || row.with(|turn| (turn.dispatch_mode.as_deref() == Some("steer") && turn.active())
+                            .then_some(turn.dispatch_label.clone()).flatten().map(|text| (text, turn.dispatch_target.clone()))).map(|(text, target)| view! {
+                            <p class="dispatch-receipt">{text}{target.filter(|id| protocol::id(id)).map(|id| view! {
+                                " · "<button type="button" class="link-btn link-btn--small" on:click=move |_| chat.focus_turn(&id)>"View target turn"</button>
+                            })}</p>
+                        })}
                         <div aria-label=label hidden=move || answer.with(String::is_empty) && outputs.with(Vec::is_empty)>
                             <div class="legacy stream-markdown">
                                 <For each=move || blocks.get() key=|(index, block): &(usize, String)| (*index, block.clone())
@@ -1232,12 +1486,13 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                             </div>
                         </div>
                         {move || row.with(|turn| {
-                            if let Some(error) = turn.error.clone() {
+                            if let Some(error) = turn.error.clone().filter(|_| turn.status != "cancelled") {
                                 view! { <p class="message-error"><span class="appearance-icon" inner_html=icons.alert.clone()></span>{error}</p> }.into_any()
                             } else {
-                                turn.approval_subject().filter(|subject| *subject != "form").map(|subject| view! {
-                                    <p class="message-muted">{format!("Review the {subject} to continue.")}</p>
-                                }).into_any()
+                                let text = turn.approval_subject().filter(|subject| *subject != "form").map(|subject| format!("Review the {subject} to continue."))
+                                    .or_else(|| turn.events.iter().any(|event| event["status"] == "waiting").then(|| "Waiting for a signed event.".into()))
+                                    .or_else(|| turn.waiting_for.is_some().then(|| "Waiting for child task results.".into()));
+                                text.map(|text| view! { <p class="message-muted">{text}</p> }).into_any()
                             }
                         })}
                     </div>
@@ -1246,8 +1501,14 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                         let label = if turn.active() && subject == Some("form") { "Waiting for your input" }
                             else if turn.active() && subject.is_some() { "Waiting for approval" }
                             else if turn.active() && turn.waiting_for_answer() { "Waiting for your answer" }
-                            else if turn.active() && turn.paused != 0 { "Paused" } else { "" };
+                            else if turn.active() && turn.paused != 0 { "Paused" }
+                            else if turn.routing.as_deref() == Some("pending") && turn.status == "running" { "Selecting recipient" }
+                            else if turn.routing.as_deref() == Some("clarify") { "Needs clarification" }
+                            else if turn.routing.as_deref() == Some("none") { "No task needed" }
+                            else if turn.waiting_for.is_some() && turn.status == "queued" { "Waiting for delegation" }
+                            else { "" };
                         let text = match (label, turn.activity.fallback_model.is_some()) {
+                            ("", true) if turn.status == "done" => "Done · Fallback model used".into(),
                             ("", true) => "Fallback model used".into(),
                             (_, true) => format!("{label} · Fallback model used"),
                             (_, false) => label.into(),
@@ -1259,8 +1520,10 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                     })}
                     {move || computer_wait.get().map(|(wait, agent, name)| panels::computer_request(agent, name, wait))}
                     {panels::exchanges(chat, row)}
-                    {controls::turn_controls(chat, row)}
-                    {queue::editor(chat, row)}
+                    {message_actions::events(chat, row)}
+                    {history::coordination(chat, row)}
+                    {history::guidance(chat, row)}
+                    {controls::turn_controls(chat, row, false)}
                 </div>
             </div>
         </article>
@@ -1297,7 +1560,7 @@ fn avatar(agent: Option<Agent>, name: &str, channel: bool, size: u8) -> impl Int
 fn header(
     chat: Chat,
     config: ConversationConfig,
-    searching: RwSignal<bool>,
+    search_dialog: NodeRef<leptos::html::Dialog>,
     memory_open: RwSignal<bool>,
     summary_open: RwSignal<bool>,
 ) -> impl IntoView {
@@ -1305,6 +1568,13 @@ fn header(
     let menu = NodeRef::<leptos::html::Details>::new();
     let trigger = NodeRef::<leptos::html::Summary>::new();
     let title = config.name.clone();
+    let project = config
+        .thread
+        .as_ref()
+        .and_then(|thread| thread.project.clone())
+        .or_else(|| config.room.as_ref().and_then(|room| room.project.clone()))
+        .filter(|id| protocol::id(id));
+    let section_settings = config.channel && project.is_none();
     let workspace = config.agent.as_ref().is_some_and(|agent| !agent.builtin);
     let builtin = config.agent.as_ref().is_some_and(|agent| agent.builtin);
     let channel = config.channel;
@@ -1312,13 +1582,15 @@ fn header(
     let settings = RwSignal::new(false);
     let toggle_details = move || chat.set_details(!chat.details.get_untracked());
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
-        if !(event.ctrl_key() || event.meta_key())
-            || document()
-                .query_selector("dialog:modal")
-                .ok()
-                .flatten()
-                .is_some()
+        if document()
+            .query_selector("dialog:modal")
+            .ok()
+            .flatten()
+            .is_some()
         {
+            return;
+        }
+        if !(event.ctrl_key() || event.meta_key()) {
             return;
         }
         if event.shift_key() && event.key().eq_ignore_ascii_case("b") {
@@ -1326,7 +1598,7 @@ fn header(
             toggle_details();
         } else if event.key().eq_ignore_ascii_case("f") {
             event.prevent_default();
-            searching.set(true);
+            history::begin_find(chat);
         }
     });
     on_cleanup(move || keys.remove());
@@ -1352,6 +1624,18 @@ fn header(
                     <span class="appearance-icon chat__pill-chev" inner_html=icons.chevron></span>
                 </summary>
                 <nav class="k-pop chat-pilot-menu__items" aria-label=format!("Menu {title}")>
+                    {project.map(|id| view! { <a class="k-menu__item" href=format!("/projects/{id}")>"Back to project"</a> })}
+                    {section_settings.then(|| view! {
+                        <button type="button" class="k-menu__item" on:click=move |_| {
+                            if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                            if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
+                            let _ = web_sys::Event::new("minarbot:section-settings").and_then(|event| window().dispatch_event(&event));
+                        }><span class="appearance-icon" inner_html=icons.settings.clone()></span>"Section settings"</button>
+                    })}
+                    <button type="button" class="k-menu__item" on:click=move |_| {
+                        if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                        history::begin_find(chat);
+                    }><span class="appearance-icon" inner_html=icons.search.clone()></span>"Find messages"</button>
                     {builtin.then(|| view! {
                         <button type="button" class="k-menu__item" on:click=move |_| {
                             if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
@@ -1378,8 +1662,9 @@ fn header(
                     })}
                     <button type="button" class="k-menu__item" on:click=move |_| {
                         if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
-                        searching.set(true);
-                    }><span class="appearance-icon" inner_html=icons.search></span>"Find messages"</button>
+                        if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
+                        controls::dialog_open(search_dialog);
+                    }><span class="appearance-icon" inner_html=icons.search></span>"Search chat history"</button>
                     {workspace.then(|| view! {
                         <button type="button" class="k-menu__item" on:click=move |_| {
                             if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
@@ -1461,69 +1746,116 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
     let guide = config.agent.clone().filter(|agent| agent.builtin);
     let snapshots = StoredValue::new(HashMap::new());
     subscribe(chat, snapshots);
-    let abort = StoredValue::new_local(web_sys::AbortController::new().ok());
-    // Abort in-flight reads as soon as the lifecycle removes the current chat.
-    on_cleanup(move || {
-        abort.try_with_value(|controller| {
-            if let Some(controller) = controller {
-                controller.abort();
-            }
-        });
-    });
-    polling(chat, snapshots, abort, RwSignal::new(false));
-    let create = window_event_listener(
-        leptos::ev::Custom::<web_sys::Event>::new("minarbot:new-conversation"),
-        move |_| {
-            if chat.config.with_value(|config| {
-                config
-                    .agent
-                    .as_ref()
-                    .is_some_and(|agent| !agent.builtin && !agent.hidden)
-            }) {
-                chat.new_thread.set(true);
-                chat.tab.set("chats");
-                chat.set_details(true);
-            }
-        },
-    );
-    on_cleanup(move || create.remove());
-    let new_chat = window_event_listener(leptos::ev::keydown, move |event| {
-        if (event.ctrl_key() || event.meta_key())
-            && event.shift_key()
-            && event.key().eq_ignore_ascii_case("o")
-            && document()
-                .query_selector("dialog:modal")
-                .ok()
-                .flatten()
-                .is_none()
-            && chat.config.with_value(|config| {
-                config
-                    .agent
-                    .as_ref()
-                    .is_some_and(|agent| !agent.builtin && !agent.hidden)
-            })
-        {
-            event.prevent_default();
-            chat.new_thread.set(true);
-        }
-    });
-    on_cleanup(move || new_chat.remove());
-    let filter = RwSignal::new(String::new());
-    let searching = RwSignal::new(false);
-    let search_input = NodeRef::<leptos::html::Input>::new();
+    let generation = RwSignal::new(0_u64);
     Effect::new(move |_| {
-        if searching.get() {
-            request_animation_frame(move || {
-                if let Some(input) = search_input.get_untracked() {
-                    let _ = input.focus();
+        chat.focus.track();
+        chat.history.track();
+        chat.finding.track();
+        chat.refresh.track();
+        generation.update(|value| *value += 1);
+        let abort = StoredValue::new_local(web_sys::AbortController::new().ok());
+        on_cleanup(move || {
+            abort.try_with_value(|controller| {
+                if let Some(controller) = controller {
+                    controller.abort();
                 }
             });
-        }
+        });
+        polling(
+            chat,
+            snapshots,
+            generation,
+            generation.get_untracked(),
+            abort,
+            RwSignal::new(false),
+        );
     });
-    let rows = Memo::new(move |_| chat.turns.with(|rows| rows.clone().unwrap_or_default()));
+    message_actions::playback();
+    if config
+        .agent
+        .as_ref()
+        .is_some_and(|agent| !agent.builtin && !agent.hidden)
+    {
+        let create = move || {
+            chat.new_thread.set(true);
+            chat.tab.set("chats");
+            chat.set_details(true);
+        };
+        let request = window_event_listener(
+            leptos::ev::Custom::<web_sys::Event>::new("minarbot:new-conversation"),
+            move |_| create(),
+        );
+        let shortcut = window_event_listener(leptos::ev::keydown, move |event| {
+            if (event.ctrl_key() || event.meta_key())
+                && event.shift_key()
+                && event.key().eq_ignore_ascii_case("o")
+                && document()
+                    .query_selector("dialog:modal")
+                    .ok()
+                    .flatten()
+                    .is_none()
+            {
+                event.prevent_default();
+                create();
+            }
+        });
+        on_cleanup(move || {
+            request.remove();
+            shortcut.remove();
+        });
+    }
+    let search_dialog = NodeRef::<leptos::html::Dialog>::new();
+    let room_settings = config
+        .room
+        .clone()
+        .filter(|room| room.project.is_none())
+        .map(|room| rooms::settings(room, NodeRef::new()));
+    let rows = Memo::new(move |_| {
+        let mut rows = chat.turns.with(|rows| rows.clone().unwrap_or_default());
+        if chat.focus.with(String::is_empty) && chat.before().is_none() {
+            chat.optimistic
+                .with(|pending| rows.extend(pending.iter().cloned()));
+        }
+        rows
+    });
+    let visible = Memo::new(move |_| {
+        rows.with(|rows| {
+            let focus = chat.focus.get();
+            rows.iter()
+                .filter(|turn| {
+                    turn.id == focus
+                        || (!chat.queued(turn)
+                            && !(turn.status == "cancelled"
+                                && !turn
+                                    .error
+                                    .as_deref()
+                                    .is_some_and(|error| error.starts_with("Stopped"))
+                                && turn.activity.calls.is_empty()
+                                && turn.room.is_none())
+                            && turn.room.as_ref().is_none_or(|room| {
+                                room["root"] == turn.id
+                                    || !rows.iter().any(|root| room["root"] == root.id)
+                            }))
+                })
+                .map(|turn| turn.id.clone())
+                .collect::<Vec<_>>()
+        })
+    });
     let timeline = NodeRef::<leptos::html::Section>::new();
     let content = NodeRef::<leptos::html::Div>::new();
     let follow = RwSignal::new(true);
+    Effect::new(move |_| {
+        let Some(timeline) = timeline.get() else {
+            return;
+        };
+        let stop = StoredValue::new_local(bind_turn_tab_stops(&timeline));
+        on_cleanup(move || {
+            stop.with_value(|close| {
+                let _ = close.call0(&wasm_bindgen::JsValue::NULL);
+            });
+        });
+    });
+    rooms::read(chat, follow);
     let last_scroll = RwSignal::new(0);
     let scroll_to_bottom = move |node: &web_sys::HtmlElement| {
         node.set_scroll_top(node.scroll_height());
@@ -1537,8 +1869,8 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         let resize = Closure::<dyn FnMut()>::new(move || {
             if follow.get_untracked()
                 && chat.focus.with_untracked(String::is_empty)
-                && chat.before.get_untracked().is_none()
-                && !searching.get_untracked()
+                && chat.history.with_untracked(Vec::is_empty)
+                && !chat.finding.get_untracked()
             {
                 scroll_to_bottom(&target);
             }
@@ -1550,59 +1882,98 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
             on_cleanup(move || handle.with_value(|(observer, _)| observer.disconnect()));
         }
     });
+    let navigation = NodeRef::<leptos::html::Div>::new();
     Effect::new(move |_| {
-        rows.track();
-        if follow.get_untracked() {
+        let loaded = chat.turns.with(Option::is_some);
+        let move_focus = chat.move_focus.get();
+        if !loaded {
+            return;
+        }
+        request_animation_frame(move || {
+            if chat.turns.is_disposed() {
+                return;
+            }
             let focus = chat.focus.get_untracked();
-            request_animation_frame(move || {
-                if !focus.is_empty() {
-                    if let Some(target) = document()
-                        .get_element_by_id(&chat.focus_card.get_value())
-                        .or_else(|| document().get_element_by_id(&format!("turn-{focus}")))
+            let before = chat.history.with_untracked(|pages| pages.last().copied());
+            if move_focus && chat.move_focus.get_untracked() {
+                let target = if !focus.is_empty() {
+                    let card = chat.focus_card.get_value();
+                    let target = document()
+                        .get_element_by_id(&format!("room-reply-{focus}"))
+                        .or_else(|| document().get_element_by_id(&format!("turn-{focus}")));
+                    target
+                        .and_then(|target| {
+                            document()
+                                .get_element_by_id(&card)
+                                .filter(|element| target.contains(Some(element)))
+                                .or(Some(target))
+                        })
                         .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-                    {
-                        target.scroll_into_view();
-                        let options = web_sys::FocusOptions::new();
-                        options.set_prevent_scroll(true);
-                        let _ = target.focus_with_options(&options);
-                        follow.set(false);
-                    }
-                } else if let Some(node) = timeline.get_untracked() {
+                } else if before.is_some() {
+                    navigation
+                        .get_untracked()
+                        .map(|node| node.unchecked_into::<web_sys::HtmlElement>())
+                } else {
+                    document()
+                        .query_selector(".transcript article.is-latest")
+                        .ok()
+                        .flatten()
+                        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+                };
+                if let Some(target) = target {
+                    target.scroll_into_view();
+                    let options = web_sys::FocusOptions::new();
+                    options.set_prevent_scroll(true);
+                    let _ = target.focus_with_options(&options);
+                }
+                chat.move_focus.set(false);
+            }
+            if focus.is_empty()
+                && before.is_none()
+                && !chat.finding.get_untracked()
+                && follow.get_untracked()
+            {
+                if let Some(node) = timeline.get_untracked() {
                     scroll_to_bottom(&node);
                 }
-            });
-        }
+            }
+        });
     });
-    let label = format!("Conversation with {}", config.name);
-    let close_search = move || {
-        chat.query.set(String::new());
-        filter.set(String::new());
-        searching.set(false);
-        if let Some(composer) = document()
-            .get_element_by_id("message")
-            .and_then(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+    let label = format!("Conversation {}", config.name);
+    let subtitle = if guide.is_some() {
+        Some("What work do you want to set up?".into())
+    } else {
+        config
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.role.clone())
+            .filter(|role| !role.is_empty())
+    };
+    let empty_name = config
+        .agent
+        .as_ref()
+        .map_or_else(|| config.name.clone(), |agent| agent.name.clone());
+    let to_latest = move || {
+        if !chat.focus.with_untracked(String::is_empty)
+            || !chat.history.with_untracked(Vec::is_empty)
         {
-            let _ = composer.focus();
+            chat.turns.set(None);
+            chat.focus.set(String::new());
+            chat.history.set(Vec::new());
+            chat.move_focus.set(true);
+        }
+        follow.set(true);
+        if let Some(node) = timeline.get_untracked() {
+            scroll_to_bottom(&node);
         }
     };
+    let icons = use_context::<Icons>().unwrap_or_default();
     view! {
         {move || (chat.workspace.get() && !memory_open.get()).then(|| workspace.get_value())
             .flatten().map(|(agent, name)| files::workspace_page(chat, agent, name))}
         <div class="chat-row conversation-layout bs-root" hidden=move || chat.workspace.get() || memory_open.get() on:click=move |event| results::follow(chat, event)>
-            <main class="chat conversation-chat" class:is-finding=searching aria-label=label>
-                <form class="conversation-find k-inline" role="search" hidden=move || !searching.get()
-                    on:keydown=move |event| { if event.key() == "Escape" { event.prevent_default(); close_search(); } }
-                    on:submit=move |event| {
-                    event.prevent_default();
-                    chat.before.set(None);
-                    chat.focus.set(String::new());
-                    chat.query.set(filter.get_untracked().trim().into());
-                }>
-                    <input node_ref=search_input type="search" class="k-input" aria-label="Find messages" maxlength="200" prop:value=filter
-                        on:input=move |event| filter.set(event_target_value(&event)) />
-                    <button type="submit" class="k-btn k-btn--sm k-btn--primary">"Find"</button>
-                    <button type="button" class="k-btn k-btn--sm k-btn--ghost" on:click=move |_| close_search()>"Close search"</button>
-                </form>
+            <main class="chat conversation-chat" class:is-finding=chat.finding aria-label=label>
+                {history::find(chat, timeline, follow)}
                 <div class="transcript-wrap">
                 <section class="transcript" aria-label="Conversation history" node_ref=timeline on:scroll=move |_| {
                     if let Some(node) = timeline.get_untracked() {
@@ -1613,25 +1984,34 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                     }
                 }>
                     <div class="transcript__col" node_ref=content>
-                        <p role="status" hidden=move || chat.turns.with(Option::is_some)>"Loading conversation…"</p>
-                        <p class="message-error" role="alert" hidden=move || chat.read_error.with(String::is_empty)>{chat.read_error}</p>
-                        {guide.as_ref().map(|agent| {
-                            let name = agent.name.clone();
-                            view! { <div class="empty-chat" hidden=move || !chat.query.with(String::is_empty) || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty()))>
-                                {avatar(Some(agent.clone()), &name, false, 64)}
-                                <div class="empty-chat__title">{name}</div>
-                                <div class="empty-chat__sub">"What work do you want to set up?"</div>
-                            </div> }
-                        })}
-                        <p class="message-muted" hidden=move || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty()))
-                            || (chat.query.with(String::is_empty) && chat.config.with_value(|config| config.agent.as_ref().is_some_and(|agent| agent.builtin)))>
-                            {move || if chat.query.with(String::is_empty) { "No messages yet" } else { "No matching messages" }}
+                        <div class="history-banner" role="status" hidden=move || chat.focus.with(String::is_empty) && chat.before().is_none()>
+                            <span>{move || if chat.focus.with(String::is_empty) { "Older history" } else if chat.config.with_value(|config| config.channel) { "Task family" } else { "Selected message" }}</span>
+                            <button type="button" class="link-btn" on:click=move |_| to_latest()>"Back to latest messages"</button>
+                        </div>
+                        <div class="history-navigation" aria-label="History navigation" node_ref=navigation tabindex="-1"
+                            hidden=move || !chat.focus.with(String::is_empty) || chat.finding.get() || chat.searched.get() || chat.before().is_none() && rows.with(|rows| rows.iter().filter(|turn| turn.history_page != Some(0)).count() < 100)>
+                            <button type="button" class="link-btn" hidden=move || rows.with(|rows| rows.iter().filter(|turn| turn.history_page != Some(0)).count() < 100)
+                                on:click=move |_| {
+                                    if let Some(seq) = rows.with_untracked(|rows| rows.iter().find(|turn| turn.history_page != Some(0)).map(|turn| turn.seq)) {
+                                        follow.set(false); chat.move_focus.set(true); chat.turns.set(None); chat.history.update(|pages| pages.push(seq));
+                                    }
+                                }>"Older messages"</button>
+                            <button type="button" class="link-btn" hidden=move || chat.before().is_none() on:click=move |_| {
+                                follow.set(true); chat.move_focus.set(true); chat.turns.set(None); chat.history.update(|pages| { pages.pop(); });
+                            }>"Newer messages"</button>
+                        </div>
+                        {history::fork(chat)}
+                        <p class="empty-chat__sub" role="status" hidden=move || chat.turns.with(Option::is_some)>"Loading conversation..."</p>
+                        <p class="chat-notice is-error" role="alert" hidden=move || chat.read_error.with(String::is_empty)>{chat.read_error}" History will be retried."</p>
+                        <p class="empty-chat__sub" role="status" hidden=move || chat.before().is_none() || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty()))>
+                            "Start of history reached. Select Newer messages to return."
                         </p>
-                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" hidden=move || rows.with(|rows| rows.len() < 100)
-                            on:click=move |_| chat.before.set(rows.with_untracked(|rows| rows.first().map(|turn| turn.seq)))>"Older messages"</button>
-                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" hidden=move || chat.before.get().is_none() && chat.focus.with(String::is_empty)
-                            on:click=move |_| { chat.before.set(None); chat.focus.set(String::new()); follow.set(true); }>"Latest messages"</button>
-                        <For each=move || rows.with(|rows| rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>()) key=|id| id.clone()
+                        <div class="empty-chat" hidden=move || chat.before().is_some() || chat.turns.with(|rows| rows.as_ref().is_none_or(|rows| !rows.is_empty())) || chat.config.with_value(|config| config.thread.as_ref().is_some_and(|thread| thread.fork.is_some()))>
+                            {avatar(config.agent.clone(), &config.name, config.channel, 64)}
+                            <div class="empty-chat__title">{empty_name}</div>
+                            {subtitle.map(|role| view! { <div class="empty-chat__sub">{role}</div> })}
+                        </div>
+                        <For each=move || visible.get() key=|id| id.clone()
                             children=move |id| {
                                 let row = RwSignal::new(rows.with_untracked(|rows| rows.iter().find(|row| row.id == id).cloned()).unwrap_or_else(|| unreachable!()));
                                 let key = id.clone();
@@ -1647,20 +2027,26 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                         <div></div>
                     </div>
                 </section>
+                {minimap::minimap(chat, rows, timeline, content, follow, last_scroll)}
+                <div class="transcript-jump" hidden=move || follow.get() || chat.before().is_some() || !chat.focus.with(String::is_empty) || chat.finding.get()>
+                    <button type="button" class="k-icon-btn jump-btn" aria-label="Jump to latest" on:click=move |_| to_latest()><span class="appearance-icon" inner_html=icons.chevron></span></button>
                 </div>
-                {controls::composer(chat, rows)}
+                </div>
+                {controls::composer(chat, Memo::new(move |_| {
+                    let mut latest = chat.latest.get();
+                    chat.optimistic.with(|pending| latest.extend(pending.iter().cloned()));
+                    latest
+                }))}
                 {guide.map(|agent| guide::connection(agent, chat.guide_connection, move |agent| {
                     chat.guide_ready.try_set(Some(agent.runnable));
-                    request_animation_frame(move || {
-                        if let Ok(Some(input)) = document().query_selector(".composer__input") {
-                            if let Ok(input) = input.dyn_into::<web_sys::HtmlElement>() { let _ = input.focus(); }
-                        }
-                    });
+                    request_animation_frame(move || history::focus_element(".composer__input"));
                 }))}
-                {header(chat, config, searching, memory_open, summary_open)}
+                {header(chat, config, search_dialog, memory_open, summary_open)}
             </main>
             {panels::right_panel(chat)}
         </div>
+        {history::search_all(chat, search_dialog)}
+        {room_settings}
         {context}
         <Show when=move || memory_open.get()>
             <main class="chat page-view bs-root"><div class="page-scroll"><div class="page legacy">

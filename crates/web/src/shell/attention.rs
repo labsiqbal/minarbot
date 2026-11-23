@@ -49,14 +49,13 @@ impl Notice {
     }
 
     pub fn href(&self) -> String {
-        let path = if let Some(channel) = &self.channel {
+        if let Some(channel) = &self.channel {
             format!("/rooms/{channel}")
         } else if let Some(thread) = &self.thread {
             format!("/agents/{}/conversations/{thread}", self.agent)
         } else {
             format!("/agents/{}", self.agent)
-        };
-        super::conversation_link(path, true)
+        }
     }
 
     pub fn open(&self) {

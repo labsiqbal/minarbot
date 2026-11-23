@@ -2,16 +2,16 @@ mod calendar;
 mod graph;
 mod routines;
 mod schedule;
-mod select;
 mod workflows;
 
 pub(crate) use calendar::{calendar_page, Calendar};
 pub(crate) use routines::routines_page;
 pub(super) use workflows::workflows_page;
 
-use crate::{api, connection_ui as ui, system::kit, workspace, workspace_route::valid_id};
+use crate::{
+    api, connection_ui as ui, select::Select, system::kit, workspace, workspace_route::valid_id,
+};
 use leptos::{prelude::*, task::spawn_local};
-use select::Select;
 use serde_json::{json, Value};
 use std::time::Duration;
 

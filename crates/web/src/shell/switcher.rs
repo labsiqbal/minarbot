@@ -1,11 +1,11 @@
-use super::{api, conversation_link, Directory, Icons, Machines, Projects};
+use super::{api, Directory, Icons, Machines, Projects};
 use crate::{settings, workspace_route::valid_id};
 use leptos::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Clone, Deserialize)]
-pub(super) struct Thread {
+struct Thread {
     id: String,
     agent: String,
     name: String,
@@ -66,7 +66,6 @@ pub(super) struct Data {
     pub machines: RwSignal<Option<Result<Machines, String>>>,
     pub projects: RwSignal<Option<Result<Projects, String>>>,
     pub base_path: Signal<String>,
-    pub conversation_navigation: bool,
     pub new_conversation: Signal<bool>,
     pub online: RwSignal<bool>,
     pub attention: RwSignal<bool>,
@@ -80,7 +79,6 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
             .iter()
             .flat_map(|data| data.agents.iter().chain(data.guide.iter()))
     };
-    let chat = |path| conversation_link(path, data.conversation_navigation);
     if data.new_conversation.get() {
         let mut item = Item::link(
             "New conversation",
@@ -98,7 +96,7 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
             "Agents",
             "",
             String::new(),
-            chat(format!("/agents/{}", agent.id)),
+            format!("/agents/{}", agent.id),
         );
         item.avatar = Some((agent.avatar_revision > 0).then(|| {
             format!(
@@ -135,18 +133,9 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
             }
         }
     }
-    let thread_link = |thread: Thread, detail: String| {
-        let path = chat(format!(
-            "/agents/{}/conversations/{}",
-            thread.agent, thread.id
-        ));
-        Item::link(
-            thread.name,
-            "Conversations",
-            detail,
-            icons.message.clone(),
-            path,
-        )
+    let thread_link = |agent: &str, id: &str, name: String, detail: String| {
+        let path = format!("/agents/{agent}/conversations/{id}");
+        Item::link(name, "Conversations", detail, icons.message.clone(), path)
     };
     if let Some(Ok(projects)) = data.projects.get() {
         for project in projects
@@ -171,7 +160,7 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
                     "Sections",
                     &project.name,
                     icons.hash.clone(),
-                    chat(format!("/rooms/{}", section.id)),
+                    format!("/rooms/{}", section.id),
                 ));
             }
             for thread in project
@@ -179,7 +168,12 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
                 .into_iter()
                 .filter(|thread| valid_id(&thread.id) && valid_id(&thread.agent))
             {
-                items.push(thread_link(thread, project.name.clone()));
+                items.push(thread_link(
+                    &thread.agent,
+                    &thread.id,
+                    thread.name,
+                    project.name.clone(),
+                ));
             }
         }
     }
@@ -187,7 +181,7 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
         let detail = agents()
             .find(|agent| agent.id == thread.agent)
             .map_or_else(String::new, |agent| agent.name.clone());
-        items.push(thread_link(thread, detail));
+        items.push(thread_link(&thread.agent, &thread.id, thread.name, detail));
     }
     let base = data.base_path.get();
     for setting in &icons.settings_choices {

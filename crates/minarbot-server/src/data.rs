@@ -287,7 +287,7 @@ pub fn handles(path: &str) -> bool {
                 "api",
                 "projects",
                 _,
-                "edit" | "archive" | "delete" | "thread" | "sections"
+                "edit" | "archive" | "restore" | "delete" | "thread" | "sections"
             ]
             | ["api", "projects", _, "environment"]
             | ["api", "projects", _, "environment", "remove" | "settings"]
@@ -746,6 +746,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/projects/{id}/edit", any(crate::dispatch))
         .route("/api/projects/{id}/archive", any(crate::dispatch))
+        .route("/api/projects/{id}/restore", any(crate::dispatch))
         .route("/api/projects/{id}/delete", any(crate::dispatch))
         .route("/api/projects/{id}/thread", any(crate::dispatch))
         .route("/api/projects/{id}/sections", any(crate::dispatch))

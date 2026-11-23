@@ -1,6 +1,8 @@
 use crate::{
     agent_profile::{self, DialogTarget, Lifecycle},
-    api, appearance, settings,
+    api, appearance,
+    projects::{management, Commands, Project},
+    settings,
 };
 use leptos::prelude::*;
 use serde::Deserialize;
@@ -8,14 +10,6 @@ use wasm_bindgen::JsCast;
 
 mod attention;
 mod switcher;
-
-fn conversation_link(path: String, pilot: bool) -> String {
-    if pilot && path != crate::workspace_route::GUIDE_PATH {
-        format!("{path}?ui=leptos")
-    } else {
-        path
-    }
-}
 
 fn start_conversation() {
     if let Ok(event) = web_sys::Event::new("minarbot:new-conversation") {
@@ -58,26 +52,10 @@ pub(crate) struct Agent {
 }
 
 #[derive(Clone, Deserialize)]
-struct Project {
-    id: String,
-    name: String,
-    description: String,
-    archived: bool,
-    sections: Vec<ProjectSection>,
-    #[serde(default)]
-    threads: Vec<switcher::Thread>,
-}
-
-#[derive(Clone, Deserialize)]
-struct ProjectSection {
-    id: String,
-    name: String,
-    archived: bool,
-}
-
-#[derive(Clone, Deserialize)]
 struct Projects {
     projects: Vec<Project>,
+    #[serde(default)]
+    root: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -230,7 +208,8 @@ pub(crate) fn WorkspaceShell(
     let summaries = RwSignal::new(Vec::<Summary>::new());
     let machines = RwSignal::new(None::<Result<Machines, String>>);
     let projects_tab = RwSignal::new(
-        base_path.starts_with("/projects/") || preference(TAB).as_deref() == Some("projects"),
+        (base_path.starts_with("/projects/") || base_path.starts_with("/rooms/"))
+            || preference(TAB).as_deref() == Some("projects"),
     );
     let collapsed = RwSignal::new(preference(COLLAPSED).as_deref() == Some("1"));
     let narrow = || {
@@ -288,13 +267,19 @@ pub(crate) fn WorkspaceShell(
     provide_context(DirectoryRefresh(Callback::new(move |()| {
         refresh_directory()
     })));
+    let refresh_projects = crate::connection_ui::UiAction::new(move |()| {
+        leptos::task::spawn_local(async move {
+            projects.try_set(Some(api::read("/api/projects").await));
+        });
+    });
+    let project_commands = Commands::new(refresh_projects);
+    provide_context(project_commands);
+    let new_project = move || project_commands.create.set(true);
     let retry = move || {
         directory.set(None);
         projects.set(None);
         refresh_directory();
-        leptos::task::spawn_local(async move {
-            projects.try_set(Some(api::read("/api/projects").await));
-        });
+        refresh_projects.run(());
         leptos::task::spawn_local(async move {
             if let Ok(data) = api::read::<Summaries>("/api/sidebar/summary").await {
                 summaries.try_set(data.summaries);
@@ -364,7 +349,30 @@ pub(crate) fn WorkspaceShell(
     on_cleanup(move || keys.remove());
     let base_path = StoredValue::new(base_path);
     let automation = use_context::<AutomationNavigation>();
+    #[cfg(feature = "conversation")]
+    let conversation = use_context::<crate::conversation::Navigation>();
+    #[cfg(feature = "conversation")]
+    let project_conversation = use_context::<crate::conversation::ProjectConversation>();
+    #[cfg(feature = "conversation")]
+    if let Some(navigation) = conversation {
+        Effect::new(move |previous: Option<String>| {
+            let path = navigation.0.get();
+            if previous.as_ref().is_some_and(|previous| previous != &path) {
+                narrow_open.set(false);
+                if path.starts_with("/rooms/") {
+                    projects_tab.set(true);
+                }
+            }
+            path
+        });
+    }
     let route_path = move || {
+        #[cfg(feature = "conversation")]
+        if let Some(navigation) = conversation {
+            return navigation
+                .0
+                .with(|route| route.split('?').next().unwrap_or_default().to_owned());
+        }
         automation
             .map(|nav| nav.0.get())
             .unwrap_or_else(|| base_path.get_value())
@@ -435,7 +443,13 @@ pub(crate) fn WorkspaceShell(
         let pending = pending.get();
         let items = directory.agents.into_iter().chain(directory.guide).filter_map(|agent| {
             let path = format!("/agents/{}", agent.id);
-            let current = base_path.with_value(|base| base == &path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/')));
+            let current = {
+                let base = route_path();
+                let local = base == path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/'));
+                #[cfg(feature = "conversation")]
+                let local = local && !project_conversation.is_some_and(|active| active.0.get());
+                local
+            };
             let summary = summaries.iter().find(|row| row.agent == agent.id);
             let mut detail = summary.filter(|row| !row.preview.is_empty()).map(|row| plain_preview(&row.preview)).unwrap_or_else(|| agent.role.clone());
             if agent.hidden && !current || !format!("{} {}", agent.name, detail).to_lowercase().contains(&query) {
@@ -455,7 +469,7 @@ pub(crate) fn WorkspaceShell(
             let avatar = (agent.avatar_revision > 0).then(|| format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision));
             let initial = agent.name.chars().next().map(|initial| initial.to_uppercase().to_string());
             let actions = agent_profile::row_actions(lifecycle, agent.clone());
-            let href = first.as_ref().map_or_else(|| conversation_link(path, conversation_navigation), |input| input.href());
+            let href = first.as_ref().map_or_else(|| path, attention::Notice::href);
             let badge = if active == 1 { "Needs you".into() } else { format!("Needs you in {active} conversations") };
             Some(view! {
                 <div class="sidebar-agent" on:contextmenu=move |event| { event.prevent_default(); open_agent_actions(event.current_target()); }
@@ -502,7 +516,7 @@ pub(crate) fn WorkspaceShell(
                     let links = machine.agents.iter().filter_map(|agent| {
                         if !format!("{} {}", agent.name, agent.role).to_lowercase().contains(&query) { return None; }
                         let path = format!("/machines/{}/agents/{}", machine.id, agent.id);
-                        let current = base_path.with_value(|base| base == &path);
+                        let current = route_path() == path;
                         Some(view! {
                             <a class="bot-row" class:is-selected=current href=path aria-current=current.then_some("page")
                                 aria-label=format!("{} on {}", agent.name, machine.name)>
@@ -536,16 +550,24 @@ pub(crate) fn WorkspaceShell(
             Some(Ok(projects)) => {
                 let rows = projects.projects.iter().filter(|project| !project.archived).filter_map(|project| {
                     let name_matches = format!("{} {}", project.name, project.description).to_lowercase().contains(&query);
-                    let sections = project.sections.iter().filter(|section| !section.archived && (name_matches || section.name.to_lowercase().contains(&query))).map(|section| {
+                    let matching = |section: &&crate::projects::Section| !section.archived && (name_matches || section.name.to_lowercase().contains(&query));
+                    let has_sections = project.sections.iter().any(|section| matching(&section));
+                    let sections = project.sections.iter().filter(matching).map(|section| {
                         let path = format!("/rooms/{}", section.id);
-                        let current = base_path.with_value(|base| base == &path);
-                        let href = if conversation_navigation { format!("{path}?ui=leptos") } else { path };
-                        view! { <div class="project-navigation__section"><a class="project-navigation__room" href=href aria-current=current.then_some("page")
-                            aria-label=format!("# {} in {}", section.name, project.name)><span class="appearance-icon" inner_html=section_icon.get_value()></span><span>{section.name.clone()}</span></a></div> }
+                        let current = route_path() == path;
+                        let unread = section.activity > section.read_position;
+                        view! { <div class="project-navigation__section" class:is-selected=current>
+                            <a class="project-navigation__room" class:is-selected=current href=path aria-current=current.then_some("page")
+                                aria-label=format!("# {} in {}{}", section.name, project.name, if unread { " - Unread" } else { "" })>
+                                <span class="appearance-icon" inner_html=section_icon.get_value()></span><span>{section.name.clone()}</span>
+                                {unread.then(|| view! { <span class="project-navigation__unread" role="img" aria-label="Unread"></span> })}
+                            </a>
+                            {management::section_menu(project_commands, project.clone(), section.clone())}
+                        </div> }
                     }).collect_view();
-                    if !name_matches && sections.is_empty() { return None; }
+                    if !name_matches && !has_sections { return None; }
                     let path = format!("/projects/{}", project.id);
-                    let current = base_path.with_value(|base| base == &path);
+                    let current = route_path() == path;
                     let key = StoredValue::new(format!("minarbot:sidebar-project:{}", project.id));
                     let expanded = RwSignal::new(key.with_value(|key| preference(key).as_deref() != Some("closed")));
                     let searching = !query.is_empty();
@@ -572,8 +594,11 @@ pub(crate) fn WorkspaceShell(
                                     <span class="appearance-icon" inner_html=move || if open() { open_icon.get_value() } else { folder_icon.get_value() }></span>
                                     <span>{project.name.clone()}</span>
                                 </a>
+                                {management::project_menu(project_commands, project.clone())}
                             </div>
-                            <div class="project-navigation__sections" hidden=move || !open()>{sections}</div>
+                            <div class="project-navigation__sections" hidden=move || !open()>
+                                {(!has_sections).then(|| view! { <p class="machine-group__note">"No active sections."</p> })}{sections}
+                            </div>
                         </div>
                     })
                 }).collect_view();
@@ -705,6 +730,11 @@ pub(crate) fn WorkspaceShell(
                                     on:click=move |_| open_lifecycle(DialogTarget::Create)><crate::connection_ui::Icon name="plus" />"New agent"</button>
                                 <button type="button" class="k-menu__item" disabled=move || !directory_ready()
                                     on:click=move |_| open_lifecycle(DialogTarget::Import)><crate::connection_ui::Icon name="download" />"Import template"</button>
+                                <button type="button" class="k-menu__item" on:click=move |_| {
+                                    if let Some(menu) = create_menu.get_untracked() { menu.set_open(false); }
+                                    if let Some(trigger) = create_trigger.get_untracked() { let _ = trigger.focus(); }
+                                    new_project();
+                                }><crate::connection_ui::Icon name="folder" />"New project"</button>
                                 <a class="k-menu__item" href=move || settings_link("/settings/machines")>"Add a machine"</a>
                             </div>
                         </details>
@@ -757,7 +787,14 @@ pub(crate) fn WorkspaceShell(
                             </nav>
                         </div>
                         <div id="workspace-panel-projects" role="tabpanel" aria-labelledby="workspace-tab-projects" hidden=move || !projects_tab.get()>
-                            <nav class="project-navigation" aria-label="Projects">{project_rows}</nav>
+                            <nav class="project-navigation" aria-label="Projects">
+                                {project_rows}
+                                <button type="button" class="project-navigation__new" on:click=move |_| new_project()>
+                                    <crate::connection_ui::Icon name="plus" /><span>"New project"</span>
+                                </button>
+                                {management::archived_projects(project_commands)}
+                                {project_commands.recovery()}
+                            </nav>
                         </div>
                     </div>
                 </div></div>
@@ -778,7 +815,7 @@ pub(crate) fn WorkspaceShell(
             {update_dialog}
             {switcher::render(switcher, switcher::Data {
                 directory, machines, projects, base_path: Signal::derive(current_url),
-                conversation_navigation, new_conversation: conversation_creation, online, attention,
+                new_conversation: conversation_creation, online, attention,
             }, switcher_icons)}
             <dialog class="k-dialog k-dialog--lg workspace-dialog" node_ref=help aria-labelledby="workspace-help-title" closedby="any">
                 <div class="k-dialog__head"><h2 class="k-dialog__title" id="workspace-help-title">"Keyboard shortcuts"</h2>
@@ -800,6 +837,7 @@ pub(crate) fn WorkspaceShell(
             </dialog>
             {agent_profile::mount(lifecycle)}
             {agent_confirmation}
+            {project_commands.dialogs(Signal::derive(move || projects.with(|data| data.as_ref().and_then(|result| result.as_ref().ok()).map_or_else(String::new, |data| data.root.clone()))))}
             <div class="leptos-workspace__outlet" inert=move || viewport.get() && narrow_open.get()>
                 {header.map(|header| view! { <header class="leptos-workspace__header">{header()}</header> })}
                 {children()}

@@ -37,6 +37,7 @@ import { chromium } from 'playwright-core';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
+const leptosConversation = process.env.MINARBOT_SMOKE_CONVERSATION_LEPTOS === '1';
 const output = await mkdtemp(join(root, 'app/node_modules/.ui-smoke-'));
 const gitAgent = randomUUID(), gitName = 'Source Control Fixture';
 let gitWorkspace;
@@ -918,7 +919,7 @@ try {
   await writeFile(join(gitWorkspace, 'notes.txt'), 'Updated first line\nShared context\n--New dash line\n++New plus line\n' + 'Long diff line '.repeat(100) + '\n');
   await writeFile(join(gitWorkspace, 'draft.txt'), 'Untracked draft\n');
   await writeFile(join(gitWorkspace, 'fixture.html'), '<!doctype html><title>Preview fixture</title><h1>Synthetic preview</h1>');
-  const env = Object.fromEntries(['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'MINARBOT_TEST_SERVER', 'MINARBOT_RUST_BINARY'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
+  const env = Object.fromEntries(['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'MINARBOT_TEST_SERVER', 'MINARBOT_RUST_BINARY', 'MINARBOT_SMOKE_CONVERSATION_LEPTOS'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
   if (interrupted) throw new Error(`Interrupted by ${interrupted}`);
   app = spawn(process.execPath, ['--experimental-strip-types', 'app/test-support/ui-smoke/machines-fixture.mjs'], {
     cwd: root, env: { ...env, PORT: String(port), MINARBOT_DATA_DIR: data, MINARBOT_PROJECT_ROOT: join(output, 'project-folders'), MINARBOT_WORKSPACES: JSON.stringify([{ agent: gitAgent, directory: gitWorkspace, write: true }]), MINARBOT_PROVIDER: 'openai-compatible', OPENAI_BASE_URL: `http://127.0.0.1:${providerPort}/v1`, OPENAI_API_KEY: 'ui-smoke-fake-key', OPENAI_MODEL: models[0] },
@@ -1014,6 +1015,22 @@ try {
   page.on('response', response => { if (new URL(response.url()).pathname.startsWith('/api/') && response.status() >= 500) receipt.failedRequests.push({ check: activeCheck, url: response.url(), method: response.request().method(), status: response.status(), atMs: Date.now() - started }); });
   receipt.timings.startupMs = Date.now() - started;
 
+  if (leptosConversation) {
+    const agent = await page.request.post(origin + '/api/agents', { headers: { Origin: origin }, data: { runtime: 'api', id: gitAgent, name: lead, model: models[0], instructions: 'Synthetic conversation fixture.' } });
+    assert(agent.ok(), await agent.text());
+    const openChat = async () => {
+      await page.goto(origin + '/agents/' + gitAgent);
+      await visible(page.getByRole('main', { name: `Conversation ${lead}`, exact: true }));
+      assert.equal(await page.locator('script[src*="/conversation-start."]').count(), 1);
+    };
+    await openChat();
+    const options = { check, page, origin, root, screenshot, visible, hidden, agentChat: openChat, leptos: true };
+    await timelineMinimapSmoke(options);
+    await roomControlsSmoke({ ...options, release: model => hrcGates.get(model)?.() });
+    await streamActionsSmoke({ ...options, releaseStream, releaseRoom, releaseRoomDelivery, streamReply: 'Stable first block.\n\nGrowing second block' + streamReply.slice('Stable first block.\n\n'.length) });
+    await runControlsSmoke(options);
+    throw new Error('SMOKE_STOP_AFTER');
+  }
   if (process.env.MINARBOT_SMOKE_WHATSAPP_ONLY === '1') {
     await whatsappSmoke({ check, page, origin, settings, screenshot });
     throw new Error('SMOKE_STOP_AFTER');
