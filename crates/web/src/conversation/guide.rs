@@ -150,7 +150,11 @@ fn install_command(install: Install, token: String, target: Value) -> impl IntoV
         });
     };
     refresh();
-    if let Ok(timer) = set_interval_with_handle(refresh, Duration::from_secs(5)) {
+    if let Ok(timer) = set_interval_with_handle(move || {
+        if !document().hidden() {
+            refresh();
+        }
+    }, Duration::from_secs(5)) {
         on_cleanup(move || timer.clear());
     }
     let command = StoredValue::new(command);

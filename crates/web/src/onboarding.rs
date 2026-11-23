@@ -599,7 +599,11 @@ fn computer(error_icon: String, monitor: String) -> impl IntoView {
     };
     refresh(false);
     if let Ok(timer) =
-        set_interval_with_handle(move || refresh(false), std::time::Duration::from_secs(5))
+        set_interval_with_handle(move || {
+            if !document().hidden() {
+                refresh(false);
+            }
+        }, std::time::Duration::from_secs(5))
     {
         on_cleanup(move || timer.clear());
     }

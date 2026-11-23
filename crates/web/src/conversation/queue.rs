@@ -181,7 +181,11 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
         if !lease.with(Option::is_some) {
             return;
         }
-        let timer = set_interval_with_handle(renew, Duration::from_secs(10)).ok();
+        let timer = set_interval_with_handle(move || {
+            if !document().hidden() {
+                renew();
+            }
+        }, Duration::from_secs(10)).ok();
         let hide = window_event_listener(leptos::ev::pagehide, move |_| release());
         let reconnect = window_event_listener(leptos::ev::online, move |_| release());
         on_cleanup(move || {
@@ -197,7 +201,8 @@ pub(super) fn editor(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
         let retry = StoredValue::new(saved);
         if let Ok(timer) = set_interval_with_handle(
             move || {
-                if pending.with_untracked(|pending| pending.as_ref() == Some(&retry.get_value())) {
+                if !document().hidden()
+                    && pending.with_untracked(|pending| pending.as_ref() == Some(&retry.get_value())) {
                     act("save");
                 }
             },
@@ -546,7 +551,11 @@ fn order_dialog(
         queued.track();
         load();
     });
-    let interval = set_interval_with_handle(load, Duration::from_millis(1500)).ok();
+    let interval = set_interval_with_handle(move || {
+        if !document().hidden() {
+            load();
+        }
+    }, Duration::from_millis(1500)).ok();
     on_cleanup(move || {
         if let Some(interval) = interval {
             interval.clear();

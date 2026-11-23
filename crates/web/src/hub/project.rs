@@ -208,7 +208,11 @@ pub(super) fn page(
     });
     on_cleanup(move || changed.remove());
     if let Ok(timer) =
-        set_interval_with_handle(move || page.refresh(), std::time::Duration::from_secs(3))
+        set_interval_with_handle(move || {
+            if !document().hidden() {
+                page.refresh();
+            }
+        }, std::time::Duration::from_secs(3))
     {
         on_cleanup(move || timer.clear());
     }

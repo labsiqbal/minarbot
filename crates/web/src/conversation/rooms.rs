@@ -316,7 +316,11 @@ pub(super) fn read(chat: Chat, follow: RwSignal<bool>) {
             busy.try_set(false);
         });
     };
-    let interval = set_interval_with_handle(read, Duration::from_millis(1200)).ok();
+    let interval = set_interval_with_handle(move || {
+        if !document().hidden() {
+            read();
+        }
+    }, Duration::from_millis(1200)).ok();
     on_cleanup(move || {
         if let Some(interval) = interval {
             interval.clear();

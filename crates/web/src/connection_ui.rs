@@ -683,6 +683,49 @@ pub fn poll(seconds: u64, tick: impl Fn() + 'static) {
     }
 }
 
+/// Poll a request-backed signal without spending the full cadence on a hidden tab
+/// or a failing endpoint. The request owns its generation fence, so a later tick
+/// can safely observe the previous error before choosing its next delay.
+pub fn poll_with_backoff(
+    seconds: u64,
+    error: RwSignal<String>,
+    tick: impl Fn() + 'static,
+) {
+    let base = seconds.saturating_mul(1000).max(1);
+    let next = RwSignal::new(0.0);
+    let failures = RwSignal::new(0_u32);
+    let run = move || {
+        if document().hidden() || js_sys::Date::now() < next.get_untracked() {
+            return;
+        }
+        let now = js_sys::Date::now();
+        let failed = !error.with_untracked(String::is_empty);
+        let count = if failed {
+            failures.update(|count| *count = count.saturating_add(1));
+            failures.get_untracked()
+        } else {
+            failures.set(0);
+            0
+        };
+        let multiplier = 1_u64 << count.min(5);
+        next.set(now + (base.saturating_mul(multiplier).min(60_000)) as f64);
+        tick();
+    };
+    if let Ok(timer) = set_interval_with_handle(run, std::time::Duration::from_millis(base)) {
+        on_cleanup(move || timer.clear());
+    }
+    let visibility = window_event_listener(leptos::ev::visibilitychange, move |_| {
+        if !document().hidden() {
+            next.set(0.0);
+        }
+    });
+    let focus = window_event_listener(leptos::ev::focus, move |_| next.set(0.0));
+    on_cleanup(move || {
+        visibility.remove();
+        focus.remove();
+    });
+}
+
 pub fn external_url(value: &str) -> Option<String> {
     let url = web_sys::Url::new(value).ok()?;
     (matches!(url.protocol().as_str(), "https:" | "http:")

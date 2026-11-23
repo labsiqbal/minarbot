@@ -1,4 +1,11 @@
 import assert from 'node:assert/strict';
+import { loadavg } from 'node:os';
+
+export const HOST_BUSY_THRESHOLD = 8;
+
+export function hostLoadAverage() {
+  return loadavg()[0];
+}
 
 // Frozen React p95 in milliseconds. Sources and derived ceilings are in PARITY.md.
 const baselineP95 = {
@@ -24,6 +31,13 @@ const baselineP95 = {
 };
 
 export function assertP95(route, phase, measured) {
+  const load = hostLoadAverage();
+  const busy = load > HOST_BUSY_THRESHOLD;
+  console.log(`${route} ${phase} host load ${load.toFixed(2)} (busy threshold ${HOST_BUSY_THRESHOLD.toFixed(2)})`);
+  if (busy && process.env.MINARBOT_PERF_COMMAND !== '1') {
+    console.log(`${route} ${phase} host busy - timing result recorded without budget verdict`);
+    return;
+  }
   const budget = baselineP95[route][phase] * (phase === 'cold' ? 1.2 : 1.1);
   console.log(`${route} ${phase} p95 ${measured.toFixed(2)} ms (budget ${budget.toFixed(2)} ms)`);
   assert(measured <= budget, `${route} ${phase} p95 exceeds ${budget.toFixed(2)} ms`);

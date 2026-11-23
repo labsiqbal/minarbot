@@ -8,7 +8,7 @@ mod machines;
 pub(crate) mod updates;
 mod usage;
 
-use crate::{api, routes::SettingsRoute};
+use crate::{api, connection_ui::poll_with_backoff, routes::SettingsRoute};
 use leptos::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -139,7 +139,7 @@ impl<T: Clone + PartialEq + DeserializeOwned + Send + Sync + 'static> Query<T> {
             }
             refresh(true);
         });
-        poll(tick, move || refresh(false));
+        poll_with_backoff(tick, error, move || refresh(false));
         query
     }
 

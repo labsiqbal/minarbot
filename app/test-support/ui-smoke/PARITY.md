@@ -85,3 +85,9 @@ unrounded products. Sources below refer to archived NUC review artifacts.
 
 Use 20 samples per timing smoke, 80 for `MINARBOT_AUTOMATION_WARM_BENCH`,
 and 60 for `MINARBOT_PROMPTS_BENCH`, matching the review sample sizes.
+
+Timing commands record the one-minute host load average before each verdict. A
+load above `8.00` reports `host busy` and skips the budget assertion. Set
+`MINARBOT_PERF_COMMAND=1` for a dedicated quiet-host performance command where
+busy hosts fail normally. This keeps shared-host load from turning visual gates
+into false regressions.
