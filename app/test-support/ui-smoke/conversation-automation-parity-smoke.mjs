@@ -421,7 +421,8 @@ try {
   if (samples && receipt.react && receipt.leptos) {
     const failures = [];
     for (const [route, timing] of Object.entries(receipt.react.timings)) {
-      for (const [phase, limit] of [['cold', route === 'workflow' ? 1.1 : 1.2], ['warm', 1.1]]) {
+      // docs/full-rust-plan.md: cold start within React p95 + 20%, warm navigation within + 10% (#84).
+      for (const [phase, limit] of [['cold', 1.2], ['warm', 1.1]]) {
         const react = timing[phase].p95Ms;
         const leptos = receipt.leptos.timings[route][phase].p95Ms;
         console.log(`${route} ${phase} p95 ${leptos} ms (Leptos), ${react} ms (React).`);
