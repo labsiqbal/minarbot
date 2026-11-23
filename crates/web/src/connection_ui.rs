@@ -723,10 +723,8 @@ impl Poll {
             if !failed {
                 self.failures.set_value(0);
             } else if !retry {
-                let count = self.failures.update_value(|count| {
-                    *count = (*count + 1).min(5);
-                    *count
-                });
+                let count = (self.failures.get_value() + 1).min(5);
+                self.failures.set_value(count);
                 self.schedule(backoff(self.interval, count) - self.interval, true);
                 return;
             }
