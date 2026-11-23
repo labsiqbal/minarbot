@@ -1185,7 +1185,6 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
         ("computer", "Computer", icons.computer),
         ("run", "Run", icons.inspect.clone()),
     ];
-    let profile = NodeRef::<leptos::html::Dialog>::new();
     let thread_settings = NodeRef::<leptos::html::Dialog>::new();
     let (agent, thread) = chat
         .config
@@ -1197,11 +1196,16 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
     } else {
         "Edit profile"
     };
-    let settings = if thread.is_some() {
-        thread_settings
-    } else {
-        profile
-    };
+    let thread_open = thread.is_some();
+    let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
+    let profile = Callback::new({
+        let id = agent.as_ref().map(|agent| agent.id.clone());
+        move |()| {
+            if let (Some(lifecycle), Some(id)) = (lifecycle, &id) {
+                lifecycle.open(crate::agent_profile::DialogTarget::Edit(id.clone()));
+            }
+        }
+    });
     let settings_icon = icons.settings;
     let drawer = NodeRef::<leptos::html::Dialog>::new();
     let narrow = RwSignal::new(details_overlay());
@@ -1243,7 +1247,7 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
                         <span class="appearance-icon" inner_html=settings_icon.clone()></span>
                     </a> }.into_any()
                 } else {
-                    view! { <button type="button" class="k-icon-btn" aria-label=settings_label title=settings_label on:click=move |_| controls::dialog_open(settings)>
+                    view! { <button type="button" class="k-icon-btn" aria-label=settings_label title=settings_label on:click=move |_| { if thread_open { controls::dialog_open(thread_settings); } else { profile.run(()); } }>
                         <span class="appearance-icon" inner_html=settings_icon.clone()></span>
                     </button> }.into_any()
                 })}
@@ -1295,7 +1299,6 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
             </div>
         </aside>
         {agent.filter(|agent| !agent.builtin).map(|agent| view! {
-            {controls::edit_dialog(agent.clone(), None, profile)}
             {thread.map(|thread| controls::edit_dialog(agent, Some(thread), thread_settings))}
         })}
         </dialog>

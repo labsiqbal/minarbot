@@ -191,9 +191,11 @@ pub fn Dialog(
     #[prop(default = "md")] size: &'static str,
     #[prop(default = Signal::derive(String::new), into)] description: Signal<String>,
     #[prop(optional)] footer: Option<Children>,
+    #[prop(optional)] actions: Option<Children>,
     #[prop(optional)] children: Option<Children>,
     #[prop(optional)] confirmation: bool,
     #[prop(optional)] hide_header: bool,
+    #[prop(optional)] select_input: bool,
     #[prop(default = Signal::derive(|| false), into)] locked: Signal<bool>,
 ) -> impl IntoView {
     let node = NodeRef::<leptos::html::Dialog>::new();
@@ -213,6 +215,16 @@ pub fn Dialog(
                         field.and_then(|field| field.dyn_into::<web_sys::HtmlElement>().ok())
                     {
                         let _ = field.focus();
+                        if select_input {
+                            if let Ok(input) = field.dyn_into::<web_sys::HtmlInputElement>() {
+                                request_animation_frame(move || {
+                                    if document().active_element().as_ref() == Some(input.as_ref())
+                                    {
+                                        input.select();
+                                    }
+                                });
+                            }
+                        }
                     } else {
                         let _ = dialog.focus();
                     }
@@ -247,6 +259,7 @@ pub fn Dialog(
           <h2 id=heading_id class="k-dialog__title">{title}</h2>
           <p id=desc_id class="k-dialog__desc" hidden=move || description.with(String::is_empty)>{description}</p>
         </div>
+        {actions.map(|actions| actions())}
         {(!confirmation && !hide_header).then(|| view! {
           <button type="button" class="k-icon-btn" aria-label="Close" disabled=locked on:click=move |_| on_close.with_value(|close| close())>{icon(icons().close)}</button>
         })}</div>
@@ -287,19 +300,23 @@ pub fn ask(
 }
 
 pub fn confirmation() -> (Confirm, impl IntoView) {
+    named_confirmation("system-confirm")
+}
+
+pub fn named_confirmation(id: &'static str) -> (Confirm, impl IntoView) {
     let request: Confirm = RwSignal::new(None);
     let cancel = move || request.set(None);
     let view = view! {
-        <Dialog id="system-confirm" title=Signal::derive(move || request.with(|value| value.as_ref().map(|request| request.title.clone()).unwrap_or_default()))
+        <Dialog id=id title=Signal::derive(move || request.with(|value| value.as_ref().map(|request| request.title.clone()).unwrap_or_default()))
           description=Signal::derive(move || request.with(|value| value.as_ref().map(|request| request.description.clone()).unwrap_or_default()))
-          open=Signal::derive(move || request.with(Option::is_some)) on_close=cancel size="sm" confirmation=true>
-          <div class="k-dialog__foot">
+          open=Signal::derive(move || request.with(Option::is_some)) on_close=cancel size="sm" confirmation=true
+          footer=content(move || view! {
             <button type="button" class="k-btn k-btn--secondary k-btn--md" autofocus on:click=move |_| cancel()>"Cancel"</button>
             <button type="button" class=move || if request.with(|value| value.as_ref().is_some_and(|request| request.danger)) { "k-btn k-btn--danger k-btn--md" } else { "k-btn k-btn--primary k-btn--md" }
               on:click=move |_| { if let Some(value) = request.get_untracked() { cancel(); value.action.run(()); } }>
               {move || request.with(|value| value.as_ref().map_or("Continue", |request| request.label))}
             </button>
-          </div>
+          })>
         </Dialog>
     };
     (request, view)
@@ -329,6 +346,8 @@ pub fn Menu(
     name: String,
     children: Children,
     items: Vec<MenuItem>,
+    #[prop(optional)] item_icons: Vec<&'static str>,
+    #[prop(optional)] separate_danger: bool,
     #[prop(default = "k-icon-btn")] class: &'static str,
     #[prop(default = Signal::derive(|| false), into)] disabled: Signal<bool>,
 ) -> impl IntoView {
@@ -373,6 +392,7 @@ pub fn Menu(
     };
     view! {
         <button node_ref=trigger type="button" class=class aria-label=name
+          data-state=move || if expanded.get() { "open" } else { "closed" }
           aria-haspopup="menu" aria-expanded=move || if expanded.get() { "true" } else { "false" } disabled=disabled
           on:click=move |_| show(false) on:keydown=move |event: web_sys::KeyboardEvent| {
             if matches!(event.key().as_str(), "ArrowDown" | "ArrowUp") {
@@ -402,12 +422,14 @@ pub fn Menu(
                 }
             }
           }>
-          {items.into_iter().map(|item| view! { <button class="k-menu__item" class:is-danger=item.danger type="button" role="menuitem" tabindex="-1"
+          {items.into_iter().enumerate().map(|(index, item)| view! {
+            {(separate_danger && item.danger).then(|| view! { <div class="k-menu__sep" role="separator"></div> })}
+            <button class="k-menu__item" class:is-danger=item.danger type="button" role="menuitem" tabindex="-1"
             on:click=move |_| {
                 if let Some(menu) = menu.get_untracked() { let _ = menu.hide_popover(); }
                 if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                 item.action.run(());
-            }>{item.label}</button> }).collect_view()}
+            }>{item_icons.get(index).map(|name| view! { <crate::connection_ui::Icon name=*name /> })}{item.label}</button> }).collect_view()}
         </div>
     }
 }

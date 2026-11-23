@@ -3,16 +3,20 @@ import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export async function deleteAgentSmoke({ page, check, origin, root }) {
-  const evidence = join(root, 'app/test-support/ui-smoke/artifacts/delete-agent');
+export async function deleteAgentSmoke({ page, check, origin, root, client = 'react', evidence = join(root, 'app/test-support/ui-smoke/artifacts/delete-agent') }) {
   await mkdir(evidence, { recursive: true });
   const viewport=page.viewportSize();
+  const leptos = client === 'leptos';
+  const initial = page.url();
+  const rowFor = name => leptos
+    ? page.locator('.sidebar-agent > .bot-row').filter({ has: page.getByText(name, { exact: true }) })
+    : page.getByRole('button', { name: `${name} Idle`, exact: true });
   await check('Agent menu supports edit, hide, restore, right-click and permanent deletion', async () => {
     const agent = await page.request.post(origin + '/api/agents', { headers:{Origin:origin},data:{ runtime: 'api',id:randomUUID(),name:'Delete fixture',model:'smoke-primary',instructions:'Help'}});
     assert.equal(agent.status(),201); const {id}=await agent.json();
     await page.reload();await page.setViewportSize({width:1440,height:900});
     await page.getByRole('tab',{name:/^Agents/}).click();
-    const row=page.getByRole('button',{name:'Delete fixture Idle',exact:true}), actions=page.getByRole('button',{name:'Actions for Delete fixture',exact:true});
+    const row=rowFor('Delete fixture'), actions=page.getByRole('button',{name:'Actions for Delete fixture',exact:true});
     await row.waitFor();await row.click();await row.hover();await actions.click();
     const menu=page.getByRole('menu');
     assert.deepEqual(await menu.getByRole('menuitem').allTextContents(),['Edit','Inbox','Hide','Delete']);
@@ -21,9 +25,11 @@ export async function deleteAgentSmoke({ page, check, origin, root }) {
     await menu.getByRole('menuitem',{name:'Hide',exact:true}).click();
     await row.locator('.bot-row__preview').filter({hasText:'Hidden'}).waitFor();
     assert.equal(await row.getAttribute('aria-current'),'page');
-    await page.getByRole('button',{name:new RegExp('^Smoke Lead')}).first().click();
+    if (leptos) await rowFor('Smoke Lead').click();
+    else await page.getByRole('button',{name:/^Smoke Lead/}).first().click();
     await row.waitFor({state:'hidden'});
-    await page.locator('.hidden-agents').getByRole('button',{name:/^Hidden/}).click();
+    await page.locator('.hidden-agents .machine-group__header').click();
+    await page.screenshot({path:join(evidence,'hidden.png'),animations:'disabled'});
     await page.getByRole('navigation',{name:'Hidden agents',exact:true}).getByRole('button',{name:'Restore Delete fixture',exact:true}).click();
     await row.waitFor();
     await page.waitForFunction(element => element.querySelector('.bot-row__preview')?.textContent === '', await row.elementHandle());
@@ -57,16 +63,18 @@ export async function deleteAgentSmoke({ page, check, origin, root }) {
   await check('Agent deletion aborts pending chat polls', async () => {
     const response = await page.request.post(origin + '/api/agents', { headers: { Origin: origin }, data: { runtime: 'api', id: randomUUID(), name: 'Delete polling fixture', model: 'smoke-primary', instructions: 'Help' } });
     assert.equal(response.status(), 201); const { id } = await response.json();
-    await page.reload(); await page.getByRole('tab', { name: /^Agents/ }).click();
-    const row = page.getByRole('button', { name: 'Delete polling fixture Idle', exact: true });
-    const matches = request => new RegExp(`/api/agents/${id}/(?:dispatch|turns)\\??$`).test(request.url());
+    if (leptos) await page.goto(initial);
+    else await page.reload();
+    await page.getByRole('tab', { name: /^Agents/ }).click();
+    const row = rowFor('Delete polling fixture');
+    const pattern = new RegExp(`/api/agents/${id}/(?:dispatch|turns)(?:\\?.*)?$`);
+    const matches = request => pattern.test(request.url());
     let unblock, ready, ended; const gate = new Promise(resolve => { unblock = resolve; }), waiting = new Promise(resolve => { ready = resolve; }), finished = new Promise(resolve => { ended = resolve; });
     const wait = promise => Promise.race([promise, page.waitForTimeout(10_000).then(() => assert.fail('Pending chat polls did not settle'))]);
     const results = []; let pending = 0;
     const complete = value => { results.push(value); if (results.length === 2) ended(); };
     const failed = request => { if (matches(request)) complete(request.failure()?.errorText); };
     const received = response => { if (matches(response.request())) complete(response.status()); };
-    const pattern = new RegExp(`/api/agents/${id}/(?:dispatch|turns)\\??$`);
     const hold = async route => { if (++pending === 2) ready(); await gate; await route.continue(); };
     page.on('requestfailed', failed); page.on('response', received); await page.route(pattern, hold);
     try {
