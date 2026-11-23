@@ -1,7 +1,13 @@
 use super::*;
 use graph::{edges, id, step_label, Graph, KINDS};
 use schedule::{format, merge};
+use std::cell::RefCell;
 use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
+
+thread_local! {
+    // ponytail: keep one agent's first page for the lifetime of the document.
+    static LIBRARY_PAGE: RefCell<Option<(String, Value)>> = const { RefCell::new(None) };
+}
 
 #[wasm_bindgen]
 extern "C" {
@@ -318,6 +324,26 @@ pub(crate) fn agent_library(owner: String, back: String) -> impl IntoView {
                 .last()
                 .map_or_else(|| path.clone(), |after| url(&path, &[("after", after)]))
         })
+    });
+    let cached = LIBRARY_PAGE.with_borrow_mut(|slot| match slot.as_ref() {
+        Some((agent, page)) if owner.with_value(|owner| owner == agent) => Some(page.clone()),
+        _ => {
+            *slot = None;
+            None
+        }
+    });
+    query.data.set(cached);
+    Effect::new(move |_| {
+        if query.busy.get() || !cursors.with(Vec::is_empty) {
+            return;
+        }
+        if !query.error.with(String::is_empty) {
+            LIBRARY_PAGE.with_borrow_mut(|slot| *slot = None);
+            query.data.set(None);
+            return;
+        }
+        let page = query.data.get_untracked();
+        LIBRARY_PAGE.with_borrow_mut(|slot| *slot = page.map(|page| (owner.get_value(), page)));
     });
     let refresh = Callback::new(move |()| query.reload.run(()));
     let library = Callback::new(move |()| {
@@ -1829,7 +1855,7 @@ pub(super) fn run_details(
     let return_to_step = actions.is_some();
     let inline = use_context::<InlineStep>();
     view! {
-        <div class="k-stack">
+        <div class=if return_to_step { "k-section" } else { "k-stack" }>
             <ReadError query label="Reload run" />
             <Show when=move || !loaded() && query.error.with(String::is_empty)>{kit::skeleton(3,"Loading run inspector...")}</Show>
             <Show when=loaded>
@@ -1845,6 +1871,7 @@ pub(super) fn run_details(
                 <Show when=move || snapshot.with(|run| !text(&run["error"]).is_empty())>
                     <kit::Alert tone="error">{move || snapshot.with(|run| text(&run["error"]).to_owned())}</kit::Alert>
                 </Show>
+                <section>
                 <Graph graph selected steps=steps clicked=Callback::new(move |id| {
                     selection.set(id);
                     request_animation_frame(move || { if let Some(node)=details.get_untracked() { let _=node.focus(); } });
@@ -1863,6 +1890,7 @@ pub(super) fn run_details(
                     }}
                     <kit::Button label=kit::text("Back to run graph") on_click=move || focus_node("data-workflow-node",&selection.get_untracked()) />
                 </div>
+                </section>
                 {actions.map(|(workflow,journal,confirm)| run_actions(snapshot,workflow,journal,confirm,query.reload))}
                 {move || id.with_value(|id| result_markdown(result.get(), id))}
                 <kit::Card>{move || steps.with(|steps| rows(steps).iter().map(|step| {

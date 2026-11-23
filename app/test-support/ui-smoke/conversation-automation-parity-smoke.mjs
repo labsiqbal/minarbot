@@ -219,8 +219,17 @@ async function exercise(client) {
       assert.equal(new URL(page.url()).searchParams.get('agent'), ids.agent);
       await page.goBack();
       await page.waitForFunction(() => document.activeElement?.classList.contains('chat__pill'));
+      const listPath = `**/api/agents/${ids.agent}/workflows`;
+      const pending = Promise.withResolvers();
+      await page.route(listPath, route => pending.resolve(route), { times: 1 });
       await page.goForward();
-      await page.getByText(wfName, { exact: true }).waitFor();
+      const revalidation = await pending.promise;
+      try {
+        await page.getByText(wfName, { exact: true }).waitFor();
+      } finally {
+        await revalidation.continue();
+      }
+      await page.locator('button[aria-label="Owner workflow actions"]:enabled').waitFor();
       assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
     }
     await capture('workflow-library');
