@@ -80,12 +80,19 @@ async function compare(left, right, output) {
     result: changed > maxChanged || over16 > maxOver16 ? 'pixels' : 'pass' };
 }
 
+const only = process.env.PARITY_GROUPS?.split(',').map(name => name.trim()).filter(Boolean);
+if (only) {
+  const unknown = only.filter(name => !groups.some(([group]) => group === name));
+  assert.equal(unknown.length, 0, `Unknown parity groups: ${unknown.join(', ')}`);
+}
+const selected = only ? groups.filter(([group]) => only.includes(group)) : groups;
+
 const env = { ...process.env, MINARBOT_RUST_BINARY: resolve(process.env.MINARBOT_RUST_BINARY ?? join(cwd, '../target/debug/minarbot-server')) };
 env.MINARBOT_HOSTED_HUB_BINARY ??= env.MINARBOT_RUST_BINARY;
 for (const key of ['MINARBOT_SMOKE_UI', 'MINARBOT_SYSTEM_CLIENT', 'MINARBOT_HUB_SMOKE_CLIENT', 'MINARBOT_PROMPTS_CLIENT']) delete env[key];
 for (const key of ['MINARBOT_PROJECT_BENCH', 'MINARBOT_FILES_BENCH', 'MINARBOT_CONVERSATION_NAV_BENCH']) env[key] ??= '0';
 const rows = [], summary = [];
-for (const [group, minimum, script, screenshotEnv, clientEnv] of groups) {
+for (const [group, minimum, script, screenshotEnv, clientEnv] of selected) {
   const dir = join(root, group);
   await mkdir(dir);
   const clients = clientEnv ? ['react', 'leptos'] : ['both'];
