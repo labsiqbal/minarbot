@@ -1343,6 +1343,30 @@ fn hub_database_markers_migrations_and_writer_aliases() -> Check {
         1
     );
 
+    let v0 = root.path("migration-v0.sqlite");
+    {
+        let db = Connection::open(&v0)?;
+        fs::set_permissions(&v0, fs::Permissions::from_mode(0o600))?;
+        data_format::mark(&db)?;
+        db.execute_batch("CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL) STRICT;")?;
+    }
+    let (db, writer) = storage::open(&v0)?;
+    assert_eq!(
+        db.query_row(
+            "SELECT checksum FROM hub_migrations WHERE version=1",
+            [],
+            |row| row.get::<_, String>(0)
+        )?,
+        migration
+    );
+    drop((db, writer));
+    let (db, _writer) = storage::open(&v0)?;
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM hub_state", [], |row| row
+            .get::<_, i64>(0))?,
+        1
+    );
+
     for (name, sql, marked, reason) in [
         ("unmarked", "CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL) STRICT;", false, "data marker"),
         ("future", "CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL) STRICT; INSERT INTO hub_migrations VALUES(99,'other');", true, "version"),

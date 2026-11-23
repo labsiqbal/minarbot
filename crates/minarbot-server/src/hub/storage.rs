@@ -82,24 +82,29 @@ fn initialize(db: &mut Connection) -> crate::db::Result<()> {
     let checksum = digest(MIGRATION);
     if fresh {
         tx.execute_batch("CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL) STRICT;")?;
+    }
+    let versions = {
+        let mut stmt = tx
+            .prepare("SELECT version,checksum FROM hub_migrations ORDER BY version")
+            .map_err(|_| "Refusing non-hub database.")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if versions.is_empty()
+        && !tx
+            .prepare("SELECT 1 FROM sqlite_schema WHERE name != 'hub_migrations'")?
+            .exists([])?
+    {
         tx.execute_batch(MIGRATION)?;
         tx.execute("INSERT INTO hub_migrations VALUES(1,?)", [&checksum])?;
         tx.execute(
             "INSERT INTO hub_state(id,authority_generation,state) VALUES(1,?,'active')",
             [new_id()],
         )?;
-    } else {
-        let mut stmt = tx
-            .prepare("SELECT version,checksum FROM hub_migrations ORDER BY version")
-            .map_err(|_| "Refusing non-hub database.")?;
-        let found = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        if found != [(1, checksum)] {
-            return Err("Incompatible hub migration version/checksum.".into());
-        }
+    } else if versions != [(1, checksum)] {
+        return Err("Incompatible hub migration version/checksum.".into());
     }
     tx.execute_batch(EXTENSIONS)?;
     if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
