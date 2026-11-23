@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { startRustServer } from '../../rust-test-server.ts';
@@ -66,9 +67,9 @@ try {
   }
   async function expectModel(runtime, account, model) {
     const expected = '/api/models?' + new URLSearchParams({ runtime, account });
-    await page.waitForRequest(request => new URL(request.url()).pathname === '/api/models', { timeout: 200 }).catch(() => {});
-    assert.equal(catalogPath, expected);
     await modelInput.waitFor();
+    for (let i = 0; catalogPath !== expected && i < 100; i++) await wait(20);
+    assert.equal(catalogPath, expected);
     await page.waitForFunction(model => document.querySelector('[placeholder="Enter model ID"]')?.value === model, model);
   }
   async function submit(runtime, account, model, pending) {
@@ -95,7 +96,7 @@ try {
   for (const [choices, runtime] of [[[codex, claude], 'codex'], [[claude], 'api']]) {
     await mount({ choices });
     await page.getByRole('button', { name: 'Use an API key', exact: true }).click();
-    await name.filter({ visible: true }).fill('Saved provider');
+    await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Saved provider');
     await page.getByLabel('API key', { exact: true }).fill('fixture-key');
     await page.getByRole('button', { name: 'Test', exact: true }).click();
     await page.getByRole('button', { name: 'Save', exact: true }).click();

@@ -383,6 +383,26 @@ async function run(client) {
     }
     assert.deepEqual(errors, []);
     assert.deepEqual(csp, []);
+    assert.deepEqual(mutations.filter(([path, body]) => !path.endsWith('/restore') && body.archived !== false), [
+      ["/api/projects", {"name": "Created in browser", "description": "", "folders": [{"mode": "new"}], "members": [{"agent": "20000000-0000-4000-8000-000000000081", "write": false}], "confirmWrite": false}],
+      ["/api/projects/:id/edit", {"name": "Updated project"}],
+      ["/api/projects/:id/sections/:id/edit", {"name": "Planning"}],
+      ["/api/projects/:id/sections", {"name": "Review"}],
+      ["/api/projects/:id/sections/:id/edit", {"position": 0}],
+      ["/api/projects/:id/sections/:id/edit", {"archived": true}],
+      ["/api/projects/:id/edit", {"allowInstallationApps": true, "confirmed": true}],
+      ["/api/projects/:id/connected-apps/grant-all/github", {"confirmed": true}],
+      ["/api/projects/:id/environment", {"name": "PROJECT_FIXTURE"}],
+      ["/api/projects/:id/environment", {"name": "PROJECT_FIXTURE"}],
+      ["/api/projects/:id/environment/remove", {"name": "PROJECT_FIXTURE", "confirmed": true}],
+      ["/api/projects/:id/environment", {"name": "PROJECT_FIXTURE"}],
+      ["/api/projects/:id/environment/remove", {"name": "PROJECT_FIXTURE", "confirmed": true}],
+      ["/api/projects/:id/mcp/test", {"name": "Fixture MCP", "url": "https://example.test/mcp"}],
+      ["/api/projects/:id/mcp", {}],
+      ["/api/projects/:id/agents/:id/mcp/:id", {"connectionRevision": 1, "tools": ["echo"]}],
+      ["/api/projects/:id/mcp/:id/remove", {"confirmed": true}],
+      ["/api/projects/:id/archive", {"confirmed": true}],
+    ]);
     receipt[client] = { metrics, screenshots, mutations, consoleErrors: errors.length, cspViolations: csp.length };
     for (const [name, timing] of Object.entries(metrics)) {
       assertP95('projects ' + name, 'cold', timing.cold.p95);

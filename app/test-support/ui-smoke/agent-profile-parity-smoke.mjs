@@ -377,6 +377,19 @@ try {
         }
       }
       assert.deepEqual(errors, []);
+      assert.deepEqual(commands, [
+        {"path": "/api/agents/:id/edit", "payload": {"revision": 1, "webAccess": true, "libraryDocsAccess": false, "learnFromConversations": false, "memoryModel": "alternate", "goalJudgeModel": "alternate", "providerAccount": "", "name": "Lifecycle updated", "role": "", "model": "fixture", "backupModel": "", "instructions": "Help the user.", "threadLimit": 2, "toolBudget": 90}},
+        {"path": "/api/agents/:id/folder", "payload": {"path": folder, "mode": "read-write", "revision": 0}},
+        {"path": "/api/agents/:id/folder/reset", "payload": {"revision": 1}},
+        {"path": "/api/agents/:id/computer", "payload": {"revision": 1, "alwaysOn": true}},
+        {"path": "/api/agents/:id/sites", "payload": {"name": "Fixture site", "source": "<h1>Fixture site</h1>"}},
+        {"path": "/api/agents/:id/avatar", "payload": {"revision": 0, "image": "PNG"}},
+        {"path": "/api/agents/:id/visibility", "payload": {"revision": 0, "hidden": true}},
+        {"path": "/api/agents/:id/visibility", "payload": {"revision": 1, "hidden": false}},
+        {"path": "/api/agents", "payload": {"setup": true, "providerAccount": "", "name": "Drafted agent", "role": "", "model": "fixture", "backupModel": "", "instructions": "Draft a profile for scheduling.", "threadLimit": 2, "toolBudget": 90, "runtime": "api"}},
+        {"path": "/api/agents", "payload": {"name": "Imported fixture", "role": "", "model": "fixture", "instructions": "Help the user.", "threadLimit": 2}},
+        {"path": "/api/agents/:id/delete", "payload": {}},
+      ]);
       await deletion(browser, app.origin, client);
       receipt[client] = { timing, commands, errors };
       if (samples) {
