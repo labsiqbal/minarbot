@@ -65,6 +65,7 @@ async function launcher(client) {
 }
 
 function stats(values) {
+  if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
   const percentile = ratio => Number(sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)].toFixed(1));
   return { samples: sorted.length, median: percentile(.5), p95: percentile(.95) };

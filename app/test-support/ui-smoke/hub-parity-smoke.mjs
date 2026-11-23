@@ -47,6 +47,14 @@ try {
   try { markMinarbotData(db); } finally { db.close(); }
   rust = await startRustHub(binary, scratch, { domain, accountsHost: central, dataPath,
     mailboxKeyPath, identity: { mode: 'stub', tokensPath }, web });
+  // Hub logins require an admitted account. Seed only the two test identities
+  // after Rust initializes the disposable database schema.
+  const seedAccounts = testDatabase(dataPath);
+  try {
+    const insert = seedAccounts.prepare("INSERT INTO accounts(id,issuer,subject,status,pilot_admitted) VALUES(?,?,?,'active',1)");
+    insert.run('10000000-0000-4000-8000-000000000001', identities.alice.issuer, identities.alice.subject);
+    insert.run('10000000-0000-4000-8000-000000000002', identities.bob.issuer, identities.bob.subject);
+  } finally { seedAccounts.close(); }
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=' + central,
     '-addext', 'subjectAltName=DNS:*.' + domain, '-keyout', join(scratch, 'tls.key'), '-out', join(scratch, 'tls.crt')], { stdio: 'ignore' });
   proxy = createServer({ key: await readFile(join(scratch, 'tls.key')), cert: await readFile(join(scratch, 'tls.crt')) }, (incoming, response) => {
