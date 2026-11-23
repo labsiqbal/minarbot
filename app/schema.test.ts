@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDatabase } from './test-support/database.ts';
 import { installCanonicalFixture } from './test-support/canonical-schema.ts';
 import { startRustServer } from './rust-test-server.ts';
-import { rustBinary } from './rust-binary.ts';
-import { startRustHub } from './test-support/hosted-hub.ts';
+import { openHubDatabase } from './hub/schema.ts';
 
 const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true };
 
@@ -143,28 +142,16 @@ for (const mode of ['canonical', 'local'] as const) {
   });
 }
 
-test('fresh Rust hub startup preserves the 85373b3 schema and applies extensions', async () => {
+test('fresh hub startup matches 85373b3', () => {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-hub-schema-'));
   const expected = testDatabase(':memory:');
   try {
     expected.exec(fixture('hub'));
-    const dataPath = join(directory, 'hub.sqlite');
-    const mailboxKeyPath = join(directory, 'mailbox.key');
-    const tokensPath = join(directory, 'tokens.json');
-    expected.exec(readFileSync(new URL('../crates/minarbot-server/src/hub/extensions.sql', import.meta.url), 'utf8'));
-    writeFileSync(mailboxKeyPath, Buffer.alloc(32, 8), { mode: 0o600 });
-    writeFileSync(tokensPath, '{}', { mode: 0o600 });
-    const binary = rustBinary('minarbot-server', process.env.MINARBOT_HOSTED_HUB_BINARY ?? process.env.MINARBOT_RUST_BINARY);
-    const hub = await startRustHub(binary, directory, {
-      domain: 'minarbot.test', accountsHost: 'accounts.minarbot.test', dataPath, mailboxKeyPath,
-      identity: { mode: 'stub', tokensPath },
-    });
-    await hub.close();
-    const db = testDatabase(dataPath, { readOnly: true });
+    const hub = openHubDatabase(join(directory, 'hub.sqlite'));
     try {
-      assert.deepEqual(snapshot(db), snapshot(expected));
-      assert.deepEqual(db.prepare('SELECT * FROM hub_migrations').all(), expected.prepare('SELECT * FROM hub_migrations').all());
-    } finally { db.close(); }
+      assert.deepEqual(snapshot(hub.db), snapshot(expected));
+      assert.deepEqual(hub.db.prepare('SELECT * FROM hub_migrations').all(), expected.prepare('SELECT * FROM hub_migrations').all());
+    } finally { hub.close(); }
   } finally {
     expected.close();
     rmSync(directory, { recursive: true, force: true });
