@@ -253,27 +253,54 @@ impl Launcher {
             )
             .stdin(Stdio::null())
             .stdout(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
-        let status = timeout(self.config.timeout, worker.wait()).await;
-        if !matches!(status, Ok(Ok(s)) if s.success()) {
-            worker.kill().await?;
-            return Err(if operation == "snapshot" {
-                "Snapshot failed. Server remains stopped."
-            } else {
-                "Snapshot restore failed. Server remains stopped."
+        let action = if operation == "snapshot" {
+            "Snapshot"
+        } else {
+            "Snapshot restore"
+        };
+        let mut stderr = worker
+            .stderr
+            .take()
+            .ok_or("Missing backup worker stderr.")?;
+        let mut diagnostic = String::new();
+        let result = timeout(self.config.timeout, async {
+            tokio::try_join!(worker.wait(), stderr.read_to_string(&mut diagnostic))
+        })
+        .await;
+        let detail = match result {
+            Ok(Ok((status, _))) if status.success() => return Ok(()),
+            Ok(Ok((status, _))) => diagnostic
+                .trim()
+                .strip_prefix("[minarbot-launcher] ")
+                .map_or_else(|| status.to_string(), str::to_owned),
+            Ok(Err(error)) => {
+                worker.kill().await?;
+                error.to_string()
             }
-            .into());
-        }
-        Ok(())
+            Err(_) => {
+                worker.kill().await?;
+                format!("timed out after {} ms", self.config.timeout.as_millis())
+            }
+        };
+        Err(format!("{action} failed: {detail}").into())
     }
     async fn rollback(&self, reason: &str) -> Result<()> {
         self.stop_child().await?;
-        self.phase("restoring", Some(reason))?;
         let attempt = self.attempt()?;
-        if attempt.snapshot_ready == Some(true) {
-            self.worker("restore").await?;
+        if attempt.snapshot_ready != Some(true) {
+            // The candidate cannot start before the snapshot is recorded.
+            // Keep serving even if storage failure prevents saving the result.
+            self.start(&attempt.from, false)?;
+            if let Err(error) = self.phase("rolled-back", Some(reason)) {
+                eprintln!("[minarbot-launcher] {reason}. Could not save update result: {error}");
+            }
+            return Ok(());
         }
+        self.phase("restoring", Some(reason))?;
+        self.worker("restore").await?;
         select(&self.config.releases, "current", &attempt.from)?;
         remove(&self.config.releases.join("trial"))?;
         self.state.borrow_mut().current = attempt.from.clone();
@@ -607,6 +634,7 @@ async fn main() {
             Path::new(&args[2]),
             Path::new(&args[3]),
         )
+        .map_err(backup::safe_error)
     } else if args.len() == 2 && args[0] == "--config" {
         match Config::load(Path::new(&args[1])) {
             Ok(config) => LocalSet::new().run_until(launch(config)).await,

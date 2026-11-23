@@ -3,6 +3,17 @@ use minarbot_launcher::data_format;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::{fs, os::unix::fs::MetadataExt, path::Path, time::Duration};
 
+pub fn safe_error(error: Box<dyn std::error::Error>) -> Box<dyn std::error::Error> {
+    match error.downcast::<rusqlite::Error>() {
+        // SQLite's free-form messages can include database values or names.
+        Ok(error) => match error.sqlite_error() {
+            Some(code) => format!("SQLite {code}").into(),
+            None => "SQLite could not read or prepare backup metadata.".into(),
+        },
+        Err(error) => error,
+    }
+}
+
 pub fn run(command: &str, database: &Path, destination: &Path) -> Result<()> {
     let source = fs::canonicalize(database)?;
     let metadata = fs::symlink_metadata(&source)?;
@@ -63,8 +74,10 @@ fn snapshot(source: &Path, target: &Path) -> Result<()> {
     let mut db = Connection::open(target)?;
     {
         let backup = rusqlite::backup::Backup::new(&source, &mut db)?;
-        backup.run_to_completion(100, Duration::from_millis(10), None)?;
+        // With the server stopped and its lease held, only contention needs a pause.
+        backup.run_to_completion(i32::MAX, Duration::from_millis(10), None)?;
     }
+    let db = db.transaction()?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS minarbot_backup (format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT; DELETE FROM minarbot_backup;")?;
     let (format, version) = data_format::WORKSPACE_BACKUP;
     db.execute(
@@ -127,5 +140,6 @@ fn snapshot(source: &Path, target: &Path) -> Result<()> {
             rusqlite::params![generation, owner],
         )?;
     }
+    db.commit()?;
     Ok(())
 }
