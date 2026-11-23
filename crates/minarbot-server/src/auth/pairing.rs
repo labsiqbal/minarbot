@@ -171,18 +171,16 @@ async fn page(state: &AppState, status: StatusCode, error: &str, secure: bool) -
     } else {
         ""
     };
-    let form = format!(
-        r#"<form method="post" action="/pair">
+    let form = r#"<form method="post" action="/pair">
 <label for="code">Pairing code</label>
-<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{{6}}" maxlength="6" required>
+<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
 <label for="name">Device name</label>
 <input id="name" name="name" maxlength="64" required>
 <button type="submit">Pair device</button>
-</form>"#
-    );
+</form>"#;
     let error = html_escape(error);
     let content = if secure {
-        form.as_str()
+        form
     } else {
         "<p>Open Minarbot over HTTPS to pair this device.</p>"
     };
