@@ -128,8 +128,7 @@ fn remove_fragment(path: &str) {
         let _ = history.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path));
     }
 }
-fn project_url(host: &str, path: &str) -> String {
-    let config = expect_context::<StoredValue<Config>>();
+fn project_url(config: StoredValue<Config>, host: &str, path: &str) -> String {
     config.with_value(|config| {
         let suffix = format!(".{}", config.domain);
         let valid = host == config.accounts_host
@@ -210,7 +209,6 @@ pub(crate) fn page(config: Config) -> impl IntoView {
     let invitation = path == "/invite";
     let path = StoredValue::new(path);
     let config = StoredValue::new(config);
-    provide_context(config);
     let session = RwSignal::new(None::<Result<Session, Failure>>);
     spawn_local(async move {
         let endpoint = if invitation {
@@ -415,7 +413,7 @@ fn Accounts(
 ) -> impl IntoView {
     let content = match path.as_str() {
         "/nodes/link" => view! { <NodeApproval actor=actor.clone() /> }.into_any(),
-        "/join" => view! { <JoinAgent actor=actor.clone() /> }.into_any(),
+        "/join" => view! { <JoinAgent actor=actor.clone() config /> }.into_any(),
         _ => view! { <Projects actor=actor.clone() config /> }.into_any(),
     };
     view! { <div class="hub-shell bs-root">
@@ -481,7 +479,7 @@ fn Projects(actor: Session, config: StoredValue<Config>) -> impl IntoView {
         let actor = actor.clone();
         let name = field(&data, "name");
         let address = field(&data, "slug");
-        let href = project_url(&format!("{address}.{domain}"), "/");
+        let href = project_url(config, &format!("{address}.{domain}"), "/");
         spawn_local(async move {
             match actor
                 .post::<Value>("/api/projects", json!({"name":name,"slug":address}))
@@ -660,7 +658,7 @@ struct ProjectOptions {
 }
 
 #[component]
-fn JoinAgent(actor: Session) -> impl IntoView {
+fn JoinAgent(actor: Session, config: StoredValue<Config>) -> impl IntoView {
     let error = RwSignal::new(String::new());
     let Some(join) = recall(JOIN).and_then(|raw| parse_join(&raw)) else {
         return view! { <div class="k-page bs-root"><Header title=Signal::derive(|| String::from("Join an agent")) /><p>"Open Settings, Connections, minarbot.com in your local app, then choose an agent."</p></div> }.into_any();
@@ -741,7 +739,7 @@ fn JoinAgent(actor: Session) -> impl IntoView {
         }
         busy.set(true);
         error.set(String::new());
-        project_link.set(project_url(&project_host, "/#agents"));
+        project_link.set(project_url(config, &project_host, "/#agents"));
         let actor = actor.get_value();
         let join = join.get_value();
         let mode = invocation.get_untracked();
