@@ -1626,7 +1626,7 @@ fn header(
     let workspace = config.agent.as_ref().is_some_and(|agent| !agent.builtin);
     let builtin = config.agent.as_ref().is_some_and(|agent| agent.builtin);
     let channel = config.channel;
-    let named = config.thread.is_some();
+    let named = config.thread.is_some() && use_context::<EmbeddedStep>().is_none();
     let settings = RwSignal::new(false);
     let toggle_details = move || chat.set_details(!chat.details.get_untracked());
     let keys = window_event_listener(leptos::ev::keydown, move |event| {

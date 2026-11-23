@@ -231,7 +231,7 @@ try {
   await projectPage.getByRole('button', { name: /^Inventory recap, Routine, Done/ }).click();
   await projectPage.getByRole(client === 'leptos' ? 'link' : 'button', { name: 'Open report', exact: true }).click();
   await projectPage.waitForURL(origin + '/rooms/' + project.channel);
-  await show(projectPage.getByText('Fixture report complete.', { exact: false }).first());
+  await show(projectPage.getByRole('region', { name: 'Conversation history' }).getByText('Fixture report complete.', { exact: true }));
   assert.deepEqual(errors, []);
   assert.deepEqual(consoleErrors, []);
   assert.deepEqual(await page.evaluate(() => window.calendarCspViolations), []);

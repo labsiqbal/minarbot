@@ -108,6 +108,7 @@ async function exercise(client) {
   }
   async function capture(name, setup = async () => {}, reset = async () => {}) {
     captureNames.push(name);
+    await page.mouse.move(1, 1);
     for (const [size, viewport] of Object.entries(sizes)) {
       await page.setViewportSize(viewport);
       await setup(size);
@@ -148,6 +149,15 @@ async function exercise(client) {
         await upcoming.locator('summary').or(upcoming.getByRole('button', { name: /^Upcoming/ })).first().press('Enter');
       }
       await upcoming.getByText(digest, { exact: true }).waitFor();
+      if (name === 'agent-upcoming') {
+        const timestamps = await upcoming.locator('time').evaluateAll(nodes =>
+          nodes.map(node => [node.dateTime, node.textContent]));
+        const [short, long] = timestamps;
+        assert.equal(short[1], new Date(short[0]).toLocaleString('en-US', {
+          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        }));
+        assert.equal(long[1], new Date(long[0]).toLocaleString('en-US'));
+      }
     }, async size => {
       if (size === 'narrow' && await details.isVisible()) await button('Close details', details).click();
     });
@@ -230,10 +240,13 @@ async function exercise(client) {
     await page.getByRole('button', { name: /^Run version / }).click();
     const step = linkOrButton('Open step work');
     await step.waitFor();
+    await page.locator('.workflow-run-node').filter({ hasText: /work.*Completed/s }).waitFor();
     await capture('workflow-inspector', () => step.scrollIntoViewIfNeeded());
     await step.press('Enter');
-    await button('Back to run ' + wfName).waitFor();
+    const stepBack = button('Back to run ' + wfName);
+    await stepBack.waitFor();
     await page.getByRole('region', { name: 'Conversation history' }).getByText(/Prepare fixture workflow\./).waitFor();
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Back to run Owner workflow');
     await capture('workflow-step', async size => {
       if (size === 'narrow') {
         assert.equal(await page.locator('dialog:modal').count(), 0, 'Step details covered the narrow transcript');
@@ -283,6 +296,7 @@ async function exercise(client) {
     await capture('remote-reply');
     machine.status = 'offline';
     await page.getByText('Offline. Reconnect the machine before sending.', { exact: true }).waitFor();
+    await page.getByText('Offline · Last known agents', { exact: true }).waitFor();
     assert(await button('Send message').isDisabled());
     await capture('remote-offline');
     machine.status = 'online';
@@ -358,6 +372,12 @@ try {
     receipt[client] = await exercise(client);
     await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
     console.log(`${client} conversation automation parity passed (${receipt[client].captureNames.length * 4} captures).`);
+  }
+  if (samples && receipt.react && receipt.leptos) {
+    const react = receipt.react.timings.workflow.warm.p95Ms;
+    const leptos = receipt.leptos.timings.workflow.warm.p95Ms;
+    console.log(`Scoped Workflows warm p95 ${leptos} ms (Leptos), ${react} ms (React).`);
+    assert(leptos <= react * 1.1, 'Scoped Workflows exceeded the warm p95 budget');
   }
 } finally {
   await browser?.close();

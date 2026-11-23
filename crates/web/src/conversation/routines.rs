@@ -75,7 +75,10 @@ pub(super) fn manage(agent: &str) -> String {
 
 pub(super) fn workflow_url(agent: &str) -> String {
     let from = window().location().pathname().unwrap_or_default();
-    format!("/workflows?agent={agent}&from={}", ui::encode(&from))
+    format!(
+        "/workflows?agent={agent}&from={}&ui=leptos",
+        ui::encode(&from)
+    )
 }
 
 pub(super) fn upcoming(agent: String) -> impl IntoView {

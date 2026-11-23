@@ -76,17 +76,38 @@ struct Summaries {
     summaries: Vec<Summary>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct Machines {
     machines: Vec<Machine>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct Machine {
     id: String,
     name: String,
     status: String,
-    agents: Vec<Agent>,
+    #[serde(default, rename = "agentCount")]
+    agent_count: Option<usize>,
+    agents: Vec<MachineAgent>,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+struct MachineAgent {
+    id: String,
+    name: String,
+    #[serde(default)]
+    role: String,
+}
+
+pub(crate) fn machine_status(status: &str) -> &'static str {
+    match status {
+        "online" => "Online",
+        "stale" => "Stale",
+        "offline" => "Offline",
+        "unauthorized" => "Unauthorized",
+        "version-mismatch" => "Version mismatch",
+        _ => "Unavailable",
+    }
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -275,6 +296,18 @@ pub(crate) fn WorkspaceShell(
     let project_commands = Commands::new(refresh_projects);
     provide_context(project_commands);
     let new_project = move || project_commands.create.set(true);
+    let refresh_machines = move || {
+        leptos::task::spawn_local(async move {
+            let next = Some(api::read("/api/machines").await);
+            machines.try_maybe_update(|current| {
+                if *current == next {
+                    return (false, ());
+                }
+                *current = next;
+                (true, ())
+            });
+        });
+    };
     let retry = move || {
         directory.set(None);
         projects.set(None);
@@ -285,11 +318,19 @@ pub(crate) fn WorkspaceShell(
                 summaries.try_set(data.summaries);
             }
         });
-        leptos::task::spawn_local(async move {
-            machines.try_set(Some(api::read("/api/machines").await));
-        });
+        refresh_machines();
     };
     retry();
+    if let Ok(timer) = set_interval_with_handle(
+        move || {
+            if document().visibility_state() == web_sys::VisibilityState::Visible {
+                refresh_machines();
+            }
+        },
+        std::time::Duration::from_secs(5),
+    ) {
+        on_cleanup(move || timer.clear());
+    }
     let agent_search = RwSignal::new(String::new());
     let project_search = RwSignal::new(String::new());
     let search = move || {
@@ -503,6 +544,7 @@ pub(crate) fn WorkspaceShell(
     };
     let hidden_agents =
         agent_profile::hidden_agents(lifecycle, directory.read_only(), agent_search);
+    let chevron_icon = StoredValue::new(icons.chevron.clone());
     let remote_rows = move || {
         let query = agent_search.get().trim().to_lowercase();
         let online = online.get();
@@ -511,13 +553,21 @@ pub(crate) fn WorkspaceShell(
             Some(Ok(result)) if !hidden => result.machines.iter()
                 .filter(|machine| !online || machine.status == "online")
                 .filter_map(|machine| {
+                    let status = machine_status(&machine.status);
+                    let online = machine.status == "online";
+                    let count = machine.agent_count.unwrap_or(machine.agents.len());
                     let links = machine.agents.iter().filter_map(|agent| {
                         if !format!("{} {}", agent.name, agent.role).to_lowercase().contains(&query) { return None; }
                         let path = format!("/machines/{}/agents/{}", machine.id, agent.id);
                         let current = route_path() == path;
+                        let initial = agent.name.chars().next().map(|initial| initial.to_uppercase().to_string());
                         Some(view! {
                             <a class="bot-row" class:is-selected=current href=path aria-current=current.then_some("page")
                                 aria-label=format!("{} on {}", agent.name, machine.name)>
+                                <span class="bot-row__avatar">
+                                    <span class="avatar bs-avatar" aria-hidden="true">{initial}</span>
+                                    <span class=if online { "status-dot is-online" } else { "status-dot is-offline" } role="img" aria-label=status></span>
+                                </span>
                                 <span class="bot-row__text"><span class="bot-row__name">{agent.name.clone()}</span><span class="bot-row__preview">{agent.role.clone()}</span></span>
                             </a>
                         })
@@ -525,10 +575,19 @@ pub(crate) fn WorkspaceShell(
                     if links.is_empty() && !query.is_empty() { return None; }
                     Some(view! {
                         <details class="machine-group" open>
-                            <summary class="machine-group__header"><span class="machine-group__name">{machine.name.clone()}</span></summary>
-                            <nav class="bot-list" aria-label=format!("Agents on {}", machine.name)>
-                                {if links.is_empty() { view! { <p class="machine-group__note">"No agents cached yet."</p> }.into_any() } else { links.into_any() }}
-                            </nav>
+                            <summary class="machine-group__header" title=format!("{} · {status}", machine.name)>
+                                <span class="machine-group__chevron" inner_html=chevron_icon.get_value()></span>
+                                <span class="sidebar-machine-icon"><crate::connection_ui::Icon name="server" /></span>
+                                <span class="machine-group__name">{machine.name.clone()}</span>
+                                <span class="machine-group__count" aria-label=format!("{count} agents")>{count}</span>
+                                <span class=format!("machine-dot is-{}", machine.status) role="img" aria-label=status title=status></span>
+                            </summary>
+                            <div class="machine-group__content" role="group" aria-label=format!("{} contents", machine.name)>
+                                {(!online).then(|| view! { <p class="machine-group__note">{format!("{status} · Last known agents")}</p> })}
+                                <nav class="bot-list" aria-label=format!("Agents on {}", machine.name)>
+                                    {if links.is_empty() { view! { <p class="machine-group__note">"No agents cached yet."</p> }.into_any() } else { links.into_any() }}
+                                </nav>
+                            </div>
                         </details>
                     })
                 }).collect_view().into_any(),
@@ -539,7 +598,6 @@ pub(crate) fn WorkspaceShell(
     let folder_icon = StoredValue::new(icons.folder.clone());
     let open_icon = StoredValue::new(icons.folder_open.clone());
     let section_icon = StoredValue::new(icons.hash.clone());
-    let chevron_icon = StoredValue::new(icons.chevron.clone());
     let project_rows = move || {
         let query = project_search.get().trim().to_lowercase();
         projects.with(|projects| match projects {

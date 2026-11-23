@@ -60,6 +60,9 @@ route. Add `?ui=react` to open the React client. The workspace shell mounts agen
 creation, profile editing, and template dialogs inside the selected route group.
 Conversation controls and Advanced profile provide Memory and History summary.
 Agent email inbox and paired-machine agent detail also use the conversation bundle.
+Agent-scoped Workflows opens in the conversation shell. Its first open loads the
+workflows WASM and CSS. Inline run steps mount the conversation bundle through
+the same loader and reuse it when the shell already has it.
 Both clients share the note recovery journal format.
 React remains the default for the staged rollout in #67.
 

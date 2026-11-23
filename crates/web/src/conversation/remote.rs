@@ -1,5 +1,5 @@
 use super::*;
-use crate::{api, connection_ui as ui, system::kit};
+use crate::{api, connection_ui as ui, shell::machine_status, system::kit};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -100,17 +100,6 @@ fn restore(key: &str, machine: &str, agent: &str) -> Result<Option<Command>, ()>
         return Err(());
     }
     Ok(Some(command))
-}
-
-fn machine_status(status: &str) -> &str {
-    match status {
-        "online" => "Online",
-        "stale" => "Stale",
-        "offline" => "Offline",
-        "unauthorized" => "Unauthorized",
-        "version-mismatch" => "Version mismatch",
-        _ => "Unavailable",
-    }
 }
 
 fn binding<'a>(machine: &'a Machine, agent: &PeerAgent) -> Option<&'a Binding> {

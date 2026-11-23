@@ -520,11 +520,17 @@ pub fn standalone() -> impl IntoView {
 pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
     let config = chat.config.get_value();
     if config.channel {
+        let lead = config.room.as_ref().and_then(|room| room.lead.as_deref());
         return view! {
             <div class="right-panel__body">
                 <ul class="right-panel__members" aria-label="Section members">
-                    {config.members.into_iter().map(|member| view! {
-                        <li><a class="k-link" href=link(&format!("/agents/{}", member.id))>{member.name}</a><span>{member.role}</span></li>
+                    {config.members.into_iter().map(|member| {
+                        let role = if lead == Some(member.id.as_str()) { "Lead" } else { member.role.as_deref().unwrap_or_default() };
+                        let picture = avatar(Some(member.clone()), &member.name, false, 32);
+                        view! { <li>{picture}<div>
+                            <strong><a class="section-member-link" href=link(&format!("/agents/{}", member.id))>{member.name.clone()}</a></strong>
+                            <span>{role.to_owned()}</span>
+                        </div></li> }
                     }).collect_view()}
                 </ul>
             </div>
@@ -534,6 +540,28 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
     let Some(agent) = config.agent else {
         return ().into_any();
     };
+    if use_context::<EmbeddedStep>().is_some() {
+        let name = agent.name.clone();
+        let role = agent
+            .role
+            .clone()
+            .filter(|role| !role.is_empty())
+            .unwrap_or_else(|| "Agent".into());
+        let model = agent.model.clone();
+        return view! {
+            <div class="details__scroll">
+                <div class="details__identity">
+                    {avatar(Some(agent), &name, false, 36)}
+                    <div class="details__identity-text">
+                        <div class="details__name">{name}</div>
+                        <div class="details__who-sub">{role}</div>
+                        <span class="details__model">{model}</span>
+                    </div>
+                </div>
+            </div>
+        }
+        .into_any();
+    }
     let upcoming = (!agent.builtin).then(|| agent.id.clone());
     let base = format!("/agents/{}", agent.id);
     let api = StoredValue::new(format!("/api{base}/threads"));

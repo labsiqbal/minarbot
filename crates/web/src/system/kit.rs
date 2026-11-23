@@ -162,13 +162,13 @@ pub fn Field(id: &'static str, label: &'static str, children: Children) -> impl 
 
 #[component]
 pub fn Disclosure(
-    title: &'static str,
+    #[prop(into)] title: String,
     #[prop(optional)] open: bool,
     children: Children,
 ) -> impl IntoView {
     let chevron = icons().down;
     let expanded = RwSignal::new(open);
-    view! { <details class="k-collapsible system-disclosure" open=open on:toggle=move |event| {
+    view! { <details class="k-collapsible system-disclosure" data-state=move || if expanded.get() { "open" } else { "closed" } open=open on:toggle=move |event| {
       expanded.set(event.target().and_then(|node| node.dyn_into::<web_sys::Element>().ok()).is_some_and(|node| node.has_attribute("open")));
     }><summary class="k-collapsible__trigger" role="button" aria-expanded=move || expanded.get().to_string()>
       <span class="k-collapsible__title">{title}</span>

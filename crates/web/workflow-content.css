@@ -1,4 +1,3 @@
-@import "../../app/src/AutomationCalendar.css";
 @import "../../app/src/ui/workflow.css";
 
 .workflow-library[hidden] { display: none; }

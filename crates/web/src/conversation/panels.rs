@@ -1248,7 +1248,7 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
             on:cancel=move |event: web_sys::Event| { event.prevent_default(); chat.set_details(false); }>
         <aside class="details right-panel conversation-panel bs-root" aria-label="Conversation details">
             <div class="right-panel__header"><div>
-                {agent.as_ref().map(|agent| if agent.builtin {
+                {agent.as_ref().filter(|_| !embedded).map(|agent| if agent.builtin {
                     let from = routes::link(&format!("/agents/{}", agent.id));
                     view! { <a class="k-icon-btn" aria-label=settings_label title=settings_label href=crate::settings::section_url("/settings/providers", &from)>
                         <span class="appearance-icon" inner_html=settings_icon.clone()></span>

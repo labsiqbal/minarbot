@@ -126,7 +126,7 @@ enum Screen {
 pub(crate) fn workflows_page() -> impl IntoView {
     let search = window().location().search().unwrap_or_default();
     if let Some((owner, back)) = crate::lazy_route::workflow_scope(&format!("/workflows{search}")) {
-        return agent_library(owner, back).into_any();
+        return agent_library(owner, format!("{back}?ui=leptos")).into_any();
     }
     let screen = RwSignal::new(Screen::List);
     let returning = return_state();
@@ -1456,7 +1456,7 @@ fn Detail(
         {move || step.get().map(|current| {
             let back_label = format!("Back to run {}", current.title);
             let back = NodeRef::<leptos::html::Button>::new();
-            back.on_load(|back| { let _ = back.focus(); });
+            back.on_load(|back| request_animation_frame(move || { let _ = back.focus(); }));
             view! {
                 <div class="workflow-step-conversation">
                     <div class="k-page bs-root workflow-page"><PageHead title=current.title description=current.description actions=kit::content(move || view! {
@@ -1763,7 +1763,7 @@ fn Versions(
     };
     view! {
         <kit::Section title="Saved versions">
-            <p class="k-field__hint">"Restore the graph as a new revision. Existing runs retain their saved graph."</p>
+            <p class="k-field__hint">"Restore the graph as a new revision. The workflow name and runs already started stay unchanged."</p>
             <ReadError query label="Reload versions" />
             {move || match query.data.get() {
                 Some(page) => view! { <kit::Card>{rows(&page["versions"]).iter().map(|row| {
@@ -1785,8 +1785,9 @@ fn Versions(
                             <kit::Menu name=format!("Version {revision} actions") disabled=Signal::derive(move || current() || journal.locked())
                               items=vec![kit::MenuItem{label:format!("Restore version {revision}"),danger:false,action:restore}]>{kit::icon(kit::icons().more)}</kit::Menu>
                         })>
-                            <details class="k-collapsible system-disclosure"><summary class="k-collapsible__trigger">{format!("View graph version {revision}")}</summary>
-                                {kit::code(format!("Graph version {revision}"),graph)}</details>
+                            <kit::Disclosure title=format!("View graph version {revision}")>
+                                {kit::code(format!("Graph version {revision}"),graph)}
+                            </kit::Disclosure>
                         </ui::Row>
                     }
                 }).collect_view()}</kit::Card> }.into_any(),
