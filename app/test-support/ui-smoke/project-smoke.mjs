@@ -150,7 +150,7 @@ async function run(client) {
   };
   try {
     await api('/api/agents', { id: agent, runtime: 'api', name: 'Project member', model: 'fixture', instructions: 'Synthetic fixture.' });
-    await api('/api/projects', { id: project, name: 'Fixture project', description: 'Project parity fixture.',
+    const created = await api('/api/projects', { id: project, name: 'Fixture project', description: 'Project parity fixture.',
       members: [{ agent, write: false }], folders: [{ mode: 'existing', path: folder }], confirmWrite: false });
     await page.goto(go());
     assert.equal(await page.locator('#leptos-root').count(), 1);
