@@ -9,7 +9,7 @@
 
 #leptos-root { height: 100%; }
 #appearance-fallback[hidden], .hub-shell [hidden] { display: none; }
-.hub-center .hub-brand, .hub-link .hub-brand { padding-inline: 0; }
+.hub-center .hub-brand { padding-inline: 0; }
 .hub-dialog { width: min(440px, calc(100% - 32px)); padding: 24px; margin: auto; }
 .hub-dialog h2 { margin: 0 0 20px; font-size: 18px; }
 .hub-dialog form + button, .hub-dialog > label + div { margin-top: 16px; }

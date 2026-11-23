@@ -194,6 +194,11 @@ pub(super) fn page(
         page.selected.set(hash_fragment())
     });
     on_cleanup(move || changed.remove());
+    if let Ok(timer) =
+        set_interval_with_handle(move || page.refresh(), std::time::Duration::from_secs(3))
+    {
+        on_cleanup(move || timer.clear());
+    }
     Effect::new(move |_| {
         let revision = page.refresh.get();
         spawn_local(page.read(revision));
@@ -224,6 +229,7 @@ pub(super) fn page(
                 <a class="hub-link" href=accounts_href>{brand()}</a>
                 <Show when=move || page.access.get()>
                     <nav aria-label="Project">
+                        <div class="hub-nav-heading">{move || page.data.with(|project| project.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| "Project".into()))}</div>
                         <a class="hub-nav-item" href="#members" aria-current=move || (page.selected.get() == "#members").then_some("page")><Icon name="users" />"Members"</a>
                         <a class="hub-nav-item" href="#agents" aria-current=move || (page.selected.get() == "#agents").then_some("page")><Icon name="bot" />"Agents"</a>
                         <p class="hub-nav-heading">"Sections"</p>

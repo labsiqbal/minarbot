@@ -384,7 +384,8 @@ pub(super) fn Room(page: ProjectPage, section: NamedSection) -> impl IntoView {
                     </div>
                 </div></div>
             </Show>
-            <div class="transcript" role="log" aria-label="Conversation" node_ref=transcript on:scroll=move |_| {
+            <div class="transcript-wrap">
+            <div class="transcript" role="log" aria-label="Conversation history" node_ref=transcript on:scroll=move |_| {
                 if let Some(element) = transcript.get_untracked() {
                     following.set(element.scroll_height() - element.scroll_top() - element.client_height() < 80);
                 }
@@ -401,6 +402,7 @@ pub(super) fn Room(page: ProjectPage, section: NamedSection) -> impl IntoView {
                         }
                     }}
                 </div>
+            </div>
             </div>
             <div class="composer-wrap">
                 <div class="hub-mentions" hidden=move || room.draft.with(|d| d.mentions.is_empty())>{move || {
@@ -461,15 +463,22 @@ fn exchange(
             "unknown" => "Uncertain",
             other => other,
         }.to_owned();
+        let tone = match turn.state.as_str() {
+            "done" => "is-done",
+            "failed" | "unknown" => "is-failed",
+            _ => "is-running",
+        };
         view! { <article class="agent-message">
             <div class="hub-author"><Icon name="bot" /><strong>{agent_name}</strong><span>{format!("Owned by {payer}")}</span><span>{format!("Requested by {requester}")}</span></div>
-            <div class="hub-reply">{text}</div>
-            {badge(status)}
+            <div class="message-column">
+                <div class="hub-reply">{text}</div>
+                <div class="turn-meta agent-meta"><span class=format!("turn-status {tone}")><i aria-hidden="true"></i>{status}</span></div>
+            </div>
         </article> }
     }).collect_view();
     view! { <div class="hub-exchange">
-        <article class="human-message" aria-label=format!("Message from {requester}")>
-            <div class="human-message__bubble">{message.text}</div><span class="hub-address">{requester.clone()}</span>
+        <article class="human-message" tabindex="-1" aria-label=format!("Message from {requester}")>
+            <div class="human-bubble message-plain">{message.text}</div><div class="turn-meta human-meta">{requester.clone()}</div>
         </article>
         {replies}
     </div> }
