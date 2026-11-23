@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { chromium } from 'playwright-core';
 import { rustBinary } from '../../rust-binary.ts';
 import { startRustHub } from '../hosted-hub.ts';
+import { markMinarbotData, testDatabase } from '../database.ts';
 import { routeReadiness } from './route-readiness.mjs';
 import { fixtureClock, parityShot } from './parity-shot.mjs';
 
@@ -41,7 +42,10 @@ try {
   const mailboxKeyPath = join(scratch, 'mailbox.key');
   await writeFile(mailboxKeyPath, Buffer.alloc(32, 3), { mode: 0o600 });
   await writeFile(tokensPath, JSON.stringify(identities), { mode: 0o600 });
-  rust = await startRustHub(binary, scratch, { domain, accountsHost: central, dataPath: join(scratch, 'state.sqlite'),
+  const dataPath = join(scratch, 'state.sqlite');
+  const db = testDatabase(dataPath);
+  try { markMinarbotData(db); } finally { db.close(); }
+  rust = await startRustHub(binary, scratch, { domain, accountsHost: central, dataPath,
     mailboxKeyPath, identity: { mode: 'stub', tokensPath }, web });
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=' + central,
     '-addext', 'subjectAltName=DNS:*.' + domain, '-keyout', join(scratch, 'tls.key'), '-out', join(scratch, 'tls.crt')], { stdio: 'ignore' });

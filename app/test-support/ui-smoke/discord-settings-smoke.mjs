@@ -54,14 +54,14 @@ try {
     return route.fulfill({ json: state });
   });
   await page.goto(origin + '/settings/connected-apps');
-  await page.getByRole('button', { name: 'Discord', exact: true }).click();
+  await page.locator('#leptos-root').waitFor({ state: 'attached' });
   const discord = page.getByRole('region', { name: 'Discord', exact: true });
   const token = discord.getByLabel('Bot token');
   await token.waitFor();
   assert.equal(await token.getAttribute('type'), 'password');
   await token.fill('invalid');
   await token.press('Enter');
-  await discord.getByRole('alert').getByText('Discord could not connect.', { exact: false }).waitFor();
+  await discord.getByRole('alert').filter({ hasText: 'Discord could not connect.' }).waitFor();
   assert.equal(await token.inputValue(), '');
   await token.fill('synthetic.discord.fixture-key');
   await token.press('Enter');

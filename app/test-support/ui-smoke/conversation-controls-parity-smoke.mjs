@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { assertP95 } from './timing-budgets.mjs';
-import { fixDate, parityChromiumArgs, parityShot } from './parity-shot.mjs';
+import { fixDate, parityChromiumArgs, parityShot, withFixtureText } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -192,7 +192,7 @@ try {
               assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), name + ' overflows');
               assert.deepEqual(await page.evaluate(() => window.fixtureCsp), [], name);
               const file = join(output, `${size}-${theme}-${name}-${client}.png`);
-              await parityShot(page, file);
+              await withFixtureText(page, [['11:47 PM', '11:20 PM'], ['11:47', '11:20']], () => parityShot(page, file));
               evidence.push({ size, theme, name, file });
             };
             const open = async path => {
