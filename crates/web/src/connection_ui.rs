@@ -154,7 +154,7 @@ pub fn local_agents() -> Vec<crate::shell::Agent> {
 
 #[component]
 pub fn Icon(name: &'static str) -> impl IntoView {
-    let icon = use_context::<Icons>().and_then(|icons| icons.0.get(name).cloned());
+    let icon = with_context::<Icons, _>(|icons| icons.0.get(name).cloned()).flatten();
     view! { <span class="appearance-icon" aria-hidden="true" inner_html=icon.unwrap_or_default()></span> }
 }
 
