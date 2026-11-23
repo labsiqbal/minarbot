@@ -10,6 +10,7 @@ mod db;
 mod events;
 mod files;
 mod harness;
+mod hub;
 mod mcp;
 mod media;
 mod operator_file;
@@ -728,6 +729,9 @@ async fn main() -> db::Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("--mcp-stdio") {
         return mcp::stdio().await;
+    }
+    if std::env::args().nth(1).as_deref() == Some("--hub") {
+        return hub::run().await;
     }
     if let Some(command @ ("script" | "restore")) = std::env::args().nth(1).as_deref() {
         let args = std::env::args().skip(2).collect::<Vec<_>>();
