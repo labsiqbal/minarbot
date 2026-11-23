@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,6 +52,11 @@ async function verifyCraft(downloadRelease: boolean) {
   try {
     const initial = await request(settings);
     assert.equal(initial.installed, false);
+    if (!downloadRelease) {
+      const version = join(directory, 'craft-anything', initial.version);
+      await mkdir(version, { recursive: true });
+      await writeFile(join(version, 'craft-anything-cli'), 'fixture');
+    }
     await request('/api/agents', { runtime: 'api', id: agent, name: 'Craft fixture', model: 'fixture', instructions: 'Study websites.' }, 201);
     await request(path, { id: turn, text: 'Check Craft Anything.' }, 202);
     await waitForTurn(row => row.status === 'running');
