@@ -46,6 +46,9 @@ workspace shell and load the `workflows` bundle. The project Calendar link loads
 the same bundle. Setup and Settings use `appearance`, and the Guide uses the `conversation` bundle on its ordinary URL.
 The #63 agent, named conversation and room pilot uses that same bundle when
 its URL includes `?ui=leptos`. Settings return links and browser history retain the selected route.
+Agent profiles, named conversations, and rooms load Memory and History summary
+from the conversation bundle. Memory uses the same API and session-storage
+journals as React, including recovery of a note save after switching clients.
 React remains the default for the staged rollout in #67.
 
 ## React inventory for #67
@@ -114,6 +117,14 @@ then writes dark/light desktop/narrow comparison images and a timing receipt.
 ```sh
 node --experimental-strip-types test-support/ui-smoke/workspace-prompts-smoke.mjs /tmp/minarbot-workspace-prompts
 MINARBOT_SMOKE_UI=leptos node --experimental-strip-types test-support/ui-smoke/guide-smoke.mjs
+```
+
+Run Memory and History summary parity after packaging. This smoke seeds private
+and section banks on a disposable server, compares both clients in dark and
+light at desktop and narrow widths, and verifies note recovery and source paging.
+
+```sh
+MINARBOT_MEMORY_BENCH=20 node --experimental-strip-types test-support/ui-smoke/memory-smoke.mjs /tmp/minarbot-memory-parity
 ```
 
 ## Warm navigation in #62

@@ -850,6 +850,8 @@ pub(super) fn edit_dialog(
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let thread_edit = thread.is_some();
+    let resources = RwSignal::new(false);
+    let agent_id = StoredValue::new(agent.id.clone());
     let title = if thread_edit {
         "Conversation settings"
     } else {
@@ -905,6 +907,9 @@ pub(super) fn edit_dialog(
     };
     view! {
         <dialog class="conversation-dialog bs-root" node_ref=dialog aria-label=title
+            on:toggle=move |_| {
+                resources.set(!thread_edit && dialog.get_untracked().is_some_and(|dialog| dialog.open()));
+            }
             on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
             <h2 class="k-dialog__title">{title}</h2>
             <form class="k-stack" node_ref=form on:submit=submit>
@@ -925,6 +930,9 @@ pub(super) fn edit_dialog(
                     </button>
                 </div>
             </form>
+            <Show when=move || resources.get()>
+                <div class="details-list agent-profile__resources">{memory::profile_resources(agent_id.get_value())}</div>
+            </Show>
         </dialog>
     }
 }

@@ -16,7 +16,7 @@ pub fn id(value: &str) -> bool {
         })
 }
 
-fn command_id(value: &str) -> bool {
+pub(super) fn command_id(value: &str) -> bool {
     id(value)
         && value.as_bytes()[14] == b'4'
         && matches!(

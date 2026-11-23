@@ -1,6 +1,7 @@
 mod controls;
 mod guide;
 mod input;
+pub(crate) mod memory;
 mod panels;
 mod protocol;
 mod queue;
@@ -44,6 +45,10 @@ pub(crate) struct Icons {
     pub folder: String,
     pub next: String,
     pub alert: String,
+    pub book: String,
+    pub brain: String,
+    pub history: String,
+    pub summary: String,
 }
 
 #[derive(Clone, Debug)]
@@ -1184,12 +1189,21 @@ fn avatar(agent: Option<Agent>, name: &str, channel: bool, size: u8) -> impl Int
     }
 }
 
-fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> impl IntoView {
+fn header(
+    chat: Chat,
+    config: ConversationConfig,
+    searching: RwSignal<bool>,
+    memory_open: RwSignal<bool>,
+    summary_open: RwSignal<bool>,
+) -> impl IntoView {
     let icons = use_context::<Icons>().unwrap_or_default();
     let menu = NodeRef::<leptos::html::Details>::new();
     let trigger = NodeRef::<leptos::html::Summary>::new();
     let title = config.name.clone();
     let builtin = config.agent.as_ref().is_some_and(|agent| agent.builtin);
+    let channel = config.channel;
+    let named = config.thread.is_some();
+    let settings = RwSignal::new(false);
     let toggle_details = move || chat.set_details(!chat.details.get_untracked());
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
         if !(event.ctrl_key() || event.meta_key())
@@ -1231,6 +1245,24 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
                             chat.guide_connection.set(true);
                         }>"AI connection"</button>
                     })}
+                    {named.then(|| view! {
+                        <button type="button" class="k-menu__item" on:click=move |_| {
+                            if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
+                            if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                            settings.set(true);
+                        }>{crate::system::kit::icon(icons.settings.clone())}"Conversation settings"</button>
+                    })}
+                    {channel.then(|| view! {
+                        <button type="button" class="k-menu__item" on:click=move |_| {
+                            if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                            memory_open.set(true);
+                        }>{crate::system::kit::icon(icons.book.clone())}"Section memory"</button>
+                        <button type="button" class="k-menu__item" on:click=move |_| {
+                            if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
+                            if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                            summary_open.set(true);
+                        }>{crate::system::kit::icon(icons.summary.clone())}"History summary"</button>
+                    })}
                     <button type="button" class="k-menu__item" on:click=move |_| {
                         if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                         searching.set(true);
@@ -1251,6 +1283,19 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
                 </button>
             </div>
         </header>
+        {named.then(|| view! {
+            <crate::system::kit::Dialog id="memory-conversation-settings" title=crate::system::kit::text("Conversation settings")
+                open=Signal::from(settings) on_close=move || settings.set(false)>
+                <div class="k-stack">
+                    <button type="button" class="k-btn k-btn--secondary k-btn--md" on:click=move |_| { settings.set(false); memory_open.set(true); }>
+                        {crate::system::kit::icon(icons.book)}"Agent memory"
+                    </button>
+                    <button type="button" class="k-btn k-btn--secondary k-btn--md" on:click=move |_| { settings.set(false); summary_open.set(true); }>
+                        {crate::system::kit::icon(icons.summary)}"History summary"
+                    </button>
+                </div>
+            </crate::system::kit::Dialog>
+        })}
     }
 }
 
@@ -1258,6 +1303,20 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
 /// Key this component by conversation scope when changing routes.
 pub fn shell(config: ConversationConfig) -> impl IntoView {
     let chat = Chat::new(config.clone());
+    let memory_open = RwSignal::new(false);
+    let summary_open = RwSignal::new(false);
+    let memory_path = StoredValue::new(if config.channel {
+        format!("{}/memory", config.base)
+    } else {
+        config
+            .agent
+            .as_ref()
+            .map(|agent| format!("/api/agents/{}/memory", agent.id))
+            .unwrap_or_default()
+    });
+    let channel = config.channel;
+    let archived = channel && config.archived;
+    let context = memory::context_dialog(config.base.clone(), summary_open);
     let guide = config.agent.clone().filter(|agent| agent.builtin);
     let snapshots = StoredValue::new(HashMap::new());
     subscribe(chat, snapshots);
@@ -1377,7 +1436,7 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         }
     };
     view! {
-        <div class="chat-row conversation-layout bs-root">
+        <div class="chat-row conversation-layout bs-root" hidden=memory_open>
             <main class="chat conversation-chat" class:is-finding=searching aria-label=label>
                 <form class="conversation-find k-inline" role="search" hidden=move || !searching.get()
                     on:keydown=move |event| { if event.key() == "Escape" { event.prevent_default(); close_search(); } }
@@ -1446,9 +1505,18 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                         }
                     });
                 }))}
-                {header(chat, config, searching)}
+                {header(chat, config, searching, memory_open, summary_open)}
             </main>
             {panels::right_panel(chat)}
         </div>
+        {context}
+        <Show when=move || memory_open.get()>
+            <main class="chat page-view bs-root"><div class="page-scroll"><div class="page legacy">
+                {memory::panel(memory_path.get_value(), channel, archived, false, Callback::new(move |()| {
+                    memory_open.set(false);
+                    memory::focus_chat_menu();
+                }))}
+            </div></div></main>
+        </Show>
     }
 }
