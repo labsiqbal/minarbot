@@ -33,3 +33,11 @@
 .project-navigation__section:has(.is-selected) > .k-icon-btn { background: transparent; }
 
 .project-index-status { font-variant-numeric: tabular-nums; }
+
+.project-home > .k-tabs > .k-tabs__panel[hidden] { display: none; }
+.project-home > .k-tabs > .k-tabs__list { overflow-x: auto; scrollbar-width: thin; }
+.project-home > .k-tabs > .k-tabs__list > .k-tabs__tab { flex-shrink: 0; }
+
+@media (max-width: 480px) {
+  .project-home .bs-root.bs-set3-environment > .k-page-head { padding-right: 0; flex-wrap: wrap; gap: 8px; }
+}

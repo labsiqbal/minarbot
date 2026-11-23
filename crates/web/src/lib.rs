@@ -19,6 +19,7 @@ mod memory;
 mod messaging_connections;
 mod onboarding;
 mod pairing;
+mod project_integrations;
 mod projects;
 mod providers;
 mod routes;

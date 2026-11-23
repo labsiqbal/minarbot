@@ -47,6 +47,7 @@ const appearanceConfig: Plugin = {
           close: X, copy: Copy, ellipsis: Ellipsis, error: CircleAlert, 'external-link': ExternalLink, globe: Globe, check: Check,
           file: FileText, info: Info, key: KeyRound, link: Link, message: MessageCircle, package: Package, plug: Plug, plus: Plus,
           download: Download, edit: Pencil, inbox: Inbox, eye: Eye, 'eye-off': EyeOff, trash: Trash2,
+          folder: Folder, 'git-branch': GitBranch, refresh: RefreshCw,
           search: Search, server: Server, shield: ShieldCheck, warn: AlertTriangle,
     };
     const iconMap = (icons: Record<string, LucideIcon>) => Object.fromEntries(Object.entries(icons)
