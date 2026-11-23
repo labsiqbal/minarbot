@@ -54,5 +54,15 @@ test('golden gate compares exact inventories and enforces dimensions and pixel c
     assert.match(failing.failures, /edges\.png\t\t\t\tdimensions/);
     assert.match(failing.failures, /extra\.png\t\t\t\tmissing baseline/);
     assert.match(failing.failures, /fourth\.png\t\t\t\tmissing capture/);
+
+    const update = (...pairs) => spawnSync(process.execPath,
+      [gate, '--update', join(scratch, 'fail'), ...pairs], { encoding: 'utf8' });
+    assert.equal(update().status, 1);
+    assert.equal(update('conversation/allowance.png', 'conversation/fourth.png').status, 1);
+    assert.deepEqual(await readFile(join(baselineDir, 'allowance.png')), baseline);
+    const updated = update('conversation/allowance.png');
+    assert.equal(updated.status, 0, updated.stderr);
+    assert.deepEqual(await sharp(join(baselineDir, 'allowance.png')).raw().toBuffer(), pixels);
+    assert.deepEqual(await readFile(join(baselineDir, 'fourth.png')), baseline);
   } finally { await rm(scratch, { recursive: true }); }
 });
