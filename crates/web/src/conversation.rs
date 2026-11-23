@@ -1,10 +1,13 @@
 mod controls;
 mod guide;
+mod inbox;
 mod input;
 mod panels;
 mod protocol;
 mod queue;
+mod remote;
 mod routes;
+mod routines;
 
 use std::{collections::HashMap, time::Duration};
 
@@ -16,7 +19,39 @@ use serde_json::Value;
 use wasm_bindgen::{closure::Closure, prelude::wasm_bindgen, JsCast};
 use web_sys::{EventSource, MessageEvent, Storage};
 
+#[cfg(feature = "workflows")]
+pub(crate) use routes::workflow_step;
 pub use routes::{standalone, Agent, Thread};
+
+fn date_at(milliseconds: i64) -> js_sys::Date {
+    js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(milliseconds as f64))
+}
+
+fn date_format(date: &js_sys::Date, locales: &js_sys::Array, fields: &[(&str, &str)]) -> String {
+    let options = js_sys::Object::new();
+    for (key, value) in fields {
+        let _ = js_sys::Reflect::set(&options, &(*key).into(), &(*value).into());
+    }
+    js_sys::Intl::DateTimeFormat::new(locales, &options)
+        .format()
+        .call1(&wasm_bindgen::JsValue::UNDEFINED, date)
+        .ok()
+        .and_then(|value| value.as_string())
+        .unwrap_or_default()
+}
+
+fn poll_visible(callback: Callback<()>, milliseconds: u64) {
+    if let Ok(handle) = set_interval_with_handle(
+        move || {
+            if document().visibility_state() == web_sys::VisibilityState::Visible {
+                callback.run(());
+            }
+        },
+        Duration::from_millis(milliseconds),
+    ) {
+        on_cleanup(move || handle.clear());
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct Icons {
@@ -55,6 +90,7 @@ pub struct ConversationConfig {
     pub thread: Option<Thread>,
     pub members: Vec<Agent>,
     pub channel: bool,
+    pub section: Option<String>,
     pub archived: bool,
     pub can_send: bool,
 }
@@ -158,6 +194,8 @@ struct Turn {
     room: Option<Value>,
     #[serde(default, rename = "goalContinuation")]
     goal_continuation: bool,
+    #[serde(rename = "routineReport")]
+    routine_report: Option<routines::Report>,
 }
 
 impl Turn {
@@ -976,6 +1014,13 @@ pub(super) fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
 }
 
 fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) -> impl IntoView {
+    if let Some(report) = row.with_untracked(|turn| turn.routine_report.clone()) {
+        return view! {
+            <article class="turn-block" class:is-latest=move || latest.get() id=format!("turn-{id}") tabindex="0">
+                {routines::report(chat, row, report)}
+            </article>
+        }.into_any();
+    }
     let inspect_id = id.clone();
     let icons = use_context::<Icons>().unwrap_or_default();
     let now = RwSignal::new(js_sys::Date::now());
@@ -1183,6 +1228,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
             </div>
         </article>
     }
+    .into_any()
 }
 
 fn avatar(agent: Option<Agent>, name: &str, channel: bool, size: u8) -> impl IntoView {
@@ -1284,6 +1330,8 @@ fn header(chat: Chat, config: ConversationConfig, searching: RwSignal<bool>) -> 
                                 if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                                 if let Some(lifecycle) = lifecycle { lifecycle.open(crate::agent_profile::DialogTarget::Edit(target.get_value())); }
                             }>"Edit profile"</button> })}
+                            <a class="k-menu__item" href=target.with_value(|agent| routines::manage(agent))><crate::connection_ui::Icon name="schedule" />"Routines"</a>
+                            <a class="k-menu__item" href=target.with_value(|agent| routines::workflows(agent))><crate::connection_ui::Icon name="workflow" />"Workflows"</a>
                             <button type="button" class="k-menu__item" on:click=move |_| {
                                 if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                                 if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }

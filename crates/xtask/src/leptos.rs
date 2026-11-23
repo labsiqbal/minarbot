@@ -223,7 +223,8 @@ pub fn build(root: &Path) -> Result<()> {
         fs::write(&glue, fs::read_to_string(&glue)?.replace(&wasm_name, &wasm))?;
         let adapter = match name {
             "conversation" => "globalThis.MinarbotConversation = (await import('minarbot-conversation-adapter')).browserAdapter;",
-            "workflows" => "globalThis.minarbotWorkflowMarkdown = (text, scope) => import('minarbot-workflow-markdown').then(({ renderWorkflowMarkdown }) => renderWorkflowMarkdown(text, scope));",
+            "workflows" => "globalThis.minarbotWorkflowMarkdown = (text, scope) => import('minarbot-workflow-markdown').then(({ renderWorkflowMarkdown }) => renderWorkflowMarkdown(text, scope));
+                globalThis.minarbotLoadWorkflowConversation = async () => { globalThis.MinarbotConversation ??= (await import('minarbot-conversation-adapter')).browserAdapter; };",
             _ => "",
         };
         let start = temp.path().join(format!("{name}-start.js"));

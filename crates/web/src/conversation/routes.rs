@@ -52,6 +52,7 @@ struct Channel {
     id: String,
     name: String,
     section_name: Option<String>,
+    project: Option<String>,
     members: Vec<String>,
     archived: u8,
 }
@@ -132,6 +133,7 @@ async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
                 agent: Some(agent),
                 thread,
                 members: Vec::new(),
+                section: None,
                 channel: false,
             })
         }
@@ -147,6 +149,7 @@ async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
                 .collect();
             Ok(ConversationConfig {
                 base: format!("/api/channels/{id}"),
+                section: channel.project.map(|_| id.clone()),
                 scope: format!("channel:{id}"),
                 channel: true,
                 name: channel.section_name.unwrap_or(channel.name),
@@ -161,6 +164,18 @@ async fn load(route: Route) -> Result<ConversationConfig, ApiError> {
 }
 
 pub fn standalone() -> impl IntoView {
+    use crate::workspace_route::AgentPage;
+    if let Some(page) = window()
+        .location()
+        .pathname()
+        .ok()
+        .and_then(|path| AgentPage::from_path(&path))
+    {
+        return match page {
+            AgentPage::Inbox(agent) => inbox::page(agent).into_any(),
+            AgentPage::Remote { machine, agent } => remote::page(machine, agent).into_any(),
+        };
+    }
     let config = RwSignal::new(None);
     let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
     let deleting = move || lifecycle.is_some_and(|lifecycle| lifecycle.deleting_current());
@@ -187,23 +202,27 @@ pub fn standalone() -> impl IntoView {
         {move || if deleting() { view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any() } else { config.get().map(shell).into_any() }}
         <p class="conversation-startup" role="status" hidden=move || config.with(Option::is_some) || !error.with(String::is_empty)>"Loading conversation…"</p>
         <p class="conversation-startup message-error" role="alert" hidden=move || error.with(String::is_empty)>{error}</p>
-    }
+    }.into_any()
 }
 
 pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
     let config = chat.config.get_value();
     if config.channel {
         return view! {
-            <ul class="right-panel__members" aria-label="Section members">
-                {config.members.into_iter().map(|member| view! {
-                    <li><a class="k-link" href=link(&format!("/agents/{}", member.id))>{member.name}</a><span>{member.role}</span></li>
-                }).collect_view()}
-            </ul>
+            <div class="right-panel__body">
+                <ul class="right-panel__members" aria-label="Section members">
+                    {config.members.into_iter().map(|member| view! {
+                        <li><a class="k-link" href=link(&format!("/agents/{}", member.id))>{member.name}</a><span>{member.role}</span></li>
+                    }).collect_view()}
+                </ul>
+            </div>
+            {config.section.map(|id| view! { <div class="details__sections details-activity">{routines::section(id)}</div> })}
         }.into_any();
     }
     let Some(agent) = config.agent else {
         return ().into_any();
     };
+    let upcoming = (!agent.builtin).then(|| agent.id.clone());
     let base = format!("/agents/{}", agent.id);
     let api = StoredValue::new(format!("/api{base}/threads"));
     let threads = RwSignal::new(Vec::<Thread>::new());
@@ -458,5 +477,49 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
         </section>
         </div>
         </div>
+        {upcoming.map(|agent| view! { <div class="details__sections details-activity">{routines::upcoming(agent)}</div> })}
     }.into_any()
+}
+
+#[cfg(feature = "workflows")]
+pub(crate) fn workflow_step(agent: String, thread: String) -> impl IntoView {
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(catch, js_name = minarbotLoadWorkflowConversation)]
+        async fn load_adapter() -> Result<(), wasm_bindgen::JsValue>;
+    }
+
+    let config = RwSignal::new(None);
+    let error = RwSignal::new(String::new());
+    let load_step = Callback::new(move |()| {
+        let route = Route::Agent(agent.clone(), Some(thread.clone()));
+        error.set(String::new());
+        leptos::task::spawn_local(async move {
+            match load_adapter().await {
+                Ok(()) => match load(route).await {
+                    Ok(value) => {
+                        config.try_set(Some(value));
+                    }
+                    Err(reason) => {
+                        error.try_set(reason.message);
+                    }
+                },
+                Err(_) => {
+                    error.try_set("Step conversation could not load.".into());
+                }
+            }
+        });
+    });
+    load_step.run(());
+    view! {
+        <div class="workflow-step-chat">
+            {move || config.get().map(shell)}
+            <Show when=move || config.with(Option::is_none)>
+                <p class="empty" role="status" hidden=move || !error.with(String::is_empty)>"Loading step conversation..."</p>
+                <p class="error" role="alert" hidden=move || error.with(String::is_empty)>{error} " "
+                    <button type="button" class="secondary" on:click=move |_| load_step.run(())>"Reload step conversation"</button>
+                </p>
+            </Show>
+        </div>
+    }
 }

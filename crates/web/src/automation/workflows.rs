@@ -124,6 +124,9 @@ enum Screen {
 }
 
 pub(crate) fn workflows_page() -> impl IntoView {
+    if let Some((owner, back)) = agent_scope() {
+        return agent_library(owner, back).into_any();
+    }
     let screen = RwSignal::new(Screen::List);
     let returning = return_state();
     let return_id = text(&returning["workflow"]);
@@ -279,6 +282,142 @@ pub(crate) fn workflows_page() -> impl IntoView {
             Screen::Editor { owner,workflow } => view! { <Editor owner workflow back select confirm /> }.into_any(),
             Screen::Detail(workflow) => view! { <Detail initial=workflow back editor confirm /> }.into_any(),
             Screen::Inbox => inbox(back).into_any(),
+        }}
+        {confirmation}
+    }).into_any()
+}
+
+fn agent_scope() -> Option<(String, String)> {
+    let params =
+        web_sys::UrlSearchParams::new_with_str(&window().location().search().ok()?).ok()?;
+    let owner = params.get("agent")?.to_ascii_lowercase();
+    if !valid_id(&owner) {
+        return None;
+    }
+    let base = format!("/agents/{owner}");
+    let back = params
+        .get("from")
+        .filter(|path| {
+            path == &base
+                || path
+                    .strip_prefix(&format!("{base}/conversations/"))
+                    .is_some_and(valid_id)
+        })
+        .unwrap_or(base);
+    Some((owner, format!("{back}?ui=leptos")))
+}
+
+fn agent_library(owner: String, back: String) -> impl IntoView {
+    let recovery = journal(&owner);
+    let initial = recovery.pending.with_untracked(|pending| {
+        pending
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .map(|pending| {
+                let workflow = pending.record["workflow"].clone();
+                if pending.record["kind"] == "save" {
+                    Screen::Editor {
+                        owner: owner.clone(),
+                        workflow,
+                    }
+                } else {
+                    Screen::Detail(workflow)
+                }
+            })
+            .unwrap_or(Screen::List)
+    });
+    let screen = RwSignal::new(initial);
+    let owner = StoredValue::new(owner);
+    let cursors = RwSignal::new(Vec::<String>::new());
+    let query = ui::query::<Value>(move || {
+        let path = owner.with_value(|owner| format!("/api/agents/{owner}/workflows"));
+        cursors.with_untracked(|cursors| {
+            cursors
+                .last()
+                .map_or_else(|| path.clone(), |after| url(&path, &[("after", after)]))
+        })
+    });
+    let refresh = Callback::new(move |()| query.reload.run(()));
+    let library = Callback::new(move |()| {
+        screen.set(Screen::List);
+        refresh.run(());
+    });
+    let open = Callback::new(move |workflow| screen.set(Screen::Detail(workflow)));
+    let edit = Callback::new(move |workflow| {
+        screen.set(Screen::Editor {
+            owner: owner.get_value(),
+            workflow,
+        })
+    });
+    let next = move || {
+        query.data.with(|data| {
+            data.as_ref()
+                .and_then(|data| data["next_after"].as_str().map(str::to_owned))
+        })
+    };
+    let page = move |older| {
+        if older {
+            if let Some(after) = next() {
+                cursors.update(|cursors| cursors.push(after));
+            }
+        } else {
+            cursors.update(|cursors| {
+                cursors.pop();
+            });
+        }
+        query.data.set(None);
+        refresh.run(());
+    };
+    let (confirm, confirmation) = kit::confirmation();
+    route_page(view! {
+        {move || match screen.get() {
+            Screen::Editor { owner, workflow } => view! { <Editor owner workflow back=library select=Callback::new(move |_| library.run(())) confirm /> }.into_any(),
+            Screen::Detail(workflow) => view! { <Detail initial=workflow back=library editor=edit confirm inline=true /> }.into_any(),
+            _ => {
+                let href = back.clone();
+                view! { <div class="k-page bs-root">
+                    <PageHead title="Workflows" actions=kit::content(move || view! {
+                        <a class="k-btn k-btn--md k-btn--ghost" href=href>"Back"</a>
+                        <button type="button" class="k-icon-btn" aria-label="Reload workflow" on:click=move |_| refresh.run(())>{kit::icon(kit::icons().refresh)}</button>
+                        <kit::Button label=kit::text("Create workflow") variant="primary" disabled=Signal::derive(move || recovery.locked())
+                            on_click=move || edit.run(Value::Null) />
+                    }) />
+                    <Recovery journal=recovery confirm done=Callback::new(move |_| refresh.run(())) />
+                    <ReadError query />
+                    <kit::Section title="Workflow library">
+                        {move || match query.data.get() {
+                            Some(data) if rows(&data["workflows"]).is_empty() => kit::empty("No workflows on this page yet", String::new()).into_any(),
+                            Some(data) => view! { <kit::Card>{rows(&data["workflows"]).iter()
+                                .filter(|row| owner.with_value(|owner| row["agent"] == *owner))
+                                .map(|row| {
+                                    let selected = row.clone();
+                                    let editable = row.clone();
+                                    let name = text(&row["name"]).to_owned();
+                                    let version = format!("Version {}", number(&row["revision"]));
+                                    let steps = format!("{} steps", rows(&row["graph"]["nodes"]).len());
+                                    view! { <ui::Row title=name.clone() click=Callback::new(move |()| open.run(selected.clone()))
+                                        meta=kit::content(move || view! { {kit::badge("neutral",version)}<span>{steps}</span> })
+                                        trailing=kit::content(move || view! {
+                                            <kit::Menu name=format!("{name} actions") disabled=Signal::derive(move || recovery.locked() || query.busy.get())
+                                                items=vec![kit::MenuItem { label:format!("Edit {name}"), danger:false, action:Callback::new(move |_| edit.run(editable.clone())) }]>
+                                                {kit::icon(kit::icons().more)}
+                                            </kit::Menu>
+                                        }) />
+                                    }
+                                }).collect_view()}</kit::Card> }.into_any(),
+                            None if query.error.with(String::is_empty) => kit::skeleton(4, "Loading workflow...").into_any(),
+                            None => ().into_any(),
+                        }}
+                        <div class="k-pager" hidden=move || cursors.with(Vec::is_empty) && next().is_none()>
+                            <button class="k-icon-btn" type="button" aria-label="Previous workflows" disabled=move || cursors.with(Vec::is_empty)
+                                on:click=move |_| page(false)>{kit::icon(kit::icons().left)}</button>
+                            <button class="k-icon-btn" type="button" aria-label="Next workflows" disabled=move || next().is_none()
+                                on:click=move |_| page(true)>{kit::icon(kit::icons().right)}</button>
+                        </div>
+                    </kit::Section>
+                </div> }.into_any()
+            }
         }}
         {confirmation}
     })
@@ -1113,12 +1252,25 @@ fn Branches(
     }
 }
 
+#[derive(Clone)]
+struct StepConversation {
+    agent: String,
+    thread: String,
+    title: String,
+    description: String,
+    sequence: i64,
+}
+
+#[derive(Clone, Copy)]
+struct InlineStep(RwSignal<Option<StepConversation>>);
+
 #[component]
 fn Detail(
     initial: Value,
     back: Callback<()>,
     editor: Callback<Value>,
     confirm: kit::Confirm,
+    #[prop(optional)] inline: bool,
 ) -> impl IntoView {
     let id = StoredValue::new(text(&initial["id"]).to_owned());
     let workflow = RwSignal::new(initial);
@@ -1142,7 +1294,22 @@ fn Detail(
         if id.with_value(|id| returning["workflow"] == *id) && valid_id(restore) {
             restore.to_owned()
         } else {
-            String::new()
+            journal.pending.with_untracked(|pending| {
+                pending
+                    .as_ref()
+                    .ok()
+                    .and_then(Option::as_ref)
+                    .and_then(|request| {
+                        match text(&request.record["kind"]) {
+                            "run" => request.body["id"].as_str(),
+                            "cancel" | "approve" | "retry" => request.path.split('/').nth(3),
+                            _ => None,
+                        }
+                        .filter(|id| valid_id(id))
+                        .map(str::to_owned)
+                    })
+                    .unwrap_or_default()
+            })
         },
     );
     let history_cursor = RwSignal::new(Vec::<i64>::new());
@@ -1233,13 +1400,17 @@ fn Detail(
         runs.data.set(None);
         runs.reload.run(());
     };
+    let step = RwSignal::new(None::<StepConversation>);
+    if inline {
+        provide_context(InlineStep(step));
+    }
     view! {
-        <div class="k-page bs-root">
+        <div class="k-page bs-root workflow-library" hidden=move || step.with(Option::is_some)>
             <header class="k-page-head"><div class="k-page-head__text"><h1 node_ref=heading tabindex="-1">{move || workflow.with(|workflow| text(&workflow["name"]).to_owned())}</h1></div>
                 <div class="k-page-head__actions">
                     <kit::Button label=kit::text("Back") variant="ghost" on_click=move || back.run(()) />
                     <button type="button" class="k-icon-btn" aria-label="Reload workflow" on:click=move |_| changed.run(Value::Null)>{kit::icon(kit::icons().refresh)}</button>
-                    <Show when=move || !deleted()>
+                    <Show when=move || !inline && !deleted()>
                         <kit::Button label=kit::text("Edit workflow") disabled=locked on_click=move || editor.run(workflow.get_untracked()) />
                     </Show>
                 </div>
@@ -1289,6 +1460,22 @@ fn Detail(
             </kit::Section>
             {move || { let id=run.get(); (!id.is_empty()).then(|| run_details(id,Some((workflow,journal,confirm)))) }}
         </div>
+        {move || step.get().map(|current| {
+            let back_label = format!("Back to run {}", current.title);
+            let back = NodeRef::<leptos::html::Button>::new();
+            back.on_load(|back| { let _ = back.focus(); });
+            view! {
+                <div class="workflow-step-conversation">
+                    <div class="k-page bs-root"><PageHead title=current.title description=current.description actions=kit::content(move || view! {
+                        <button type="button" node_ref=back class="k-btn k-btn--md k-btn--ghost" on:click=move |_| {
+                            step.set(None);
+                            request_animation_frame(move || focus_node("data-workflow-step", &current.sequence.to_string()));
+                        }>{back_label}</button>
+                    }) /></div>
+                    {crate::conversation::workflow_step(current.agent, current.thread)}
+                </div>
+            }
+        })}
     }
 }
 
@@ -1641,6 +1828,7 @@ pub(super) fn run_details(
     });
     let details = NodeRef::<leptos::html::Div>::new();
     let return_to_step = actions.is_some();
+    let inline = use_context::<InlineStep>();
     view! {
         <div class="k-stack">
             <ReadError query label="Reload run" />
@@ -1681,13 +1869,24 @@ pub(super) fn run_details(
                 <kit::Card>{move || steps.with(|steps| rows(steps).iter().map(|step| {
                     let node=text(&step["node"]).to_owned();
                     let label=step_label(step);
-                    let href=step["thread"].as_str().zip(step["agent"].as_str()).filter(|(thread,agent)| valid_id(thread)&&valid_id(agent))
-                        .map(|(thread,agent)| conversation(agent,thread));
+                    let target=step["thread"].as_str().zip(step["agent"].as_str()).filter(|(thread,agent)| valid_id(thread)&&valid_id(agent))
+                        .map(|(thread,agent)| (thread.to_owned(), agent.to_owned()));
                     let detail=text(&step["detail"]).to_owned();
                     let name=format!("Open step {node}");
+                    let step_node=node.clone();
                     let sequence=number(&step["seq"]);
                     view! { <ui::Row title=node meta=kit::content(move || kit::badge("neutral",label))
-                        trailing=kit::content(move || href.map(|url| {
+                        trailing=kit::content(move || target.map(|(thread, agent)| {
+                            if let (Some(InlineStep(active)), Some((workflow, _, _))) = (inline, actions) {
+                                return view! { <button type="button" class="k-btn k-btn--sm k-btn--secondary" data-workflow-step=sequence.to_string()
+                                    on:click=move |_| {
+                                        let title = workflow.with_untracked(|row| text(&row["name"]).to_owned());
+                                        let version = snapshot.with_untracked(|run| number(&run["version"]));
+                                        let description = format!("{title} · Version {version} · Step {step_node} · Run {}", id.get_value());
+                                        active.set(Some(StepConversation { agent:agent.clone(), thread:thread.clone(), title, description, sequence }));
+                                    }>{name}</button> }.into_any();
+                            }
+                            let url = conversation(&agent, &thread);
                             let link = NodeRef::<leptos::html::A>::new();
                             if return_to_step && return_state()["step"] == sequence {
                                 link.on_load(|link| { let _=link.focus(); });
@@ -1699,7 +1898,7 @@ pub(super) fn run_details(
                                         let _=history.replace_state_with_url(&JsValue::from_str(&target.to_string()),"",None);
                                     }
                                 }
-                            }>{name}</a> }
+                            }>{name}</a> }.into_any()
                         }))>
                         {id.with_value(|id| result_markdown(detail,id))}
                     </ui::Row> }

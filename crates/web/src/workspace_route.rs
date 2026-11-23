@@ -1,5 +1,28 @@
 pub const GUIDE_PATH: &str = "/agents/00000000-0000-4000-8000-000000000005";
 
+pub enum AgentPage {
+    Inbox(String),
+    Remote { machine: String, agent: String },
+}
+
+impl AgentPage {
+    pub fn from_path(path: &str) -> Option<Self> {
+        let parts: Vec<_> = path.strip_prefix('/')?.split('/').collect();
+        match parts.as_slice() {
+            ["agents", agent, "inbox"] if valid_id(agent) => {
+                Some(Self::Inbox(agent.to_ascii_lowercase()))
+            }
+            ["machines", machine, "agents", agent] if valid_id(machine) && valid_id(agent) => {
+                Some(Self::Remote {
+                    machine: machine.to_ascii_lowercase(),
+                    agent: agent.to_ascii_lowercase(),
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
 // Shared workspace route ownership for Axum and Leptos.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceRoute {

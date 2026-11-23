@@ -8,6 +8,8 @@
 @import "../../app/src/computer-viewer.css";
 @import "../../app/src/goal-mode.css";
 @import "../../app/src/attachments.css";
+@import "../../app/src/Routines.css";
+@import "../../app/src/ui/machines.css";
 
 .conversation-startup { padding: 24px; }
 body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
@@ -86,3 +88,6 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .question-card-body :is(h3, p, .k-check__label) { white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-card-note { margin: 0; overflow-wrap: anywhere; }
 .turn-request { scroll-margin-block-start: 12px; }
+
+.conversation-panel .activity-section[hidden] { display: none; }
+.conversation-panel .system-disclosure summary { list-style: none; }

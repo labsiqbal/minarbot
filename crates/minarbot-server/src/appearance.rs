@@ -14,14 +14,14 @@ pub const WORKFLOWS_DOCUMENT: &str = "_leptos/workflows.html";
 pub const CONVERSATION_DOCUMENT: &str = "_leptos/conversation.html";
 
 pub fn conversation_route(path: &str, query: &str) -> bool {
-    crate::navigation(path)
-        && (path.starts_with("/rooms/")
-            || path.starts_with("/agents/") && !path.ends_with("/inbox"))
-        && !form_urlencoded::parse(query.as_bytes())
+    !form_urlencoded::parse(query.as_bytes())
             .any(|(key, _)| matches!(key.as_ref(), "result" | "computer"))
-        && (path.eq_ignore_ascii_case(workspace_route::GUIDE_PATH)
-            || form_urlencoded::parse(query.as_bytes())
-                .any(|(key, value)| key == "ui" && value == "leptos"))
+        && (workspace_route::AgentPage::from_path(path).is_some()
+            || crate::navigation(path)
+                && (path.starts_with("/rooms/") || path.starts_with("/agents/"))
+                && (path.eq_ignore_ascii_case(workspace_route::GUIDE_PATH)
+                    || form_urlencoded::parse(query.as_bytes())
+                        .any(|(key, value)| key == "ui" && value == "leptos")))
 }
 
 pub fn conversation_document(html: &str, path: &str, query: &str) -> String {

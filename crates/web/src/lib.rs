@@ -21,6 +21,8 @@ mod pairing;
 mod projects;
 mod providers;
 mod routes;
+#[cfg(any(feature = "conversation", feature = "workflows"))]
+mod routine_label;
 mod settings;
 mod settings_recovery;
 mod shell;
@@ -119,6 +121,7 @@ pub fn mount_workflows() -> Result<(), JsValue> {
     struct Config {
         colors: Vec<appearance::ColorTheme>,
         workspace_icons: shell::Icons,
+        conversation_icons: conversation::Icons,
         connection_icons: connection_ui::Icons,
         system_icons: system::kit::Icons,
         error_icon: String,
@@ -133,6 +136,7 @@ pub fn mount_workflows() -> Result<(), JsValue> {
         .ok_or_else(|| JsValue::from_str("Unknown automation route"))?;
     mount_to(root, move || {
         let colors = StoredValue::new(config.colors);
+        provide_context(config.conversation_icons);
         provide_context(config.connection_icons);
         provide_context(config.system_icons);
         if route.is_automation() {
@@ -150,7 +154,7 @@ pub fn mount_workflows() -> Result<(), JsValue> {
     Ok(())
 }
 
-#[cfg(feature = "conversation")]
+#[cfg(all(feature = "conversation", not(feature = "workflows")))]
 #[wasm_bindgen]
 pub fn mount_conversation() -> Result<(), JsValue> {
     let document = document();

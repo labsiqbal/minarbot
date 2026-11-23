@@ -129,58 +129,7 @@ fn relative(at: i64) -> String {
         .unwrap_or_default()
 }
 
-pub(super) fn trigger_label(routine: &Value) -> String {
-    match text(&routine["trigger"]) {
-        "manual" => "Manual".into(),
-        "script" => "Local script".into(),
-        "webhook" => TEMPLATES
-            .iter()
-            .find(|(id, _, _)| routine["webhook_source"] == *id)
-            .map_or("Webhook", |(_, name, _)| *name)
-            .into(),
-        _ => {
-            let spec = &routine["schedule"];
-            let zone = routine["schedule_zone"].as_str().unwrap_or("UTC");
-            match text(&spec["kind"]) {
-                "cron" => {
-                    let parts = text(&spec["expression"])
-                        .split_whitespace()
-                        .collect::<Vec<_>>();
-                    match parts.as_slice() {
-                        [minute, hour, "*", "*", "*"]
-                            if minute.parse::<u8>().is_ok() && hour.parse::<u8>().is_ok() =>
-                        {
-                            format!("Every day at {hour:0>2}:{minute:0>2} ({zone})")
-                        }
-                        [minute, hour, "*", "*", "1-5"]
-                            if minute.parse::<u8>().is_ok() && hour.parse::<u8>().is_ok() =>
-                        {
-                            format!("Weekdays at {hour:0>2}:{minute:0>2} ({zone})")
-                        }
-                        _ => format!("Cron {} ({zone})", text(&spec["expression"])),
-                    }
-                }
-                "interval" => {
-                    let amount = number(&spec["amount"]);
-                    format!(
-                        "Every {amount} {}{}",
-                        text(&spec["unit"]),
-                        if amount == 1 { "" } else { "s" }
-                    )
-                }
-                _ => routine["interval_ms"].as_i64().map_or_else(
-                    || {
-                        format!(
-                            "Once on {} ({zone})",
-                            format(number(&routine["next_at"]), "en-GB", &[("timeZone", zone)])
-                        )
-                    },
-                    |ms| format!("Every {} minutes", ms as f64 / 60_000.0),
-                ),
-            }
-        }
-    }
-}
+pub(super) use crate::routine_label::trigger as trigger_label;
 
 #[derive(Clone)]
 enum Editor {
