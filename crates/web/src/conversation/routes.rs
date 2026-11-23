@@ -166,6 +166,10 @@ pub fn standalone() -> impl IntoView {
     let deleting = move || lifecycle.is_some_and(|lifecycle| lifecycle.deleting_current());
     let error = RwSignal::new(String::new());
     leptos::task::spawn_local(async move {
+        if results::current().is_err() {
+            error.set("Page not found.".into());
+            return;
+        }
         let result = match window()
             .location()
             .pathname()
