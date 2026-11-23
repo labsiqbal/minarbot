@@ -220,8 +220,10 @@ impl Hub {
     }
     fn host(&self, db: &Connection, headers: &HeaderMap, peer: IpAddr) -> Result<String> {
         let raw = single(headers, "host")?
-            .filter(|v| exact_host(v))
-            .ok_or_else(missing)?;
+            .ok_or_else(|| Failure::new(400, "invalid_host", "Host is required."))?;
+        if !exact_host(raw) {
+            return Err(missing());
+        }
         if single(headers, "forwarded")?.is_some() {
             return Err(missing());
         }
