@@ -18,17 +18,28 @@ extern "C" {
     ) -> js_sys::Array;
 }
 
-fn files(chat: Chat, selected: web_sys::FileList, uploading: RwSignal<bool>) {
+fn files(
+    chat: Chat,
+    selected: web_sys::FileList,
+    uploading: RwSignal<bool>,
+    file_names: RwSignal<HashMap<String, String>>,
+) {
     upload_files(
         chat,
         (0..selected.length())
             .filter_map(|index| selected.get(index))
             .collect(),
         uploading,
+        file_names,
     );
 }
 
-fn upload_files(chat: Chat, selected: Vec<web_sys::File>, uploading: RwSignal<bool>) {
+fn upload_files(
+    chat: Chat,
+    selected: Vec<web_sys::File>,
+    uploading: RwSignal<bool>,
+    file_names: RwSignal<HashMap<String, String>>,
+) {
     if chat.locked() || uploading.get_untracked() {
         return;
     }
@@ -44,6 +55,7 @@ fn upload_files(chat: Chat, selected: Vec<web_sys::File>, uploading: RwSignal<bo
     let path = format!("{}/files", chat.base());
     leptos::task::spawn_local(async move {
         for file in selected {
+            let name = file.name();
             let result = upload(&path, file).await;
             if chat.files.is_disposed() {
                 return;
@@ -53,6 +65,9 @@ fn upload_files(chat: Chat, selected: Vec<web_sys::File>, uploading: RwSignal<bo
                     if let Some(id) = value.as_string().filter(|id| protocol::id(id)) {
                         let mut files = chat.files.get_untracked();
                         if !files.contains(&id) {
+                            file_names.update(|names| {
+                                names.insert(id.clone(), name);
+                            });
                             files.push(id);
                             chat.attach(files);
                         }
@@ -89,6 +104,7 @@ fn recording_control(
     chat: Chat,
     recording: RwSignal<&'static str>,
     uploading: RwSignal<bool>,
+    file_names: RwSignal<HashMap<String, String>>,
 ) -> impl IntoView {
     let icons = use_context::<Icons>().unwrap_or_default();
     let session = StoredValue::new_local(None::<Recording>);
@@ -144,7 +160,7 @@ fn recording_control(
                         recording.try_set(state);
                     });
                     let file = Closure::<dyn FnMut(web_sys::File)>::new(move |file| {
-                        if !chat.files.is_disposed() { upload_files(chat, vec![file], uploading); }
+                        if !chat.files.is_disposed() { upload_files(chat, vec![file], uploading, file_names); }
                     });
                     let error = Closure::<dyn FnMut(String)>::new(move |error| { chat.error.try_set(error); });
                     let actions = record(state.as_ref().unchecked_ref(), file.as_ref().unchecked_ref(), error.as_ref().unchecked_ref());
@@ -322,15 +338,19 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
             })
             .unwrap_or_else(|| chat.files.get())
     });
-    let file_names = RwSignal::new(Vec::<FileRef>::new());
+    let file_names = RwSignal::new(HashMap::<String, String>::new());
     Effect::new(move |_| {
-        if attachments.with(Vec::is_empty) {
+        if attachments.with(|ids| {
+            file_names.with_untracked(|names| ids.iter().all(|id| names.contains_key(id)))
+        }) {
             return;
         }
         let path = format!("{}/files", chat.base());
         leptos::task::spawn_local(async move {
             if let Ok(list) = get::<Vec<FileRef>>(&path).await {
-                file_names.try_set(list);
+                file_names.try_update(|names| {
+                    names.extend(list.into_iter().map(|file| (file.id, file.name)))
+                });
             }
         });
     });
@@ -412,12 +432,12 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                     }
                     on:drop=move |event: web_sys::DragEvent| {
                         if let Some(list) = event.data_transfer().and_then(|data| data.files()).filter(|list| list.length() != 0) {
-                            event.prevent_default(); files(chat, list, uploading);
+                            event.prevent_default(); files(chat, list, uploading, file_names);
                         }
                     }>
                     <div class="composer-attachments k-inline" role="group" aria-label="Composer attachments" hidden=move || attachments.with(Vec::is_empty)>
                         {move || attachments.get().into_iter().map(|id| {
-                            let title = file_names.with(|rows| rows.iter().find(|file| file.id == id).map(|file| file.name.clone())).unwrap_or_else(|| "Attachment".into());
+                            let title = file_names.with(|names| names.get(&id).cloned()).unwrap_or_else(|| "Attachment".into());
                             view! {
                                 <span class="k-badge">{title.clone()}</span>
                                 <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || chat.locked()
@@ -438,7 +458,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                         on:input=move |event| chat.draft(event_target_value(&event))
                         on:paste=move |event: web_sys::ClipboardEvent| {
                             if let Some(list) = event.clipboard_data().and_then(|data| data.files()).filter(|list| list.length() != 0) {
-                                event.prevent_default(); files(chat, list, uploading);
+                                event.prevent_default(); files(chat, list, uploading, file_names);
                             }
                         }
                         on:keydown=move |event| {
@@ -458,7 +478,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                     <div class="composer__toolbar">
                         <input node_ref=file_input type="file" multiple hidden on:change=move |_| {
                             if let Some(element) = file_input.get_untracked() {
-                                if let Some(list) = element.files() { files(chat, list, uploading); }
+                                if let Some(list) = element.files() { files(chat, list, uploading, file_names); }
                                 element.set_value("");
                             }
                         } />
@@ -472,7 +492,7 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                         {channel.then(|| rooms::addressed_member(chat))}
                         <div class="composer__right">
                             <span class="composer__retry" hidden=move || chat.busy.get() || chat.pending.with(Option::is_none)>"Retry send"</span>
-                            {recording_control(chat, recording, uploading)}
+                            {recording_control(chat, recording, uploading, file_names)}
                             <button class="composer__cta" type="submit" aria-label=send_label title=send_label
                                 hidden=move || active.with(Option::is_some) && value().trim().is_empty() && attachments.with(Vec::is_empty) && chat.pending.with(Option::is_none)
                                 disabled=move || chat.busy.get() || chat.blocked.get() || uploading.get() || recording.get() != "idle" || chat.config.with_value(|c| c.archived)
