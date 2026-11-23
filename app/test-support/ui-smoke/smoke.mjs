@@ -882,9 +882,9 @@ async function computerViewerSmoke() {
 }
 
 try {
-  try { await access(join(root, 'app/dist/index.html')); }
-  catch { throw new Error('Missing app/dist/index.html. Run `npm ci` then `npm run build` in app/ before `node smoke.mjs`. This harness does not build the app.'); }
-  const dist = await readFile(join(root, 'app/dist/index.html'));
+  try { await access(join(root, 'app/dist/_leptos/appearance.html')); }
+  catch { throw new Error('Missing app/dist/_leptos/appearance.html. Build app/ then run `cargo xtask leptos` before `node smoke.mjs`. This harness does not build the app.'); }
+  const dist = await readFile(join(root, 'app/dist/_leptos/appearance.html'));
   receipt.versions.distIndexSha256 = createHash('sha256').update(dist).digest('hex');
   receipt.versions.app = JSON.parse(await readFile(join(root, 'app/package.json'), 'utf8')).version;
   receipt.versions.sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
@@ -918,7 +918,7 @@ try {
   await writeFile(join(gitWorkspace, 'notes.txt'), 'Updated first line\nShared context\n--New dash line\n++New plus line\n' + 'Long diff line '.repeat(100) + '\n');
   await writeFile(join(gitWorkspace, 'draft.txt'), 'Untracked draft\n');
   await writeFile(join(gitWorkspace, 'fixture.html'), '<!doctype html><title>Preview fixture</title><h1>Synthetic preview</h1>');
-  const env = Object.fromEntries(['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'MINARBOT_TEST_SERVER', 'MINARBOT_RUST_BINARY', 'MINARBOT_SMOKE_CONVERSATION_LEPTOS'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
+  const env = Object.fromEntries(['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'MINARBOT_TEST_SERVER', 'MINARBOT_RUST_BINARY'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
   if (interrupted) throw new Error(`Interrupted by ${interrupted}`);
   app = spawn(process.execPath, ['--experimental-strip-types', 'app/test-support/ui-smoke/machines-fixture.mjs'], {
     cwd: root, env: { ...env, PORT: String(port), MINARBOT_DATA_DIR: data, MINARBOT_PROJECT_ROOT: join(output, 'project-folders'), MINARBOT_WORKSPACES: JSON.stringify([{ agent: gitAgent, directory: gitWorkspace, write: true }]), MINARBOT_PROVIDER: 'openai-compatible', OPENAI_BASE_URL: `http://127.0.0.1:${providerPort}/v1`, OPENAI_API_KEY: 'ui-smoke-fake-key', OPENAI_MODEL: models[0] },
