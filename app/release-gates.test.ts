@@ -20,7 +20,6 @@ function fixture() {
   writeFileSync(join(dir, 'app/package.json'), JSON.stringify({ version: '1.0.0', type: 'module' }));
   mkdirSync(join(dir, 'app/dist/_leptos'), { recursive: true });
   writeFileSync(join(dir, 'app/dist/_leptos/conversation.html'), 'Fixture UI\n');
-  writeFileSync(join(dir, 'app/dist/index.html'), 'Retired build\n');
   git('add', '.');
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'Fixture');
   git('branch', 't3/shipped');
