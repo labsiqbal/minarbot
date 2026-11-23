@@ -17,52 +17,6 @@ export function streamWork(turn: { partial?: StreamPartial | null; activity?: Tu
   return (turn.activity?.stream ?? []).filter(segment => !segment.final && (segment.kind === 'tool' || !!segment.text && !(turn.partial?.seq === segment.seq && turn.partial.segment === segment.id)));
 }
 
-type ActivityTurn = { status: string; paused: number; created: string; activity?: TurnActivityData; questions?: { answer: string | null }[] };
-export const liveTurn = (turn: ActivityTurn) => ['queued', 'running'].includes(turn.status) && !turn.paused && !turn.questions?.some(question => question.answer === null);
-export const livePartial = (turn: { status: string; paused: number; partial?: { status: string; text: string } | null }) => turn.status === 'running' && !turn.paused && !!turn.partial && ['pending', 'received'].includes(turn.partial.status) && !!turn.partial.text;
-export const turnPollDelay = (turns: { status: string }[]) => turns.some(turn => ['queued', 'running'].includes(turn.status)) ? 400 : 1200;
-
-type PendingInputTurn = {
-  computerWait?: unknown;
-  questions?: { answer: string | null }[];
-  approvals?: { state: string }[];
-  harnessApprovals?: { kind: string; state: string }[];
-};
-
-export function isTurnWaitingForInput(turn: PendingInputTurn) {
-  return !!turn.computerWait || !!turn.questions?.some(question => question.answer === null) || pendingApprovalSubject(turn) !== null;
-}
-
-export function pendingApprovalSubject(turn: PendingInputTurn) {
-  if (turn.approvals?.some(approval => approval.state === 'approval')) return 'connected app action';
-  const approval = turn.harnessApprovals?.find(approval => approval.state === 'approval');
-  if (!approval) return null;
-  switch (approval.kind) {
-    case 'command': return 'shell command';
-    case 'file': return 'file change';
-    case 'network': return 'network access request';
-    case 'email': return 'email draft';
-    case 'form': return 'form';
-    default: return 'tool request';
-  }
-}
-
-export function activityLabel(turn: ActivityTurn, now: number) {
-  if (!['done', 'cancelled'].includes(turn.status) && turn.questions?.some(question => question.answer === null)) return 'Waiting for your answer';
-  if (!['done', 'cancelled'].includes(turn.status) && turn.paused) return 'Paused';
-  const calls = turn.activity?.calls ?? [];
-  const start = turn.activity?.started_at ?? calls[0]?.created ?? (turn.status === 'cancelled' ? null : turn.created);
-  const end = turn.status === 'cancelled' ? turn.activity?.stopped_at : liveTurn(turn) ? now : calls.at(-1)?.finished;
-  const elapsed = start && end ? Math.max(0, Math.floor((new Date(end).getTime() - Date.parse(start)) / 1000)) : null;
-  const duration = elapsed !== null && Number.isFinite(elapsed) ? elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : elapsed === 0 ? '<1s' : `${elapsed}s` : null;
-  if (turn.status === 'done') return duration ? `Worked for ${duration}` : 'Worked';
-  if (turn.status === 'failed') return duration ? `Failed after ${duration}` : 'Failed';
-  if (turn.status === 'interrupted') return duration ? `Interrupted after ${duration}` : 'Interrupted';
-  if (turn.status === 'cancelled') return duration ? `Stopped after ${duration}` : 'Stopped';
-  if (turn.status === 'queued') return 'Queued';
-  return duration ? `Working… ${duration}` : 'Working…';
-}
-
 export function matchOffsets(text: string, query: string) {
   if (!query.trim()) return [];
   return [...text.matchAll(new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'))]

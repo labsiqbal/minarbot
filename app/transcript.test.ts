@@ -7,48 +7,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './test-bridge.ts';
-import { activityLabel, isTurnWaitingForInput, livePartial, pendingApprovalSubject, turnPollDelay } from './src/ui/transcript.ts';
-
-const created = '2026-11-14T00:00:00.000Z';
-const activity = { calls: [{ seq: 1, model: 'primary', purpose: 'completion', phase: 'answer', status: 'received', created, finished: '2026-11-14T00:01:54.000Z' }], tools: [], fallback_model: null };
-
-test('activity duration stops at recorded provider finish; live text and polling distinguish current attempts', () => {
-  const turn = { status: 'done', paused: 0, created, activity };
-  const now = Date.parse('2026-11-14T01:00:00.000Z');
-  assert.equal(activityLabel(turn, now), 'Worked for 1m 54s');
-  assert.equal(activityLabel({ ...turn, status: 'failed' }, now), 'Failed after 1m 54s');
-  assert.equal(activityLabel({ ...turn, status: 'interrupted' }, now), 'Interrupted after 1m 54s');
-  assert.equal(activityLabel({ ...turn, status: 'cancelled' }, now), 'Stopped');
-  assert.equal(activityLabel({ ...turn, status: 'running' }, Date.parse(created) + 12000), 'Working… 12s');
-  assert.equal(activityLabel({ ...turn, status: 'running', activity: { ...activity, calls: [{ ...activity.calls[0], created: '2026-11-14T00:00:02.000Z' }] } }, Date.parse(created) + 3000), 'Working… 1s');
-  assert.equal(activityLabel({ ...turn, status: 'queued', paused: 1 }, now), 'Paused');
-  assert.equal(activityLabel({ ...turn, status: 'queued', questions: [{ answer: null }] }, now), 'Waiting for your answer');
-  assert.equal(activityLabel({ ...turn, activity: undefined }, now), 'Worked');
-  assert.equal(activityLabel({ ...turn, status: 'queued', activity: undefined }, now), 'Queued');
-  const partial = { text: '# Growing answer', status: 'pending' };
-  assert.equal(livePartial({ status: 'running', paused: 0, partial }), true);
-  assert.equal(livePartial({ status: 'running', paused: 0, partial: { ...partial, status: 'received' } }), true);
-  for (const status of ['failed', 'interrupted']) assert.equal(livePartial({ status: 'running', paused: 0, partial: { ...partial, status } }), false);
-  assert.equal(livePartial({ status: 'interrupted', paused: 0, partial }), false);
-  assert.equal(livePartial({ status: 'running', paused: 1, partial }), false);
-  assert.equal(turnPollDelay([{ status: 'running' }]), 400);
-  assert.equal(turnPollDelay([{ status: 'queued' }]), 400);
-  assert.equal(turnPollDelay([{ status: 'done' }, { status: 'failed' }]), 1200);
-  assert.equal(turnPollDelay([]), 1200);
-});
-
-test('transcript distinguishes pending input and names each approval kind', () => {
-  assert.equal(isTurnWaitingForInput({ questions: [{ answer: null }] }), true);
-  assert.equal(isTurnWaitingForInput({ harnessApprovals: [{ kind: 'command', state: 'approval' }] }), true);
-  assert.equal(isTurnWaitingForInput({ approvals: [{ state: 'approval' }] }), true);
-  assert.equal(isTurnWaitingForInput({ computerWait: {} }), true);
-  assert.equal(isTurnWaitingForInput({ questions: [{ answer: 'yes' }] }), false);
-  assert.equal(isTurnWaitingForInput({ harnessApprovals: [{ kind: 'file', state: 'expired' }] }), false);
-  for (const [kind, noun] of [['command', 'shell command'], ['file', 'file change'], ['network', 'network access request'], ['tool', 'tool request'], ['unknown', 'tool request']] as const) {
-    assert.equal(pendingApprovalSubject({ harnessApprovals: [{ kind, state: 'approval' }] }), noun);
-  }
-  assert.equal(pendingApprovalSubject({ approvals: [{ state: 'approval' }] }), 'connected app action');
-});
 
 test('turn list exposes scoped read-only activity metadata in direct, thread and channel views', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-transcript-'));
@@ -95,23 +53,6 @@ test('turn list exposes scoped read-only activity metadata in direct, thread and
   } finally { await app.close(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('subsecond and stopped turn labels remain terminal', () => {
-  const turn = { status: 'done', paused: 0, created, activity: { ...activity, calls: [{ ...activity.calls[0], created, finished: created }] } };
-  assert.equal(activityLabel(turn, Date.now()), 'Worked for <1s');
-  assert.equal(activityLabel({ ...turn, status: 'cancelled' }, Date.now()), 'Stopped');
-  assert.equal(activityLabel({ ...turn, status: 'cancelled', activity: undefined }, Date.now()), 'Stopped');
-});
-
-test('stopped duration uses run start and accepted Stop, independent of queue time and provider cleanup', () => {
-  const started_at = '2026-11-14T00:01:00.000Z', stopped_at = '2026-11-14T00:01:03.200Z';
-  const turn = { status: 'cancelled', paused: 0, created, activity: { ...activity, started_at, stopped_at } };
-  for (const finished of [null, '2026-11-14T00:01:05.000Z']) {
-    assert.equal(activityLabel({ ...turn, activity: { ...turn.activity, calls: [{ ...activity.calls[0], finished }] } }, Date.now()), 'Stopped after 3s');
-  }
-  assert.equal(activityLabel({ ...turn, activity: { ...turn.activity, stopped_at: started_at } }, Date.now()), 'Stopped after <1s');
-  assert.equal(activityLabel({ ...turn, activity: { ...turn.activity, started_at: null, calls: [] } }, Date.now()), 'Stopped');
-});
-
 test('Stop timestamps survive repeated cancellation and server restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-stop-'));
   const provider = createServer((_req, res) => {
@@ -144,12 +85,10 @@ test('Stop timestamps survive repeated cancellation and server restart', async (
     const [stopped] = await (await fetch(app.origin + path)).json();
     assert.equal(stopped.activity.started_at, running.activity.started_at);
     assert(Date.parse(stopped.activity.stopped_at) - Date.parse(stopped.activity.started_at) >= 1100);
-    assert.match(activityLabel(stopped, Date.now()), /^Stopped after [1-9]\d*s$/);
     await request(`${path}/${turn}/cancel`, { id: randomUUID() });
     await app.close(); app = await startApp(options);
     const [reloaded] = await (await fetch(app.origin + path)).json();
     assert.equal(reloaded.activity.started_at, stopped.activity.started_at);
     assert.equal(reloaded.activity.stopped_at, stopped.activity.stopped_at);
-    assert.equal(activityLabel(reloaded, Date.now() + 60000), activityLabel(stopped, Date.now()));
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); }
 });

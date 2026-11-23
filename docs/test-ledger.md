@@ -117,8 +117,10 @@ owns CSP, gzip, asset allowlists, retry and failed Wasm. The web recovery test
 covers missing and invalid builds, 404s and the ignored selector. The queue
 edit HTTP suite retains lease, revision and expiry checks. Its React-only
 session-storage parser case retired with the hook. Leptos queue controls
-keep the journal format. The old `chat-like-t3` harness rendered React, so the
-conversation and rich golden groups now own its browser coverage.
+keep the journal format. Leptos transcript and minimap checks cover the retired React status labels,
+poll cadence, turn projection and rail geometry. Shared preview and run
+inspector tests keep exercising their adapters. The conversation and rich
+golden groups own the old chat-like-t3 harness coverage.
 
 ## Issue #60 turn protocol
 

@@ -10,20 +10,6 @@ export type WorkflowNode =
 export type WorkflowGraph = { entry: string; maxSteps: number; nodes: WorkflowNode[]; trigger?: { kind: 'discord'; channel: string }; positions?: Record<string, { x: number; y: number }> };
 
 export const workflowStepTypes = { agent: 'Agent', parallel: 'Parallel', model: 'Model', condition: 'Condition', approval: 'Approval', wait: 'Wait for event', output: 'Output' } satisfies Record<WorkflowNode['kind'], string>;
-export function workflowStepTypeLabel(kind: WorkflowNode['kind']): string {
-  return Object.hasOwn(workflowStepTypes, kind) ? workflowStepTypes[kind] : `Unsupported (${kind})`;
-}
-
-export function removeWorkflowNode(graph: WorkflowGraph, removed: string): WorkflowGraph {
-  return { ...graph, ...(graph.positions ? { positions: Object.fromEntries(Object.entries(graph.positions).filter(([id]) => id !== removed)) } : {}), entry: graph.entry === removed ? '' : graph.entry, nodes: graph.nodes.filter(node => node.id !== removed).map(node => {
-    if (!Object.hasOwn(workflowStepTypes, node.kind)) return node;
-    // Legacy approval rejection edges no longer execute or appear in the editor.
-    if (node.kind === 'approval') return { id: node.id, kind: node.kind, prompt: node.prompt, yes: node.yes === removed ? '' : node.yes };
-    return { ...node, ...('next' in node && node.next === removed ? { next: '' } : {}),
-      ...(node.kind === 'condition' ? { yes: node.yes === removed ? '' : node.yes, no: node.no === removed ? '' : node.no } : {}) };
-  }) };
-}
-
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Workflow object is required.');
   return value as Record<string, unknown>;
