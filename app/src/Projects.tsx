@@ -24,7 +24,7 @@ export function useProjects(request: Request) {
   const [error,setError] = useState(''), [busy,setBusy] = useState(false), [pending,setPending] = useState<Command | null>(null), [invalid,setInvalid] = useState(false);
   const flight = useRef(false), commandRef = useRef<Command | null>(null), confirm = useConfirm();
   const reload = useCallback(() => queryCache.refresh(path, () => request<NonNullable<typeof data>>(path)), [request]);
-  useEffect(() => { try { const raw = sessionStorage.getItem(storage); if(raw) { const value = JSON.parse(raw); if(!value || typeof value.path !== 'string' || !/^\/api\/projects(?:\/[a-f0-9-]{36}\/(?:edit|archive|delete|thread|sections(?:\/[a-f0-9-]{36}\/edit)?))?$/.test(value.path) || !value.body || !/^[a-f0-9-]{36}$/i.test(value.body.id)) throw new Error(); commandRef.current=value;setPending(value); } } catch {setInvalid(true);} },[reload]);
+  useEffect(() => { try { const raw = sessionStorage.getItem(storage); if(raw) { const value = JSON.parse(raw); if(!value || typeof value.path !== 'string' || !/^\/api\/projects(?:\/[a-f0-9-]{36}\/(?:edit|archive|restore|delete|thread|sections(?:\/[a-f0-9-]{36}\/edit)?))?$/.test(value.path) || !value.body || !/^[a-f0-9-]{36}$/i.test(value.body.id)) throw new Error(); commandRef.current=value;setPending(value); } } catch {setInvalid(true);} },[reload]);
   useQueryPolling(async signal => { try { await reload(); } catch(error) { if (!signal.aborted) setError(message(error)); } }, { interval: 5000 }, [reload]);
   async function execute(path: string, body: Record<string,unknown>): Promise<boolean> {
     if(flight.current || invalid) return false; const command = commandRef.current ?? {path,body};

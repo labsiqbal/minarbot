@@ -20,7 +20,7 @@ struct Connection {
     revision: u64,
 }
 #[derive(Clone, PartialEq, Deserialize)]
-struct Page {
+pub(crate) struct Page {
     items: Vec<Connection>,
     next_after: Option<String>,
 }
@@ -72,7 +72,9 @@ impl Tool {
 #[derive(Clone, Copy)]
 struct State {
     page: Query<Page>,
+    first_page: Option<StoredValue<Option<Page>>>,
     agent: RwSignal<String>,
+    agents: Signal<Vec<(String, String)>>,
     selected: RwSignal<String>,
     detail: Query<Detail>,
     tools: RwSignal<Vec<String>>,
@@ -142,6 +144,9 @@ impl State {
         self.error.set(String::new());
         let test = command.body.get("test").is_some();
         let remove = command.path.ends_with("/remove");
+        if let Some(cache) = self.first_page {
+            cache.set_value(None);
+        }
         self.journal.run(command, None, move |result| {
             if result.is_none() {
                 return;
@@ -177,8 +182,9 @@ impl State {
         self.tested.set(None);
         self.testing.set(true);
         self.error.set(String::new());
+        let path = self.journal.endpoint("/api/mcp/test");
         spawn_local(async move {
-            match api::post::<Test>("/api/mcp/test", &body).await {
+            match api::post::<Test>(&path, &body).await {
                 Ok(result) => {
                     self.tested.try_set(Some(result));
                 }
@@ -196,7 +202,7 @@ impl State {
         confirm(self.confirmation, "Load the latest connection revision for this draft?",
             "The entered name and token stay saved, but old test results are discarded. Test again before saving.",
             "Reload", false, UiAction::new(move |()| {
-                let path = format!("{PATH}/{}", encode(&row.id));
+                let path = self.journal.endpoint(&format!("{PATH}/{}", encode(&row.id)));
                 self.testing.set(true);
                 self.tested.set(None);
                 self.error.set(String::new());
@@ -212,12 +218,51 @@ impl State {
 }
 
 pub fn panel() -> impl IntoView {
+    scoped_panel(None, None, None)
+}
+
+pub(crate) fn scoped_panel(
+    project: Option<String>,
+    members: Option<Vec<String>>,
+    first_page: Option<StoredValue<Option<Page>>>,
+) -> impl IntoView {
+    let agents = scoped_agents(false, members.map(StoredValue::new));
+    let journal = Journal::new(
+        project.as_ref().map_or_else(
+            || "minarbot:mcp-command".into(),
+            |id| format!("minarbot:mcp-command:{id}"),
+        ),
+        16000,
+        |cmd| {
+            cmd.valid(
+                &format!("^/api/(mcp(/{UUID}(/remove)?)?|agents/{UUID}/mcp/{UUID})$"),
+                &[
+                    "test",
+                    "revision",
+                    "enabled",
+                    "connectionRevision",
+                    "tools",
+                    "confirmed",
+                ],
+            ) && cmd.body.get("tools").is_none_or(|tools| {
+                tools
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(serde_json::Value::is_string))
+            })
+        },
+    )
+    .for_project(project.map(StoredValue::new));
     let cursor = Cursor::new(Vec::new());
     let selected = RwSignal::new(String::new());
-    let agent = agent_selection(false);
+    let agent = selected_agent(agents);
     let state = State {
-        page: query(move || format!("{PATH}{}", cursor_query(cursor))),
+        page: cached_query(
+            move || journal.endpoint(&format!("{PATH}{}", cursor_query(cursor))),
+            first_page,
+        ),
+        first_page,
         agent,
+        agents,
         selected,
         detail: query(move || {
             let selected = selected.get_untracked();
@@ -225,7 +270,11 @@ pub fn panel() -> impl IntoView {
             if selected.is_empty() || agent.is_empty() {
                 String::new()
             } else {
-                format!("{PATH}/{}?agent={}", encode(&selected), encode(&agent))
+                journal.endpoint(&format!(
+                    "{PATH}/{}?agent={}",
+                    encode(&selected),
+                    encode(&agent)
+                ))
             }
         }),
         tools: RwSignal::new(Vec::new()),
@@ -240,19 +289,7 @@ pub fn panel() -> impl IntoView {
         testing: RwSignal::new(false),
         confirmation: Confirm::new(None),
         error: RwSignal::new(String::new()),
-        journal: Journal::new("minarbot:mcp-command", 16000, |cmd| {
-            cmd.valid(
-                &format!("^/api/(mcp(/{UUID}(/remove)?)?|agents/{UUID}/mcp/{UUID})$"),
-                &[
-                    "test",
-                    "revision",
-                    "enabled",
-                    "connectionRevision",
-                    "tools",
-                    "confirmed",
-                ],
-            )
-        }),
+        journal,
     };
     Effect::new(move |_| {
         let _ = selected.get();
@@ -268,7 +305,15 @@ pub fn panel() -> impl IntoView {
     Effect::new(move |_| {
         let _ = selected.get();
         let _ = cursor.get();
-        request_animation_frame(crate::settings::focus_heading);
+        request_animation_frame(move || {
+            if let Ok(Some(heading)) = document().query_selector(".bs-set3-mcp h1") {
+                if let Some(heading) =
+                    wasm_bindgen::JsCast::dyn_ref::<web_sys::HtmlElement>(&heading)
+                {
+                    let _ = heading.focus();
+                }
+            }
+        });
     });
     let time = RwSignal::new(js_sys::Date::now());
     poll(1, move || {
@@ -429,7 +474,7 @@ fn permissions(state: State, connection: Memo<Option<Connection>>) -> impl IntoV
         })}
         <Section title="Permissions" actions=Box::new(move || view! {
             <Select name="mcp-agent" label="Agent" small=true value=state.agent.into()
-                options=Signal::derive(|| agent_options(false)) disabled=move || state.locked()
+                options=Signal::derive(move || state.agents.get()) disabled=move || state.locked()
                 change=Callback::new(move |value| state.agent.set(value)) />
         }.into_any())>
             {move || {
@@ -445,7 +490,7 @@ fn permissions(state: State, connection: Memo<Option<Connection>>) -> impl IntoV
                         event.prevent_default();
                         if state.locked() || state.detail.busy.get_untracked() { return; }
                         let current = state.agent.get_untracked();
-                        let name = agent_options(false).into_iter().find(|(id, _)| id == &current).map_or_else(|| "agent".into(), |(_, name)| name);
+                        let name = state.agents.get().into_iter().find(|(id, _)| id == &current).map_or_else(|| "agent".into(), |(_, name)| name);
                         confirm(state.confirmation, format!("Allow selected access for {name}?"),
                             "Effects in external services may still occur after the task is canceled.", "Save permissions", false,
                             UiAction::new(move |()| state.execute(Command::new(

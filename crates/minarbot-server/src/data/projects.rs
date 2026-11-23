@@ -259,7 +259,7 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
     fields(
         v,
         match op {
-            "archive" | "delete" => &["id", "revision", "confirmed"],
+            "archive" | "restore" | "delete" => &["id", "revision", "confirmed"],
             "thread" => &["id", "revision", "name", "agent", "folder"],
             _ => &[
                 "id",
@@ -285,7 +285,7 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
     }
     transaction(db, || {
         let current = read(db, pid)?;
-        if current["archived"] == true && op != "delete" {
+        if current["archived"] == true && !matches!(op, "delete" | "restore") {
             return Err(error(409, "Project is archived."));
         }
         if current["revision"] != v["revision"] {
@@ -297,6 +297,7 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
                 "Stop or finish project work before changing access.",
             ));
         }
+        let mut archive_state = None;
         match op {
             "delete" | "archive" => {
                 if v["confirmed"] != true {
@@ -336,6 +337,10 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
                     db.execute("UPDATE channels SET lead=NULL WHERE project=?", [pid])?;
                     db.execute("DELETE FROM local_project_folders WHERE project=?", [pid])?;
                 } else {
+                    archive_state = Some(json!({
+                        "sections": all(db, "SELECT channel AS id FROM local_project_sections WHERE project=? AND archived=0", [pid])?,
+                        "threads": all(db, "SELECT t.id FROM local_project_threads p JOIN threads t ON t.id=p.thread WHERE p.project=? AND t.archived=0 AND t.deleted=0", [pid])?,
+                    }));
                     db.execute("UPDATE local_projects SET archived=1 WHERE id=?", [pid])?;
                 }
                 db.execute(
@@ -344,6 +349,28 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
                 )?;
                 db.execute("UPDATE local_project_sections SET archived=1,revision=revision+1 WHERE project=?",[pid])?;
                 db.execute("UPDATE threads SET archived=1 WHERE id IN(SELECT thread FROM local_project_threads WHERE project=?)",[pid])?;
+            }
+            "restore" => {
+                if v["confirmed"] != true || current["archived"] != true {
+                    return Err(error(409, "Confirm restoration of an archived project."));
+                }
+                // Archives made before the snapshot leave their sections and threads
+                // archived because their original status is unknown.
+                let snapshot = one(db, "SELECT result FROM local_project_commands
+                    WHERE json_extract(request,'$.projectId')=? AND json_extract(request,'$.action')='archive'
+                    ORDER BY rowid DESC LIMIT 1", [pid])?
+                    .map(|row| json(&row["result"])).transpose()?.unwrap_or(Value::Null);
+                let archived = &snapshot["archiveState"];
+                for section in archived["sections"].as_array().into_iter().flatten() {
+                    let id = string(section, "id");
+                    db.execute("UPDATE local_project_sections SET archived=0,revision=revision+1 WHERE project=? AND channel=?", [pid,id])?;
+                    db.execute("UPDATE channels SET archived=0,revision=revision+1 WHERE project=? AND id=?", [pid,id])?;
+                }
+                for thread in archived["threads"].as_array().into_iter().flatten() {
+                    db.execute("UPDATE threads SET archived=0,revision=revision+1 WHERE id IN
+                        (SELECT thread FROM local_project_threads WHERE project=? AND thread=?) AND deleted=0", [pid,string(thread, "id")])?;
+                }
+                db.execute("UPDATE local_projects SET archived=0 WHERE id=?", [pid])?;
             }
             "thread" => {
                 let agent = string(v, "agent");
@@ -473,16 +500,15 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
             "UPDATE local_projects SET revision=revision+1,updated=? WHERE id=?",
             rusqlite::params![state.config.now(), pid],
         )?;
-        save(
-            db,
-            id,
-            &request,
-            if op == "delete" {
-                json!({"id":pid,"deleted":true})
-            } else {
-                read(db, pid)?
-            },
-        )
+        let mut result = if op == "delete" {
+            json!({"id":pid,"deleted":true})
+        } else {
+            read(db, pid)?
+        };
+        if let Some(snapshot) = archive_state {
+            result["archiveState"] = snapshot;
+        }
+        save(db, id, &request, result)
     })
 }
 fn active(db: &Connection, pid: &str) -> Result<bool> {
@@ -651,7 +677,10 @@ pub fn route(
         }
         return folders::browse(state, param(q, "path"));
     }
-    if !q.is_empty() {
+    let archived = get
+        && p == ["api", "projects"]
+        && matches!(q, [(key, value)] if key == "archived" && value == "1");
+    if !q.is_empty() && !archived {
         return Err(error(
             if get { 400 } else { 403 },
             if get {
@@ -663,7 +692,7 @@ pub fn route(
     }
     match p {
         ["api", "projects"] if get => {
-            let rows=all(db,"SELECT id FROM local_projects WHERE deleted=0 AND archived=0 ORDER BY updated DESC,rowid DESC",[])?;
+            let rows=all(db,"SELECT id FROM local_projects WHERE deleted=0 AND archived=? ORDER BY updated DESC,rowid DESC",[i64::from(archived)])?;
             let projects = rows
                 .iter()
                 .map(|v| read_with_index(state, db, string(v, "id")))
@@ -675,9 +704,13 @@ pub fn route(
         ["api", "projects"] => create(state, db, v),
         ["api", "projects", id] if get => read_with_index(state, db, id),
         ["api", "projects", id, op]
-            if ["edit", "archive", "delete", "thread"].contains(op) && !get =>
+            if ["edit", "archive", "restore", "delete", "thread"].contains(op) && !get =>
         {
-            edit(state, db, id, op, v)
+            let mut result = edit(state, db, id, op, v)?;
+            if let Some(result) = result.as_object_mut() {
+                result.remove("archiveState");
+            }
+            Ok(result)
         }
         ["api", "projects", id, "sections"] if get => Ok(read(db, id)?["sections"].clone()),
         ["api", "projects", id, "sections"] => section(state, db, id, None, v),

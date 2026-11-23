@@ -39,23 +39,31 @@ route ownership.
 General, Appearance, Providers, Engines, Skills, minarbot.com, Connected apps,
 Email, MCP connections, Vault, Craft Anything, Machines, Devices, Computer,
 Updates, Usage, Shared data, Backup & restore, and External access use Leptos
-when `MINARBOT_APPEARANCE_CLIENT=leptos`. First-run setup, project overview,
+when `MINARBOT_APPEARANCE_CLIENT=leptos`. First-run setup, project management,
 the Rust-rendered `/pair` form, `/routines`, `/workflows`, `/calendar`, and the
 project Calendar tab also use Leptos. The three automation routes share a mounted
 workspace shell and load the `workflows` bundle. The project Calendar link loads
-the same bundle. Setup and Settings use `appearance`. Guide uses the
-`conversation` bundle on its ordinary URL. Agent, named conversation, and room
-pilots use that bundle with `?ui=leptos`, including Memory, History summary,
-Files, Changes, workspace browsing, result links, and Computer. Standalone
-Computer uses the same bundle when Leptos is enabled and supports `ui=react` for
-rollback. Agent email inbox at `/agents/:id/inbox` and paired-machine agent
-detail at `/machines/:id/agents/:id` use the conversation bundle on ordinary URLs
-when Leptos is enabled. The workspace shell
-mounts agent creation, profile editing, and template dialogs. Agent creation and
-import open the conversation bundle through the pilot selector. Settings return
-links and browser history retain the selected route. Advanced profile mounts
-Agent memory and History summary inside the selected route group. Both clients
-share the note recovery journal format.
+the same bundle. Setup, Settings, and project Overview, Connected apps,
+Environment, and MCP use `appearance`. Project tabs preserve their URL and
+browser history. The sidebar can create, rename, archive, and restore projects,
+and rename, reorder, archive, and restore sections. Restoring a project
+reopens the sections and conversations that were active when it was archived.
+Restoring projects archived before #81 keeps their sections and conversations
+archived. Discord and WhatsApp reuse the installation settings for project
+routing destinations.
+
+The Guide uses the `conversation` bundle on its ordinary URL. Agent, named
+conversation, and room pilots use that bundle with `?ui=leptos`, including Memory,
+History summary, Files, Changes, workspace browsing, result links, and Computer. Standalone Computer
+uses the same bundle when Leptos is enabled and supports `ui=react` for rollback.
+Agent email inbox at `/agents/:id/inbox` and paired-machine agent detail at
+`/machines/:id/agents/:id` use the conversation bundle on ordinary URLs when
+Leptos is enabled.
+The workspace shell mounts agent creation, profile editing, and template dialogs.
+Agent creation and import open the conversation bundle through the pilot selector.
+Settings return links and browser history retain the selected route. Advanced
+profile mounts Agent memory and History summary inside the selected route group.
+Both clients share the note recovery journal format.
 React remains the default for the staged rollout in #67.
 
 ## React inventory for #67
@@ -68,11 +76,11 @@ issue.
 | --- | --- | --- |
 | Conversation routing and remaining chat controls | Post-setup `/`, agent Main chat, named and project conversations, and rooms use React on ordinary links. The explicit #63 pilot covers the core transcript, composer, rich replies, queue, approvals, Goals/Loops, chat list and Computer panel. Still on the React path are timeline minimap, historical paging and task-family navigation, speech playback, chat history search across conversations, fork history/origin, checkpoint restore, signed event connection, room management and the remaining dispatch controls. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `ui/AgentConversation.tsx`, `ui/ChatPrimitives.tsx`, `ui/MessageFind.tsx`, `ui/TimelineMinimap.tsx`, `ui/TurnActivity.tsx`, `ui/RunControls.tsx`, `SourceControl.tsx`, `SpeechPlayback.tsx`, `EventConnection.tsx` |
 | Memory and history summary | Agent and section Memory and History summary use Leptos in the selected conversation routes and Advanced profile. React provides the same Notes, Learned, Standing questions, and compaction views on rollback. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
-| Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. New agent and New project hand off to their staged creation forms pending #76 and #81. Remote agent detail remains React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
+| Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. Remote agent detail remains React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
 | Agent inbox and remote agent detail | Agent email inbox and message content at `/agents/:id/inbox`, and paired-machine agent detail at `/machines/:id/agents/:id`. | `App.tsx`, `AgentEmail.tsx`, `MachinesPanel.tsx`, `AgentActions.tsx` |
 | Conversation files, results and Computer | Local agent, named conversation and room file panels, workspace browser, Changes, artifact and result previews, run inspector, secure requests and standalone Computer use the Leptos conversation bundle. Remote agent detail follows its own route group. | `RightPanel.tsx`, `RightPanelFiles.tsx`, `RightPanelDiff.tsx`, `WorkspacePanel.tsx`, `HtmlPreview.tsx`, `ResultURLPreview.tsx`, `ComputerViewer.tsx`, `SecureComputerRequest.tsx`, `RunInspector.tsx` |
 | Automation embedded in conversations | Agent/section Upcoming routines, inbound routine reports and deep links, and the agent-scoped workflow library, editor, versions, webhook/schedule forms and run inspector with inline step conversations. | `App.tsx`, `WorkflowPanel.tsx`, `WorkflowEditor.tsx`, `WorkflowGraph.tsx`, `WorkflowSchedule.tsx`, `WorkflowWebhook.tsx`, `WorkflowInbox.tsx` |
-| Project management and integrations | New project, project-scoped Connected apps, Environment and MCP tabs, project source control, sidebar rename/archive/restore and section settings. Overview, its member/folder forms, section creation and Calendar have Leptos entry points. | `App.tsx`, `Projects.tsx`, `ConnectedAppsPanel.tsx`, `DiscordSettings.tsx`, `WhatsAppSettings.tsx`, `ProjectEnvironmentPanel.tsx`, `McpPanel.tsx`, `SourceControl.tsx` |
+| Project management and integrations (#81) | Ported creation, project-scoped Connected apps, Environment and MCP, source control, sidebar actions and section settings. | `App.tsx`, `Projects.tsx`, `ConnectedAppsPanel.tsx`, `DiscordSettings.tsx`, `WhatsAppSettings.tsx`, `ProjectEnvironmentPanel.tsx`, `McpPanel.tsx`, `SourceControl.tsx` |
 | Canonical hub | Clerk sign-in/session handoff, project directory and creation, invitation acceptance, account/machine enrollment, join agent, project members/roles/invitations, participating agents/policies/consent, sections and room chat. | `hub/main.tsx`, `hub/HubApp.tsx`, `hub/client.ts` |
 | Fallback and retirement | Workspace loading/error/404, then the full React workspace, setup, Settings, Project and Automation when explicitly selected or when a Leptos document is unavailable. Keep rollback available for the staged releases. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `FirstRun.tsx`, `settings-groups.ts`, `lazyPanels.tsx`, `Projects.tsx`, `AutomationCalendar.tsx`, `AutomationCalendarDialog.tsx`, `RoutineSchedule.tsx`, `RoutineTemplates.tsx`, `WorkflowDirectory.tsx` |
 
@@ -144,6 +152,18 @@ paging, and compares desktop and narrow screenshots in both themes.
 ```sh
 MINARBOT_MEMORY_BENCH=20 node --experimental-strip-types test-support/ui-smoke/memory-smoke.mjs /tmp/minarbot-memory-parity
 ```
+
+Run project parity from `app/` after packaging Leptos. Set
+`MINARBOT_RUST_BINARY` to the freshly built server.
+
+```sh
+node --experimental-strip-types test-support/ui-smoke/project-smoke.mjs /tmp/minarbot-project-parity
+```
+
+The smoke uses a disposable server and synthetic connection responses. It
+captures dark and light desktop and narrow screens and compares project
+mutation paths and payloads with secrets omitted. `MINARBOT_PROJECT_BENCH`
+sets the sample count for cold loads and warmed tab switches.
 
 ## Warm navigation in #62
 
