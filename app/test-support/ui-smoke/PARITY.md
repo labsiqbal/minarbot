@@ -46,12 +46,12 @@ the live test uses an ephemeral port or temporary root. Assertions still use
 the real disposable fixture. Capture-only text substitutions restore the
 original values before the smoke continues, so future captures stay stable.
 
-No frozen PNG was replaced for #67. A replacement is allowed only when the
-original UUID, port, or timestamp cannot be recovered cheaply. Review the
+No frozen PNG was replaced for #67. A fixture-only replacement is allowed when
+the original UUID, port, or timestamp cannot be recovered cheaply. Review the
 side-by-side and diff image for that named pair, verify every changed pixel is
-inside the fixture text bounding box, and record pair, region, and reason in
-this file or a baselines manifest. Any pixel outside that box requires fixing
-the smoke or rejecting the replacement.
+inside the fixture text bounding boxes, and record pair, regions, and reason in
+this file or a baselines manifest. Reject fixture-only replacement if any pixel
+changes outside those boxes.
 
 ## Frozen timing budgets
 
