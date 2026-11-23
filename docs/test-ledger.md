@@ -77,8 +77,13 @@ Retained Node and Rust API cases below still cover the shared contracts.
 
 ### Stage B retirement and retained coverage
 
-Each row records the disposition of a test from the cutover inventory. Shared
-tests still exercise production adapter code. Timing sources and ceilings are recorded
+This inventory records matching coverage at cutover. The legacy polling and
+query-cache cases retired with their React implementations, including the old
+backoff, visibility, LRU and identity-clear policies. The shared download
+case moved to download-blob.test.ts. The optimistic-turns and right-panel
+state unit suites retired when Leptos took over their UI contracts.
+Presentation keeps the palette contrast case. Shared tests exercise production
+adapter code. Timing sources and ceilings are recorded
 in the [golden gate guide](../app/test-support/ui-smoke/PARITY.md).
 
 | Node test | Coverage decision |
@@ -97,19 +102,19 @@ in the [golden gate guide](../app/test-support/ui-smoke/PARITY.md).
 | `navigation.test.ts` | Keep shared result target validation. Conversation deep links, startup route and history run against Leptos. |
 | `needs-you-notifications.test.ts` | Removed. `needs-you-notifications-smoke.mjs` checks request/completion identity and notification deduplication across reload. |
 | `next-frame.test.ts` | The tested frame queue is shared by the Leptos HTML reply and MCP app bridges. |
-| `optimistic-turns.test.ts` | Removed. Leptos conversation retry checks cover an in-flight send, stale history, reload and exact receipt reconciliation. |
-| `polling.test.ts` | Retired the React timer contract with its hook, including serialized backoff, visibility and focus cadence. Leptos stream and profile deletion smokes check cleanup and stale updates. Shared download coverage moved to `download-blob.test.ts`. |
-| `presentation.test.ts` | Keep palette contrast assertions. Appearance covers storage, palettes, mode, text size and tabs. Files covers dock and narrow layouts. |
-| `query-cache.test.ts` | Retired React LRU, invalidation and identity-clear assertions with its global cache. Leptos uses route-local caches and generation checks. Model catalog smoke covers the late Codex response after switching to API. |
-| `right-panel-state.test.ts` | Removed. Leptos controls/files smokes exercise docking, tabs, close/reopen, history navigation and narrow overlays. |
+| `optimistic-turns.test.ts` | Leptos conversation retry checks cover an in-flight send, stale history, reload and exact receipt reconciliation. |
+| `polling.test.ts` | Leptos stream/reconnect and profile deletion smokes check cleanup and stale updates. Download helper is still shared. React-specific polling backoff and visibility scheduling use a different implementation and need a product contract before an equivalent port. |
+| `presentation.test.ts` | Appearance smoke covers local storage, palettes, mode, text size and tabs. Theme values are shared with the Leptos build. Conversation files checks dock and narrow layouts. |
+| `query-cache.test.ts` | Leptos uses route-local caches and generation checks. Model catalog smoke ports the stale-response assertion by releasing a Codex response after switching to API. React LRU and identity-clear policies have no Leptos equivalent. |
+| `right-panel-state.test.ts` | Leptos controls/files smokes exercise docking, tabs, close/reopen, history navigation and narrow overlays. |
 | `run-inspector.test.ts` | Leptos renders work logs through the shared `turnActivitySteps` adapter. Files and rich cover inspector display and API errors. |
 | `timeline-minimap.test.ts` | Shared preview utility and Leptos `timeline-minimap-smoke.mjs` cover previews, keyboard movement, pointer bounds and narrow behavior. |
 | `updateEverything.logic.test.ts` | Removed. System and shell smokes cover update submission, restart, remote receipts and exact payload recovery. Native launcher tests cover persisted restart and rollback. |
 | `workflows.test.ts` | Removed. Automation and scoped smokes cover keyboard moves, undo/save, version confirmation, route readiness, run results and journal replay. Rust validates graph paths and step configuration. |
 
 The retired `csp.test.ts` exercised React's style nonce. The appearance smoke
-owns CSP, gzip, asset allowlists, retry and failed Wasm. Rust static UI tests
-cover missing and invalid builds, 404s and the ignored selector. The queue
+owns CSP, gzip, asset allowlists, retry and failed Wasm. The web recovery test
+covers missing and invalid builds, 404s and the ignored selector. The queue
 edit HTTP suite retains lease, revision and expiry checks. Its React-only
 session-storage parser case retired with the hook. Leptos queue controls
 keep the journal format. The old `chat-like-t3` harness rendered React, so the
