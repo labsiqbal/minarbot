@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { ProtocolError } from '../shared/protocol.ts';
 
 type Config = {
   domain: string;
@@ -14,13 +15,20 @@ type Config = {
   web?: { distPath: string; developmentIdentity?: boolean };
   nodeLink?: { signingKeyPath: string };
 };
-export async function startRustHub(binary: string, dir: string, config: Config, port = 0) {
+type PostInput = { requestId: string; sectionId: string; text: string; mentions: string[] };
+type Control = { now: number; post?: { projectId: string; accountId: string; input: PostInput } };
+
+export async function startRustHub(binary: string, dir: string, config: Config, port = 0, testFixture = false) {
   if (existsSync(config.dataPath)) chmodSync(config.dataPath, 0o600);
   const file = join(dir, 'hub-config.json');
   writeFileSync(file, JSON.stringify({ ...config, port }), { mode: 0o600 });
-  const child = spawn(binary, ['--hub'], { env: { ...process.env, MINARBOT_HUB_CONFIG: file }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(binary, testFixture ? ['--hub', 'test-fixture'] : ['--hub'], {
+    env: { ...process.env, MINARBOT_HUB_CONFIG: file, ...(testFixture ? { MINARBOT_TEST_SERVER: 'rust' } : {}) },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   const closed = once(child, 'close');
   const close = async () => {
+    child.stdin.end();
     if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) child.kill('SIGTERM');
     await closed.catch(() => {});
   };
@@ -28,6 +36,26 @@ export async function startRustHub(binary: string, dir: string, config: Config, 
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', chunk => { if (diagnostic.length < 4096) diagnostic += chunk; });
   const lines = createInterface({ input: child.stdout });
+  child.stdin.on('error', () => {});
+  let controlling = false;
+  async function control(input: Control) {
+    if (!testFixture || !child.stdin.writable || child.exitCode !== null || child.signalCode !== null || controlling) {
+      throw new Error('Hosted hub fixture control is unavailable.');
+    }
+    controlling = true;
+    try {
+      const reply = once(lines, 'line', { signal: AbortSignal.any([AbortSignal.timeout(10000), stopped.signal]) });
+      child.stdin.write(JSON.stringify(input) + '\n');
+      const [line] = await reply;
+      const { result, error } = JSON.parse(line);
+      if (error) throw new ProtocolError(error.status, error.code, error.message);
+      return result;
+    } finally {
+      controlling = false;
+    }
+  }
+  const stopped = new AbortController();
+  lines.once('close', () => stopped.abort());
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const ready = new Promise<number>((resolve, reject) => {
@@ -37,12 +65,13 @@ export async function startRustHub(binary: string, dir: string, config: Config, 
         if (match) resolve(Number(match[1]));
       });
     });
-    return { port: await Promise.race([ready, closed.then(() => { throw new Error('Hosted hub exited before readiness: ' + diagnostic); })]), close };
+    const port = await Promise.race([ready, closed.then(() => { throw new Error('Hosted hub exited before readiness: ' + diagnostic); })]);
+    return { port, close, control };
   } catch (error) {
     await close();
     throw error;
   } finally {
     clearTimeout(timer);
-    lines.close();
+    if (!testFixture) lines.close();
   }
 }

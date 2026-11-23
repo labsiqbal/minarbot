@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { once, EventEmitter } from 'node:events';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { testDatabase } from './test-support/database.ts';
 import { startRustHub } from './test-support/hosted-hub.ts';
+import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import WebSocket from 'ws';
 import { startApp } from './test-bridge.ts';
 import { signedNodeMessage, verifiedNodeMessage } from './hub/node-link.ts';
@@ -37,7 +38,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     initializeHubSchema(hubDb);
     let clock = Date.now();
     const rustBinary = process.env.MINARBOT_HOSTED_HUB_BINARY;
-    const now = rustBinary ? () => Math.max(Date.now(), clock) : () => clock;
+    const now = () => clock;
     const a = createHubAuthority(hubDb, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now });
     const r = createHubRouting(a), signer = generateKeyPairSync('ed25519').privateKey, hubKey = createPublicKey(signer).export({ type: 'spki', format: 'der' }).toString('base64url');
     const alice = a.provisionAccount(who('alice'), true), bob = a.provisionAccount(who('bob'), true), eve = a.provisionAccount(who('eve'), true), project = a.createProject(alice, 'alpha', 'Alpha');
@@ -53,14 +54,20 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
             writeFileSync(tokensPath, JSON.stringify(Object.fromEntries(identities)), { mode: 0o600 });
             writeFileSync(signingKeyPath, signer.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
             const rust = await startRustHub(rustBinary, dir, { domain: 'minarbot.test', accountsHost, dataPath: join(dir, 'hub.sqlite'),
-                mailboxKeyPath, identity: { mode: 'stub', tokensPath }, nodeLink: { signingKeyPath } });
+                mailboxKeyPath, identity: { mode: 'stub', tokensPath }, nodeLink: { signingKeyPath } }, 0, true);
+            try {
+                await rust.control({ now: clock });
+            } catch (error) {
+                await rust.close();
+                throw error;
+            }
             return { ...rust, transport: { flush() { /* Hosted Rust polls its own outbox. */ } } };
         }
         const node = createHubServer({ authority: a, verifier: createStubVerifier(identities), accountsHost, domain: 'minarbot.test', nodeLink: { origin, signingKey: signer, now } });
         await new Promise<void>(resolve => node.server.listen(0, '127.0.0.1', resolve));
         const address = node.server.address();
         assert(address && typeof address !== 'string');
-        return { port: address.port, close: node.close, transport: node.nodeLink! };
+        return { port: address.port, close: node.close, transport: node.nodeLink!, control: undefined };
     }
     const hub = await startFixtureHub();
     const { transport } = hub;
@@ -82,6 +89,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         return response;
     };
     const frames = new EventEmitter();
+    let receive: HubLinkOptions['receive'];
     const webSocket = (url: string, settings: import('ws').ClientOptions) => {
         const socket = new WebSocket(url.replace(origin.replace('https', 'wss'), localOrigin.replace('http', 'ws')), { ...settings, headers: { ...settings.headers, Host: accountsHost } });
         socket.on('message', data => frames.emit('frame', String(data)));
@@ -122,7 +130,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     const providerPort = p.port;
     const keys = new Map<string, string>(), entry = (service: string, name: string) => ({ getPassword: () => keys.get(`${service}/${name}`) ?? null, setPassword: (value: string) => { keys.set(`${service}/${name}`, value); } }), apps: App[] = [];
     async function node(name: string, account: string, extra: Partial<Parameters<typeof startApp>[0]> = {}) {
-        const database = join(dir, `${name}.sqlite`), options = { ...extra, database, stream, baseURL: `http://127.0.0.1:${providerPort}/v1`, hubLink: { origin, hubSigningPublicKey: hubKey, fetch: hubFetch, webSocket, entry, reconnectMs: 10, now } };
+        const database = join(dir, `${name}.sqlite`), options = { ...extra, database, stream, baseURL: `http://127.0.0.1:${providerPort}/v1`, hubLink: { origin, hubSigningPublicKey: hubKey, fetch: hubFetch, webSocket, entry, reconnectMs: 10, now, receive: (frame: string, socket: WebSocket) => receive?.(frame, socket) ?? [frame] } };
         let app = await startApp(options);
         apps.push(app);
         const agent = await api(app, '/api/agents', { runtime: 'api', id: randomUUID(), name, model: name, instructions: 'Answer section requests.' }, 201);
@@ -171,7 +179,15 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         return (await browser(project.host, '/api/messages', { requestId: randomUUID(), sectionId: project.sectionId, text: 'Mention from authenticated project browser', mentions }, session)).data;
     }
     const post = (account: string, mentions: string[]) => r.post(ctx(account), { requestId: randomUUID(), sectionId: project.sectionId, text: 'Explain transport', mentions });
-    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, frames, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, now: () => clock, advance(ms: number) { clock += ms; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
+    async function advance(ms: number) {
+        if (hub.control) await hub.control({ now: clock + ms });
+        clock += ms;
+    }
+    async function queuedPost(input: Parameters<typeof r.post>[1], advanceMs = 0): Promise<ReturnType<typeof r.post>> {
+        clock += advanceMs;
+        return hub.control ? hub.control({ now: clock, post: { projectId: project.projectId, accountId: alice, input } }) : r.post(ctx(alice), input);
+    }
+    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, frames, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, advance, queuedPost, receiveFrames(intercept?: HubLinkOptions['receive']) { receive = intercept; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
 }
 test('signed envelopes reject forged payloads, keys and directions', () => {
     const pair = generateKeyPairSync('ed25519'), key = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'), body = { kind: 'heartbeat' };
@@ -232,25 +248,27 @@ test('dangerous tool waits for exact local owner approval; hub/browser roles can
 });
 test('duplicate delivery, final ACK loss and restart never execute twice', async (t) => {
     const f = await fixture(t), node = await f.node('Once', f.alice), p = await node.participate();
-    const original = WebSocket.prototype.send;
     let duplicated = false, dropped = false;
-    WebSocket.prototype.send = function (data: any, ...args: any[]) {
-        const wire = typeof data === 'string' ? JSON.parse(data) : undefined;
+    f.receiveFrames((data, socket) => {
+        const wire = JSON.parse(data);
         if (wire?.body?.kind === 'turn.request' && !duplicated) {
             duplicated = true;
-            Reflect.apply(original, this, [data, ...args]);
+            return [data, data];
         }
-        if (wire?.body?.kind === 'response' && wire.body.result?.accepted && wire.body.result.sequence >= 3 && !dropped) {
-            dropped = true;
-            this.close(4409, 'Injected ACK loss');
-            return;
+        if (wire.body.kind === 'response' && wire.body.result?.accepted && !dropped) {
+            const result = f.a.one('SELECT frame_json FROM node_results WHERE project_id=? AND sequence=?', f.project.projectId, wire.body.result.sequence);
+            if (result && JSON.parse(String(result.frame_json)).kind === 'turn.final') {
+                dropped = true;
+                socket.close(4409, 'Injected ACK loss');
+                return [];
+            }
         }
-        return Reflect.apply(original, this, [data, ...args]);
-    };
-    t.after(() => { WebSocket.prototype.send = original; });
-    const post = f.post(f.alice, [p.participationId]);
+        return [data];
+    });
+    const post = await f.browserPost(f.alice, [p.participationId]);
     await until(() => f.calls === 1);
     await until(() => dropped, 'result ACK dropped');
+    assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'done');
     await until(() => f.a.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation !== 1, 'generation fenced');
     await node.restart();
     await sleep(400);
@@ -262,22 +280,26 @@ test('duplicate delivery, final ACK loss and restart never execute twice', async
 test('revocation mid-stream stops local work before another effect and does not execute offline', async (t) => { let release: (text: string) => void = () => { }; const f = await fixture(t, () => new Promise<string>(resolve => { release = resolve; })), node = await f.node('Held', f.alice), p = await node.participate(), post = f.post(f.alice, [p.participationId]); await until(() => f.calls === 1); f.a.withdraw(f.ctx(f.alice), p.participationId); f.transport.flush(); await until(async () => { const status = await api(node.app, '/api/hub-link'); return !status.connected || f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown'; }); release('Late answer'); await sleep(300); assert.equal(f.calls, 1); assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'unknown'); assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError); });
 test('foreign project and forged signed hub frames never reach local engine', async (t) => {
     const f = await fixture(t), node = await f.node('Isolated', f.alice), p = await node.participate();
-    const original = WebSocket.prototype.send;
-    let injected = false;
-    WebSocket.prototype.send = function (data: any, ...args: any[]) {
-        const wire = typeof data === 'string' ? JSON.parse(data) : undefined;
-        if (wire?.body?.kind === 'turn.request' && !injected) {
+    const forged = generateKeyPairSync('ed25519').privateKey;
+    for (const scenario of ['foreign project', 'wrong signature']) {
+        let injected = false;
+        f.receiveFrames(data => {
+            const wire = JSON.parse(data);
+            if (wire.body.kind !== 'turn.request' || injected) return [data];
             injected = true;
-            const foreign = { ...wire.body, projectId: randomUUID() };
-            return Reflect.apply(original, this, [canonicalJson(signedNodeMessage(foreign, f.signer, 'hub')), ...args]);
-        }
-        return Reflect.apply(original, this, [data, ...args]);
-    };
-    t.after(() => { WebSocket.prototype.send = original; });
-    const post = f.post(f.alice, [p.participationId]);
-    await until(() => injected);
-    await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown');
-    assert.equal(f.calls, 0);
+            if (scenario === 'foreign project') {
+                const foreign = { ...wire.body, projectId: randomUUID() };
+                return [canonicalJson(signedNodeMessage(foreign, f.signer, 'hub'))];
+            }
+            const { signature } = signedNodeMessage(wire.body, forged, 'hub');
+            return [canonicalJson({ ...wire, signature })];
+        });
+        const post = await f.browserPost(f.alice, [p.participationId]);
+        await until(() => injected, scenario);
+        await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown');
+        assert.equal(f.calls, 0);
+        await node.restart();
+    }
 });
 test('local owner endpoints require exact Origin and refuse bearer callers; unenrolled app stays idle', async (t) => { const f = await fixture(t), node = await f.node('Boundary', f.alice); const r = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: 'https://foreign.test', Connection: 'close' } }); assert.equal(r.status, 403); const bearer = await fetch(node.app.origin + '/api/hub-link', { headers: { Origin: node.app.origin, Authorization: 'Bearer rejected', Connection: 'close' } }); assert.equal(bearer.status, 403); assert.equal(f.calls, 0); await api(node.app, '/api/hub-link/revoke', {}); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'revoked'); assert.equal(node.app.hubLink!.status().disabled, true); });
 test('node revocation drains its signed frame before closing transport', async t => {
@@ -302,29 +324,20 @@ test('node revocation drains its signed frame before closing transport', async t
     assert.equal(node.app.hubLink!.status().disabled, true);
     assert.equal(f.calls, 0);
 });
-async function childApp(options: Record<string, unknown>, keys: Map<string, string>, localOrigin: string, clock: number) {
-    const code = `import {request} from 'node:http'; import WebSocket from 'ws'; import {startApp} from ${JSON.stringify(new URL('./test-bridge.ts', import.meta.url).href)};process.on('message',async message=>{try{const keys=new Map(message.keys), origin=message.options.hubLink.origin, host=new URL(origin).host;
-const hubFetch=(url,init)=>new Promise((resolve,reject)=>{const req=request(message.localOrigin+new URL(url).pathname,{method:init.method,headers:{...init.headers,Host:host}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve(new Response(Buffer.concat(chunks),{status:res.statusCode})));});req.on('error',reject);req.end(init.body);});
-const webSocket=(url,settings)=>new WebSocket(url.replace(origin.replace('https','wss'),message.localOrigin.replace('http','ws')),{...settings,headers:{...settings.headers,Host:host}});
-const app=await startApp({...message.options,hubLink:{...message.options.hubLink,now:()=>message.clock,fetch:hubFetch,webSocket,entry:(service,name)=>({getPassword:()=>keys.get(service+'/'+name)??null,setPassword:value=>keys.set(service+'/'+name,value)})}});process.send({kind:'ready',origin:app.origin});}catch{process.send({kind:'failed'});process.exitCode=1;}});`;
-    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', code], { cwd: new URL('.', import.meta.url), stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
-    let stderr = ''; child.stderr!.on('data', chunk => { stderr = (stderr + chunk).slice(-16000); });
-    const ready = once(child, 'message', { signal: AbortSignal.timeout(10000) });
-    child.send({ options, keys: [...keys], localOrigin, clock });
-    try {
-        const [message] = await ready;
-        assert.equal(message.kind, 'ready', stderr);
-        return child;
-    } catch (error) { await killChild(child); throw new Error(`Child startup failed: ${stderr}`, { cause: error }); }
-}
-async function killChild(child: ChildProcess) {
-    if (child.exitCode !== null || child.signalCode !== null)
-        return;
-    const exited = once(child, 'exit');
-    child.kill('SIGKILL');
-    await exited;
-}
-test('SIGKILL after dispatch and before result ACK keeps durable uncertainty without replay', async (t) => { let release: () => void = () => { }; const f = await fixture(t, () => new Promise<string>(resolve => { release = () => resolve('Effect already happened'); })), node = await f.node('Crash', f.alice), p = await node.participate(); await node.app.close(); const { entry: unused, now: unusedClock, ...linkOptions } = node.options.hubLink; const options = { ...node.options, hubLink: linkOptions }; let child = await childApp(options, f.keys, f.localOrigin, f.now()); t.after(async () => { await killChild(child); }); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'ready'); const post = f.post(f.alice, [p.participationId]); await until(() => f.calls === 1, 'provider dispatched'); await killChild(child); release(); await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown'); child = await childApp(options, f.keys, f.localOrigin, f.now()); await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'ready'); await sleep(500); assert.equal(f.calls, 1); assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'unknown'); });
+test('SIGKILL after dispatch and before result ACK keeps durable uncertainty without replay', async (t) => {
+    let release: () => void = () => {};
+    const f = await fixture(t, () => new Promise<string>(resolve => { release = () => resolve('Effect already happened'); }));
+    const node = await f.node('Crash', f.alice), p = await node.participate();
+    const post = await f.browserPost(f.alice, [p.participationId]);
+    await until(() => f.calls === 1, 'provider dispatched');
+    await node.app.crash();
+    release();
+    await until(() => f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown', 'durable uncertainty');
+    await node.restart();
+    await sleep(500);
+    assert.equal(f.calls, 1);
+    assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'unknown');
+});
 test('provider partial snapshots stream over real WebSockets before final', async (t) => { const f = await fixture(t, () => ({ streamText: 'Streamed local answer' }), true), node = await f.node('Stream', f.alice), p = await node.participate(), post = f.post(f.alice, [p.participationId]); const results = await f.done(post.turnIds[0]); assert(results.some(frame => frame.kind === 'turn.partial' && frame.payload.text === 'Streamed local answer')); assert.equal(results.at(-1)!.kind, 'turn.final'); assert.equal(results.at(-1)!.payload.text, 'Streamed local answer'); assert.equal(f.calls, 1); });
 test('browser code alone cannot redeem enrollment; node upgrade rejects browser credentials', async (t) => {
     const f = await fixture(t);
@@ -336,7 +349,20 @@ test('browser code alone cannot redeem enrollment; node upgrade rejects browser 
     const error = await once(ws, 'error');
     assert(error[0] instanceof Error);
 });
-test('reconnect fences old generation; session expiry renews with node key and never replays completed work', async (t) => { const f = await fixture(t), node = await f.node('Renew', f.alice), p = await node.participate(), post = f.post(f.alice, [p.participationId]); await f.done(post.turnIds[0]); const before = Number(f.a.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation); f.advance(900001); f.transport.flush(); await until(() => Number(f.a.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation) > before, 'signed renewal'); assert.equal(f.calls, 1); assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'done'); });
+test('reconnect fences old generation; session expiry renews with node key and never replays completed work', async (t) => {
+    const f = await fixture(t), node = await f.node('Renew', f.alice), p = await node.participate();
+    const post = await f.browserPost(f.alice, [p.participationId]);
+    await f.done(post.turnIds[0]);
+    const connectionGeneration = () => Number(f.a.one('SELECT connection_generation FROM nodes WHERE id=?', node.nodeId)!.connection_generation);
+    const session = () => f.a.one('SELECT expires_at FROM node_link_sessions WHERE node_id=?', node.nodeId)!.expires_at;
+    const before = connectionGeneration(), expiresAt = session();
+    await f.advance(900001);
+    f.transport.flush();
+    await until(() => connectionGeneration() > before && node.app.hubLink!.status().connected, 'signed renewal');
+    assert(Number(session()) > Number(expiresAt));
+    assert.equal(f.calls, 1);
+    assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'done');
+});
 test('local provider spend ceiling refuses next request before dispatch', async (t) => {
     const f = await fixture(t, body => body.messages.some((m: any) => m.role === 'tool') ? 'Second paid call' : ({ id: 'budget-tool', type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify({ name: 'budget.txt', text: 'One local file' }) } })), node = await f.node('Budget', f.alice);
     const policy: ParticipationPolicy = { sectionIds: [f.project.sectionId], invocation: { mode: 'owner' }, scopes: ['read', 'invoke'], localPolicyDigest: (await api(node.app, `/api/hub-link/agents/${node.agent.id}/policy`)).localPolicyDigest, payerBindingRef: 'local_provider', maxCostMicros: 100 };
@@ -416,8 +442,8 @@ test('hub-side withdrawal waits offline beyond turn deadline and disables local 
     const f = await fixture(t), node = await f.node('HubWithdrawOffline', f.bob), p = await node.participate();
     await node.app.close();
     await until(() => f.a.one('SELECT status FROM nodes WHERE id=?', node.nodeId)!.status === 'offline');
-    f.a.withdraw(f.ctx(f.alice), p.participationId);
-    f.advance(600001);
+    await f.browser(f.project.host, '/api/participants/withdraw', { participationId: p.participationId }, await f.projectSession(f.alice));
+    await f.advance(600001);
     await node.restart();
     await until(() => f.a.one("SELECT acked FROM outbox WHERE participation_id=? AND kind='grant.revoked'", p.participationId)?.acked === 1, 'durable control ACK');
     await node.app.close();
@@ -686,13 +712,16 @@ test('offline withdrawal is acknowledged even after owner loses project membersh
 test('project queue admission is atomic, idempotent and expires without executing offline work', async t => {
     const f = await fixture(t), node = await f.node('QueueBoundary', f.alice), p = await node.participate();
     const input = { requestId: randomUUID(), sectionId: f.project.sectionId, text: 'Bounded queue', mentions: [p.participationId] };
-    const first = f.r.post(f.ctx(f.alice), input);
-    for (let i = 1; i < 100; i++) f.r.post(f.ctx(f.alice), { ...input, requestId: randomUUID() });
-    assert.throws(() => f.r.post(f.ctx(f.alice), { ...input, requestId: randomUUID() }), e => e instanceof ProtocolError && e.status === 429);
-    assert.deepEqual(f.r.post(f.ctx(f.alice), input), first);
+    // Let the hosted queue fill while withholding delivery to the local engine.
+    f.receiveFrames(frame => ['section.event', 'turn.request'].includes(JSON.parse(frame).body.kind) ? [] : [frame]);
+    const first = await f.queuedPost(input);
+    for (let i = 1; i < 100; i++) await f.queuedPost({ ...input, requestId: randomUUID() });
+    await assert.rejects(f.queuedPost({ ...input, requestId: randomUUID() }), e => e instanceof ProtocolError && e.status === 429 && e.code === 'project_queue_full');
+    assert.deepEqual(await f.queuedPost(input), first);
     assert.equal(f.a.one('SELECT count(*) AS n FROM turns WHERE project_id=?', f.project.projectId)!.n, 100);
-    f.advance(600001);
-    assert.equal(f.r.post(f.ctx(f.alice), { ...input, requestId: randomUUID() }).turnIds.length, 1);
+    assert.equal((await f.queuedPost({ ...input, requestId: randomUUID() }, 600001)).turnIds.length, 1);
+    await node.restart();
+    f.receiveFrames();
     assert.equal(f.calls, 0);
 });
 

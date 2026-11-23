@@ -1,5 +1,6 @@
 mod authority;
 mod browser;
+mod fixture;
 mod node;
 mod routing;
 mod session;
@@ -75,7 +76,10 @@ pub async fn run() -> crate::db::Result<()> {
         return Err("Central accounts host must be accounts.<domain>.".into());
     }
     let commands = std::env::args_os().skip(2).collect::<Vec<_>>();
-    if !commands.is_empty() {
+    let test_fixture = commands == ["test-fixture"];
+    if test_fixture {
+        fixture::validate(&config)?;
+    } else if !commands.is_empty() {
         return storage::command(&config.data_path, &commands);
     }
     let key = std::fs::read(&config.mailbox_key_path)?;
@@ -101,6 +105,7 @@ pub async fn run() -> crate::db::Result<()> {
         _writer: writer,
     });
     println!("Minarbot hub: http://{}", listener.local_addr()?);
+    let fixture_stop = test_fixture.then(|| fixture::start(&state));
     let router = Router::new().fallback(dispatch).with_state(state.clone());
     let shutdown = async {
         #[cfg(unix)]
@@ -117,7 +122,13 @@ pub async fn run() -> crate::db::Result<()> {
     // Drop live streams/sockets together with the isolated listener on shutdown.
     tokio::select! {
         result = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()) => result?,
-        _ = shutdown => {}
+        _ = shutdown => {},
+        result = async {
+            match fixture_stop {
+                Some(stop) => stop.await?,
+                None => std::future::pending().await,
+            }
+        } => result?,
     }
     Ok(())
 }
@@ -255,7 +266,7 @@ impl Hub {
     }
 }
 fn now() -> i64 {
-    crate::config::now()
+    fixture::clock().unwrap_or_else(crate::config::now)
 }
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
