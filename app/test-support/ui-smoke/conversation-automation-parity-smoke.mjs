@@ -154,9 +154,9 @@ async function exercise(client) {
           nodes.map(node => [node.dateTime, node.textContent]));
         const [short, long] = timestamps;
         assert.equal(short[1], new Date(short[0]).toLocaleString('en-US', {
-          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+          timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
         }));
-        assert.equal(long[1], new Date(long[0]).toLocaleString('en-US'));
+        assert.equal(long[1], new Date(long[0]).toLocaleString('en-US', { timeZone: 'UTC' }));
       }
     }, async size => {
       if (size === 'narrow' && await details.isVisible()) await button('Close details', details).click();
