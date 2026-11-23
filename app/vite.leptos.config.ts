@@ -92,8 +92,8 @@ const appearanceConfig: Plugin = {
       },
       hub: {
         colors: colorThemes,
-        icons: iconMap({ bot: Bot, folder: FolderOpen, monitor: Monitor, logout: LogOut, users: Users,
-          hash: Hash, plus: Plus, refresh: RefreshCw, ellipsis: Ellipsis, send: ArrowUp, 'external-link': ExternalLink }),
+        icons: { ...iconMap({ bot: Bot, folder: FolderOpen, monitor: Monitor, logout: LogOut, users: Users,
+          hash: Hash, plus: Plus, refresh: RefreshCw, ellipsis: Ellipsis, send: ArrowUp, 'external-link': ExternalLink }), brand: svg(Bot, 24) },
       },
     };
     for (const [group, config] of Object.entries(configs)) {

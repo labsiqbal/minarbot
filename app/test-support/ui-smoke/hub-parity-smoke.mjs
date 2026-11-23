@@ -27,11 +27,12 @@ const identities = new Map(['Alice', 'Bob'].map(subject => [subject.toLowerCase(
 const account = authority.provisionAccount(identities.get('alice'), true);
 authority.provisionAccount(identities.get('bob'), true);
 const project = authority.createProject(account, 'pilot', 'Pilot project');
+if (process.env.MINARBOT_HUB_SMOKE_CLIENT !== 'react') process.env.MINARBOT_APPEARANCE_CLIENT = 'leptos';
 const hub = createHubServer({
   authority, accountsHost: central, domain, verifier: createStubVerifier(identities),
   web: { distPath: resolve(import.meta.dirname, '../../dist/hub'), developmentIdentity: true },
 });
-let proxy, browser;
+let proxy, browser, dropMessageResponse = false;
 
 async function listen(server) {
   server.listen(0, '127.0.0.1');
@@ -47,6 +48,13 @@ try {
     const connection = request({ host: '127.0.0.1', port, path: incoming.url, method: incoming.method, headers: incoming.headers });
     incoming.pipe(connection);
     connection.on('response', upstream => {
+      if (dropMessageResponse && incoming.url === '/api/messages' && upstream.statusCode === 200) {
+        dropMessageResponse = false;
+        upstream.resume();
+        response.writeHead(503, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: { code: 'fixture_lost_response', message: 'Success response lost in fixture.' } }));
+        return;
+      }
       response.writeHead(upstream.statusCode, upstream.headers);
       upstream.pipe(response);
     });
@@ -97,9 +105,13 @@ try {
       await page.reload();
       await message.waitFor();
       assert.equal(await message.inputValue(), text);
+      dropMessageResponse = true;
       await message.press('Enter');
+      await page.getByText('Message not confirmed', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Retry message', exact: true }).first().click();
       await page.getByText(text, { exact: true }).waitFor();
-      assert.equal(await message.inputValue(), '');
+      await page.waitForFunction(() => document.querySelector('textarea[placeholder="Message general"]')?.value === '');
+      assert.equal(await page.getByText(text, { exact: true }).count(), 1);
       if (screenshots) {
         assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
         await page.screenshot({ path: join(screenshots, client + '-room-dark.png') });
@@ -116,9 +128,10 @@ try {
       const invite = page.getByRole('dialog', { name: 'Invite member' });
       await invite.getByLabel('Email', { exact: true }).fill('bob@example.test');
       await invite.getByRole('button', { name: 'Create invitation' }).click();
+      await page.getByRole('heading', { name: 'Invitation ready' }).waitFor();
       await page.getByLabel('Private invitation link', { exact: true }).waitFor();
       assert.equal(errors.length, 0, errors.join('\n'));
-      console.log(client + ': HTTPS handoff, durable draft, room SSE, invitation form, dark/light');
+      console.log(client + ': HTTPS handoff, durable draft, exact replay after response loss, room SSE, invitation form, dark/light');
     } finally {
       await context.close();
     }

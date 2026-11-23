@@ -407,10 +407,10 @@ fn Members(page: ProjectPage) -> impl IntoView {
                     <div class="hub-actions"><button class=BUTTON type="button" disabled=page.busy on:click=move |_| close_dialog(invite_dialog)>"Cancel"</button><button class=PRIMARY type="submit" disabled=page.busy>"Create invitation"</button></div>
                 </form>
             }>
-                <label class="k-field"><span class="k-field__label">"Private invitation link"</span>
-                    <textarea class="k-input k-textarea" readonly prop:value=move || link.get().unwrap_or_default() aria-describedby="hub-invite-hint"></textarea>
+                <div class="k-field"><label class="k-field__label" for="hub-invite-link">"Private invitation link"</label>
+                    <textarea id="hub-invite-link" class="k-input k-textarea" readonly prop:value=move || link.get().unwrap_or_default() aria-describedby="hub-invite-hint"></textarea>
                     <span id="hub-invite-hint" class="k-field__hint">"Send privately to the invited email address. Shown once."</span>
-                </label>
+                </div>
                 <div><button class=BUTTON type="button" on:click=move |_| close_dialog(invite_dialog)>"Done"</button></div>
             </Show>
         </dialog>

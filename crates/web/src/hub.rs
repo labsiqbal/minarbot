@@ -153,7 +153,7 @@ fn alert(error: RwSignal<String>) -> impl IntoView {
     }
 }
 fn brand() -> impl IntoView {
-    view! { <span class="hub-brand"><Icon name="bot" />"Minarbot"</span> }
+    view! { <span class="hub-brand"><Icon name="brand" />"Minarbot"</span> }
 }
 fn badge(label: String) -> impl IntoView {
     view! { <span class="k-badge">{label}</span> }
@@ -515,11 +515,11 @@ fn Projects(actor: Session, config: StoredValue<Config>) -> impl IntoView {
             <h2 id="hub-create-title">"Create project"</h2>
             <form class="hub-form" method="post" action="/api/projects" on:submit=submit>
                 <label class="k-field"><span class="k-field__label">"Project name"</span><input class="k-input" name="name" required maxlength="120" autofocus /></label>
-                <label class="k-field"><span class="k-field__label">"Project address"</span>
-                    <input class="k-input" name="slug" required minlength="3" maxlength="63" pattern=r"[a-z][a-z0-9\-]{1,61}[a-z0-9]"
+                <div class="k-field"><label class="k-field__label" for="hub-project-address">"Project address"</label>
+                    <input class="k-input" id="hub-project-address" name="slug" required minlength="3" maxlength="63" pattern=r"[a-z][a-z0-9\-]{1,61}[a-z0-9]"
                         aria-describedby="hub-address-preview" on:input=move |event| slug.set(event_target_value(&event)) />
                     <span id="hub-address-preview" class="k-field__hint">{move || format!("{}.{}", slug.with(|s| if s.is_empty() { "your-project".into() } else { s.clone() }), config.with_value(|c| c.domain.clone()))}</span>
-                </label>
+                </div>
                 {alert(error)}
                 <div class="hub-actions"><button class=BUTTON type="button" disabled=busy on:click=move |_| close_dialog(create)>"Cancel"</button><button class=PRIMARY type="submit" disabled=busy>"Create project"</button></div>
             </form>
