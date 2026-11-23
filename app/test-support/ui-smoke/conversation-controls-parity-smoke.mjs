@@ -65,6 +65,10 @@ try {
     id: randomUUID(), revision: project.revision, agent: agent.id, name: 'Project chat', folder: '',
   });
   const projectChat = main + '/conversations/' + projectThread.threads.find(thread => thread.name === 'Project chat').id;
+  const standalone = await api('/api/channels', {
+    id: randomUUID(), name: 'Standalone section', instructions: 'Coordinate fixture work.',
+    members: [agent.id, helper.id], lead: helper.id,
+  });
   const realTurn = randomUUID();
   await api(mainApi + '/turns', { id: realTurn, text: 'Fork source message' });
   let complete = false;
@@ -118,6 +122,7 @@ try {
         const images = new Map();
         for (const client of ['react', 'leptos']) {
           const context = await browser.newContext({ viewport: { width, height }, reducedMotion: 'reduce', colorScheme: theme });
+          let page;
           try {
             await context.addInitScript(theme => {
               localStorage.setItem('minarbot-presentation-v1', JSON.stringify({ version: 1, theme, textSize: 'standard', colorTheme: 'minarbot' }));
@@ -133,7 +138,7 @@ try {
               window.fixtureCsp = [];
               document.addEventListener('securitypolicyviolation', event => window.fixtureCsp.push(event.effectiveDirective));
             }, theme);
-            const page = await context.newPage();
+            page = await context.newPage();
             page.setDefaultTimeout(15000);
             page.on('pageerror', error => faults.push({ client, error: error.message }));
             page.on('console', message => { if (message.type() === 'error') faults.push({ client, error: message.text() }); });
@@ -262,6 +267,14 @@ try {
             assert.equal(restoration.body.checkpointId, checkpoint.id);
             assert.equal(restoration.body.digest, digest);
 
+            const coordination = message(checkpoint.id).getByRole('button', { name: 'Task coordination (1)', exact: true });
+            await coordination.click();
+            await message(checkpoint.id).getByRole('button', { name: 'View subtask', exact: true }).click();
+            await page.getByText('Selected message', { exact: true }).waitFor();
+            await message(child.id).waitFor();
+            await capture('task-family');
+            await page.getByRole('button', { name: 'Back to latest messages', exact: true }).click();
+
             await message(waiting.id).getByRole('button', { name: 'Show event connection' }).click();
             const secret = message(waiting.id).getByLabel('Signing secret');
             await secret.waitFor();
@@ -315,12 +328,50 @@ try {
               const all = page.getByRole('dialog', { name: 'Search chat history', exact: true });
               await all.getByRole('searchbox').fill('Fork source message');
               await all.getByRole('searchbox').press('Enter');
-              await all.getByRole('link', { name: 'Fork source message', exact: true }).click();
+              const result = all.getByRole('link', { name: 'Fork source message', exact: true });
+              await result.waitFor();
+              await page.screenshot({ path: join(output, `${size}-${theme}-search-chat-history-leptos.png`), animations: 'disabled' });
+              await result.click();
               await message(realTurn).waitFor();
               await page.goBack();
               await page.getByRole('main', { name: 'Conversation Named chat', exact: true }).waitFor();
             }
-          } finally { await context.close(); }
+            // The server migrates legacy rooms into projects. Exercise the legacy room form with its original read shape.
+            await page.route(url => url.origin === app.origin && url.pathname === '/api/channels', async route => {
+              const response = await route.fetch();
+              const channels = await response.json();
+              await route.fulfill({ response, json: channels.map(channel => channel.id === standalone.id ? { ...channel, project: null } : channel) });
+            });
+            await open('/rooms/' + standalone.id);
+            await page.locator('.chat__pill').click();
+            await page.getByRole('menuitem', { name: 'Section settings', exact: true })
+              .or(page.getByRole('button', { name: 'Section settings', exact: true })).click();
+            const section = page.getByRole('dialog', { name: 'Section settings', exact: true });
+            const member = section.getByRole('checkbox', { name: helper.name, exact: true });
+            await member.waitFor();
+            assert.equal(await member.getAttribute('aria-checked'), 'true');
+            assert(await section.getByRole('textbox', { name: 'Section name' }).evaluate(element => element === document.activeElement));
+            await capture('section-settings');
+            await member.press('Space');
+            assert.equal(await member.getAttribute('aria-checked'), 'false');
+            const saving = page.waitForResponse(response => response.url().endsWith('/api/channels/' + standalone.id + '/edit'));
+            await section.getByRole('button', { name: 'Save section', exact: true }).click();
+            const saved = await saving;
+            assert(saved.ok(), 'Section settings save');
+            const body = saved.request().postDataJSON();
+            assert.deepEqual(body.members, [agent.id]);
+            assert.equal(body.lead, null);
+            const edited = await saved.json();
+            assert.deepEqual(edited.members, [agent.id]);
+            await section.waitFor({ state: 'hidden' });
+            await api('/api/channels/' + standalone.id + '/edit', {
+              id: randomUUID(), revision: edited.revision, archived: false, name: standalone.name,
+              instructions: standalone.instructions, members: standalone.members, lead: standalone.lead,
+            });
+          } finally {
+            await page?.unrouteAll({ behavior: 'wait' });
+            await context.close();
+          }
         }
         assert.equal(evidence.filter(item => item.size === size && item.theme === theme).length, images.size);
       }

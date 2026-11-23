@@ -194,6 +194,7 @@ pub(super) fn settings(room: Channel, dialog: NodeRef<leptos::html::Dialog>) -> 
                             let selected = move || id.with_value(|id| members.with(|members| members.contains(id)));
                             view! { <div class="k-check">
                                 <button id=control.clone() type="button" role="checkbox" class="k-check__box" disabled=locked
+                                    aria-label=agent.name.clone()
                                     aria-checked=move || selected().to_string() data-state=move || if selected() { "checked" } else { "unchecked" }
                                     on:click=move |_| {
                                         let id = id.get_value();
