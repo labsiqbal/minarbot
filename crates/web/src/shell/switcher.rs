@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Clone, Deserialize)]
-pub(super) struct Thread {
+struct Thread {
     id: String,
     agent: String,
     name: String,
@@ -133,15 +133,9 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
             }
         }
     }
-    let thread_link = |thread: Thread, detail: String| {
-        let path = format!("/agents/{}/conversations/{}", thread.agent, thread.id);
-        Item::link(
-            thread.name,
-            "Conversations",
-            detail,
-            icons.message.clone(),
-            path,
-        )
+    let thread_link = |agent: &str, id: &str, name: String, detail: String| {
+        let path = chat(format!("/agents/{agent}/conversations/{id}"));
+        Item::link(name, "Conversations", detail, icons.message.clone(), path)
     };
     if let Some(Ok(projects)) = data.projects.get() {
         for project in projects
@@ -174,7 +168,12 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
                 .into_iter()
                 .filter(|thread| valid_id(&thread.id) && valid_id(&thread.agent))
             {
-                items.push(thread_link(thread, project.name.clone()));
+                items.push(thread_link(
+                    &thread.agent,
+                    &thread.id,
+                    thread.name,
+                    project.name.clone(),
+                ));
             }
         }
     }
@@ -182,7 +181,7 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
         let detail = agents()
             .find(|agent| agent.id == thread.agent)
             .map_or_else(String::new, |agent| agent.name.clone());
-        items.push(thread_link(thread, detail));
+        items.push(thread_link(&thread.agent, &thread.id, thread.name, detail));
     }
     let base = data.base_path.get();
     for setting in &icons.settings_choices {

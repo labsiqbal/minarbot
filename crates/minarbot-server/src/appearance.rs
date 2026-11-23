@@ -76,13 +76,6 @@ pub fn route_title(state: &crate::AppState, path: &str, query: &str) -> Option<&
     {
         return None;
     }
-    if path.starts_with("/projects/")
-        && form_urlencoded::parse(query.as_bytes()).any(|(key, value)| {
-            key == "projectTab" && matches!(value.as_ref(), "apps" | "environment" | "mcp")
-        })
-    {
-        return None;
-    }
     match WorkspaceRoute::from_path(path)? {
         WorkspaceRoute::Setup => {
             let db = state.database.lock().ok()?;
@@ -127,7 +120,9 @@ pub fn document(html: &str, route: &str, title: &str, query: &str) -> String {
         params.append_pair("from", from);
     }
     for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-        if (route.starts_with("/projects/") && key == "projectTab" && value == "calendar")
+        if (route.starts_with("/projects/")
+            && key == "projectTab"
+            && matches!(value.as_ref(), "calendar" | "apps" | "environment" | "mcp"))
             || (route == "/routines" && key == "agent" && valid_id(&value))
         {
             params.append_pair(&key, &value);

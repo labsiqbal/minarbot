@@ -29,7 +29,7 @@ struct Toolkit {
     managed_auth: bool,
 }
 #[derive(Clone, Deserialize, PartialEq)]
-struct Catalog {
+pub(crate) struct Catalog {
     configured: bool,
     items: Vec<Toolkit>,
     categories: Vec<Category>,
@@ -66,6 +66,8 @@ struct Apps {
     grants: Query<Items<Grant>>,
     policies: Query<Items<Policy>>,
     agent: RwSignal<String>,
+    agents: Signal<Vec<(String, String)>>,
+    project: Option<ProjectApps>,
     selected: RwSignal<String>,
     search: RwSignal<String>,
     query: RwSignal<String>,
@@ -77,6 +79,16 @@ struct Apps {
     link: RwSignal<Option<String>>,
     journal: Journal,
     confirmation: Confirm,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProjectApps {
+    pub id: StoredValue<String>,
+    pub members: StoredValue<Vec<String>>,
+    pub inherited: bool,
+    pub change: Callback<bool>,
+    pub locked: Signal<bool>,
+    pub catalog: StoredValue<Option<Catalog>>,
 }
 
 fn valid(command: &Command) -> bool {
@@ -278,28 +290,53 @@ impl Apps {
 }
 
 pub fn panel() -> impl IntoView {
-    let agent = agent_selection(true);
+    scoped_panel(None)
+}
+
+pub(crate) fn scoped_panel(project: Option<ProjectApps>) -> impl IntoView {
+    let agents = scoped_agents(project.is_none(), project.map(|project| project.members));
+    let agent = selected_agent(agents);
+    let journal = match project {
+        Some(project) => Journal::new(
+            project
+                .id
+                .with_value(|id| format!("minarbot:connected-app-command:{id}")),
+            4000,
+            |command| {
+                valid(command)
+                    && !command.path.starts_with(KEY)
+                    && !command.path.contains("/app-approvals/")
+            },
+        )
+        .for_project(Some(project.id)),
+        None => Journal::new("minarbot:connected-app-command", 4000, valid),
+    };
     let cursor = Cursor::new(Vec::new());
     let query_text = RwSignal::new(String::new());
     let category = RwSignal::new(String::new());
-    let apps = Apps {
-        key: query(|| KEY.into()),
-        catalog: query(move || {
+    let catalog = cached_query(
+        move || {
             let after = cursor.with_untracked(|rows| rows.last().cloned().unwrap_or_default());
             format!(
-                "{PATH}?search={}&category={}&after={}",
+                "{}?search={}&category={}&after={}",
+                journal.endpoint(PATH),
                 encode(&query_text.get_untracked()),
                 encode(&category.get_untracked()),
                 encode(&after)
             )
-        }),
-        accounts: query(|| format!("{PATH}/accounts")),
+        },
+        project.map(|project| project.catalog),
+    );
+    let apps = Apps {
+        key: query(|| KEY.into()),
+        catalog,
+        accounts: query(move || journal.endpoint(&format!("{PATH}/accounts"))),
         grants: query(move || {
             let id = agent.get_untracked();
             if id.is_empty() {
                 String::new()
             } else {
-                format!("/api/agents/{}/connected-apps", encode(&id))
+                journal.endpoint(&format!("/api/agents/{}/connected-apps", encode(&id)))
             }
         }),
         policies: query(move || {
@@ -307,10 +344,15 @@ pub fn panel() -> impl IntoView {
             if id.is_empty() {
                 String::new()
             } else {
-                format!("/api/agents/{}/connected-app-policies", encode(&id))
+                journal.endpoint(&format!(
+                    "/api/agents/{}/connected-app-policies",
+                    encode(&id)
+                ))
             }
         }),
         agent,
+        agents,
+        project,
         cursor,
         category,
         query: query_text,
@@ -320,7 +362,7 @@ pub fn panel() -> impl IntoView {
         replacing: RwSignal::new(false),
         secret: RwSignal::new(String::new()),
         link: RwSignal::new(None),
-        journal: Journal::new("minarbot:connected-app-command", 4000, valid),
+        journal,
         confirmation: Confirm::new(None),
     };
     Effect::new(move |_| {
@@ -332,7 +374,15 @@ pub fn panel() -> impl IntoView {
     });
     Effect::new(move |_| {
         let _ = apps.selected.get();
-        request_animation_frame(crate::settings::focus_heading);
+        request_animation_frame(move || {
+            if let Ok(Some(heading)) = document().query_selector(".bs-set3-apps h1") {
+                if let Some(heading) =
+                    wasm_bindgen::JsCast::dyn_ref::<web_sys::HtmlElement>(&heading)
+                {
+                    let _ = heading.focus();
+                }
+            }
+        });
     });
     poll(15, move || {
         if !apps.journal.busy.get_untracked() {
@@ -366,14 +416,32 @@ pub fn panel() -> impl IntoView {
                     click=UiAction::new(move |()| apps.selected.set(String::new())) />
             </Show>
             <Header title=move || apps.selected.with(|slug| if slug.is_empty() { "Connected apps".into() } else { apps.title(slug) })
-                actions=Box::new(move || view! { {move || apps.integration_menu(apps.key.data.get())} }.into_any()) />
+                actions=Box::new(move || view! { {move || project.is_none().then(|| apps.integration_menu(apps.key.data.get()))} }.into_any()) />
             <Show when=move || apps.selected.with(String::is_empty)>
-                {move || crate::messaging_connections::discord()}
-                {move || crate::messaging_connections::whatsapp()}
+                {project.is_none().then(|| view! {
+                    {crate::messaging_connections::discord()}
+                    {crate::messaging_connections::whatsapp()}
+                })}
             </Show>
             <ErrorNotice error=error retry=refresh label="Try again" />
             <Recovery journal=apps.journal retry=retry confirmation=apps.confirmation refresh=refresh enter_key=enter_key
                 needs_key=move || apps.needs_key() && apps.secret.with(|value| value.trim().is_empty()) />
+            {project.map(|project| view! {
+                <Show when=move || apps.selected.with(String::is_empty)>
+                    <div class="k-card"><Row title="Allow global apps" trailing=Box::new(move || view! {
+                        <span title="Member agents may also use apps granted to them in Settings. Project accounts take priority for the same toolkit.">
+                            <Switch label="Allow global apps" checked=project.inherited disabled=move || apps.journal.locked() || project.locked.get()
+                                change=Callback::new(move |enabled| {
+                                    if enabled {
+                                        confirm(apps.confirmation, "Allow installation apps in this project?",
+                                            "Members can use their installation accounts alongside this project’s accounts. Approval choices stay separate for this project.",
+                                            "Allow installation apps", false, UiAction::new(move |()| project.change.run(enabled)));
+                                    } else { project.change.run(enabled); }
+                                }) />
+                        </span>
+                    }.into_any()) /></div>
+                </Show>
+            })}
             <Show when=move || apps.catalog.data.with(|data| data.as_ref().is_some_and(|data| !data.configured))
                 fallback=move || view! {
                     <Show when=move || apps.selected.with(String::is_empty) fallback=move || detail(apps)>
@@ -381,13 +449,41 @@ pub fn panel() -> impl IntoView {
                     </Show>
                 }>
                 <Empty title="Connect apps" icon="blocks">
-                    <Button label="Set up" disabled=move || apps.journal.locked() || apps.key.data.with(Option::is_none)
-                        click=UiAction::new(move |()| apps.open_setup()) />
+                    {if project.is_none() { view! {
+                        <Button label="Set up" disabled=move || apps.journal.locked() || apps.key.data.with(Option::is_none)
+                            click=UiAction::new(move |()| apps.open_setup()) />
+                    }.into_any() } else { view! { <div class="k-empty__text">"Set up Composio in Settings > Connected apps."</div> }.into_any() }}
                 </Empty>
             </Show>
+            {project.is_some().then(|| view! {
+                <Show when=move || apps.selected.with(String::is_empty)>
+                    {project_messaging()}
+                </Show>
+            })}
             <Show when=move || apps.setup.get()>{move || setup(apps, error, refresh, retry)}</Show>
             <ConfirmDialog state=apps.confirmation />
         </div>
+    }
+}
+
+fn project_messaging() -> impl IntoView {
+    let details = NodeRef::<leptos::html::Details>::new();
+    let open = RwSignal::new(false);
+    view! {
+        <details class="k-collapsible connection-disclosure" node_ref=details on:toggle=move |_| {
+            open.set(details.get_untracked().is_some_and(|details| details.open()));
+        }>
+            <summary class="k-collapsible__trigger">
+                <span class="k-collapsible__title">"Discord and WhatsApp"</span>
+                <span class="k-collapsible__chev"><Icon name="chevron-down" /></span>
+            </summary>
+            <Show when=move || open.get()>
+                <div class="k-collapsible__content k-stack" data-state="open">
+                    {crate::messaging_connections::discord()}
+                    {crate::messaging_connections::whatsapp()}
+                </div>
+            </Show>
+        </details>
     }
 }
 
@@ -499,7 +595,10 @@ fn browse(apps: Apps) -> impl IntoView {
                     let connect = UiAction::new(move |()| apps.execute(Command::new(format!("{PATH}/connect/{}", encode(&slug.get_value())), json!({}))));
                     let meta = move || view! { <Badge success=true>"Connected"</Badge> }.into_any();
                     let trailing = move || view! { <Button label=if active { "Manage" } else if row.managed_auth { "Connect" } else { "Custom auth needed" }
-                        size="sm" disabled=move || apps.journal.locked() || !active && !row.managed_auth click=if active { manage } else { connect } /> }.into_any();
+                        size="sm" disabled=move || apps.journal.locked() || !active && !row.managed_auth
+                            || apps.project.is_some() && (apps.catalog.busy.get() || apps.accounts.busy.get()
+                            || !apps.catalog.error.with(String::is_empty) || !apps.accounts.error.with(String::is_empty))
+                        click=if active { manage } else { connect } /> }.into_any();
                     if active { view! { <Row title=row.name icon="blocks" click=manage meta=Box::new(meta) trailing=Box::new(trailing) /> }.into_any() }
                     else { view! { <Row title=row.name icon="blocks" trailing=Box::new(trailing) /> }.into_any() }
                 }).collect_view()}</div> }.into_any(),
@@ -512,19 +611,18 @@ fn browse(apps: Apps) -> impl IntoView {
 
 fn detail(apps: Apps) -> impl IntoView {
     let slug = apps.selected.get();
+    let toolkit = StoredValue::new(slug);
     let connected = {
-        let slug = slug.clone();
         move || {
             apps.accounts.data.with(|data| {
                 data.as_ref().is_some_and(|data| {
-                    data.items
-                        .iter()
-                        .any(|row| row.toolkit == slug && row.status == "ACTIVE")
+                    data.items.iter().any(|row| {
+                        toolkit.with_value(|slug| &row.toolkit == slug) && row.status == "ACTIVE"
+                    })
                 })
             })
         }
     };
-    let toolkit = StoredValue::new(slug);
     view! {
         <Section title="Accounts">
             {move || {
@@ -549,9 +647,9 @@ fn detail(apps: Apps) -> impl IntoView {
             }}
         </Section>
         <Section title="Agent access" actions=Box::new(move || view! {
-            <Show when=move || !agent_options(true).is_empty()>
+            <Show when=move || !apps.agents.with(Vec::is_empty)>
                 <Select name="apps-agent" label="Agent for connected apps" small=true value=apps.agent.into()
-                    options=Signal::derive(|| agent_options(true)) disabled=move || apps.journal.locked()
+                    options=apps.agents disabled=move || apps.journal.locked()
                     change=Callback::new(move |value| apps.agent.set(value)) />
             </Show>
         }.into_any())>
@@ -563,7 +661,7 @@ fn detail(apps: Apps) -> impl IntoView {
                 };
                 if !connected() { return view! { <Empty title="No connected account" /> }.into_any(); }
                 let title = apps.title(&toolkit.get_value());
-                let agent = agent_options(true).into_iter().find(|(agent, _)| agent == &id).map_or_else(String::new, |(_, name)| name);
+                let agent = apps.agents.get().into_iter().find(|(agent, _)| agent == &id).map_or_else(String::new, |(_, name)| name);
                 let grant = grants.items.into_iter().find(|row| toolkit.with_value(|slug| slug == &row.toolkit));
                 let revision = grant.as_ref().map_or(0, |grant| grant.revision);
                 let enabled = grant.is_some_and(|grant| grant.enabled);
@@ -575,6 +673,21 @@ fn detail(apps: Apps) -> impl IntoView {
                         ))) />
                 }.into_any()) /></div> }.into_any()
             }}
+            {apps.project.map(|project| view! {
+                <Show when=connected>
+                    <Button label="Allow all members" size="sm" disabled=move || apps.journal.locked() || apps.agents.with(Vec::is_empty)
+                        click=UiAction::new(move |()| {
+                            let slug = toolkit.get_value();
+                            let title = apps.title(&slug);
+                            let count = project.members.with_value(Vec::len);
+                            confirm(apps.confirmation, format!("Allow all project members to use {title}?"),
+                                format!("This grants {count} current members access. Actions that write or have unknown effects still ask for approval in chat."),
+                                "Allow all members", false, UiAction::new(move |()| apps.execute(Command::new(
+                                    format!("{PATH}/grant-all/{}", encode(&slug)), json!({ "confirmed": true })
+                                ))));
+                        }) />
+                </Show>
+            })}
         </Section>
         <Section title="Allowed actions">
             {move || {
