@@ -93,7 +93,130 @@ pub(crate) fn response(catalog: Vec<Model>) -> Value {
     json!({"models": models, "catalog": catalog})
 }
 
-pub(crate) async fn models(state: &AppState, runtime: &str, binding: &str) -> Result<Value> {
+const OPENAI_MINI: &str = "gpt-5.4-mini";
+
+pub(crate) fn api_memory_default(account: &providers::Account) -> Option<&'static str> {
+    let url = providers::address(&account.base).ok()?;
+    match (account.family.as_str(), url.host_str()) {
+        ("anthropic", Some("api.anthropic.com")) => Some("claude-haiku-5-5"),
+        ("openai-compatible", Some("api.openai.com")) => Some(OPENAI_MINI),
+        _ => None,
+    }
+}
+
+// Consolidation can include twelve facts and twelve observations, plus its
+// prompt and reply budget. Require 64 Ki tokens for custom models.
+const MEMORY_CONTEXT: u64 = 65_536;
+
+pub(crate) struct MemoryPricing {
+    context: u64,
+    cost: f64,
+}
+
+impl MemoryPricing {
+    pub(crate) fn from_row(row: &Value) -> Option<Self> {
+        fn rate(value: &Value) -> Option<f64> {
+            value
+                .as_f64()
+                .or_else(|| value.as_str()?.parse().ok())
+                .filter(|rate| rate.is_finite() && *rate >= 0.0)
+        }
+        if row["architecture"]["output_modalities"]
+            .as_array()
+            .is_some_and(|types| !types.iter().any(|kind| kind == "text"))
+        {
+            return None;
+        }
+        let context = row["context_length"].as_u64()?;
+        // Approximate the observed input-heavy extraction workload.
+        let cost = 16.0 * rate(&row["pricing"]["prompt"])? + rate(&row["pricing"]["completion"])?;
+        cost.is_finite().then_some(Self { context, cost })
+    }
+}
+
+fn custom_memory_default(models: &BTreeMap<String, Option<MemoryPricing>>) -> Option<Value> {
+    let priced = || {
+        models
+            .iter()
+            .filter_map(|(id, info)| Some((id, info.as_ref()?)))
+    };
+    let (model, price) = priced()
+        .filter(|(_, info)| info.context >= MEMORY_CONTEXT)
+        .min_by(|(_, a), (_, b)| a.cost.total_cmp(&b.cost))?;
+    let replaces = priced()
+        .filter_map(|(id, info)| (info.cost > price.cost).then_some(id.as_str()))
+        .collect::<Vec<_>>();
+    (!replaces.is_empty()).then(|| json!({"model":model,"replaces":replaces}))
+}
+
+pub(super) fn native_memory_default(runtime: &str, catalog: &[Model]) -> Option<&'static str> {
+    match runtime {
+        "claude" => Some("haiku"),
+        "codex" => [OPENAI_MINI, "gpt-5.1-codex-mini", "gpt-5-mini"]
+            .into_iter()
+            .find(|id| {
+                catalog
+                    .iter()
+                    .any(|model| model.group.is_none() && model.id == *id)
+            }),
+        _ => None,
+    }
+}
+
+pub(crate) fn memory_default(catalog: &Value, main: &str) -> Option<String> {
+    let selection = &catalog["memoryDefault"];
+    if selection["replaces"]
+        .as_array()
+        .is_some_and(|ids| !ids.iter().any(|id| id == main))
+    {
+        return None;
+    }
+    selection["model"].as_str().map(str::to_owned)
+}
+
+pub(crate) async fn api_models(state: &AppState, account: &providers::Account) -> Result<Value> {
+    // Include credentials and endpoint in the cache identity so edits cannot
+    // reuse another binding's catalog. Keep only the digest.
+    let key = crate::data::digest_bytes(
+        &serde_json::to_vec(&(
+            &account.id,
+            &account.family,
+            &account.base,
+            &account.key,
+            &account.model,
+        ))
+        .map_err(|_| Failure::storage())?,
+    );
+    state
+        .config
+        .harness
+        .model_catalog
+        .get("api", &key, async {
+            let models = providers::discover_catalog_with_timeout(state, account, true).await?;
+            let mut result = response(
+                models
+                    .keys()
+                    .map(|id| Model::new(id, id, id == &account.model))
+                    .collect(),
+            );
+            if let Some(model) =
+                api_memory_default(account).filter(|model| models.contains_key(*model))
+            {
+                result["memoryDefault"] = json!({"model":model});
+            } else if let Some(selection) = custom_memory_default(&models) {
+                result["memoryDefault"] = selection;
+            }
+            Ok(result)
+        })
+        .await
+}
+
+pub(crate) async fn models(
+    state: &AppState,
+    runtime: &str,
+    binding: &str,
+    include_custom: bool,
+) -> Result<Value> {
     let executable = executable(state, runtime)
         .ok_or_else(|| error(503, "The selected engine is unavailable on this host."))?;
     let login = if binding == logins::DEVICE {
@@ -110,18 +233,31 @@ pub(crate) async fn models(state: &AppState, runtime: &str, binding: &str) -> Re
         .config
         .harness
         .model_catalog
-        .get(runtime, binding, async {
-            let deadline = Instant::now() + PROBE_TIMEOUT;
-            let (mut catalog, config) = if let Some(profile) = login {
-                login_models(state, &executable, runtime, &profile, deadline).await?
+        .get(
+            if include_custom || runtime == "claude" {
+                runtime
             } else {
-                device_models(&executable, runtime, path(state), deadline).await?
-            };
-            if let Some(config) = config {
-                catalog.extend(custom_models(&config, deadline).await);
-            }
-            Ok(response(catalog))
-        })
+                "codex-login"
+            },
+            binding,
+            async {
+                let deadline = Instant::now() + PROBE_TIMEOUT;
+                let (mut catalog, config) = if let Some(profile) = login {
+                    login_models(state, &executable, runtime, &profile, deadline).await?
+                } else {
+                    device_models(&executable, runtime, path(state), deadline).await?
+                };
+                if let Some(config) = config.filter(|_| include_custom) {
+                    catalog.extend(custom_models(&config, deadline).await);
+                }
+                let memory_default = native_memory_default(runtime, &catalog);
+                let mut result = response(catalog);
+                if let Some(model) = memory_default {
+                    result["memoryDefault"] = json!({"model":model});
+                }
+                Ok(result)
+            },
+        )
         .await
 }
 

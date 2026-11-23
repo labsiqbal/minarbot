@@ -1,5 +1,5 @@
 use super::*;
-use crate::data::providers::format_timeout;
+use crate::{data::providers::format_timeout, harness::model_catalog};
 use reqwest::Response;
 use std::{future::Future, time::Duration};
 
@@ -77,8 +77,43 @@ pub async fn call(
     if pending(state) {
         return Err(error(503, "Update trial is pending."));
     }
+    let memory_selection = if memory {
+        let (agent, account) = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            let db = &guard.connection;
+            let agent = super::memory::completion_agent(db, turn, phase)?;
+            let account = admission::account(state, db, string(&agent, "id"))?;
+            (agent, account)
+        };
+        let configured = string(&agent, "memory_model");
+        let selected = if !configured.is_empty() {
+            if configured == "default" {
+                account.model.clone()
+            } else {
+                configured.to_owned()
+            }
+        } else {
+            let main = string(&agent, "model");
+            let default = if main.is_empty() || main == "default" {
+                &account.model
+            } else {
+                main
+            };
+            model_catalog::api_models(state, &account)
+                .await
+                .ok()
+                .and_then(|catalog| model_catalog::memory_default(&catalog, default))
+                .unwrap_or_else(|| default.to_owned())
+        };
+        Some((agent["revision"].clone(), account, selected))
+    } else {
+        None
+    };
+    let model = memory_selection
+        .as_ref()
+        .map_or(model, |(_, _, model)| model.as_str());
     let mut messages = messages.to_vec();
-    let (account, seq, vault_secrets, learning_model) = {
+    let (account, seq, vault_secrets) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let row = one(
@@ -94,25 +129,14 @@ pub async fn call(
             }
         })
         .ok_or_else(|| error(409, "Task has stopped."))?;
-        let learning_model = if memory {
-            Some(
-                string(
-                    &super::memory::completion_agent(db, turn, phase)?,
-                    "learning_model",
-                )
-                .to_owned(),
-            )
-        } else {
-            None
-        };
         let account = admission::account(state, db, string(&row, "agent"))?;
-        let learning_model = learning_model.map(|model| {
-            if model.is_empty() || model == "default" {
-                account.model.clone()
-            } else {
-                model
+        if let Some((revision, discovered_account, _)) = &memory_selection {
+            let current = super::memory::completion_agent(db, turn, phase)?;
+            if pending(state) || &account != discovered_account || &current["revision"] != revision
+            {
+                return Err(error(409, "Conversation learning settings changed."));
             }
-        });
+        }
         if !private
             && phase != "routing"
             && !super::profile::setup(db, &json!({"id":turn,"agent":row["agent"]}))?
@@ -145,14 +169,13 @@ pub async fn call(
         } else {
             "completion"
         };
-        db.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES (?,?,?,?,?,?,?,?, 'pending',?)",params![turn,row["agent"].as_str(),learning_model.as_deref().unwrap_or(model),origin,purpose,phase,account.family,account.id,iso(db,state.config.now())?])?;
+        db.execute("INSERT INTO provider_calls(turn,agent,model,origin,purpose,phase,family,account,status,created) VALUES (?,?,?,?,?,?,?,?, 'pending',?)",params![turn,row["agent"].as_str(),model,origin,purpose,phase,account.family,account.id,iso(db,state.config.now())?])?;
         let seq = db.last_insert_rowid();
         if !memory {
             state.events.turn(db, turn)?;
         }
-        (account, seq, vault_secrets, learning_model)
+        (account, seq, vault_secrets)
     };
-    let model = learning_model.as_deref().unwrap_or(model);
     let streamed = account.stream;
     let max_tokens = if memory {
         account
@@ -194,7 +217,12 @@ pub async fn call(
         streamed,
     )?;
     if memory && account.family == "openai-compatible" {
-        body["max_tokens"] = json!(max_tokens);
+        let limit = if model_catalog::api_memory_default(&account).is_some() {
+            "max_completion_tokens"
+        } else {
+            "max_tokens"
+        };
+        body[limit] = json!(max_tokens);
     }
     let mut request = state.turns.client.post(endpoint).json(&body);
     if account.family == "anthropic" {

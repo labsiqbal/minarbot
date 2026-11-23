@@ -1,6 +1,11 @@
 use super::*;
+use crate::harness::model_catalog::{self, MemoryPricing};
 use serde::Deserialize;
-use std::{collections::BTreeSet, path::Path, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    time::Duration,
+};
 
 const DEFAULT_TURN_IDLE_TIMEOUT_MS: u64 = 10 * 60 * 1000;
 const DEFAULT_TURN_MAX_MS: u64 = 60 * 60 * 1000;
@@ -36,7 +41,7 @@ fn account_values<'de, D: serde::Deserializer<'de>>(
 ) -> std::result::Result<Option<Value>, D::Error> {
     Value::deserialize(input).map(Some)
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Account {
     pub id: String,
     pub name: String,
@@ -465,7 +470,7 @@ pub async fn models(state: &AppState, q: &[(String, String)]) -> Result<Value> {
     let runtime = param(q, "runtime");
     if let Some(engine @ ("codex" | "claude")) = runtime {
         if account_id == logins::DEVICE || account_id.starts_with(logins::PREFIX) {
-            return crate::harness::model_catalog::models(state, engine, account_id).await;
+            return crate::harness::model_catalog::models(state, engine, account_id, true).await;
         }
     }
     let account=accounts(state)?.into_iter().find(|a|a.id==account_id).ok_or_else(||error(503,"The selected provider account is missing. Choose another account or update server configuration."))?;
@@ -479,17 +484,10 @@ pub async fn models(state: &AppState, q: &[(String, String)]) -> Result<Value> {
             },
         ));
     }
-    let models = discover_with_timeout(state, &account, true).await?;
     if matches!(runtime, Some("api" | "codex" | "claude")) {
-        use crate::harness::model_catalog::{response, Model};
-        Ok(response(
-            models
-                .iter()
-                .map(|id| Model::new(id, id, id == &account.model))
-                .collect(),
-        ))
+        model_catalog::api_models(state, &account).await
     } else {
-        Ok(json!({"models":models}))
+        Ok(json!({"models": discover_with_timeout(state, &account, true).await?}))
     }
 }
 
@@ -502,9 +500,20 @@ async fn discover_with_timeout(
     account: &Account,
     paginate: bool,
 ) -> Result<Vec<String>> {
+    Ok(discover_catalog_with_timeout(state, account, paginate)
+        .await?
+        .into_keys()
+        .collect())
+}
+
+pub(crate) async fn discover_catalog_with_timeout(
+    state: &AppState,
+    account: &Account,
+    paginate: bool,
+) -> Result<BTreeMap<String, Option<MemoryPricing>>> {
     tokio::time::timeout(
         Duration::from_millis(state.config.data.timeout.unwrap_or(15000).min(15000)),
-        discover(account, paginate),
+        discover_catalog(account, paginate),
     )
     .await
     .map_err(|_| error(502, TIMEOUT))?
@@ -516,12 +525,19 @@ pub(crate) fn valid_model_id(id: &str) -> bool {
         && !id.chars().any(|c| c < ' ' || c == '\u{7f}')
 }
 pub(crate) async fn discover(a: &Account, paginate: bool) -> Result<Vec<String>> {
+    Ok(discover_catalog(a, paginate).await?.into_keys().collect())
+}
+
+async fn discover_catalog(
+    a: &Account,
+    paginate: bool,
+) -> Result<BTreeMap<String, Option<MemoryPricing>>> {
     let mut url = address(&a.base).map_err(|_| error(502, INVALID))?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| Failure::storage())?;
-    let mut models = BTreeSet::new();
+    let mut models = BTreeMap::new();
     let mut cursors = BTreeSet::new();
     let mut size = 0;
     for _ in 0..100 {
@@ -588,25 +604,27 @@ pub(crate) async fn discover(a: &Account, paginate: bool) -> Result<Vec<String>>
                     .as_array()
                     .ok_or_else(|| error(502, INVALID))?;
                 if methods.iter().any(|v| v == "generateContent") {
-                    models.insert(name.to_owned());
+                    models.insert(name.to_owned(), None);
                 }
             } else {
                 let id = row["id"]
                     .as_str()
                     .filter(|s| valid_model_id(s))
                     .ok_or_else(|| error(502, INVALID))?;
-                models.insert(id.to_owned());
+                models
+                    .entry(id.to_owned())
+                    .or_insert_with(|| MemoryPricing::from_row(row));
             }
         }
         if models.len() > 10000 {
             return Err(error(502, INVALID));
         }
         if !paginate {
-            return Ok(models.into_iter().collect());
+            return Ok(models);
         }
         let cursor = if a.family == "gemini" {
             if v.get("nextPageToken").is_none() {
-                return Ok(models.into_iter().collect());
+                return Ok(models);
             }
             v["nextPageToken"]
                 .as_str()
@@ -615,14 +633,14 @@ pub(crate) async fn discover(a: &Account, paginate: bool) -> Result<Vec<String>>
         } else if a.family == "anthropic" {
             let more = v["has_more"].as_bool().ok_or_else(|| error(502, INVALID))?;
             if !more {
-                return Ok(models.into_iter().collect());
+                return Ok(models);
             }
             v["last_id"]
                 .as_str()
                 .filter(|s| rows.last().is_some_and(|r| r["id"] == *s))
                 .ok_or_else(|| error(502, INVALID))?
         } else {
-            return Ok(models.into_iter().collect());
+            return Ok(models);
         };
         if !cursors.insert(cursor.to_owned()) {
             return Err(error(502, INVALID));

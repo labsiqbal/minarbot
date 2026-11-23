@@ -104,6 +104,66 @@ fn codex_config_reads_provider_names_urls_and_optional_bearer() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn first_party_defaults_follow_the_binding() -> Result<()> {
+    let mut account = providers::Account {
+        id: "account".into(),
+        name: "Account".into(),
+        family: "anthropic".into(),
+        base: "https://api.anthropic.com/v1".into(),
+        key: None,
+        model: "main".into(),
+        stream: false,
+        termination: String::new(),
+        max_tokens: 4096,
+        source: "fixture",
+    };
+    let api = api_memory_default(&account).ok_or_else(Failure::storage)?;
+    assert_eq!(api, "claude-haiku-5-5");
+    assert_eq!(native_memory_default("claude", &[]), Some("haiku"));
+    account.family = "openai-compatible".into();
+    account.base = "https://api.openai.com/v1".into();
+    assert_eq!(api_memory_default(&account), Some("gpt-5.4-mini"));
+    account.base = "https://api.openai.com.example.test/v1".into();
+    assert_eq!(api_memory_default(&account), None);
+
+    let mut foreign = Model::new("gpt-5.4-mini", "Group model", false);
+    foreign.group = Some("other-account".into());
+    assert_eq!(native_memory_default("codex", &[foreign]), None);
+    let models = [
+        Model::new("gpt-5.1-codex-mini", "Older mini", false),
+        Model::new("gpt-5.4-mini", "Current mini", false),
+    ];
+    assert_eq!(
+        native_memory_default("codex", &models),
+        Some("gpt-5.4-mini")
+    );
+    assert_eq!(
+        native_memory_default("codex", &models[..1]),
+        Some("gpt-5.1-codex-mini")
+    );
+    Ok(())
+}
+
+#[test]
+fn custom_catalog_requires_prices_text_and_context() -> Result<()> {
+    let models = [
+        ("main", json!({"context_length":128_000,"pricing":{"prompt":"0.01","completion":"0.02"}})),
+        ("budget", json!({"context_length":65_536,"pricing":{"prompt":0.001,"completion":0.002}})),
+        ("cheap-short", json!({"context_length":32_768,"pricing":{"prompt":0,"completion":0}})),
+        ("cheap-image", json!({"context_length":128_000,"pricing":{"prompt":0,"completion":0},"architecture":{"output_modalities":["image"]}})),
+        ("unpriced", json!({"context_length":128_000})),
+        ("bad-price", json!({"context_length":128_000,"pricing":{"prompt":"NaN","completion":0}})),
+    ].into_iter().map(|(id, row)| (id.to_owned(), MemoryPricing::from_row(&row))).collect();
+    let selection = custom_memory_default(&models).ok_or_else(Failure::storage)?;
+    let catalog = json!({"memoryDefault": selection});
+    assert_eq!(memory_default(&catalog, "main").as_deref(), Some("budget"));
+    for main in ["budget", "cheap-short", "unpriced", "bad-price"] {
+        assert_eq!(memory_default(&catalog, main), None, "{main}");
+    }
+    Ok(())
+}
+
 #[tokio::test(start_paused = true)]
 async fn cache_coalesces_probes_expires_results_and_retries_failures() -> Result<()> {
     let cache = Cache::default();

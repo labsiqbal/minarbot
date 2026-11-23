@@ -23,6 +23,8 @@ const message = (error: unknown) => error instanceof Error ? error.message : 'Co
 
 export type Agent = { builtin?: boolean; workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; goal_judge_model?: string; learn_from_conversations?: 0 | 1; memory_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; library_docs_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 
+type MemoryDefault = { model: string; replaces?: string[] };
+
 export type FirstAgentDefaults = { runtime: Runtime; account: string; model: string };
 export type FirstRunConnection = { value: string; label: string; runtime: Runtime; defaults: FirstAgentDefaults };
 const harnessLabels = { codex: 'Codex', claude: 'Claude Code', hermes: 'Hermes', antigravity: 'Antigravity', grok: 'Grok', pi: 'Pi', opencode: 'OpenCode', gemini: 'Gemini', kiro: 'Kiro' };
@@ -90,6 +92,7 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
   }, [accountReload, quick]);
   const discoversModels = ['api', 'codex', 'claude'].includes(runtime);
   const [models, setModels] = useState<ComboboxSuggestion[]>([]);
+  const [memoryDefault, setMemoryDefault] = useState<MemoryDefault>();
   const [catalogStatus, setCatalogStatus] = useState('Loading models');
   const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
   const modelEdited = useRef(false);
@@ -106,14 +109,16 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
       modelEdited.current = false;
     }
     lastConnection.current = { value: catalogConnection, runtime, account, model: quickModel };
+    setMemoryDefault(undefined);
     if (!discoversModels) { setModels([]); setCatalogStatus(''); return; }
     let stopped = false;
     setModels([]); setCatalogStatus('Loading models');
-    void api<{ models: string[]; catalog?: { id: string; label: string; default?: boolean }[] }>(`/api/models?runtime=${encodeURIComponent(runtime)}&account=${encodeURIComponent(account)}`).then(data => {
+    void api<{ models: string[]; catalog?: { id: string; label: string; default?: boolean }[]; memoryDefault?: MemoryDefault }>(`/api/models?runtime=${encodeURIComponent(runtime)}&account=${encodeURIComponent(account)}`).then(data => {
       if (!stopped) {
         const labels = new Map<string, string>();
         for (const item of data.catalog ?? []) if (!labels.has(item.id)) labels.set(item.id, item.label);
         const suggestions = data.models.map(id => ({ value: id, label: labels.get(id) ?? id }));
+        setMemoryDefault(data.memoryDefault);
         setModels(suggestions); setCatalogStatus(suggestions.length ? '' : 'Enter model ID');
         const recommended = data.catalog?.find(item => item.default)?.id ?? data.models[0];
         if (recommended && !profile && !pending.current && !modelEdited.current) setModelValue(recommended);
@@ -205,6 +210,11 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
       <Textarea name="instructions" required={!!profile || setup} maxLength={8000} readOnly={locked} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={6} onChange={event => setInstructionCount(event.target.value.length)} placeholder={!profile && setup ? 'Describe the work this agent should help with.' : undefined} />{profile && <span aria-hidden className="agent-profile__count">{instructionCount}/8000</span>}
     </Field>
   </>;
+  const accountModel = accounts.find(item => item.id === account)?.defaultModel;
+  const main = modelValue.trim();
+  const fallback = (main === 'default' || !main) && accountModel ? accountModel : main;
+  const defaultMemoryModel = memoryDefault && (!memoryDefault.replaces || memoryDefault.replaces.includes(fallback))
+    ? memoryDefault.model : fallback;
   const modelField = <Combobox name="model" value={modelValue} onChange={changeModel} suggestions={models} required maxLength={160} readOnly={locked || busy || !discoversModels} placeholder="Enter model ID" />;
   const modelFields = <>
     {profile?.runtime === 'api' && <Button type="button" onClick={event => { flushSync(() => { setRuntime('codex'); setMemoryModel(''); }); event.currentTarget.form?.requestSubmit(); }} disabled={locked || busy || !runtimeChoices.some(choice => choice.runtime === 'codex' && choice.available && choice.enabled)}>Use Codex</Button>}
@@ -239,7 +249,7 @@ export function AgentForm({ model, firstRun, connections, connection, onConnecti
         maxLength={160} readOnly={locked} placeholder="Use agent model" /></Field>
     </Collapsible>}
     {profile && <Card><Row title="Learn from conversations" trailing={<Switch label="Learn from conversations" checked={learnFromConversations} onChange={setLearnFromConversations} disabled={locked || busy} />} /></Card>}
-    {profile && <Field label="Memory model" optional><Combobox name="memoryModel" value={memoryModel} onChange={setMemoryModel} suggestions={models} maxLength={160} readOnly={locked || busy} placeholder="Use agent model" /></Field>}
+    {profile && <Field label="Memory model" optional><Combobox name="memoryModel" value={memoryModel} onChange={setMemoryModel} suggestions={models} maxLength={160} readOnly={locked || busy} placeholder={defaultMemoryModel ? `Default (${defaultMemoryModel})` : "Default"} /></Field>}
   </>;
   const advancedFields = <>
     {!profile && <Field label="Fallback model" optional><Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" /></Field>}
