@@ -119,7 +119,7 @@ try {
       await message.press('Enter');
       await page.getByText('Message not confirmed', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Retry message', exact: true }).first().click();
-      await page.getByText(text, { exact: true }).waitFor();
+      await page.locator('.human-bubble').getByText(text, { exact: true }).waitFor();
       await page.waitForFunction(() => document.querySelector('textarea[placeholder="Message general"]')?.value === '');
       assert.equal(await page.getByText(text, { exact: true }).count(), 1);
       if (screenshots) {
