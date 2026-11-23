@@ -16,6 +16,7 @@
 
 .conversation-startup { padding: 24px; }
 .conversation-route { display: contents; }
+.conversation-route.is-workflow { display: none; }
 .agent-inbox .k-icon-btn svg { width: 16px; height: 16px; }
 body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .chat-pilot-menu summary { list-style: none; cursor: pointer; }

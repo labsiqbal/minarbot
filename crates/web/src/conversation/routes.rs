@@ -539,7 +539,7 @@ pub fn standalone() -> impl IntoView {
         });
     });
     view! {
-        <div style:display=move || if workflow.with(Option::is_some) {"none"} else {"contents"}
+        <div class="conversation-route" class:is-workflow=move || workflow.with(Option::is_some)
             inert=move || workflow.with(Option::is_some)>
             {move || if deleting() {
                 view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any()
