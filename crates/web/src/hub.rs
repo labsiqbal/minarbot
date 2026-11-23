@@ -23,7 +23,7 @@ pub(crate) struct Config {
     icons: Icons,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Session {
     account_id: String,
@@ -210,13 +210,36 @@ pub(crate) fn page(config: Config) -> impl IntoView {
     let path = StoredValue::new(path);
     let config = StoredValue::new(config);
     let session = RwSignal::new(None::<Result<Session, Failure>>);
+    let endpoint = if invitation {
+        "/api/invitation-session"
+    } else {
+        "/api/session"
+    };
     spawn_local(async move {
-        let endpoint = if invitation {
-            "/api/invitation-session"
-        } else {
-            "/api/session"
-        };
         session.set(Some(read(endpoint).await));
+    });
+    let checking = RwSignal::new(false);
+    crate::connection_ui::poll(3, move || {
+        let Some(Ok(actor)) = session.get_untracked() else {
+            return;
+        };
+        if checking.get_untracked() {
+            return;
+        }
+        checking.set(true);
+        spawn_local(async move {
+            let result = read::<Session>(endpoint).await;
+            if checking.try_set(false).is_some() {
+                return;
+            }
+            let changed = match result {
+                Ok(current) => actor != current,
+                Err(failure) => failure.access_ended(),
+            };
+            if changed {
+                crate::session::reload();
+            }
+        });
     });
     view! {
         {move || match session.get() {
@@ -395,7 +418,7 @@ fn account_footer(actor: Session, error: RwSignal<String>) -> impl IntoView {
                 let actor = actor.clone();
                 spawn_local(async move {
                     match actor.post::<Value>("/auth/logout",json!({"global":false})).await {
-                        Ok(_) => { let _ = window().location().reload(); }
+                        Ok(_) => crate::session::reload(),
                         Err(failure) => { error.set(failure.message); busy.set(false); }
                     }
                 });

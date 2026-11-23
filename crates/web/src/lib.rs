@@ -37,6 +37,7 @@ mod routine_label;
 mod select;
 mod settings;
 mod settings_recovery;
+mod session;
 mod shell;
 #[path = "../../shared/skill_files.rs"]
 mod skill_files;

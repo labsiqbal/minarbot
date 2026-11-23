@@ -28,6 +28,13 @@ if (ready) {
       __ADAPTER__
       mount();
       fallback.hidden = true;
+      // Cached documents can still contain data from a revoked browser session.
+      window.addEventListener('pagehide', event => {
+        if (event.persisted) document.getElementById('leptos-root').hidden = true;
+      });
+      window.addEventListener('pageshow', event => {
+        if (event.persisted) location.reload();
+      });
     }
   } catch {
     document.getElementById('leptos-root').replaceChildren();

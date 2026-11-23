@@ -228,7 +228,6 @@ try {
     await otherTab.getByRole('button', { name: 'Sign out', exact: true }).click();
     await otherTab.getByLabel('Development identity token').waitFor();
     await page.bringToFront();
-    await page.reload();
     await page.getByLabel('Development identity token').waitFor({ timeout: 12000 });
     assert.equal(await page.getByText('New project ' + client, { exact: true }).count(), 0);
     await page.getByLabel('Development identity token').fill('bob');
@@ -240,7 +239,6 @@ try {
     try {
       assert(expire.prepare("UPDATE hub_browser_sessions SET expires_at=0 WHERE host=? AND account_id=(SELECT id FROM accounts WHERE subject='Bob')").run(central).changes);
     } finally { expire.close(); }
-    await page.reload();
     await page.getByLabel('Development identity token').waitFor({ timeout: 12000 });
     assert.equal(await page.getByText('Bob', { exact: true }).count(), 0);
     console.log('PASS signed-out and expired Hub sessions clear cached account and project data');

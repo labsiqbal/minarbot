@@ -220,6 +220,8 @@ pub(crate) fn WorkspaceShell(
     children: Children,
 ) -> impl IntoView {
     appearance::initialize(colors);
+    #[cfg(not(feature = "hub"))]
+    crate::session::watch_device();
     let directory = RwSignal::new(None::<Result<Directory, String>>);
     provide_context(directory.read_only());
     let lifecycle = Lifecycle::new(directory);
