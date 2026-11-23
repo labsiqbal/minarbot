@@ -43,5 +43,4 @@ INSERT INTO mcp_app_approvals VALUES('app','approval','fixture',0);
 
 INSERT INTO local_projects(id,name,description,created,updated,channel)
 VALUES('project','Workspace','',0,0,'');
-INSERT INTO craft_grants VALUES('rollback-agent');
 INSERT INTO craft_deep VALUES('project');
