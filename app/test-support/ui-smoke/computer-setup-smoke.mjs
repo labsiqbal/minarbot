@@ -10,9 +10,11 @@ import { chromium } from 'playwright-core';
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-computer-ui-'));
 const output = process.env.MINARBOT_COMPUTER_SCREENSHOTS ?? await mkdtemp(join(tmpdir(), 'minarbot-computer-shots-'));
 await mkdir(output, { recursive: true });
+const appearanceClient = process.env.MINARBOT_SMOKE_UI === 'leptos' ? 'leptos' : 'react';
+const agentQuery = appearanceClient === 'leptos' ? '?ui=leptos' : '';
 let app, browser;
 try {
-  app = await startApp({ database: join(scratch, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
+  app = await startApp({ database: join(scratch, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture', appearanceClient });
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
   const agent = randomUUID();
   let status;
@@ -93,7 +95,7 @@ try {
     await page.getByRole('button', { name: 'Edit profile', exact: true }).click();
     await profile.getByRole('tab', { name: 'Advanced' }).click();
   }
-  await page.goto(app.origin + `/agents/${agent}`);
+  await page.goto(app.origin + `/agents/${agent}${agentQuery}`);
   await openProfile();
   const toggle = profile.getByRole('switch', { name: 'Computer', exact: true });
   await toggle.waitFor();

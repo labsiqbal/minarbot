@@ -29,6 +29,7 @@ enum Destination {
     Link(String),
     Restore(String, u64),
     NewConversation,
+    NewAgent,
 }
 
 #[derive(Clone, PartialEq)]
@@ -200,20 +201,24 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
             ));
         }
     }
-    for (label, kind) in [("New agent", "agent"), ("New project", "project")] {
-        // ponytail: use the staged client's creation form until #76 and #81 own these entry points.
-        items.push(Item::link(
-            label,
-            "Create",
-            "",
-            icons.plus.clone(),
-            format!("/?ui=react&create={kind}"),
-        ));
+    if directory.is_some() {
+        let mut item = Item::link("New agent", "Create", "", icons.plus.clone(), String::new());
+        item.destination = Destination::NewAgent;
+        items.push(item);
     }
+    // ponytail: use the staged client's project form until #81 owns this entry point.
+    items.push(Item::link(
+        "New project",
+        "Create",
+        "",
+        icons.plus.clone(),
+        "/?ui=react&create=project".into(),
+    ));
     items
 }
 
 pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl IntoView {
+    let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
     let dialog = NodeRef::<leptos::html::Dialog>::new();
     let query = RwSignal::new(String::new());
     let active = RwSignal::new(0_usize);
@@ -323,6 +328,11 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
                 let _ = window().location().assign(&path);
             }
             Destination::NewConversation => super::start_conversation(),
+            Destination::NewAgent => {
+                if let Some(lifecycle) = lifecycle {
+                    lifecycle.open(crate::agent_profile::DialogTarget::Create);
+                }
+            }
             Destination::Restore(id, revision) => {
                 super::save_preference(super::TAB, "agents");
                 if restoring.get_untracked() {

@@ -1,0 +1,39 @@
+@import "../../app/src/agent-profile.css";
+@import "../../app/src/ui/avatar.css";
+
+.leptos-workspace .system-dialog:not([open]) { display: none; }
+.leptos-workspace .system-dialog { inset: 50% auto auto 50%; margin: 0; padding: 0; color: var(--color-text-primary); }
+.leptos-workspace .system-dialog::backdrop { background: var(--color-bg-scrim); }
+.leptos-workspace .system-menu[popover] { position: fixed; inset: auto; margin: 0; }
+.leptos-workspace .system-dialog [hidden], .leptos-workspace .hidden-agents[hidden] { display: none; }
+.leptos-workspace .system-dialog .appearance-icon { display: contents; }
+.leptos-workspace .system-dialog .connection-select { position: relative; display: inline-flex; align-items: center; width: 100%; }
+.leptos-workspace .system-dialog .connection-select > select { appearance: none; padding-right: 30px; width: 100%; }
+.leptos-workspace .system-dialog .connection-select > .k-select__chev { position: absolute; right: 9px; pointer-events: none; }
+.leptos-workspace .system-dialog .connection-disclosure > summary { list-style: none; cursor: pointer; }
+.leptos-workspace .system-dialog .connection-disclosure[open] .k-collapsible__chev { transform: rotate(180deg); }
+.leptos-workspace .system-dialog .k-tabs__panel { display: flex; flex-direction: column; gap: 16px; }
+.leptos-workspace .system-dialog .k-tabs__panel[hidden] { display: none; }
+.leptos-workspace .system-dialog .agent-profile__resources .panel-row__title { min-width: 0; }
+.leptos-workspace .agent-avatar-current, .leptos-workspace .agent-template-avatar { border-radius: 8px; object-fit: cover; }
+.leptos-workspace .agent-template-avatar { border-radius: 12px; }
+.leptos-workspace .agent-avatar-filename { align-self: center; overflow-wrap: anywhere; }
+.leptos-workspace .agent-template-fields { padding: 12px; }
+.leptos-workspace .agent-model-field { gap: 4px; }
+.leptos-workspace .system-dialog:has(#agent-template-export-title) > .k-dialog__foot:empty { display: none; }
+.leptos-workspace .agent-profile__runtime-select > .agent-profile__runtime-icon { position: absolute; left: 10px; pointer-events: none; }
+.leptos-workspace .agent-profile__runtime-select > select { padding-left: 34px; }
+.leptos-workspace .agent-profile__resources .panel-row { display: flex; align-items: center; }
+.leptos-workspace .agent-profile__resources .panel-row:hover { color: var(--color-text-primary); }
+.leptos-workspace .k-avatar-picker__check svg { width: 10px; height: 10px; }
+.leptos-workspace .k-avatar-picker__swatch svg { width: 14px; height: 14px; color: #1c1c1c; }
+
+.leptos-workspace .system-dialog:is([role="alertdialog"], :has(#agent-template-import-title)) button[autofocus]:focus {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+.leptos-workspace .agent-profile__initials { font-size: 17px; }
+.leptos-workspace .agent-profile .k-combobox > input::-webkit-calendar-picker-indicator { display: none; }
+.leptos-workspace .hidden-agents[open] .machine-group__chevron { transform: rotate(90deg); }
+.leptos-workspace .agent-hidden-avatar { width: 36px; height: 36px; font-size: 15px; }
+.leptos-workspace :is(.agent-actions + .system-menu, .sidebar-create) .k-menu__item .appearance-icon { display: contents; }

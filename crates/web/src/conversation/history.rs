@@ -217,6 +217,7 @@ pub(super) async fn all_turns(
     base: &str,
     mut turns: Vec<Turn>,
     current: impl Fn() -> bool,
+    signal: Option<&web_sys::AbortSignal>,
 ) -> Result<Vec<Turn>, ApiError> {
     let mut page = turns
         .iter()
@@ -227,7 +228,8 @@ pub(super) async fn all_turns(
         let Some(before) = page.first().map(|turn| turn.seq) else {
             break;
         };
-        page = get::<Vec<Turn>>(&format!("{base}/turns?before={before}")).await?;
+        page =
+            get_with_signal::<Vec<Turn>>(&format!("{base}/turns?before={before}"), signal).await?;
         if page.first().is_none_or(|turn| turn.seq >= before) {
             break;
         }

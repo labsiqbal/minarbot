@@ -47,6 +47,9 @@ the same bundle. Setup and Settings use `appearance`. After setup, `/`, agent
 Main chat, named and project conversations, and rooms use `conversation`.
 Conversation links reuse the shell and browser history. Settings return links
 retain the selected route. Add `?ui=react` to open the React client.
+The workspace shell mounts agent creation, profile editing and template dialogs
+inside the selected route group. The Advanced profile panel exposes
+`#agent-memory-mount` for the Memory port in #77.
 React remains the default for the staged rollout in #67.
 
 ## React inventory for #67
@@ -57,9 +60,8 @@ issue.
 
 | Issue group | React screens and dialogs | React sources |
 | --- | --- | --- |
-| Agent lifecycle and profile | New agent, Draft with AI, full Profile, Model and Advanced tabs, avatar and look editor, availability/hidden agent restore and deletion, model/provider/runtime and access controls, working folder and Computer settings, Sites and template import/export. The #63 pilot has a basic profile form. | `App.tsx`, `AgentProfileDialog.tsx`, `AgentActions.tsx`, `AgentSidebar.tsx`, `AgentAvatar.tsx`, `AgentVisibility.tsx`, `AgentFolderSettings.tsx`, `AgentComputerSettings.tsx`, `SitesPanel.tsx`, `AgentTemplateImport.tsx` |
 | Memory and history summary | Agent and section Memory, including Notes, Learned and Standing questions, search, source links, edit, pin, forget and undo. History summary and compaction controls from chat and profile. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
-| Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. New agent and New project hand off to their staged creation forms pending #76 and #81. Remote agent detail remains React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
+| Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. New project hands off to its staged creation form pending #81. Remote agent detail remains React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
 | Agent inbox and remote agent detail | Agent email inbox and message content at `/agents/:id/inbox`, and paired-machine agent detail at `/machines/:id/agents/:id`. | `App.tsx`, `AgentEmail.tsx`, `MachinesPanel.tsx`, `AgentActions.tsx` |
 | Conversation files, results and Computer | Full workspace browser, contextual file attachment and artifact previews, Changes/diff/source control, Preview, result file/URL/Computer deep links, standalone Computer window, and secure Computer request dialogs. Corresponding #63 Files, Computer and Run panels are available in the pilot. | `App.tsx`, `RightPanel.tsx`, `RightPanelFiles.tsx`, `RightPanelDiff.tsx`, `WorkspacePanel.tsx`, `HtmlPreview.tsx`, `ResultURLPreview.tsx`, `SourceControl.tsx`, `ComputerViewer.tsx`, `AgentComputerPanel.tsx`, `SecureComputerRequest.tsx`, `RunInspector.tsx` |
 | Automation embedded in conversations | Agent/section Upcoming routines, inbound routine reports and deep links, and the agent-scoped workflow library, editor, versions, webhook/schedule forms and run inspector with inline step conversations. | `App.tsx`, `WorkflowPanel.tsx`, `WorkflowEditor.tsx`, `WorkflowGraph.tsx`, `WorkflowSchedule.tsx`, `WorkflowWebhook.tsx`, `WorkflowInbox.tsx` |
@@ -147,3 +149,13 @@ NUC, Chromium 156.0.8078.4, optimized Axum build, loopback, no throttling. Twent
 The original warm-navigation p95 exceeded the 10% regression budget. General-to-Appearance navigation now stays within the Leptos document, preserving the settings rail and workspace queries.
 
 Packaged WASM plus startup glue measured 349,332 bytes raw and 129,079 bytes gzip. Release build wall time was 1,365.09 s for native Cargo, 38.83 s for the React build, 87.57 s for the incremental WASM build and 15.49 s for asset packaging. Build slot wait and network setup are outside those measurements.
+
+## Verify agent lifecycle
+
+Package Leptos, then run from `app/` with `MINARBOT_RUST_BINARY` pointing to
+the built server. Use `MINARBOT_AGENT_BENCH=20` for cold and warm profile
+timings, and pass a screenshot directory.
+
+```sh
+node --experimental-strip-types test-support/ui-smoke/agent-profile-parity-smoke.mjs /tmp/minarbot-agent-profile
+```

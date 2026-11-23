@@ -299,7 +299,14 @@ async fn read<T: DeserializeOwned>(
 }
 
 async fn get<T: DeserializeOwned>(path: &str) -> Result<T, ApiError> {
-    read(Request::get(path).send().await).await
+    get_with_signal(path, None).await
+}
+
+async fn get_with_signal<T: DeserializeOwned>(
+    path: &str,
+    signal: Option<&web_sys::AbortSignal>,
+) -> Result<T, ApiError> {
+    read(Request::get(path).abort_signal(signal).send().await).await
 }
 
 async fn post<T: DeserializeOwned>(path: &str, raw: &str) -> Result<T, ApiError> {
@@ -365,7 +372,6 @@ struct Chat {
     move_focus: RwSignal<bool>,
     tab: RwSignal<&'static str>,
     details: RwSignal<bool>,
-    profile: NodeRef<leptos::html::Dialog>,
     run: RwSignal<String>,
     new_thread: RwSignal<bool>,
     guide_connection: RwSignal<bool>,
@@ -429,7 +435,6 @@ impl Chat {
             move_focus: RwSignal::new(!focus.is_empty()),
             tab: RwSignal::new("chats"),
             details: RwSignal::new(restore_details()),
-            profile: NodeRef::new(),
             run: RwSignal::new(String::new()),
             new_thread: RwSignal::new(false),
             guide_connection: RwSignal::new(false),
@@ -782,6 +787,8 @@ fn polling(
     snapshots: StoredValue<HashMap<String, Partial>>,
     generation: RwSignal<u64>,
     epoch: u64,
+    abort: StoredValue<Option<web_sys::AbortController>, LocalStorage>,
+    dispatch_busy: RwSignal<bool>,
 ) {
     let current = move || generation.try_get_untracked() == Some(epoch);
     if !current() {
@@ -798,8 +805,27 @@ fn polling(
     } else {
         format!("{base}/turns")
     };
+    let signal =
+        abort.with_value(|controller| controller.as_ref().map(web_sys::AbortController::signal));
+    if !dispatch_busy.get_untracked() {
+        dispatch_busy.set(true);
+        let dispatch_signal = signal.clone();
+        let dispatch_path = format!("{base}/dispatch");
+        leptos::task::spawn_local(async move {
+            let result =
+                get_with_signal::<Vec<Dispatch>>(&dispatch_path, dispatch_signal.as_ref()).await;
+            if current() {
+                dispatch_busy.set(false);
+                if let Ok(active) = result {
+                    if chat.active.with_untracked(|old| *old != active) {
+                        chat.active.set(active);
+                    }
+                }
+            }
+        });
+    }
     leptos::task::spawn_local(async move {
-        let result = get::<Vec<Turn>>(&path).await;
+        let result = get_with_signal::<Vec<Turn>>(&path, signal.as_ref()).await;
         if !current() {
             return;
         }
@@ -807,7 +833,9 @@ fn polling(
         let result = if let Ok(page) = &result {
             let history_mode = !focus.is_empty() || before.is_some();
             if history_mode {
-                if let Ok(latest) = get::<Vec<Turn>>(&format!("{base}/turns")).await {
+                if let Ok(latest) =
+                    get_with_signal::<Vec<Turn>>(&format!("{base}/turns"), signal.as_ref()).await
+                {
                     if !current() {
                         return;
                     }
@@ -835,7 +863,7 @@ fn polling(
                         .with_untracked(|rows| rows.clone().unwrap_or_default());
                     Ok(history::merge(previous, page.clone()))
                 } else if finding {
-                    history::all_turns(&base, page.clone(), current).await
+                    history::all_turns(&base, page.clone(), current, signal.as_ref()).await
                 } else {
                     result
                 }
@@ -899,16 +927,10 @@ fn polling(
                 Err(error) => chat.read_error.set(error.message),
             }
         }
-        let result = get::<Vec<Dispatch>>(&format!("{}/dispatch", chat.base())).await;
-        if !current() {
-            return;
-        }
-        if let Ok(active) = result {
-            if chat.active.with_untracked(|old| *old != active) {
-                chat.active.set(active);
-            }
-        }
-        set_timeout(move || polling(chat, snapshots, generation, epoch), delay);
+        set_timeout(
+            move || polling(chat, snapshots, generation, epoch, abort, dispatch_busy),
+            delay,
+        );
     });
 }
 
@@ -1493,6 +1515,13 @@ fn header(
         }
     });
     on_cleanup(move || keys.remove());
+    let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
+    let profile_agent = config
+        .agent
+        .as_ref()
+        .filter(|agent| !agent.builtin)
+        .map(|agent| agent.id.clone());
+    let main_chat = config.thread.is_none();
     view! {
         <header class="chat__header">
             <details class="chat__pill-anchor chat-pilot-menu" node_ref=menu on:keydown=move |event| {
@@ -1535,6 +1564,21 @@ fn header(
                         if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                     }><span class="appearance-icon" inner_html=icons.panel.clone()></span>
                       {move || if chat.details.get() { "Hide panel" } else { "Show panel" }}</button>
+                    {profile_agent.map(|id| {
+                        let target = StoredValue::new(id);
+                        view! {
+                            {main_chat.then(|| view! { <button type="button" class="k-menu__item" on:click=move |_| {
+                                if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                                if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
+                                if let Some(lifecycle) = lifecycle { lifecycle.open(crate::agent_profile::DialogTarget::Edit(target.get_value())); }
+                            }>"Edit profile"</button> })}
+                            <button type="button" class="k-menu__item" on:click=move |_| {
+                                if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
+                                if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
+                                if let Some(lifecycle) = lifecycle { lifecycle.open(crate::agent_profile::DialogTarget::Export(target.get_value())); }
+                            }>"Export template"</button>
+                        }
+                    })}
                 </nav>
             </details>
             <div class="chat__header-right">
@@ -1562,7 +1606,22 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         chat.finding.track();
         chat.refresh.track();
         generation.update(|value| *value += 1);
-        polling(chat, snapshots, generation, generation.get_untracked());
+        let abort = StoredValue::new_local(web_sys::AbortController::new().ok());
+        on_cleanup(move || {
+            abort.try_with_value(|controller| {
+                if let Some(controller) = controller {
+                    controller.abort();
+                }
+            });
+        });
+        polling(
+            chat,
+            snapshots,
+            generation,
+            generation.get_untracked(),
+            abort,
+            RwSignal::new(false),
+        );
     });
     message_actions::playback();
     if config

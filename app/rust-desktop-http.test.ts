@@ -257,15 +257,20 @@ test('HTTP control and user input enforce Origin, revision, validation and rate 
 test('HTTP VNC relay enforces owner Host/Origin, tickets, viewer cap, live control fencing and stop cleanup', { timeout: 30000 }, async () => {
   const { startApp } = await import('./test-bridge.ts'); const f = await desktopFixture(), agent = randomUUID();
   const app = await startApp({ database: join(f.dir, 'vnc.sqlite'), desktop: f.options }), path = `/api/agents/${agent}/computer`;
-  const received: Buffer[] = [];
+  const received: Buffer[] = [], input = new EventEmitter();
   const backend = createNetServer(socket => {
     let state = 0; socket.write('RFB 003.008\n'); socket.on('error', () => {});
-    socket.on('data', data => { if (state === 0) { state++; socket.write(Buffer.from([1, 1])); } else if (state === 1) { state++; socket.write(Buffer.alloc(4)); } else if (state === 2) { state++; const init = Buffer.alloc(24); init.writeUInt16BE(1280); init.writeUInt16BE(800, 2); socket.write(init); } else received.push(Buffer.from(data)); });
+    socket.on('data', data => { if (state === 0) { state++; socket.write(Buffer.from([1, 1])); } else if (state === 1) { state++; socket.write(Buffer.alloc(4)); } else if (state === 2) { state++; const init = Buffer.alloc(24); init.writeUInt16BE(1280); init.writeUInt16BE(800, 2); socket.write(init); } else { received.push(Buffer.from(data)); input.emit('received'); } });
   });
   const clients: Awaited<ReturnType<typeof connectVnc>>[] = [];
   async function waitForClose(client: (typeof clients)[number]) {
     if (!client.closed) await once(client.socket, 'close', { signal: AbortSignal.timeout(5000) });
     assert(client.closed);
+  }
+  async function waitForKey(down: boolean) {
+    const key = Buffer.from([4, Number(down), 0, 0, 0, 0, 0, 97]);
+    const signal = AbortSignal.timeout(5000);
+    while (!Buffer.concat(received).includes(key)) await once(input, 'received', { signal });
   }
   let socketDirectory: number | undefined;
   async function raw(suffix: string, body: unknown, headers = {}) { return fetch(app.origin + suffix, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) }); }
@@ -293,8 +298,8 @@ test('HTTP VNC relay enforces owner Host/Origin, tickets, viewer cap, live contr
     one.key(97, true); one.pointer(4, 8, 1); await new Promise(resolve => setTimeout(resolve, 30)); assert(!Buffer.concat(received).includes(Buffer.from([4, 1, 0, 0, 0, 0, 0, 97])));
     await post(path + '/control', { id: randomUUID(), revision: 0, operation: 'take' }); await Promise.all(clients.map(waitForClose));
     const control = await connectVnc(url((await mint('control', 1)).ticket), app.origin); clients.push(control); await control.handshake(); control.key(97, true); control.pointer(10, 20, 1);
-    await new Promise(resolve => setTimeout(resolve, 30)); assert(Buffer.concat(received).includes(Buffer.from([4, 1, 0, 0, 0, 0, 0, 97])));
-    await post(path + '/control', { id: randomUUID(), revision: 1, operation: 'hand-back' }); await waitForClose(control); assert(Buffer.concat(received).includes(Buffer.from([4, 0, 0, 0, 0, 0, 0, 97])));
+    await waitForKey(true);
+    await post(path + '/control', { id: randomUUID(), revision: 1, operation: 'hand-back' }); await waitForClose(control); await waitForKey(false);
     const last = await connectVnc(url((await mint('watch', 2)).ticket), app.origin); clients.push(last); await last.handshake(); await post(path + '/stop', {}); await waitForClose(last);
   } finally { for (const client of clients) client.close(); await app.close(); await new Promise<void>(resolve => backend.close(() => resolve())); if (socketDirectory !== undefined) fs.closeSync(socketDirectory); f.cleanup(); }
 });

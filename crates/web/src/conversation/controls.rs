@@ -195,6 +195,16 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
     let uploading = RwSignal::new(false);
     let recording = RwSignal::new("idle");
     let icons = use_context::<Icons>().unwrap_or_default();
+    let hidden_agent = chat.config.with_value(|config| {
+        config
+            .agent
+            .as_ref()
+            .filter(|agent| agent.hidden)
+            .map(|agent| agent.id.clone())
+    });
+    let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
+    let restoring = RwSignal::new(String::new());
+    let is_hidden = hidden_agent.is_some();
     let label = chat.config.with_value(|c| {
         if c.channel {
             format!(
@@ -368,8 +378,20 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
                     <p role="alert">"Message recovery data could not be read. Check history before sending."</p>
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" on:click=move |_| dialog_open(discard)>"Discard message recovery"</button>
                 </div>
-                <p class="composer__note" hidden=move || !chat.config.with_value(|c| c.archived)>"Archived"</p>
-                <p class="composer__note composer__note--blocked" hidden=move || chat.config.with_value(|c| c.archived) || chat.can_send()>
+                {hidden_agent.map(|id| {
+                    let agent = StoredValue::new(id);
+                    view! { <div class="composer__note">"Hidden "
+                        <button type="button" class="k-btn k-btn--sm k-btn--ghost" disabled=move || !restoring.with(String::is_empty) on:click=move |_| {
+                            if let Some(lifecycle) = lifecycle {
+                                if let Some(profile) = lifecycle.get(&agent.get_value()) {
+                                    crate::agent_profile::restore(lifecycle, agent, profile.visibility_revision, restoring);
+                                }
+                            }
+                        } >"Restore"</button>
+                    </div> }
+                })}
+                <p class="composer__note" hidden=move || is_hidden || !chat.config.with_value(|c| c.archived)>"Archived"</p>
+                <p class="composer__note composer__note--blocked" hidden=move || is_hidden || chat.config.with_value(|c| c.archived) || chat.can_send()>
                     {if chat.config.with_value(|config| config.agent.as_ref().is_some_and(|agent| agent.builtin)) {
                         view! { <button class="k-btn k-btn--sm k-btn--secondary" type="button" on:click=move |_| chat.guide_connection.set(true)>"Choose AI connection"</button> }.into_any()
                     } else { view! { <a class="k-link" href="/settings/providers">"Connect a provider"</a> }.into_any() }}
@@ -778,6 +800,7 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>, skip: bool) -> impl IntoVi
         busy.track();
         recover().is_some()
     });
+    let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
     let close = move || {
         if let Some(menu) = menu.get_untracked() {
             menu.set_open(false);
@@ -822,7 +845,13 @@ pub fn turn_controls(chat: Chat, row: RwSignal<Turn>, skip: bool) -> impl IntoVi
                 <div class="k-pop task-actions" role="menu">
                     <button type="button" class="k-menu__item" role="menuitem" disabled=busy
                         hidden=move || !resumable() || chat.config.with_value(|config| config.agent.as_ref().is_none_or(|agent| agent.builtin))
-                        on:click=move |_| { close(); dialog_open(chat.profile); }>"Change model"</button>
+                        on:click=move |_| {
+                            close();
+                            let agent = chat.config.with_value(|config| config.agent.as_ref().map(|agent| agent.id.clone()));
+                            if let (Some(lifecycle), Some(agent)) = (lifecycle, agent) {
+                                lifecycle.open(crate::agent_profile::DialogTarget::Edit(agent));
+                            }
+                        }>"Change model"</button>
                     <button type="button" class="k-menu__item" role="menuitem" disabled=busy hidden=move || !available() || !skip && !resumable()
                         on:click=move |_| {
                             close();
