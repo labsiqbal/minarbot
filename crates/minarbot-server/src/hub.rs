@@ -270,6 +270,10 @@ impl Hub {
     }
 }
 fn now() -> i64 {
+    #[cfg(test)]
+    if let Some(clock) = tests::clock() {
+        return clock;
+    }
     fixture::clock().unwrap_or_else(crate::config::now)
 }
 fn new_id() -> String {
