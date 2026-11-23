@@ -210,8 +210,12 @@ async function rollout(page, origin) {
   await ready(page, 'react');
   await open(page, origin, 'leptos', url.slice(origin.length));
   const settingsStart = await page.evaluate(() => performance.timeOrigin);
+  const connectionChunk = '**/appearance-split_settings_connections.*.wasm';
+  await page.route(connectionChunk, request => request.abort(), { times: 1 });
   await button(page, 'Vault').click();
   await page.waitForURL(origin + '/settings/vault?from=%2Froutines');
+  await panel(page).getByRole('alert').getByText('Could not load Vault.').waitFor();
+  await panel(page).getByRole('button', { name: 'Retry', exact: true }).click();
   await panel(page).getByRole('heading', { name: 'Vault', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => performance.timeOrigin), settingsStart);
   const [response] = await Promise.all([
@@ -554,7 +558,7 @@ async function setupAndDirectory(origin, client) {
     await sidebar.getByText('Directory agent', { exact: true }).click();
     await page.waitForURL(origin + `/agents/${agent.id}`);
     await page.getByRole('main', { name: 'Conversation Directory agent' }).waitFor();
-    assert.equal(await page.locator('#leptos-root').count(), 0);
+    assert.equal(await page.locator('#leptos-root').count(), client === 'leptos' ? 1 : 0);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 }

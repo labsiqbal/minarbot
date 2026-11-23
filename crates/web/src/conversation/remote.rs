@@ -347,7 +347,9 @@ pub(super) fn page(machine: String, agent: String) -> impl IntoView {
     };
     let headline = NodeRef::<leptos::html::Div>::new();
     headline.on_load(|headline| {
-        let _ = headline.focus();
+        request_animation_frame(move || {
+            let _ = headline.focus();
+        });
     });
     Effect::new(move |_| {
         document().set_title(&format!("{} · Minarbot", title()));

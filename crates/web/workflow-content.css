@@ -34,9 +34,4 @@
 .leptos-workspace .automation-select .k-menu__item:is(:hover, :focus-visible) {
   background: var(--color-bg-hover);
 }
-.leptos-workspace .routine-table { min-width: 720px; }
-@media (max-width: 767px) {
-  .leptos-workspace :is(.routines-hub, .routine-detail) .k-page-head { flex-wrap: wrap; gap: 8px; }
-  .leptos-workspace :is(.routines-hub, .routine-detail) .k-page-head__actions { flex-wrap: wrap; max-width: 100%; }
-  .leptos-workspace .routine-table { min-width: 920px; }
-}
+.routine-detail .k-page-head__actions .k-btn .appearance-icon svg { width: 14px; height: 14px; }

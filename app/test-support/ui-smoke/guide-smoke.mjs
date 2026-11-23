@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { startRustServer } from '../../rust-test-server.ts';
+import { routeReadiness } from './route-readiness.mjs';
 
 const work = await mkdtemp(join(tmpdir(), 'minarbot-guide-'));
 const output = process.env.MINARBOT_GUIDE_SCREENSHOTS && resolve(process.env.MINARBOT_GUIDE_SCREENSHOTS);
@@ -176,6 +177,12 @@ try {
   assert(command.includes('--name \'Test machine\'') && /\bbsi_[A-Za-z0-9_-]{43}\b/.test(command), 'Install command invalid');
   assert(!/\bbsi_[A-Za-z0-9_-]{43}\b/.test(JSON.stringify(await api(path))), 'Install credential leaked in transcript');
   await capture('guide-machine-install', machineChange, [machineChange.getByRole('textbox', { name: 'Run on the new machine' })]);
+  const samples = Number(process.env.MINARBOT_GUIDE_BENCH ?? 0);
+  assert(Number.isSafeInteger(samples) && samples >= 0);
+  if (samples) {
+    const timing = await routeReadiness(browser, { viewport }, app.origin + '/agents/' + guide.id, '.composer__input', samples);
+    console.log(JSON.stringify({ client, guide: timing }));
+  }
   assert.deepEqual(failures, []);
   assert(guidePrompt);
   assert(toolIsolation);

@@ -24,6 +24,7 @@ ring = "0.17"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["net", "rt", "sync"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+wasm_split_cli_support = "=0.2.5"
 
 [lints]
 workspace = true

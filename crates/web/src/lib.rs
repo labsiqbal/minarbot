@@ -18,7 +18,10 @@ mod hub;
 mod hub_connection;
 #[cfg(any(feature = "conversation", feature = "workflows"))]
 mod lazy_route;
+#[cfg(not(feature = "hub"))]
+mod lazy_view;
 mod mcp_connections;
+#[cfg(not(feature = "hub"))]
 mod memory;
 mod messaging_connections;
 mod onboarding;
@@ -47,12 +50,12 @@ mod workspace_route;
 
 use leptos::{mount::mount_to, prelude::*};
 use wasm_bindgen::{prelude::*, JsCast};
-#[cfg(not(any(feature = "conversation", feature = "workflows")))]
+#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
 use web_sys::HtmlDialogElement;
 use web_sys::HtmlElement;
 
-#[cfg(not(any(feature = "conversation", feature = "workflows")))]
-#[cfg_attr(not(feature = "hub"), wasm_bindgen)]
+#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[wasm_bindgen]
 pub fn mount_appearance() -> Result<(), JsValue> {
     let document = document();
     let element = |id| {

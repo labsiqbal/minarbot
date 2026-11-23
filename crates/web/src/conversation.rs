@@ -28,8 +28,16 @@ use serde_json::Value;
 use wasm_bindgen::{closure::Closure, prelude::wasm_bindgen, JsCast};
 use web_sys::{EventSource, MessageEvent, Storage};
 
-pub(crate) use panels::computer_window;
 pub(crate) use routes::workflow_step;
+
+pub(crate) fn computer_window() -> impl IntoView {
+    crate::lazy_view::load("Computer", computer_screen)
+}
+
+#[leptos::wasm_split::wasm_split(computer, wasm_split_path = leptos::wasm_split, fallible)]
+fn computer_screen() -> crate::lazy_view::ChunkView {
+    Ok(panels::computer_window().into_any())
+}
 pub use routes::{standalone, Agent, Thread};
 pub(crate) use routes::{Navigation, ProjectConversation};
 

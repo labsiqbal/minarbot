@@ -83,7 +83,8 @@ try {
     await doc(path, 'conversation');
     await doc(path + '?ui=react', 'react');
   }
-  await doc(main + '/inbox', 'react');
+  await doc(main + '/inbox', 'conversation');
+  await doc(main + '/inbox?ui=react', 'react');
   const result = encodeURIComponent(JSON.stringify({ view: 'url', path: 'https://example.test/', name: 'Fixture' }));
   await doc(main + '?result=' + result, 'conversation');
   await doc('/?computer=' + agent.id, 'conversation');

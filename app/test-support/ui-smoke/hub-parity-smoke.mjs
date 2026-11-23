@@ -13,11 +13,14 @@ import { createHubAuthority } from '../../hub/project-authority.ts';
 import { initializeHubSchema } from '../../hub/schema.ts';
 import { createStubVerifier } from '../../hub/sessions.ts';
 import { startRustHub } from '../hosted-hub.ts';
+import { routeReadiness } from './route-readiness.mjs';
 
 const domain = 'hub-fixture.test';
 const central = 'accounts.' + domain;
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-hub-ui-'));
 const screenshots = process.env.MINARBOT_HUB_SCREENSHOTS;
+const samples = Number(process.env.MINARBOT_HUB_BENCH ?? 0);
+assert(Number.isSafeInteger(samples) && samples >= 0);
 const rustBinary = process.env.MINARBOT_HOSTED_HUB_BINARY;
 const dataPath = join(scratch, 'hub.sqlite');
 const db = new DatabaseSync(rustBinary ? dataPath : ':memory:');
@@ -29,7 +32,10 @@ const identities = new Map(['Alice', 'Bob'].map(subject => [subject.toLowerCase(
 }]));
 const account = authority.provisionAccount(identities.get('alice'), true);
 authority.provisionAccount(identities.get('bob'), true);
-const project = authority.createProject(account, 'pilot', 'Pilot project');
+const projects = {
+  react: authority.createProject(account, 'workspace-react', 'Pilot project'),
+  leptos: authority.createProject(account, 'workspace-leptos', 'Pilot project'),
+};
 if (process.env.MINARBOT_HUB_SMOKE_CLIENT !== 'react') process.env.MINARBOT_APPEARANCE_CLIENT = 'leptos';
 const web = { distPath: resolve(import.meta.dirname, '../../dist/hub'), developmentIdentity: true };
 const node = rustBinary ? undefined : createHubServer({
@@ -79,8 +85,11 @@ try {
     args: ['--no-proxy-server', '--host-resolver-rules=MAP *.' + domain + ' 127.0.0.1:' + httpsPort],
   });
   if (screenshots) await mkdir(screenshots, { recursive: true });
+  const timings = {};
   for (const client of process.env.MINARBOT_HUB_SMOKE_CLIENT ? [process.env.MINARBOT_HUB_SMOKE_CLIENT] : ['react','leptos']) {
-    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 860 } });
+    const project = projects[client];
+    const viewport = { width: 1280, height: 860 };
+    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport, reducedMotion: 'reduce' });
     if (client === 'react') {
       await context.route(/^https:\/\/[^/]+\/(?:login|invite|join|nodes\/link)?(?:\?.*)?$/, async route => {
         if (!route.request().isNavigationRequest()) return route.continue();
@@ -91,6 +100,17 @@ try {
       });
     }
     const page = await context.newPage();
+    async function capture(label, mask = []) {
+      if (!screenshots) return;
+      for (const [layout, size] of Object.entries({ desktop: viewport, narrow: { width: 390, height: 844 } })) {
+        await page.setViewportSize(size);
+        for (const theme of ['dark', 'light']) {
+          await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+          await page.screenshot({ path: join(screenshots, `${client}-${label}-${layout}-${theme}.png`), animations: 'disabled', mask });
+        }
+      }
+      await page.setViewportSize(viewport);
+    }
     const errors = [];
     const wasm = [];
     page.on('response', response => {
@@ -112,6 +132,8 @@ try {
       });
       await page.goto('https://' + project.host + '/');
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await page.getByLabel('Development identity token').waitFor();
+      await capture('sign-in');
       await page.getByLabel('Development identity token').fill('alice');
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       const message = page.getByRole('textbox', { name: 'Message general' });
@@ -122,7 +144,7 @@ try {
         assert(wasm.every(headers => headers['content-type'] === 'application/wasm' && headers['content-encoding'] === 'gzip'));
       } else assert.equal(wasm.length, 0);
       await page.getByText('Live', { exact: true }).waitFor();
-      const text = 'Hub message from ' + client;
+      const text = 'Hub message fixture';
       await message.fill(text);
       await page.reload();
       await message.waitFor();
@@ -146,17 +168,30 @@ try {
         await page.getByText(text, { exact: true }).waitFor();
         assert.equal(await page.locator('html').getAttribute('data-theme'), 'light');
         await page.screenshot({ path: join(screenshots, client + '-room-light.png') });
+        await capture('room');
+      }
+      if (samples) {
+        timings[client] = await routeReadiness(browser, {
+          ignoreHTTPSErrors: true, viewport, storageState: await context.storageState(),
+        }, `https://${project.host}/?ui=${client}`, 'textarea[placeholder="Message general"]', samples);
       }
       await page.getByRole('link', { name: 'Members', exact: true }).click();
+      await page.getByRole('button', { name: 'Invite member', exact: true }).waitFor();
+      await capture('members');
       await page.getByRole('button', { name: 'Invite member', exact: true }).click();
       const invite = page.getByRole('dialog', { name: 'Invite member' });
+      await invite.waitFor();
+      await capture('invite');
       await invite.getByLabel('Email', { exact: true }).fill('bob@example.test');
       await invite.getByRole('button', { name: 'Create invitation' }).click();
       await page.getByRole('heading', { name: 'Invitation ready' }).waitFor();
       await page.getByLabel('Private invitation link', { exact: true }).waitFor();
+      await capture('invitation', [page.getByLabel('Private invitation link', { exact: true })]);
       await page.goto('https://' + central + '/');
       await page.getByRole('button', { name: 'Create project', exact: true }).click();
       const create = page.getByRole('dialog', { name: 'Create project' });
+      await create.waitFor();
+      await capture('create-project');
       await create.getByLabel('Project name', { exact: true }).fill('New project ' + client);
       await create.getByLabel('Project address', { exact: true }).fill('pilot-' + client);
       await create.getByRole('button', { name: 'Create project', exact: true }).click();
@@ -168,6 +203,14 @@ try {
       console.log(client + ': HTTPS handoff, durable draft, exact replay after response loss, room SSE, invitation and project creation, dark/light');
     } finally {
       await context.close();
+    }
+  }
+  if (samples) {
+    console.log(JSON.stringify({ hub: timings }));
+    if (screenshots) await writeFile(join(screenshots, 'timings.json'), JSON.stringify(timings, null, 2) + '\n');
+    if (timings.react && timings.leptos) {
+      assert(timings.leptos.cold.p95 <= timings.react.cold.p95 * 1.2, 'Hub exceeded the cold p95 budget');
+      assert(timings.leptos.warm.p95 <= timings.react.warm.p95 * 1.1, 'Hub exceeded the warm p95 budget');
     }
   }
 } finally {

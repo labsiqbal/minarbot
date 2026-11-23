@@ -15,6 +15,7 @@
 @import "../../app/src/ui/machines.css";
 
 .conversation-startup { padding: 24px; }
+.agent-inbox .k-icon-btn svg { width: 16px; height: 16px; }
 body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .chat-pilot-menu summary { list-style: none; cursor: pointer; }
 .chat__pill-chev > svg { opacity: 0.5; flex-shrink: 0; }

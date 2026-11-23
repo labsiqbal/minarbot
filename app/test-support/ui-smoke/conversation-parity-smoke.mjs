@@ -187,11 +187,11 @@ try {
   await page.getByRole('button', { name: /Quick switcher/ }).click();
   const search = page.getByRole('dialog', { name: 'Quick switcher' });
   await search.getByLabel('Jump to').fill('Conversation fixture');
-  await search.getByRole('link', { name: 'Conversation fixture Agents' }).waitFor();
+  await search.getByRole('option', { name: /^Conversation fixture/ }).first().waitFor();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Show details' }).click();
   const details = page.getByRole('complementary', { name: 'Conversation details' });
-  const editor = page.getByRole('dialog', { name: 'Edit profile' });
+  const editor = page.getByRole('dialog', { name: 'Agent profile' });
   await details.getByRole('button', { name: 'Edit profile', exact: true }).click();
   await editor.getByRole('button', { name: 'Cancel' }).click();
   await details.getByLabel('Menu conversation Main chat').click();
@@ -199,7 +199,7 @@ try {
   assert.equal(await editor.getByLabel('Name', { exact: true }).inputValue(), agent.name);
   const saved = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(`/api${main}/edit`));
   const reloaded = page.waitForEvent('load');
-  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
   const response = await saved;
   assert(response.ok(), `Profile edit returned ${response.status()}`);
   await reloaded;

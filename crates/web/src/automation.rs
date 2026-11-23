@@ -4,16 +4,52 @@ mod routines;
 mod schedule;
 mod workflows;
 
-pub(crate) use calendar::{calendar_page, Calendar};
-pub(crate) use routines::routines_page;
-pub(super) use workflows::{agent_library, workflows_page};
-
 use crate::{
     api, connection_ui as ui, select::Select, system::kit, workspace, workspace_route::valid_id,
 };
 use leptos::{prelude::*, task::spawn_local};
 use serde_json::{json, Value};
 use std::time::Duration;
+
+pub(crate) fn routines_page() -> impl IntoView {
+    crate::lazy_view::load("Routines", routines_screen)
+}
+
+pub(crate) fn workflows_page() -> impl IntoView {
+    crate::lazy_view::load("Workflows", workflows_screen)
+}
+
+#[leptos::wasm_split::wasm_split(workflows_screen, wasm_split_path = leptos::wasm_split, fallible)]
+fn workflows_screen() -> crate::lazy_view::ChunkView {
+    Ok(workflows::workflows_page().into_any())
+}
+
+pub(crate) fn agent_library(owner: String, back: String) -> impl IntoView {
+    workflows::agent_library(owner, back)
+}
+
+#[leptos::wasm_split::wasm_split(routines, wasm_split_path = leptos::wasm_split, fallible)]
+fn routines_screen() -> crate::lazy_view::ChunkView {
+    Ok(routines::routines_page().into_any())
+}
+
+pub(crate) fn calendar_page(active: Signal<bool>) -> impl IntoView {
+    crate::lazy_view::load("Calendar", move || calendar_screen(active))
+}
+
+#[leptos::wasm_split::wasm_split(calendar, wasm_split_path = leptos::wasm_split, fallible)]
+fn calendar_screen(active: Signal<bool>) -> crate::lazy_view::ChunkView {
+    Ok(calendar::calendar_page(active).into_any())
+}
+
+pub(crate) fn project_calendar(project: Value) -> impl IntoView {
+    crate::lazy_view::load("Calendar", move || project_calendar_screen(project.clone()))
+}
+
+#[leptos::wasm_split::wasm_split(project_calendar, wasm_split_path = leptos::wasm_split, fallible)]
+fn project_calendar_screen(project: Value) -> crate::lazy_view::ChunkView {
+    Ok(view! { <calendar::Calendar project=Some(project) /> }.into_any())
+}
 
 fn text(value: &Value) -> &str {
     value.as_str().unwrap_or_default()

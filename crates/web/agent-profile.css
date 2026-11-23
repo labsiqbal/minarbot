@@ -28,10 +28,6 @@
 .leptos-workspace .k-avatar-picker__check svg { width: 10px; height: 10px; }
 .leptos-workspace .k-avatar-picker__swatch svg { width: 14px; height: 14px; color: #1c1c1c; }
 
-.leptos-workspace .system-dialog:is([role="alertdialog"], :has(#agent-template-import-title)) button[autofocus]:focus {
-  outline: 2px solid var(--color-border-focus);
-  outline-offset: 2px;
-}
 .leptos-workspace .agent-profile__initials { font-size: 17px; }
 .leptos-workspace .agent-profile .k-combobox > input::-webkit-calendar-picker-indicator { display: none; }
 .leptos-workspace .hidden-agents[open] .machine-group__chevron { transform: rotate(90deg); }

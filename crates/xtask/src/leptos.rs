@@ -14,11 +14,11 @@ const WASM_PROFILE: &str = "wasm-release";
 const BINARYEN_VERSION: &str = "133";
 const NAMESPACE: &str = "/_leptos/";
 // Each route group gets its own document, CSS and Wasm.
-const ROUTE_GROUPS: [(&str, &[&str]); 4] = [
-    ("appearance", &[]),
-    ("workflows", &["--features", "workflows"]),
-    ("conversation", &["--features", "conversation"]),
-    ("hub", &["--features", "hub"]),
+const ROUTE_GROUPS: [(&str, &[&str], u64); 4] = [
+    ("appearance", &[], 960_000),
+    ("workflows", &["--features", "workflows"], 610_000),
+    ("conversation", &["--features", "conversation"], 430_000),
+    ("hub", &["--features", "hub"], 240_000),
 ];
 
 fn bindgen(target: &Path) -> Result<PathBuf> {
@@ -137,6 +137,73 @@ fn hash_asset(source: &Path, assets: &Path, name: &str, ext: &str) -> Result<Str
     Ok(format!("{NAMESPACE}assets/{filename}"))
 }
 
+fn optimize(optimizer: &Path, input: &Path, output: &Path) -> Result<()> {
+    run(Command::new(optimizer)
+        .args(["-Oz", "--strip-debug", "--strip-producers", "-o"])
+        .arg(output)
+        .arg(input))
+}
+
+fn split_wasm(
+    input: &Path,
+    temp: &Path,
+    assets: &Path,
+    optimizer: &Path,
+    name: &str,
+) -> Result<(PathBuf, BTreeMap<String, Vec<String>>)> {
+    let bytes = fs::read(input)?;
+    let directory = temp.join(format!("{name}-split"));
+    let primary = directory.join("main.wasm");
+    let link = format!("./{name}-chunks.js");
+    let module = format!("./{name}.js");
+    let mut opts = wasm_split_cli_support::Options::new(&bytes);
+    opts.output_dir = &directory;
+    opts.main_out_path = &primary;
+    opts.link_name = &link;
+    opts.main_module = &module;
+    opts.emit_dwarf = false;
+    let split = wasm_split_cli_support::transform(opts)
+        .map_err(|error| format!("Split Leptos {name}: {error:#}"))?;
+    let glue = directory.join(&link);
+    let mut js = fs::read_to_string(&glue)?;
+    let mut urls = BTreeMap::new();
+    for chunk in split.split_modules {
+        let stem = chunk
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid split module name.")?;
+        let optimized = chunk.with_extension("opt.wasm");
+        optimize(optimizer, &chunk, &optimized)?;
+        let url = hash_asset(&optimized, assets, &format!("{name}-{stem}"), "wasm")?;
+        let reference = format!("fetch(new URL(\"./{stem}.wasm\", import.meta.url))");
+        if !js.contains(&reference) {
+            return Err(format!("Missing URL in {name} loader for {stem}.").into());
+        }
+        js = js.replace(
+            &reference,
+            &format!("fetch({url:?}, {{ signal: AbortSignal.timeout(8000) }})"),
+        );
+        urls.insert(stem.to_owned(), url);
+    }
+    fs::write(temp.join(link), js)?;
+    let prefetches = split
+        .prefetch_map
+        .into_iter()
+        .map(|(label, stems)| {
+            let assets = stems
+                .into_iter()
+                .map(|stem| {
+                    urls.get(&stem)
+                        .cloned()
+                        .ok_or("Missing split module asset.")
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok((label, assets))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    Ok((primary, prefetches))
+}
+
 fn hub_assets(
     manifest: &serde_json::Value,
     entries: [&str; 2],
@@ -181,7 +248,7 @@ fn hub_assets(
 }
 
 pub fn require_build(app: &Path) -> Result<()> {
-    for (name, _) in ROUTE_GROUPS {
+    for (name, _, _) in ROUTE_GROUPS {
         if !app.join(format!("dist/_leptos/{name}.html")).is_file() {
             return Err(format!(
                 "Build the Leptos {name} group with cargo xtask leptos before packaging."
@@ -203,17 +270,18 @@ pub fn build(root: &Path) -> Result<()> {
     let dist = app.join("dist");
     fs::create_dir_all(&dist)?;
     let temp = private_stage("bindgen-", &target)?;
-    fs::copy(
-        web.join("route-chunks.js"),
-        temp.path().join("route-chunks.js"),
-    )?;
     let stage = private_stage(".leptos-", &dist)?;
     let assets = stage.path().join("assets");
     fs::create_dir(&assets)?;
     let mut inputs = BTreeMap::new();
     let mut cargo_time = Duration::ZERO;
     let mut bundles = BTreeMap::new();
-    for (name, features) in ROUTE_GROUPS {
+    for (name, features, budget) in ROUTE_GROUPS {
+        let rustflags = if name == "hub" {
+            "target.wasm32-unknown-unknown.rustflags=['--cfg','erase_components']"
+        } else {
+            "target.wasm32-unknown-unknown.rustflags=['--cfg','erase_components','-Clink-arg=--emit-relocs']"
+        };
         let cargo_began = Instant::now();
         run(Command::new("cargo")
             .current_dir(&web)
@@ -227,11 +295,24 @@ pub fn build(root: &Path) -> Result<()> {
                 "--target",
                 "wasm32-unknown-unknown",
                 "--config",
-                "target.wasm32-unknown-unknown.rustflags=['--cfg','erase_components']",
+                rustflags,
             ])
             .args(features))?;
         cargo_time += cargo_began.elapsed();
-        run(Command::new(&cli)
+        let input = target.join(format!(
+            "wasm32-unknown-unknown/{WASM_PROFILE}/minarbot_web.wasm"
+        ));
+        let (input, chunks) = if name == "hub" {
+            (input, BTreeMap::new())
+        } else {
+            split_wasm(&input, temp.path(), &assets, &optimizer, name)?
+        };
+        let mut bindgen = Command::new(&cli);
+        if name != "hub" {
+            // Split modules share the primary module's indirect function table.
+            bindgen.arg("--keep-lld-exports");
+        }
+        run(bindgen
             .args([
                 "--target",
                 "web",
@@ -243,21 +324,29 @@ pub fn build(root: &Path) -> Result<()> {
                 "--out-dir",
             ])
             .arg(temp.path())
-            .arg(target.join(format!(
-                "wasm32-unknown-unknown/{WASM_PROFILE}/minarbot_web.wasm"
-            ))))?;
+            .arg(&input))?;
         let wasm_name = format!("{name}_bg.wasm");
         let unoptimized = temp.path().join(&wasm_name);
         let before_raw = fs::metadata(&unoptimized)?.len();
         let before_gzip = gzip(&unoptimized, &unoptimized.with_extension("wasm.gz"))?;
         let optimized = temp.path().join(format!("{name}_optimized.wasm"));
-        run(Command::new(&optimizer)
-            .args(["-Oz", "--strip-debug", "--strip-producers", "-o"])
-            .arg(&optimized)
-            .arg(&unoptimized))?;
+        optimize(&optimizer, &unoptimized, &optimized)?;
         let after_raw = fs::metadata(&optimized)?.len();
         let after_gzip = gzip(&optimized, &optimized.with_extension("wasm.gz"))?;
+        if after_gzip > budget {
+            return Err(format!(
+                "Leptos {name} Wasm is {after_gzip} gzip bytes (budget {budget})."
+            )
+            .into());
+        }
         let wasm = hash_asset(&optimized, &assets, name, "wasm")?;
+        if name == "workflows" {
+            fs::write(
+                temp.path().join("route-chunks.js"),
+                fs::read_to_string(web.join("route-chunks.js"))?
+                    .replace("__WORKFLOWS_WASM__", &wasm),
+            )?;
+        }
         bundles.insert(
             name,
             json!({
@@ -265,6 +354,8 @@ pub fn build(root: &Path) -> Result<()> {
                 "beforeWasmOpt": { "raw": before_raw, "gzip": before_gzip },
                 "afterWasmOpt": { "raw": after_raw, "gzip": after_gzip },
                 "asset": wasm,
+                "gzipBudget": budget,
+                "chunks": chunks,
             }),
         );
         let glue = temp.path().join(format!("{name}.js"));
@@ -320,7 +411,7 @@ pub fn build(root: &Path) -> Result<()> {
         }
         sizes.insert(format!("assets/{name}"), size);
     }
-    for (name, _) in ROUTE_GROUPS {
+    for (name, _, _) in ROUTE_GROUPS {
         let asset = |prefix: &str, extension: &str| -> Result<String> {
             let key = format!("assets/{prefix}.");
             let path = sizes

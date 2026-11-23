@@ -335,13 +335,48 @@ fn agent_surface(path: &str) -> Option<AnyView> {
     let parts = path.strip_prefix('/')?.split('/').collect::<Vec<_>>();
     match parts.as_slice() {
         ["agents", agent, "inbox"] if protocol::id(agent) => {
-            Some(inbox::page(agent.to_ascii_lowercase()).into_any())
+            let agent = agent.to_ascii_lowercase();
+            Some(crate::lazy_view::load("inbox", move || inbox_view(agent.clone())).into_any())
         }
         ["machines", machine, "agents", agent] if protocol::id(machine) && protocol::id(agent) => {
-            Some(remote::page(machine.to_ascii_lowercase(), agent.to_ascii_lowercase()).into_any())
+            let machine = machine.to_ascii_lowercase();
+            let agent = agent.to_ascii_lowercase();
+            Some(
+                crate::lazy_view::load("remote agent", move || {
+                    remote_view(machine.clone(), agent.clone())
+                })
+                .into_any(),
+            )
         }
         _ => None,
     }
+}
+
+#[leptos::wasm_split::wasm_split(inbox, wasm_split_path = leptos::wasm_split, fallible)]
+fn inbox_view(agent: String) -> crate::lazy_view::ChunkView {
+    Ok(inbox::page(agent).into_any())
+}
+
+#[leptos::wasm_split::wasm_split(remote, wasm_split_path = leptos::wasm_split, fallible)]
+fn remote_view(machine: String, agent: String) -> crate::lazy_view::ChunkView {
+    Ok(remote::page(machine, agent).into_any())
+}
+
+fn chat_view(config: ConversationConfig, restore_focus: bool) -> impl IntoView {
+    crate::lazy_view::load("conversation", move || {
+        render_conversation(config.clone(), restore_focus)
+    })
+}
+
+#[leptos::wasm_split::wasm_split(conversation, wasm_split_path = leptos::wasm_split, fallible)]
+fn render_conversation(
+    config: ConversationConfig,
+    restore_focus: bool,
+) -> crate::lazy_view::ChunkView {
+    if restore_focus {
+        request_animation_frame(move || history::focus_element(".chat__pill"));
+    }
+    Ok(shell(config).into_any())
 }
 
 pub fn standalone() -> impl IntoView {
@@ -359,6 +394,7 @@ pub fn standalone() -> impl IntoView {
     let nav = use_context::<Navigation>().unwrap_or_else(|| Navigation(RwSignal::new(location())));
     let workflow = Memo::new(move |_| nav.0.with(|path| crate::lazy_route::workflow_scope(path)));
     let was_workflow = RwSignal::new(false);
+    let restore_conversation_focus = RwSignal::new(false);
     let project_conversation = use_context::<ProjectConversation>();
     let pop = window_event_listener(leptos::ev::popstate, move |_| {
         let location = location();
@@ -435,6 +471,9 @@ pub fn standalone() -> impl IntoView {
             document().set_title("Workflows · Minarbot");
             return;
         }
+        leptos::task::spawn_local(async {
+            let _ = __wasm_split_preload_render_conversation().await;
+        });
         let restore_focus = was_workflow.get_untracked();
         was_workflow.set(false);
         leptos::task::spawn_local(async move {
@@ -479,20 +518,8 @@ pub fn standalone() -> impl IntoView {
                                 .is_some_and(|thread| thread.project.is_some()),
                         );
                     }
+                    restore_conversation_focus.set(restore_focus);
                     config.set(Some(value));
-                    if restore_focus {
-                        request_animation_frame(move || {
-                            if generation.try_get_untracked() == Some(version) {
-                                if let Ok(Some(heading)) = document().query_selector(".chat__pill")
-                                {
-                                    if let Ok(heading) = heading.dyn_into::<web_sys::HtmlElement>()
-                                    {
-                                        let _ = heading.focus();
-                                    }
-                                }
-                            }
-                        });
-                    }
                 }
                 Err(reason) => error.set(reason.message),
             }
@@ -504,7 +531,7 @@ pub fn standalone() -> impl IntoView {
         } else if let Some((_, back)) = workflow.get() {
             crate::lazy_route::outlet("workflows", "workflows", nav.0.get_untracked(), String::new(), Some(back)).into_any()
         } else {
-            config.get().map(shell).into_any()
+            config.get().map(|config| chat_view(config, restore_conversation_focus.get_untracked())).into_any()
         }}
         <p class="conversation-startup" role="status" hidden=move || workflow.with(Option::is_some) || config.with(Option::is_some) || !error.with(String::is_empty)>"Loading conversation…"</p>
         <div class="conversation-startup" hidden=move || error.with(String::is_empty)>
@@ -853,7 +880,7 @@ pub(crate) fn workflow_step(agent: String, thread: String) -> impl IntoView {
     load_step.run(());
     view! {
         <>
-            {move || config.get().map(shell)}
+            {move || config.get().map(|config| chat_view(config, false))}
             <Show when=move || config.with(Option::is_none)>
                 <p class="empty" role="status" hidden=move || !error.with(String::is_empty)>"Loading step conversation..."</p>
                 <p class="error" role="alert" hidden=move || error.with(String::is_empty)>{error} " "

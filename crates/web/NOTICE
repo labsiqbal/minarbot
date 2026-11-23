@@ -9,6 +9,7 @@ serde and serde_json - MIT OR Apache-2.0 - https://github.com/serde-rs/serde and
 Marked 18.2.0 - MIT - https://github.com/markedjs/marked
 noVNC 1.7.0 - MPL-2.0 - https://github.com/novnc/noVNC
 Binaryen 133 - Apache-2.0 - https://github.com/WebAssembly/binaryen/releases/tag/version_133
+wasm_split_helpers and wasm_split_cli_support (build-time splitter) - MIT OR Apache-2.0 - https://github.com/WorldSEnder/wasm-split-prototype
 
 Cargo.lock records exact package versions and registry checksums.
 Shared CSS, palettes, icons and Inter use the same sources as the React build.

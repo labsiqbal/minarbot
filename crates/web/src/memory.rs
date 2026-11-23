@@ -92,6 +92,19 @@ pub(crate) fn panel(
     in_dialog: bool,
     close: Callback<()>,
 ) -> impl IntoView {
+    crate::lazy_view::load("Memory", move || {
+        memory_panel(path.clone(), channel, archived, in_dialog, close)
+    })
+}
+
+#[leptos::wasm_split::wasm_split(memory, wasm_split_path = leptos::wasm_split, fallible)]
+fn memory_panel(
+    path: String,
+    channel: bool,
+    archived: bool,
+    in_dialog: bool,
+    close: Callback<()>,
+) -> crate::lazy_view::ChunkView {
     let path = StoredValue::new(path);
     let tab = RwSignal::new("notes");
     let heading = NodeRef::<html::H1>::new();
@@ -123,7 +136,7 @@ pub(crate) fn panel(
             }
         });
     }
-    view! {
+    Ok(view! {
         <div class="k-page bs-root">
             <header class="k-page-head">
                 <div class="k-page-head__text">
@@ -163,7 +176,7 @@ pub(crate) fn panel(
             </div>
             {confirmation}
         </div>
-    }
+    }.into_any())
 }
 
 pub(crate) fn dialog(path: String, open: RwSignal<bool>) -> impl IntoView {
@@ -190,13 +203,24 @@ pub(crate) fn profile_resources(agent: String) -> impl IntoView {
 
 #[cfg(feature = "conversation")]
 pub(crate) fn context_dialog(base: String, open: RwSignal<bool>) -> impl IntoView {
-    let path = StoredValue::new(format!("{base}/compaction"));
     view! {
+        {move || open.get().then(|| crate::lazy_view::load("history summary", {
+            let base = base.clone();
+            move || context_view(base.clone(), open)
+        }))}
+    }
+}
+
+#[cfg(feature = "conversation")]
+#[leptos::wasm_split::wasm_split(context, wasm_split_path = leptos::wasm_split, fallible)]
+fn context_view(base: String, open: RwSignal<bool>) -> crate::lazy_view::ChunkView {
+    let path = StoredValue::new(format!("{base}/compaction"));
+    Ok(view! {
         <kit::Dialog id="conversation-context" title=kit::text("Conversation context") open=Signal::from(open)
             on_close=move || { open.set(false); focus_chat_menu(); }>
             {move || open.get().then(|| summary(path.get_value()))}
         </kit::Dialog>
-    }
+    }.into_any())
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

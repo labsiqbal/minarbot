@@ -1,7 +1,10 @@
 mod avatar;
+#[cfg(not(feature = "hub"))]
 mod form;
 mod journal;
+#[cfg(not(feature = "hub"))]
 mod resources;
+#[cfg(not(feature = "hub"))]
 mod templates;
 
 use crate::{
@@ -131,10 +134,11 @@ fn find_agent(data: Option<&Result<Directory, String>>, id: &str) -> Option<Agen
         .cloned()
 }
 
-pub(crate) fn mount(lifecycle: Lifecycle) -> impl IntoView {
-    let target = move || match lifecycle.target.get() {
-        None => ().into_any(),
-        Some(DialogTarget::Create) => {
+#[cfg(not(feature = "hub"))]
+#[leptos::wasm_split::wasm_split(agent_profile, wasm_split_path = leptos::wasm_split, fallible)]
+fn profile_dialog(lifecycle: Lifecycle, target: DialogTarget) -> crate::lazy_view::ChunkView {
+    Ok(match target {
+        DialogTarget::Create => {
             let model = lifecycle
                 .directory
                 .with_untracked(|state| {
@@ -146,16 +150,27 @@ pub(crate) fn mount(lifecycle: Lifecycle) -> impl IntoView {
                 .unwrap_or_default();
             form::agent_form(lifecycle, None, model).into_any()
         }
-        Some(DialogTarget::Edit(id)) => lifecycle
+        DialogTarget::Edit(id) => lifecycle
             .get(&id)
             .map(|agent| form::agent_form(lifecycle, Some(agent), String::new()))
             .into_any(),
         #[cfg(feature = "conversation")]
-        Some(DialogTarget::Export(id)) => lifecycle
+        DialogTarget::Export(id) => lifecycle
             .get(&id)
             .map(|agent| templates::export(agent, move || lifecycle.close(), true))
             .into_any(),
-        Some(DialogTarget::Import) => templates::import(lifecycle).into_any(),
+        DialogTarget::Import => templates::import(lifecycle).into_any(),
+    })
+}
+
+#[cfg(not(feature = "hub"))]
+pub(crate) fn mount(lifecycle: Lifecycle) -> impl IntoView {
+    let target = move || {
+        lifecycle.target.get().map(|target| {
+            crate::lazy_view::load("agent dialog", move || {
+                profile_dialog(lifecycle, target.clone())
+            })
+        })
     };
     let avatar_failure = RwSignal::new(window().session_storage().ok().flatten().is_some_and(
         |storage| {
