@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -10,7 +10,7 @@ import { startApp } from '../../test-bridge.ts';
 
 const output = resolve(process.argv[2] ?? 'test-support/ui-smoke/artifacts/conversation-automation');
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-conversation-automation-'));
-const folder = await mkdtemp(resolve('node_modules/.conversation-automation-project-'));
+const folder = await mkdtemp(join(await realpath('node_modules'), '.conversation-automation-project-'));
 await mkdir(output, { recursive: true });
 const ids = Object.fromEntries(['agent', 'other', 'project', 'section', 'routine', 'workflow', 'foreign', 'machine', 'remote', 'mail'].map(key => [key, randomUUID()]));
 const provider = createServer(async (req, res) => {
