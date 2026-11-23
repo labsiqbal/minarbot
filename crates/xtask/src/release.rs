@@ -119,6 +119,23 @@ pub fn verify(releases: &Path, id: &str) -> Result<Info> {
 }
 
 pub fn stage_runtime(source: &Path, stage: &Path) -> Result<()> {
+    let dist = source.join("dist");
+    if dist.is_dir() {
+        for entry in fs::read_dir(&dist)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if !matches!(
+                name.to_str(),
+                Some("_leptos" | "icons" | "manifest.webmanifest" | "pair.css")
+            ) {
+                return Err(format!(
+                    "Release contains unsupported file: {}",
+                    entry.path().display()
+                )
+                .into());
+            }
+        }
+    }
     for name in [
         "bin",
         "dist/_leptos",
