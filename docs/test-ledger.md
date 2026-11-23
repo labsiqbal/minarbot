@@ -53,7 +53,7 @@ in the [golden gate guide](../app/test-support/ui-smoke/PARITY.md).
 | `markdown-stream-blocks.test.ts` | `splitMarkdownBlocks` is shared. Ported rendered reference-link and retained-prefix checks to `leptos-conversation-smoke.mjs`. |
 | `message-find.test.ts` | `matchOffsets` is shared by the Leptos browser adapter. Controls smoke checks UI matching and highlight cleanup. |
 | `navigation.test.ts` | Conversation deep links, startup route and history assertions run against Leptos. Result target parsing is shared. |
-| `needs-you-notifications.test.ts` | Ported to `needs-you-notifications-smoke.mjs`. Leptos distinguishes requests on one turn from completion and suppresses duplicate notifications after reload. |
+| `needs-you-notifications.test.ts` | Needs a product port. Leptos covers in-app Needs you indicators and separate workflow notifications. React's durable browser notification claim behavior has no Leptos equivalent. |
 | `next-frame.test.ts` | The tested frame queue is shared by the Leptos HTML reply and MCP app bridges. |
 | `optimistic-turns.test.ts` | Leptos conversation retry checks cover an in-flight send, stale history, reload and exact receipt reconciliation. |
 | `polling.test.ts` | Leptos stream/reconnect and profile deletion smokes check cleanup and stale updates. Download helper is still shared. React-specific polling backoff and visibility scheduling use a different implementation and need a product contract before an equivalent port. |
