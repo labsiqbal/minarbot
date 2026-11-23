@@ -157,9 +157,14 @@ export async function runControlsSmoke({ check, page, origin, visible, hidden, a
     await pill.getByRole('button', { name: 'Cancel recording', exact: true }).click(); await hidden(pill);
     assert(await page.evaluate(() => window.__uxaStops > 0));
     await page.getByRole('button', { name: 'Record audio', exact: true }).click(); await visible(pill);
-    await pill.getByRole('button', { name: 'Stop recording', exact: true }).click(); await hidden(pill);
-    await visible(page.getByRole('group', { name: 'Composer attachments', exact: true }));
-    assert.match(await page.getByRole('group', { name: 'Composer attachments', exact: true }).innerText(), /Voice note \d+:\d{2}/);
+    const files = origin + path.replace(/\/turns$/, '/files');
+    await page.route(files, route => route.fulfill({ json: [] }));
+    try {
+      await pill.getByRole('button', { name: 'Stop recording', exact: true }).click(); await hidden(pill);
+      const attachments = page.getByRole('group', { name: 'Composer attachments', exact: true });
+      await visible(attachments);
+      assert.match(await attachments.innerText(), /Voice note \d+:\d{2}/);
+    } finally { await page.unroute(files); }
     assert(await page.getByRole('button', { name: 'Send message', exact: true }).isEnabled());
     assert(await page.getByRole('group', { name: 'Composer attachments', exact: true }).evaluate(element => !!element.closest('.composer')));
     await shot('UX-03-audio-chip');
