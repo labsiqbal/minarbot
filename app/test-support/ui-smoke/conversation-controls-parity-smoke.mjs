@@ -84,7 +84,9 @@ try {
     await doc(path + '?ui=react', 'react');
   }
   await doc(main + '/inbox', 'react');
-  await doc(main + '?result=fixture', 'react');
+  const result = encodeURIComponent(JSON.stringify({ view: 'url', path: 'https://example.test/', name: 'Fixture' }));
+  await doc(main + '?result=' + result, 'conversation');
+  await doc('/?computer=' + agent.id, 'conversation');
   if (process.env.MINARBOT_CONVERSATION_ROUTES_ONLY === '1') { console.log('PASS fresh setup, ordinary routes and React rollback'); process.exitCode = 0; }
 
   if (process.env.MINARBOT_CONVERSATION_ROUTES_ONLY !== '1') {

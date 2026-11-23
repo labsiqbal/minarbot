@@ -278,6 +278,14 @@ fn location() -> String {
     )
 }
 
+fn conversation_scope(url: &str) -> (&str, Option<String>) {
+    let (path, query) = url.split_once('?').unwrap_or((url, ""));
+    let focus = web_sys::UrlSearchParams::new_with_str(query)
+        .ok()
+        .and_then(|params| params.get("focus"));
+    (path, focus)
+}
+
 fn internal(path: &str) -> bool {
     let (path, query) = path.split_once('?').unwrap_or((path, ""));
     let Some(route) = route(path) else {
@@ -285,8 +293,7 @@ fn internal(path: &str) -> bool {
     };
     !matches!(route, Route::Default)
         && web_sys::UrlSearchParams::new_with_str(query).is_ok_and(|params| {
-            !params.has("result")
-                && !params.has("computer")
+            !params.has("computer")
                 && !params
                     .get_all("ui")
                     .iter()
@@ -321,7 +328,17 @@ pub fn standalone() -> impl IntoView {
     let error = RwSignal::new(String::new());
     let nav = use_context::<Navigation>().unwrap_or_else(|| Navigation(RwSignal::new(location())));
     let project_conversation = use_context::<ProjectConversation>();
-    let pop = window_event_listener(leptos::ev::popstate, move |_| nav.0.set(location()));
+    let pop = window_event_listener(leptos::ev::popstate, move |_| {
+        let location = location();
+        if results::current().is_err()
+            || !error.with_untracked(String::is_empty)
+            || nav.0.with_untracked(|current| {
+                conversation_scope(current) != conversation_scope(&location)
+            })
+        {
+            nav.0.set(location);
+        }
+    });
     let click = window_event_listener(leptos::ev::click, move |event| {
         if event.default_prevented()
             || event.button() != 0
@@ -344,6 +361,9 @@ pub fn standalone() -> impl IntoView {
             || !anchor.target().is_empty()
             || !anchor.hash().is_empty()
             || window().location().origin().ok().as_deref() != Some(anchor.origin().as_str())
+            || anchor.has_attribute("data-minarbot-result")
+                && window().location().pathname().ok().as_deref()
+                    == Some(anchor.pathname().as_str())
         {
             return;
         }
@@ -368,9 +388,12 @@ pub fn standalone() -> impl IntoView {
         config.set(None);
         error.set(String::new());
         leptos::task::spawn_local(async move {
-            let result = match route(path.split('?').next().unwrap_or_default()) {
-                Some(route) => load(route, directory_cache, thread_cache).await,
-                None => Err(load_error("Conversation not found.")),
+            let result = match (
+                results::current(),
+                route(path.split('?').next().unwrap_or_default()),
+            ) {
+                (Ok(_), Some(route)) => load(route, directory_cache, thread_cache).await,
+                _ => Err(load_error("Conversation not found.")),
             };
             if generation.try_get_untracked() != Some(version) {
                 return;
@@ -379,7 +402,8 @@ pub fn standalone() -> impl IntoView {
                 Ok(value) => {
                     if path.split('?').next() == Some("/") {
                         if let Some(agent) = &value.agent {
-                            let url = format!("/agents/{}", agent.id);
+                            let search = window().location().search().unwrap_or_default();
+                            let url = format!("/agents/{}{search}", agent.id);
                             if window()
                                 .history()
                                 .and_then(|history| {

@@ -10,6 +10,7 @@
 @import "../../app/src/computer-viewer.css";
 @import "../../app/src/goal-mode.css";
 @import "../../app/src/attachments.css";
+@import "../../app/src/ui/source-control.css";
 
 .conversation-startup { padding: 24px; }
 body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
@@ -25,7 +26,7 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .conversation-inspect { position: absolute; inset: 0 4px auto auto; opacity: 0; }
 .turn-activity:hover .conversation-inspect, .turn-activity:focus-within .conversation-inspect { opacity: 1; }
 .conversation-layout .turn-activity__details summary { display: flex; width: 100%; list-style: none; }
-.conversation-layout .conversation-panel { flex: 0 1 340px; width: 340px; min-width: 0; }
+.conversation-layout .conversation-panel { flex: 0 1 360px; width: 360px; min-width: 0; }
 .conversation-panel > .k-tabs > .k-tabs__list > .k-tabs__tab[hidden] { display: none; }
 .conversation-panel a.panel-row { text-decoration: none; }
 .conversation-panel .panel-row > .appearance-icon > svg { width: 16px; height: 16px; }
@@ -47,13 +48,13 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 /* Keep panel content mounted across viewport changes. Native modal handles focus and Escape. */
 .conversation-panel-shell {
   position: static; inset: auto; margin: 0; padding: 0; border: 0; color: inherit;
-  background: transparent; max-width: none; max-height: none; height: 100%; flex: 0 1 340px; min-width: 0;
+  background: transparent; max-width: none; max-height: none; height: 100%; flex: 0 1 360px; min-width: 0;
 }
 .conversation-panel-shell > .conversation-panel { width: 100%; }
 .conversation-panel-shell:modal {
   position: fixed; top: 0; right: 0; bottom: 0; width: 100%; height: 100dvh;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  background: var(--color-bg-pane); overscroll-behavior: contain;
+  background: var(--color-bg-pane); box-shadow: var(--shadow-popover); overscroll-behavior: contain;
 }
 .conversation-panel-shell:modal::backdrop { background: var(--color-bg-scrim); overflow: hidden; overscroll-behavior: contain; }
 .conversation-disclosure > summary { list-style: none; }
@@ -74,6 +75,10 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .chat-list-menu > .k-icon-btn { width: 28px; height: 28px; }
 .chat-list-menu > .k-icon-btn svg { width: 15px; height: 15px; }
 .conversation-workspace > nav svg { width: 14px; height: 14px; }
+.conversation-workspace-page .k-btn svg { width: 14px; height: 14px; }
+.workspace-previous-icon, .conversation-workspace-page .k-row__chev { display: flex; }
+.workspace-previous-icon { rotate: 180deg; }
+.conversation-workspace-page .k-row__chev > svg { width: 16px; height: 16px; }
 .conversation-workspace .k-empty__icon > svg { width: 18px; height: 18px; }
 .chat-list-menu .k-pop { position: absolute; right: 0; z-index: 2; }
 .leptos-workspace .turn-activity__details .k-collapsible__chev { display: inline-flex; }
@@ -83,6 +88,23 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 
 .conversation-panel > .right-panel__header { padding-inline-end: 12px; }
 
+.conversation-layout[hidden], .computer-viewer [hidden] { display: none; }
+.file-actions { flex: none; }
+.file-actions > button { width: 32px; height: 32px; }
+.file-actions .k-menu { position: fixed; inset: auto; margin: 0; }
+.conversation-kit-dialog { margin: 0; padding: 0; color: var(--color-text-primary); }
+.conversation-kit-dialog::backdrop { background: var(--color-bg-scrim); }
+.conversation-kit-dialog:not([open]) { display: none; }
+.conversation-html-preview { min-height: 320px; }
+.conversation-preview-code { max-height: 600px; }
+.conversation-workspace-code { max-height: 280px; }
+.conversation-workspace-page .k-field__hint { margin: 0; }
+.panel-skeleton { width: 55%; }
+.panel-skeleton.is-small { width: 28%; }
+.conversation-select { position: relative; max-width: 100%; }
+.conversation-select > select { appearance: none; padding-right: 30px; field-sizing: content; }
+.conversation-select > .k-select__chev { position: absolute; right: 8px; top: 50%; translate: 0 -50%; pointer-events: none; }
+.computer-empty-icon svg { width: 28px; height: 28px; stroke-width: 1.5; }
 
 .event-reveal { align-self: flex-start; }
 .chat-search-results { padding-inline-start: 20px; overflow-wrap: anywhere; }

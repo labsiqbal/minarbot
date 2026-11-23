@@ -6,6 +6,9 @@ import { forwardWheelToTimeline } from './ui/timelineMinimapWheel';
 import { resolveTimelineMinimapPreview } from './ui/timelineMinimapItems';
 import { marked, type Tokens } from 'marked';
 import { markdownLink } from './markdown-link';
+import { resultTarget, type ResultTarget } from './navigation';
+import type { AttachmentFile } from './attachments';
+import { decodeHTML } from 'entities';
 import { splitMarkdownBlocks } from './ui/markdownStreamBlocks';
 import { bindHtmlReply } from './html-reply-bridge';
 import { readHtmlReply } from './html-reply';
@@ -13,6 +16,7 @@ import { bindMcpApp } from './mcp-app-bridge';
 import { readMcpAppReference } from './mcp-app-host';
 import type RFB from '@novnc/novnc';
 import { HttpError, readJson } from './http';
+import { downloadBlob } from './hooks/downloadBlob';
 import { copyText, readClipboardText } from './ui/clipboard';
 import { uploadLimitError } from './attachments';
 import { startAudioRecording } from './audio-recording';
@@ -24,24 +28,68 @@ function markdownBlocks(text: string) {
   return text.length > 64000 ? [text] : splitMarkdownBlocks(text) ?? [text];
 }
 
-function markdown(text: string, scope: string) {
+function markdown(text: string, scope: string, rawFiles?: string) {
+  const files: AttachmentFile[] = rawFiles ? JSON.parse(rawFiles) : [];
+  const mentioned = new Set<string>();
+  const names = files.map(file => file.name).filter(Boolean).sort((a, b) => b.length - a.length);
+  const pattern = names.length ? new RegExp(
+    `(?<![\\p{L}\\p{N}_.-])(${names.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\p{L}\\p{N}_-]|\\.[\\p{L}\\p{N}])`,
+    'gu',
+  ) : null;
+  let insideLink = false;
+  const filePath = (file: AttachmentFile) => `${file.thread ? `/api/threads/${file.thread}` : scope}/files/${file.id}`;
+  function link(href: string, label: string, file?: AttachmentFile, name = '') {
+    if (file) mentioned.add(file.id);
+    if (file?.deleted) return `<span class="message-muted" aria-label="${escape(file.name)} (deleted)">${label} (deleted)</span>`;
+    const target = markdownLink(href, file?.thread ? `/api/threads/${file.thread}` : scope, location.origin);
+    if (!target) return label;
+    if (!rawFiles) {
+      const attributes = target.external ? ' target="_blank" rel="noopener noreferrer"' : target.result ? '' : ' download';
+      return '<a href="' + escape(target.href) + '"' + attributes + '>' + label + '</a>';
+    }
+    const candidate: ResultTarget = target.result ?? (target.external
+      ? { view: 'url', path: new URL(target.href, location.origin).href, name: target.href }
+      : { view: 'file', path: target.href.replace('/files/', '/panel/files/'), name: file?.name ?? (name || 'File') });
+    const result = resultTarget(candidate);
+    if (!result) return label;
+    const route = new URL(location.href);
+    route.searchParams.set('result', JSON.stringify(result));
+    return `<a href="${escape(route.pathname + route.search)}" data-minarbot-result title="${escape(target.href)}">${label}</a>`;
+  }
+  function prose(text: string) {
+    return !insideLink && pattern ? text.split(pattern).map((part, index) => {
+      const file = index % 2 ? files.find(file => file.name === part) : undefined;
+      return file ? link(filePath(file), escape(part), file) : escape(part);
+    }).join('') : escape(text);
+  }
+  function remainder() {
+    const links = files.filter(file => !mentioned.has(file.id)).map(file => link(filePath(file), escape(file.name), file));
+    return links.length ? `<p>${links.join(', ')}</p>` : '';
+  }
   const lines = text.split(/\r\n|\r|\n/);
   const columns = lines.reduce((max, line) => Math.max(max, line.split('|').length), 1);
-  if (text.length > 64000 || columns * lines.length > 6000) return escape(text);
+  if (text.length > 64000 || columns * lines.length > 6000) return escape(text) + remainder();
   const renderer = {
     html: ({ text }: Tokens.HTML | Tokens.Tag) => escape(text),
     image: ({ text }: Tokens.Image) => escape(text ? '[Image: ' + text + ']' : '[Image]'),
+    ...(rawFiles ? {
+      text(this: { parser: { parseInline: (tokens: Tokens.Link['tokens']) => string } }, token: Tokens.Text | Tokens.Escape) {
+        return 'tokens' in token && token.tokens ? this.parser.parseInline(token.tokens) : prose(decodeHTML(token.text));
+      },
+      codespan: ({ text }: Tokens.Codespan) => `<code>${prose(text)}</code>`,
+    } : {}),
     link(this: { parser: { parseInline: (tokens: Tokens.Link['tokens']) => string } }, token: Tokens.Link) {
+      const file = files.find(file => markdownLink(token.href, file.thread ? `/api/threads/${file.thread}` : scope, location.origin)?.href === filePath(file)
+        || !/^https?:/i.test(token.href) && token.href.endsWith('/' + file.name));
+      insideLink = true;
       const label = this.parser.parseInline(token.tokens);
-      const target = markdownLink(token.href, scope, location.origin);
-      if (!target) return label;
-      const attributes = target.external ? ' target="_blank" rel="noopener noreferrer"' : target.result ? '' : ' download';
-      return '<a href="' + escape(target.href) + '"' + attributes + '>' + label + '</a>';
+      insideLink = false;
+      return link(file ? filePath(file) : token.href, label, file, token.text);
     },
   };
   try {
-    return marked.parse(text, { async: false, renderer: Object.assign(new marked.Renderer(), renderer) });
-  } catch { return escape(text); }
+    return marked.parse(text, { async: false, renderer: Object.assign(new marked.Renderer(), renderer) }) + remainder();
+  } catch { return escape(text) + remainder(); }
 }
 
 async function upload(path: string, file: File) {
@@ -66,6 +114,23 @@ async function upload(path: string, file: File) {
   } catch (error) {
     if (error instanceof HttpError && error.status < 500 && error.status !== 409) sessionStorage.removeItem(key);
     throw error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function copyPanelFile(base: string, source: string, name: string) {
+  const response = await fetch(source);
+  if (!response.ok) throw 'File could not load. Try again.';
+  return upload(base, new File([await response.blob()], name));
+}
+
+async function downloadWorkspace(path: string, name: string) {
+  try {
+    const response = await fetch(path);
+    if (!response.ok) await readJson(response, 'Download failed. Try again.');
+    downloadBlob(await response.blob(), name);
+  } catch (error) {
+    if (error instanceof TypeError) throw 'Download interrupted. Check the connection and try again.';
+    throw error instanceof Error ? error.message : 'Download failed. Try again.';
   }
 }
 
@@ -295,5 +360,5 @@ function speechPlayback(listener: (enabled: boolean, owner: string, playing: boo
   };
 }
 
-export const browserAdapter = { findMatches, selectMatch, clearMatches, minimapPreview, bindTimelineWheel, bindTurnTabStops, postKeepalive, workLog, speechPlayback, record, messageTime, markdown, markdownBlocks, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
+export const browserAdapter = { copyPanelFile, downloadWorkspace, findMatches, selectMatch, clearMatches, minimapPreview, bindTimelineWheel, bindTurnTabStops, postKeepalive, workLog, speechPlayback, record, messageTime, markdown, markdownBlocks, upload, mountFrame: frame, mountVnc, readClipboard: readClipboardText,
   writeClipboard: copyText };
