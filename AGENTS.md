@@ -11,7 +11,7 @@ npm run build --prefix app
 cargo xtask leptos
 ```
 
-Run app tests with `npm test` from `app/` after building the workspace and Leptos. The TypeScript check leaves `app/dist` intact.
+Run app tests with `npm test` from `app/` after building the workspace and Leptos. The TypeScript check leaves the built app output intact.
 
 ## Rust
 
