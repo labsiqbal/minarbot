@@ -92,11 +92,6 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         const boot = await browser(accountsHost, '/auth/bootstrap');
         return browser(accountsHost, '/auth/session', {}, boot, subject);
     }
-    const project = (await browser(accountsHost, '/api/projects', { slug: 'alpha', name: 'Alpha' }, await login(alice))).data as { projectId: string; host: string; sectionId: string };
-    const ctx = (account: string) => a.resolveProject(project.host, account, project.projectId);
-    const { data: invitation } = await browser(project.host, '/api/invitations', { mailbox: 'bob@example.test', role: 'member' }, await projectSession(alice));
-    const proof = Object.fromEntries(new URLSearchParams(new URL(invitation.url).hash.slice(1)));
-    await browser(project.host, '/api/invitations/accept', proof, await projectSession(bob));
     let providerCalls = 0;
     const provider = createServer(async (req, res) => {
         let raw = '';
@@ -157,6 +152,11 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         const fragment = new URLSearchParams(new URL(handoff.data.callback).hash.slice(1));
         return browser(project.host, '/auth/redeem', { state: fragment.get('state'), code: fragment.get('code') }, { ...started, csrf: fragment.get('state')! });
     }
+    const project = (await browser(accountsHost, '/api/projects', { slug: 'alpha', name: 'Alpha' }, await login(alice))).data as { projectId: string; host: string; sectionId: string };
+    const ctx = (account: string) => a.resolveProject(project.host, account, project.projectId);
+    const { data: invitation } = await browser(project.host, '/api/invitations', { mailbox: 'bob@example.test', role: 'member' }, await projectSession(alice));
+    const proof = Object.fromEntries(new URLSearchParams(new URL(invitation.url).hash.slice(1)));
+    await browser(project.host, '/api/invitations/accept', proof, await projectSession(bob));
     async function browserPost(account: string, mentions: string[]) {
         const session = await projectSession(account);
         return (await browser(project.host, '/api/messages', { requestId: randomUUID(), sectionId: project.sectionId, text: 'Mention from authenticated project browser', mentions }, session)).data;
