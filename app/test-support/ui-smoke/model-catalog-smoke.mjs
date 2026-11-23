@@ -29,8 +29,9 @@ try {
   const picker = page.getByRole('combobox', { name: 'Run with', exact: true });
   const status = page.locator('.first-run__status');
   let fixture, created, saved, catalogPath;
+  const oldCatalog = Promise.withResolvers();
   await page.route('**/*', route => new URL(route.request().url()).origin === app.origin ? route.continue() : route.abort());
-  await page.route('**/api/**', route => {
+  await page.route('**/api/**', async route => {
     const request = route.request(), url = new URL(request.url());
     switch (url.pathname) {
       case '/api/agents':
@@ -49,6 +50,7 @@ try {
         catalogPath = url.pathname + '?' + url.searchParams.toString();
         const selected = url.searchParams.get('runtime');
         const preferred = selected === 'hermes' ? 'host-model' : selected + '-preferred';
+        if (fixture.holdCodex && selected === 'codex') await oldCatalog.promise;
         return fixture.unavailable ? route.fulfill({ status: 503, json: { error: 'Catalog unavailable' } })
           : route.fulfill({ json: { models: [preferred, selected + '-other'] } });
       }
@@ -128,6 +130,17 @@ try {
   assert.deepEqual(await page.locator('#' + suggested + ' option').evaluateAll(rows => rows.map(row => row.value)), ['api-preferred', 'api-other']);
   await modelInput.fill('api-other');
   await submit('api', api.id, 'api-other');
+
+  await mount({ ...three, holdCodex: true });
+  await expectModel('codex', 'device', 'default');
+  await picker.selectOption({ label: api.name });
+  await expectModel('api', api.id, 'api-preferred');
+  await Promise.all([
+    page.waitForResponse(response => new URL(response.url()).searchParams.get('runtime') === 'codex'),
+    oldCatalog.resolve(),
+  ]);
+  assert.equal(await modelInput.inputValue(), 'api-preferred');
+  assert.deepEqual(await page.locator('#' + suggested + ' option').evaluateAll(rows => rows.map(row => row.value)), ['api-preferred', 'api-other']);
 
   await mount({ ...three, unavailable: true });
   await expectModel('codex', 'device', 'default');
