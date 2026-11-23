@@ -129,10 +129,7 @@ pub async fn generate(
             "SELECT 1 FROM vault_grants WHERE entry=? AND agent=?",
             [FAL_ENTRY, agent],
         )? {
-            return Err(error(
-                403,
-                "Grant this agent the craft-anything-fal secret in Vault.",
-            ));
+            return Err(error(403, "Grant this agent the fal.ai secret in Vault."));
         }
     }
     if !approval(state, turn, name, input).await? {
@@ -140,7 +137,7 @@ pub async fn generate(
     }
     let (slot, mut secret) = {
         let _changes = state.computer.craft.changes.lock().await;
-        super::access(state, turn, authority.deep)?;
+        let authority = super::prepare(state, turn, authority.deep).await?;
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let (origin, secret) = super::super::vault::resolve(
             state,
@@ -160,7 +157,7 @@ pub async fn generate(
             state
                 .computer
                 .craft
-                .session(data::string(turn, "id"), authority)?,
+                .session(data::string(turn, "id"), &authority)?,
             secret,
         )
     };

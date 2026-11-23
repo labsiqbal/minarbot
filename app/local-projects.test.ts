@@ -136,12 +136,23 @@ test('built-in CodeGraph indexes projects and serves API turns without a CLI', a
 
     writeFileSync(source, 'export function projectFixture() { return 43; }\n');
     assert.match((await f.send(turns, 'EXPLORE')).reply, /return 43/);
-    await f.request(path + '/edit', { id: randomUUID(), revision: changed.revision, codegraphEnabled: false });
-    assert.equal((await f.request(path)).codegraphIndex.state, 'off');
-    f.calls.length = 0;
-    await f.send(turns, 'READ');
-    assert(f.calls.every(call => call.tools?.every((tool: { function: { name: string } }) =>
-      !tool.function.name.startsWith('codegraph_')) ?? true));
+    const legacy = { id: randomUUID(), revision: changed.revision };
+    const enabled = await f.request(path + '/edit', { ...legacy, codegraphEnabled: false });
+    assert.equal(enabled.codegraphEnabled, true);
+    assert.equal((await f.request(path + '/edit', legacy)).revision, enabled.revision);
+    assert.equal((await f.request(path)).codegraphIndex.state, 'ready');
+    assert.match((await f.send(turns, 'EXPLORE')).reply, /return 43/);
+    await f.stop();
+    const db = testDatabase(f.options.database);
+    try {
+      db.prepare('UPDATE local_projects SET codegraph_enabled=0 WHERE id=?').run(f.project.id);
+      db.prepare(`UPDATE local_project_commands SET
+        request=json_set(request,'$.codegraphEnabled',json('false')),
+        result=json_set(result,'$.codegraphEnabled',json('false')) WHERE id=?`).run(legacy.id);
+    } finally { db.close(); }
+    await f.restart();
+    assert.equal((await f.request(path + '/edit', legacy)).codegraphEnabled, true);
+    assert.match((await f.send(turns, 'EXPLORE')).reply, /return 43/);
   } finally { await f.close(); }
 });
 

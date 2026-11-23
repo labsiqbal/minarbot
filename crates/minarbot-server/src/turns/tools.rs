@@ -177,7 +177,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
     if crate::files::rich_html::available(state, turn) {
         specs.push(crate::files::components::spec());
     }
-    specs.extend(crate::computer::craft::specs(state, db, turn)?);
+    specs.extend(crate::computer::craft::specs(state));
     if turn["profile_setup"] == 1 {
         specs.retain(|t| ["edit_profile", "ask_user"].contains(&string(&t["function"], "name")));
         for tool in &mut specs {

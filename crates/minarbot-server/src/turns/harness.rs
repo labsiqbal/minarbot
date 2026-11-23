@@ -134,7 +134,7 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
     if super::goals::offer_tools(state, db, turn)? {
         specs.extend(super::goals::specs());
     }
-    specs.extend(crate::computer::craft::specs(state, db, turn)?);
+    specs.extend(crate::computer::craft::specs(state));
     if crate::connectors::mailbox::available(state, db, turn)? {
         specs.extend(crate::connectors::mailbox::specs()?);
     }

@@ -27,7 +27,7 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
 pub(super) fn enabled(db: &Connection, agent: &str) -> Result<bool> {
     exists(
         db,
-        "SELECT 1 FROM agents WHERE id=? AND web_access=1 AND library_docs_access=1",
+        "SELECT 1 FROM agents WHERE id=? AND web_access=1",
         [agent],
     )
 }

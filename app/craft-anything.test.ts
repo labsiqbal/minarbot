@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +9,7 @@ import test from 'node:test';
 import { startApp } from './test-bridge.ts';
 
 const linux = process.platform === 'linux';
-test('Craft Anything needs a grant and maps its approvals to allow-once cards', { skip: !linux }, async () => verifyCraft(false));
+test('Craft Anything is built in and maps its approvals to allow-once cards', { skip: !linux }, async () => verifyCraft(false));
 test('Craft Anything installs its signed release and captures a public page in Computer', {
   skip: !linux || process.env.MINARBOT_CRAFT_LIVE !== '1',
 }, async () => verifyCraft(true));
@@ -52,15 +52,6 @@ async function verifyCraft(downloadRelease: boolean) {
   try {
     const initial = await request(settings);
     assert.equal(initial.installed, false);
-    if (downloadRelease) {
-      assert.equal((await request(settings + '/install', {})).installed, true);
-      assert((await request('/api/skills')).skills.some((row: { name: string }) => row.name === 'Craft Anything'));
-    } else {
-      // The approval fixture never starts the binary.
-      const version = join(directory, 'craft-anything', initial.version);
-      await mkdir(version, { recursive: true });
-      await writeFile(join(version, 'craft-anything-cli'), 'fixture');
-    }
     await request('/api/agents', { runtime: 'api', id: agent, name: 'Craft fixture', model: 'fixture', instructions: 'Study websites.' }, 201);
     await request(path, { id: turn, text: 'Check Craft Anything.' }, 202);
     await waitForTurn(row => row.status === 'running');
@@ -87,10 +78,13 @@ async function verifyCraft(downloadRelease: boolean) {
       await request(url, { id: randomUUID(), revision: card.revision, decision });
       return card.input;
     }
-    assert(!(await exposed()).includes('call_craft_tool'));
-    assert.deepEqual((await request(settings + '/grant', { agent, enabled: true })).agents, [agent]);
-    assert((await exposed()).includes('list_craft_tools'));
-    assert((await exposed()).includes('call_craft_tool'));
+    const names = await exposed();
+    assert(names.includes('list_craft_tools'));
+    assert(names.includes('call_craft_tool'));
+    for (const enabled of [true, false]) {
+      assert((await request(settings + '/grant', { agent, enabled })).agents.includes(agent));
+    }
+    assert.deepEqual(await exposed(), names);
     assert.equal((await rpc('tools/call', { name: 'list_craft_tools', arguments: { deep: true } }, 403)).error,
       'MCP authorization failed.');
     const input = { file_path: 'draft.txt' };
@@ -104,6 +98,8 @@ async function verifyCraft(downloadRelease: boolean) {
     if (downloadRelease) {
       assert.equal((await list({ name: 'core_target_open' })).structuredContent.tool, null);
       assert.equal((await list({ name: 'web_site_open' })).structuredContent.tool.name, 'web_site_open');
+      assert.equal((await request(settings)).installed, true);
+      assert((await request('/api/skills')).skills.some((row: { name: string }) => row.name === 'Craft Anything'));
       const pending = call('web_site_open', { url: 'https://example.com/', settle_ms: 300 });
       await decide('allow');
       assert.match(JSON.stringify(await pending), /Example Domain/);
@@ -115,9 +111,8 @@ async function verifyCraft(downloadRelease: boolean) {
       assert.equal(artifact.structuredContent.name, 'screenshot-390.png');
       console.log(`Live Computer clean-room capture ${evidence.id}`);
     }
-    await request(settings + '/grant', { agent, enabled: false });
-    assert(!(await exposed()).includes('call_craft_tool'));
     assert.equal((await request(settings + '/remove', {})).installed, false);
+    assert.deepEqual(await exposed(), names);
   } finally {
     finish();
     await app.close();

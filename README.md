@@ -87,13 +87,16 @@ Chrome uses the same profile after each start. For encryption at rest on Linux, 
 
 Minarbot reads manifests and lockfiles in the agent's current working folder. It adds a short summary of detected versions to the turn and exposes `project_stack` and `library_docs` in API, Codex, Claude Code, and ACP turns. `library_docs` uses the detected version if there is exactly one. Use `version` to select among multiple versions. The tool labels the source and returns `source_version: null` when the source cannot verify its version.
 
-Library docs are on by default. In the agent profile's **Advanced** tab, turn off **Library docs** to disable both tools and the stack summary. Turning off **Web access** also disables them.
-
-**Settings → General → Library docs** shows the connection and key status. Anonymous lookups use Context7's lower rate limits. To use a key, add a Vault **Secret** named `context7-api-key`, scoped to `https://context7.com`, with no agent grants. The server sends it only as a bearer header to Context7. Delete the Vault entry to return to anonymous use.
+Library docs and the stack summary follow the agent's **Web access** setting. Minarbot indexes project folders with CodeGraph on supported Linux hosts. Craft Anything uses Computer and installs its signed engine on first use. Actions that need permission prompt in the conversation.
 
 The hosted API receives the library name or its public Context7 ID, the requested version when available, and a short public API topic. Minarbot keeps manifest contents, file paths, project metadata, conversation history and project credentials out of these requests. Use public identifiers and keywords in tool arguments. Context7 may retain lookup queries under its data privacy policy. [Context7 data privacy](https://context7.com/docs/security/data-privacy)
 
 Minarbot calls the documented v2 search and context endpoints. The reference MCP server is MIT-licensed and is used as API documentation. The hosted service has its own terms and rate limits. Lookups run on demand, respect `Retry-After`, and use official sources after an error or index/version miss. Successful Context7 excerpts are cached locally for 24 hours, official excerpts for one hour. Documentation excerpts remain subject to the original sources' terms. [API guide](https://context7.com/docs/api-guide) · [MCP client reference](https://github.com/upstash/context7/blob/b1e3611e32a8b1369ae526cacdf335ddfd6e5fbb/packages/mcp/src/lib/api.ts) · [MIT license](https://github.com/upstash/context7/blob/b1e3611e32a8b1369ae526cacdf335ddfd6e5fbb/LICENSE) · [Upstash terms](https://upstash.com/legal/terms)
+
+### Optional Vault keys
+
+- **Context7** uses anonymous lookups by default. For higher limits, add a Vault **Secret** named `context7-api-key` for `https://context7.com` and leave agents unselected.
+- **fal.ai** powers Craft Anything asset generation. Add a Vault **Secret** named `craft-anything-fal` for `https://fal.ai` and grant access to agents that can generate assets.
 
 ### Routine templates
 
