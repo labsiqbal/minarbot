@@ -46,7 +46,7 @@ try {
         saved = id;
         return route.fulfill({ json: { id, name, provider, defaultModel, configured: true } });
       case '/api/models': {
-        catalogPath = url.pathname + url.search;
+        catalogPath = url.pathname + '?' + url.searchParams.toString();
         const selected = url.searchParams.get('runtime');
         const preferred = selected === 'hermes' ? 'host-model' : selected + '-preferred';
         return fixture.unavailable ? route.fulfill({ status: 503, json: { error: 'Catalog unavailable' } })
@@ -69,7 +69,7 @@ try {
     const expected = '/api/models?' + new URLSearchParams({ runtime, account });
     await modelInput.waitFor();
     for (let i = 0; catalogPath !== expected && i < 100; i++) await wait(20);
-    assert.equal(catalogPath.replace(/&$/, ''), expected);
+    assert.equal(catalogPath, expected);
     await page.waitForFunction(model => document.querySelector('[placeholder="Enter model ID"]')?.value === model, model);
   }
   async function submit(runtime, account, model, pending) {

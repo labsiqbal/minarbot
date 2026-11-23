@@ -281,6 +281,36 @@ try {
     await bench.close();
     statistics[client] = timingsSummary(timings);
   }
+  // Exercise the renderer called by the Wasm conversation, including the
+  // reference-link fallback and model-supplied markup.
+  const markup = await page.evaluate(scope => {
+    const { markdown, markdownBlocks } = globalThis.MinarbotConversation;
+    const id = '11111111-1111-4111-8111-111111111111';
+    const files = JSON.stringify([{ id, name: 'report.html', size: 10 }]);
+    const prefix = 'First **paragraph**.\n\n';
+    const reference = '[reference][id]\n\n[id]: https://example.com/';
+    return {
+      safe: markdown('# Heading\n\n**Bold** and *italic*\n\n- One\n- Two\n\n| A | B |\n| - | - |\n| 1 | 2 |', scope, files),
+      refused: markdown('<img src="https://tracker.test/pixel" onerror="alert(1)">\n\n<script>alert(1)</script>\n\n[evil](javascript:alert(1))\n\n![track](https://tracker.test/x)\n\n<iframe src="/api/backup"></iframe>', scope),
+      file: markdown('Review report.html.', scope, files),
+      deleted: markdown('Review report.html.', scope, JSON.stringify([{ id, name: 'report.html', size: 10, deleted: true }])),
+      ordinary: markdown('[File](' + scope + '/files/' + id + ') [Docs](https://example.test/)', scope),
+      reference: markdown(markdownBlocks(reference)[0], scope, '[]'),
+      referenceBlocks: markdownBlocks(reference),
+      prefixes: ['Second', 'Second grows', 'Second grows.\n\nThird'].map(suffix => markdownBlocks(prefix + suffix)[0]),
+    };
+  }, '/api' + path);
+  for (const tag of ['h1', 'strong', 'em', 'ul', 'table']) assert(markup.safe.includes('<' + tag), tag);
+  assert.doesNotMatch(markup.refused, /<(img|script|iframe|style)|href=/);
+  assert.match(markup.file, /data-minarbot-result/);
+  assert.equal((markup.file.match(/<a /g) ?? []).length, 1);
+  assert.match(markup.deleted, /message-muted[^>]*>.*\(deleted\)/);
+  assert.doesNotMatch(markup.deleted, /<a /);
+  assert.match(markup.ordinary, / download/);
+  assert.match(markup.ordinary, /target="_blank"/);
+  assert.match(markup.reference, /title="https:\/\/example.com\/"/);
+  assert.equal(markup.referenceBlocks.length, 1);
+  assert.deepEqual(markup.prefixes, Array(3).fill('First **paragraph**.\n\n'));
   assert.deepEqual(errors, []);
   if (samples) {
     const coldStart = Object.fromEntries(Object.entries(cold).map(([client, runs]) => [client, {
