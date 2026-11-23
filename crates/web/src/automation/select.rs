@@ -1,9 +1,10 @@
-use super::*;
+use crate::connection_ui as ui;
+use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 #[component]
 pub(super) fn Select(
-    name: &'static str,
+    #[prop(into)] name: String,
     #[prop(optional, into)] label: Option<String>,
     #[prop(optional_no_strip)] described_by: Option<&'static str>,
     value: Signal<String>,
@@ -85,7 +86,11 @@ pub(super) fn Select(
     let list_id = format!("{name}-list");
     let controls = list_id.clone();
     let label_for = label.clone();
-    let labelled_by = if label.is_some() { None } else { Some(name) };
+    let labelled_by = if label.is_some() {
+        None
+    } else {
+        Some(name.clone())
+    };
     let typeahead = RwSignal::new((0.0_f64, String::new()));
     view! {
         <button id=name node_ref=trigger type="button" role="combobox" class="k-input k-select" class:k-select--sm=small

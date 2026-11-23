@@ -66,9 +66,9 @@
   .composer__toolbar { flex-wrap: wrap; padding-inline: 4px; }
   .composer__right { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
   .composer__input, .chat input:not([type="radio"], [type="checkbox"], [type="file"]), .chat textarea { font-size: max(1rem, var(--mobile-input-size)); }
-  .transcript .k-row-actions .k-btn { min-height: 44px; max-width: 100%; height: auto; white-space: normal; }
+  .transcript .k-row-actions .k-btn:not(.k-dialog *) { min-height: 44px; max-width: 100%; height: auto; white-space: normal; }
   .transcript .k-fieldset, .transcript .k-check { min-width: 0; }
-  .transcript .k-check { min-height: 44px; }
+  .transcript .k-check:not(.k-dialog *) { min-height: 44px; }
   .transcript .k-row__title { white-space: normal; overflow-wrap: anywhere; }
 
   .app-settings { flex-direction: column; height: 100dvh; padding-top: env(safe-area-inset-top); }

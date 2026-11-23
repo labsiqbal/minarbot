@@ -52,17 +52,14 @@ Restoring projects archived before #81 keeps their sections and conversations
 archived. Discord and WhatsApp reuse the installation settings for project
 routing destinations.
 
-The Guide uses the `conversation` bundle on its ordinary URL. Agent, named
-conversation, and room pilots use that bundle with `?ui=leptos`, including Memory,
-History summary, Files, Changes, workspace browsing, result links, and Computer. Standalone Computer
-uses the same bundle when Leptos is enabled and supports `ui=react` for rollback.
-Agent email inbox at `/agents/:id/inbox` and paired-machine agent detail at
-`/machines/:id/agents/:id` use the conversation bundle on ordinary URLs when
-Leptos is enabled.
-The workspace shell mounts agent creation, profile editing, and template dialogs.
-Agent creation and import open the conversation bundle through the pilot selector.
-Settings return links and browser history retain the selected route. Advanced
-profile mounts Agent memory and History summary inside the selected route group.
+After setup, `/`, agent Main chat, named and project conversations, rooms, and
+Guide use the `conversation` bundle. Files, Changes, result previews, workspace
+browsing, and standalone Computer also use that bundle. Conversation links
+reuse the shell and browser history. Settings return links retain the selected
+route. Add `?ui=react` to open the React client. The workspace shell mounts agent
+creation, profile editing, and template dialogs inside the selected route group.
+Conversation controls and Advanced profile provide Memory and History summary.
+Agent email inbox and paired-machine agent detail also use the conversation bundle.
 Both clients share the note recovery journal format.
 React remains the default for the staged rollout in #67.
 
@@ -74,9 +71,8 @@ issue.
 
 | Issue group | React screens and dialogs | React sources |
 | --- | --- | --- |
-| Conversation routing and remaining chat controls | Post-setup `/`, agent Main chat, named and project conversations, and rooms use React on ordinary links. The explicit #63 pilot covers the core transcript, composer, rich replies, queue, approvals, Goals/Loops, chat list and Computer panel. Still on the React path are timeline minimap, historical paging and task-family navigation, speech playback, chat history search across conversations, fork history/origin, checkpoint restore, signed event connection, room management and the remaining dispatch controls. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `ui/AgentConversation.tsx`, `ui/ChatPrimitives.tsx`, `ui/MessageFind.tsx`, `ui/TimelineMinimap.tsx`, `ui/TurnActivity.tsx`, `ui/RunControls.tsx`, `SourceControl.tsx`, `SpeechPlayback.tsx`, `EventConnection.tsx` |
 | Memory and history summary | Agent and section Memory and History summary use Leptos in the selected conversation routes and Advanced profile. React provides the same Notes, Learned, Standing questions, and compaction views on rollback. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
-| Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. Remote agent detail remains React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
+| Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. Quick switcher's New project entry and remote agent detail use React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
 | Agent inbox and remote agent detail | Agent email inbox and message content at `/agents/:id/inbox`, and paired-machine agent detail at `/machines/:id/agents/:id`. | `App.tsx`, `AgentEmail.tsx`, `MachinesPanel.tsx`, `AgentActions.tsx` |
 | Conversation files, results and Computer | Local agent, named conversation and room file panels, workspace browser, Changes, artifact and result previews, run inspector, secure requests and standalone Computer use the Leptos conversation bundle. Remote agent detail follows its own route group. | `RightPanel.tsx`, `RightPanelFiles.tsx`, `RightPanelDiff.tsx`, `WorkspacePanel.tsx`, `HtmlPreview.tsx`, `ResultURLPreview.tsx`, `ComputerViewer.tsx`, `SecureComputerRequest.tsx`, `RunInspector.tsx` |
 | Automation embedded in conversations | Agent/section Upcoming routines, inbound routine reports and deep links, and the agent-scoped workflow library, editor, versions, webhook/schedule forms and run inspector with inline step conversations. | `App.tsx`, `WorkflowPanel.tsx`, `WorkflowEditor.tsx`, `WorkflowGraph.tsx`, `WorkflowSchedule.tsx`, `WorkflowWebhook.tsx`, `WorkflowInbox.tsx` |
@@ -91,6 +87,13 @@ webhook and run inspector. Back from an inline step restores focus to the step
 button. Global workflow step links open the conversation route.
 
 ## Verify
+
+Run `node --experimental-strip-types app/test-support/ui-smoke/conversation-controls-parity-smoke.mjs <output-directory>`
+after packaging Leptos, with `MINARBOT_RUST_BINARY` pointing at the built server.
+The smoke compares navigation, message history, and chat controls in both
+themes at desktop and narrow widths against the same disposable server.
+Run `MINARBOT_SMOKE_CONVERSATION_LEPTOS=1 node --experimental-strip-types app/test-support/ui-smoke/smoke.mjs`
+to run the existing minimap, room, streaming, and dispatch checks on Leptos.
 
 Install the UI smoke dependencies under `app/test-support/ui-smoke` and install the pinned Playwright Chromium. Run `node app/test-support/ui-smoke/appearance-smoke.mjs` with `MINARBOT_RUST_BINARY` pointing at the built server. It restarts a disposable loopback server on the same origin to verify both selectors, General API and keyboard parity, appearance persistence, and rollback.
 

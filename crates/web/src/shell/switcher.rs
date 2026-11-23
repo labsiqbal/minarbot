@@ -1,4 +1,4 @@
-use super::{api, conversation_link, Directory, Icons, Machines, Projects};
+use super::{api, Directory, Icons, Machines, Projects};
 use crate::{settings, workspace_route::valid_id};
 use leptos::prelude::*;
 use serde::Deserialize;
@@ -66,7 +66,6 @@ pub(super) struct Data {
     pub machines: RwSignal<Option<Result<Machines, String>>>,
     pub projects: RwSignal<Option<Result<Projects, String>>>,
     pub base_path: Signal<String>,
-    pub conversation_navigation: bool,
     pub new_conversation: Signal<bool>,
     pub online: RwSignal<bool>,
     pub attention: RwSignal<bool>,
@@ -80,7 +79,6 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
             .iter()
             .flat_map(|data| data.agents.iter().chain(data.guide.iter()))
     };
-    let chat = |path| conversation_link(path, data.conversation_navigation);
     if data.new_conversation.get() {
         let mut item = Item::link(
             "New conversation",
@@ -98,7 +96,7 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
             "Agents",
             "",
             String::new(),
-            chat(format!("/agents/{}", agent.id)),
+            format!("/agents/{}", agent.id),
         );
         item.avatar = Some((agent.avatar_revision > 0).then(|| {
             format!(
@@ -136,7 +134,7 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
         }
     }
     let thread_link = |agent: &str, id: &str, name: String, detail: String| {
-        let path = chat(format!("/agents/{agent}/conversations/{id}"));
+        let path = format!("/agents/{agent}/conversations/{id}");
         Item::link(name, "Conversations", detail, icons.message.clone(), path)
     };
     if let Some(Ok(projects)) = data.projects.get() {
@@ -162,7 +160,7 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
                     "Sections",
                     &project.name,
                     icons.hash.clone(),
-                    chat(format!("/rooms/{}", section.id)),
+                    format!("/rooms/{}", section.id),
                 ));
             }
             for thread in project

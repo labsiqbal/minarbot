@@ -68,7 +68,7 @@ impl Lifecycle {
     }
 
     pub fn link(self, agent: &str) -> String {
-        format!("/agents/{agent}?ui=leptos")
+        format!("/agents/{agent}")
     }
 
     fn start_chat(self, agent: &Value) {
