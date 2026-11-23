@@ -652,21 +652,23 @@ fn number_field(label: &'static str, name: &'static str, max: u32, value: u32) -
 fn goal_chip(chat: Chat) -> impl IntoView {
     let result = RwSignal::new(Value::Null);
     let busy = RwSignal::new(false);
-    fn refresh(chat: Chat, result: RwSignal<Value>) {
-        if result.is_disposed() {
-            return;
-        }
-        let path = format!("{}/goal", chat.base());
+    let reading = RwSignal::new(false);
+    let failed = RwSignal::new(false);
+    let path = StoredValue::new(format!("{}/goal", chat.base()));
+    let refresh = move || {
+        reading.set(true);
+        let path = path.get_value();
         leptos::task::spawn_local(async move {
-            if let Ok(value) = get(&path).await {
+            let current = get(&path).await;
+            failed.try_set(current.is_err());
+            if let Ok(value) = current {
                 result.try_set(value);
             }
-            if !result.is_disposed() {
-                set_timeout(move || refresh(chat, result), Duration::from_millis(1800));
-            }
+            reading.try_set(false);
         });
-    }
-    refresh(chat, result);
+    };
+    refresh();
+    crate::connection_ui::poll_with_backoff(1800, move || (!reading.get_untracked() && !busy.get_untracked()).then(|| failed.get_untracked()), refresh);
     view! {
         {move || result.with(|goal| {
             let target = goal["target"].as_str()?.to_owned();

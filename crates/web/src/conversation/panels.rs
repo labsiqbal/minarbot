@@ -582,7 +582,11 @@ impl ComputerControl {
             error: RwSignal::new(String::new()),
             busy: RwSignal::new(false),
         };
-        control.refresh();
+        let reading = RwSignal::new(false);
+        let failed = RwSignal::new(false);
+        let refresh = move || control.refresh(reading, failed);
+        refresh();
+        crate::connection_ui::poll_with_backoff(1000, move || (!reading.get_untracked()).then(|| failed.get_untracked()), refresh);
         control
     }
 
@@ -598,15 +602,15 @@ impl ComputerControl {
         })
     }
 
-    fn refresh(self) {
-        if self.status.is_disposed() {
-            return;
-        }
+    fn refresh(self, reading: RwSignal<bool>, failed: RwSignal<bool>) {
+        reading.set(true);
         let path = self.path.get_value();
         let previous = self.status.get_untracked();
         leptos::task::spawn_local(async move {
-            if !document().hidden() {
-                let result = get::<ComputerStatus>(&path).await;
+            let result = get::<ComputerStatus>(&path).await;
+            reading.try_set(false);
+            failed.try_set(result.is_err());
+            {
                 if self.status.is_disposed() {
                     return;
                 }
@@ -624,7 +628,6 @@ impl ComputerControl {
                     }
                 }
             }
-            set_timeout(move || self.refresh(), Duration::from_secs(1));
         });
     }
 

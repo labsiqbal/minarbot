@@ -888,9 +888,11 @@ fn polling(
     epoch: u64,
     abort: StoredValue<Option<web_sys::AbortController>, LocalStorage>,
     dispatch_busy: RwSignal<bool>,
+    dispatch_retry: RwSignal<(f64, u32)>,
+    mut failures: u32,
 ) {
     let current = move || generation.try_get_untracked() == Some(epoch);
-    if !current() {
+    if !current() || document().hidden() {
         return;
     }
     let base = chat.base();
@@ -906,7 +908,8 @@ fn polling(
     };
     let signal =
         abort.with_value(|controller| controller.as_ref().map(web_sys::AbortController::signal));
-    if !dispatch_busy.get_untracked() {
+    let (retry_at, dispatch_failures) = dispatch_retry.get_untracked();
+    if !dispatch_busy.get_untracked() && js_sys::Date::now() >= retry_at {
         dispatch_busy.set(true);
         let dispatch_signal = signal.clone();
         let dispatch_path = format!("{base}/dispatch");
@@ -916,9 +919,14 @@ fn polling(
             if current() {
                 dispatch_busy.set(false);
                 if let Ok(active) = result {
+                    dispatch_retry.set((0.0, 0));
                     if chat.active.with_untracked(|old| *old != active) {
                         chat.active.set(active);
                     }
+                } else {
+                    let count = (dispatch_failures + 1).min(5);
+                    let delay = crate::connection_ui::backoff(1200, count);
+                    dispatch_retry.set((js_sys::Date::now() + delay as f64, count));
                 }
             }
         });
@@ -979,6 +987,7 @@ fn polling(
         {
             match result {
                 Ok(mut rows) => {
+                    failures = 0;
                     snapshots.update_value(|snapshots| {
                         for turn in &mut rows {
                             if turn.status == "running" {
@@ -1023,11 +1032,15 @@ fn polling(
                     }
                     chat.read_error.set(String::new());
                 }
-                Err(error) => chat.read_error.set(error.message),
+                Err(error) => {
+                    chat.read_error.set(error.message);
+                    failures = (failures + 1).min(5);
+                    delay = Duration::from_millis(crate::connection_ui::backoff(1200, failures));
+                }
             }
         }
         set_timeout(
-            move || polling(chat, snapshots, generation, epoch, abort, dispatch_busy),
+            move || polling(chat, snapshots, generation, epoch, abort, dispatch_busy, dispatch_retry, failures),
             delay,
         );
     });
@@ -1809,6 +1822,8 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
     let guide = config.agent.clone().filter(|agent| agent.builtin);
     let snapshots = StoredValue::new(HashMap::new());
     subscribe(chat, snapshots);
+    let visible = RwSignal::new(!document().hidden());
+    crate::connection_ui::on_visibility(move || visible.set(!document().hidden()));
     let generation = RwSignal::new(0_u64);
     Effect::new(move |_| {
         chat.focus.track();
@@ -1816,6 +1831,9 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         chat.finding.track();
         chat.refresh.track();
         generation.update(|value| *value += 1);
+        if !visible.get() {
+            return;
+        }
         let abort = StoredValue::new_local(web_sys::AbortController::new().ok());
         on_cleanup(move || {
             abort.try_with_value(|controller| {
@@ -1831,6 +1849,8 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
             generation.get_untracked(),
             abort,
             RwSignal::new(false),
+            RwSignal::new((0.0, 0)),
+            0,
         );
     });
     message_actions::playback();

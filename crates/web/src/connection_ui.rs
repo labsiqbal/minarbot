@@ -760,13 +760,19 @@ pub fn poll_with_backoff(
         actions: StoredValue::new_local((Box::new(status), Box::new(tick))),
     };
     poll.schedule(milliseconds, false);
-    let changed = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || poll.resume());
-    let _ = document().add_event_listener_with_callback("visibilitychange", changed.as_ref().unchecked_ref());
-    let changed = StoredValue::new_local(changed);
+    on_visibility(move || poll.resume());
     let focus = window_event_listener(leptos::ev::focus, move |_| poll.resume());
     on_cleanup(move || {
         poll.clear();
         focus.remove();
+    });
+}
+
+pub(crate) fn on_visibility(changed: impl FnMut() + 'static) {
+    let changed = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(changed);
+    let _ = document().add_event_listener_with_callback("visibilitychange", changed.as_ref().unchecked_ref());
+    let changed = StoredValue::new_local(changed);
+    on_cleanup(move || {
         changed.with_value(|changed| {
             let _ = document().remove_event_listener_with_callback("visibilitychange", changed.as_ref().unchecked_ref());
         });

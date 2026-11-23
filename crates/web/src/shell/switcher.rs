@@ -258,6 +258,7 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
     let restoring = RwSignal::new(false);
     let generation = RwSignal::new(0_u32);
     let directory = data.directory;
+    let pending = RwSignal::new(0);
     let fetch_threads = move || {
         let revision = generation.get_untracked().wrapping_add(1);
         generation.set(revision);
@@ -273,6 +274,7 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         });
+        pending.set(agents.len());
         for agent in agents {
             leptos::task::spawn_local(async move {
                 let result =
@@ -282,6 +284,7 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
                 {
                     return;
                 }
+                pending.update(|count| *count -= 1);
                 match result {
                     Ok(rows) => threads.update(|threads| {
                         threads.extend(rows.into_iter().filter(|row| {
@@ -300,16 +303,7 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
     Effect::new(move |_| {
         if opened.get() {
             fetch_threads();
-            if let Ok(timer) = set_interval_with_handle(
-                move || {
-                    if !document().hidden() {
-                        untrack(fetch_threads);
-                    }
-                },
-                std::time::Duration::from_secs(30),
-            ) {
-                on_cleanup(move || timer.clear());
-            }
+            crate::connection_ui::poll_with_backoff(30000, move || (pending.get_untracked() == 0).then(|| thread_error.get_untracked()), fetch_threads);
         }
     });
     Effect::new(move |_| {
