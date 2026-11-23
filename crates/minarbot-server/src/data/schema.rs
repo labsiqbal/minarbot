@@ -111,6 +111,7 @@ fn initialize_mode(database: &Database, canonical: bool) -> crate::db::Result<()
             CREATE TRIGGER IF NOT EXISTS channel_turn_created AFTER INSERT ON turns WHEN NEW.channel IS NOT NULL BEGIN UPDATE channels SET activity=activity+1 WHERE id=NEW.channel; END;
             CREATE TRIGGER IF NOT EXISTS channel_turn_changed AFTER UPDATE ON turns WHEN NEW.channel IS NOT NULL AND(NEW.status IS NOT OLD.status OR NEW.reply IS NOT OLD.reply OR NEW.agent IS NOT OLD.agent OR NEW.revision IS NOT OLD.revision) BEGIN UPDATE channels SET activity=activity+1 WHERE id=NEW.channel; END;
             ")?;
+        db.execute_batch(include_str!("builtin-tools.sql"))?;
         memory::initialize(db, canonical)?;
         if canonical {
             return Ok(());
