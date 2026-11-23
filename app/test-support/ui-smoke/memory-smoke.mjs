@@ -14,7 +14,7 @@ import { startApp } from '../../test-bridge.ts';
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-memory-ui-'));
 const output = resolve(process.argv[2] ?? await mkdtemp(join(tmpdir(), 'minarbot-memory-shots-')));
 const database = join(scratch, 'fixture.sqlite');
-const agent = randomUUID(), turn = randomUUID(), thread = randomUUID(), channel = randomUUID();
+const agent = '40000000-0000-4000-8000-000000000050', turn = '40000000-0000-4000-8000-000000000051', thread = '40000000-0000-4000-8000-000000000052', channel = '40000000-0000-4000-8000-000000000053';
 const main = `/agents/${agent}`, named = `${main}/conversations/${thread}`, room = `/rooms/${channel}`;
 const note = 'Start the greenhouse inventory on Mondays.';
 const shared = 'Water the seedlings before noon.';
@@ -24,6 +24,8 @@ const clients = ['leptos'];
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
 const samples = Number(process.env.MINARBOT_MEMORY_BENCH ?? 0);
 const images = new Map(), errors = [], timings = {};
+let nextId = 60;
+const stableId = () => `40000000-0000-4000-8000-${String(nextId++).padStart(12, '0')}`;
 const bank = `agents:${agent}`, memory = `/api/agents/${agent}/memory`;
 const provider = createServer((request, response) => {
   response.setHeader('Content-Type', 'application/json');
@@ -42,8 +44,8 @@ try {
   await api('/api/agents', { id: agent, name: 'Garden planner', model: 'fixture', instructions: 'Plan garden work.', runtime: 'api' });
   await api(`/api/agents/${agent}/threads`, { id: thread, name: 'Seedling planning' });
   await api('/api/channels', { id: channel, name: 'Greenhouse', instructions: 'Plan planting.', lead: agent, members: [agent] });
-  await api(`/api/channels/${channel}/memory`, { id: randomUUID(), entry: randomUUID(), text: shared, revision: 0, essential: false, remove: false });
-  await api(memory, { id: randomUUID(), entry: randomUUID(), text: 'Start the greenhouse inventory on Mondays.', revision: 0, essential: true, remove: false });
+  await api(`/api/channels/${channel}/memory`, { id: stableId(), entry: stableId(), text: shared, revision: 0, essential: false, remove: false });
+  await api(memory, { id: stableId(), entry: stableId(), text: 'Start the greenhouse inventory on Mondays.', revision: 0, essential: true, remove: false });
   const db = new DatabaseSync(database);
   try {
     const source = { kind: 'turn', id: turn, agent, thread, role: 'prompt', created: '2026-11-19T10:30:00Z' };
@@ -208,7 +210,7 @@ try {
       await go(page, client, main);
       let panel = await openMemory(page, await profile(page, client));
       const key = `minarbot:memory:${memory}`;
-      const command = { id: randomUUID(), entry: randomUUID(), revision: 0, text: 'Recovery fixture note.', essential: true, remove: false };
+      const command = { id: stableId(), entry: stableId(), revision: 0, text: 'Recovery fixture note.', essential: true, remove: false };
       await api(memory, command);
       await page.evaluate(([key, command]) => sessionStorage.setItem(key, JSON.stringify(command)), [key, command]);
       await page.reload();
@@ -227,7 +229,7 @@ try {
       await panel.getByText('Note forgotten.', { exact: true }).waitFor();
       await button(panel, 'Undo').press('Enter');
       await panel.getByText('Note restored.', { exact: true }).waitFor();
-      await api(memory, { ...command, id: randomUUID(), revision: 3, text: '', essential: false, remove: true });
+      await api(memory, { ...command, id: stableId(), revision: 3, text: '', essential: false, remove: true });
 
       const memoryPanel = panel;
       await role(memoryPanel, 'tab', 'Learned').press('Enter');

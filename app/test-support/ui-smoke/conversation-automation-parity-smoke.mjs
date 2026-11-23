@@ -14,7 +14,7 @@ const output = resolve(process.argv[2] ?? 'test-support/ui-smoke/artifacts/conve
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-conversation-automation-'));
 const folder = await mkdtemp(join(await realpath('node_modules'), '.conversation-automation-project-'));
 await mkdir(output, { recursive: true });
-const ids = Object.fromEntries(['agent', 'other', 'project', 'section', 'routine', 'workflow', 'foreign', 'machine', 'remote', 'mail'].map(key => [key, randomUUID()]));
+const ids = Object.fromEntries(['agent', 'other', 'project', 'section', 'routine', 'workflow', 'foreign', 'machine', 'remote', 'mail'].map((key, index) => [key, `40000000-0000-4000-8000-${String(index + 20).padStart(12, '0')}`]));
 const provider = createServer(async (req, res) => {
   for await (const chunk of req) void chunk;
   res.setHeader('Content-Type', 'application/json');
@@ -33,7 +33,7 @@ assert(Number.isSafeInteger(samples) && samples >= 0);
 const fixture = { id: ids.mail, subject: 'Fixture receipt', from: 'sender@example.test', to: 'owner@example.test', text: 'The fixture arrived. <b>Plain text.</b>', received: now };
 const digest = 'Morning digest';
 const wfName = 'Owner workflow';
-const workflowRunId = randomUUID();
+const workflowRunId = '40000000-0000-4000-8000-000000000031';
 let browser;
 
 async function exercise(client, app) {

@@ -15,10 +15,10 @@ if (output) await mkdir(output, { recursive: true });
 let origin;
 
 const peerId = 'fixture-peer';
-const agentId = randomUUID();
-const accountId = randomUUID();
-const deviceId = randomUUID();
-const tokenId = randomUUID();
+const agentId = '40000000-0000-4000-8000-000000000040';
+const accountId = '40000000-0000-4000-8000-000000000041';
+const deviceId = '40000000-0000-4000-8000-000000000042';
+const tokenId = '40000000-0000-4000-8000-000000000043';
 const stamp = Date.parse('2026-11-15T00:00:00Z');
 const created = new Date(stamp).toISOString();
 const release = { id: '0.2.0-12345678', version: '0.2.0', commit: '12345678'.repeat(5), created, notes: 'Synthetic release notes.', source: 'Local feed' };

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { assertP95 } from './timing-budgets.mjs';
-import { parityShot } from './parity-shot.mjs';
+import { fixDate, parityShot } from './parity-shot.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -19,7 +19,9 @@ const binary = resolve(process.env.MINARBOT_RUST_BINARY ?? join(root, 'target/de
 const output = process.env.MINARBOT_CONVERSATION_SCREENSHOTS;
 const data = await mkdtemp(join(tmpdir(), 'minarbot-leptos-chat-'));
 const calls = [];
-const agent = randomUUID();
+const agent = '40000000-0000-4000-8000-000000000001';
+// Match the time displayed in the frozen conversation screenshots.
+const captureClock = Date.UTC(2026, 10, 23, 16, 21);
 const path = '/agents/' + agent;
 const turns = '/api' + path + '/turns';
 let releaseAnswer;
@@ -51,7 +53,7 @@ try {
     child.once('exit', code => reject(new Error('Fixture exited ' + code)));
   });
   child.stdin.end(JSON.stringify({
-    database: join(data, 'state.sqlite'), port: 0, dist: join(root, 'app/dist'), baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', defaultModel: 'fixture', stream: true,
+    database: join(data, 'state.sqlite'), port: 0, dist: join(root, 'app/dist'), fixedClock: captureClock, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', defaultModel: 'fixture', stream: true,
   }));
   const origin = await Promise.race([listening, wait(90_000, null, { ref: false })]);
   assert(origin, 'Fixture readiness timed out');
@@ -69,6 +71,7 @@ try {
     if (localStorage.getItem('minarbot:details-open') === null) localStorage.setItem('minarbot:details-open', '0');
   });
   const page = await context.newPage();
+  await fixDate(page, captureClock + 60_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const route = origin + path + '';

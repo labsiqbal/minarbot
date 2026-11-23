@@ -15,6 +15,7 @@ const out = resolve(process.argv[2] ?? '/tmp/minarbot-conversation-parity');
 const work = await mkdtemp(join(tmpdir(), 'minarbot-conversation-parity-'));
 const dist = fileURLToPath(new URL('../../dist', import.meta.url));
 const model = 'parity-fixture';
+const ids = { agent: '40000000-0000-4000-8000-000000000010', completed: '40000000-0000-4000-8000-000000000011', failed: '40000000-0000-4000-8000-000000000012', rich: '40000000-0000-4000-8000-000000000013' };
 const chart = {
   tree: { type: 'stack', children: [{ type: 'bar', title: 'Weekly signups', data: 'signups' }] },
   data: { signups: [{ label: 'Week 1', value: 26 }, { label: 'Week 2', value: 40 }, { label: 'Week 3', value: 51 }, { label: 'Week 4', value: 67 }] },
@@ -47,16 +48,16 @@ let app, browser;
 try {
   await mkdir(out, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startRustServer({ appearanceClient: 'leptos', database: join(work, 'state.sqlite'), dist, baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: model, stream: false });
+  app = await startRustServer({ appearanceClient: 'leptos', appearanceClient: 'leptos', database: join(work, 'state.sqlite'), dist, fixedClock: Date.UTC(2026, 10, 23, 7), baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: model, stream: false });
   async function api(path, payload) {
     const res = await fetch(app.origin + path, payload === undefined ? undefined : { method: 'POST', headers: { origin: app.origin, 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     assert(res.ok, `${path} ${res.status} ${await res.clone().text()}`);
     return res.json();
   }
-  const agent = await api('/api/agents', { id: randomUUID(), name: 'Conversation fixture', instructions: 'Reply to fixture prompts.', model, runtime: 'api' });
+  const agent = await api('/api/agents', { id: ids.agent, name: 'Conversation fixture', instructions: 'Reply to fixture prompts.', model, runtime: 'api' });
   const main = `/agents/${agent.id}`;
   async function seed(scope, text, ready) {
-    const id = randomUUID();
+    const id = text === 'Replay fixture' ? ids.completed : text === 'Inspect failed run' ? ids.failed : ids.rich;
     await api(`${scope}/turns`, { id, text });
     for (let i = 0; i < 200; i++) {
       const turn = (await api(`${scope}/turns`)).find(row => row.id === id);
