@@ -7,6 +7,7 @@ type KeyEntry = { getPassword(): string | null; setPassword(value: string): void
 export type HubLinkOptions = {
   fetch?: typeof fetch;
   webSocket?: (url: string, options: ClientOptions) => WebSocket;
+  receive?: (frame: string, socket: WebSocket) => string[];
   origin: string;
   hubSigningPublicKey: string;
   development?: boolean;
@@ -36,7 +37,12 @@ export function hubTestTransport(options?: HubLinkOptions) {
         if (!options.webSocket) throw new Error('Hub fixture requires isolated WebSocket transport.');
         const socket = options.webSocket(options.origin.replace(/^http/, 'ws') + '/node', { headers: args.headers as Record<string, string>, maxPayload: 65536, perMessageDeflate: false, followRedirects: false, handshakeTimeout: 10000 });
         const entry = { socket, events: [] as string[], closed: false }; sockets.set(String(args.id), entry);
-        socket.on('message', (data, binary) => { if (binary || entry.events.length >= 128) { socket.terminate(); return; } entry.events.push(data.toString()); });
+        socket.on('message', (data, binary) => {
+          if (binary) { socket.terminate(); return; }
+          const frame = data.toString(), frames = options.receive?.(frame, socket) ?? [frame];
+          if (entry.events.length + frames.length > 128) { socket.terminate(); return; }
+          entry.events.push(...frames);
+        });
         socket.on('close', () => { entry.closed = true; }); socket.on('error', () => { socket.terminate(); });
         return null;
       }
