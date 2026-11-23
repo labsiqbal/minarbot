@@ -151,7 +151,7 @@ console.log(`Lint: ${checks} assertions passed; ${browserSafeModules.length} sha
     .filter(name => !name.endsWith('.test.ts') && !/^rust-.*\.ts$|^vite.*\.config\.ts$/.test(name)
       && name !== 'test-bridge.ts' && name !== 'test.ts');
   assert.deepEqual(rootModules.sort(), [],
-    'Server code belongs in Rust. Put browser code under src/ or shared/, hub code under hub/, and test helpers under test-support/.');
+    'Server code belongs in Rust. Put browser code under src/ or shared/, and test helpers under test-support/.');
 }
 
 // A port taken from listen(0) and released is in the kernel's ephemeral range, where another
