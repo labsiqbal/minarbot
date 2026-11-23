@@ -177,7 +177,7 @@ impl Composer {
                             ..draft
                         });
                     }
-                    if failure.access_ended() {
+                    if failure.status == 401 {
                         self.page.failed(failure.clone());
                     }
                     self.error.try_set(if failure.code == "node_offline" {

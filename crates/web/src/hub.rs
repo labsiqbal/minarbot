@@ -638,13 +638,13 @@ fn parse_join(raw: &str) -> Option<Value> {
     .then_some(value)
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct NamedSection {
     id: String,
     name: String,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Member {
     account_id: String,

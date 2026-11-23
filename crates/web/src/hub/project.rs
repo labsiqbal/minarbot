@@ -5,11 +5,11 @@ use crate::system::kit::{named_confirmation, Confirm};
 use wasm_bindgen::{closure::Closure, JsCast};
 use web_sys::{EventSource, MessageEvent};
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct ProjectName {
     name: String,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Participant {
     id: String,
@@ -24,13 +24,13 @@ struct Participant {
     policy_digest: String,
     project_consent_revision: Option<i64>,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Policy {
     section_ids: Vec<String>,
     invocation: Invocation,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct Invocation {
     mode: String,
 }
@@ -85,10 +85,14 @@ impl ProjectPage {
         }
         match result {
             Ok((project, sections, members, participants)) => {
-                self.data.set(Some(project));
-                self.sections.set(sections);
-                self.members.set(members);
-                self.participants.set(participants);
+                self.data
+                    .maybe_update(|current| replace_if_changed(current, Some(project)));
+                self.sections
+                    .maybe_update(|current| replace_if_changed(current, sections));
+                self.members
+                    .maybe_update(|current| replace_if_changed(current, members));
+                self.participants
+                    .maybe_update(|current| replace_if_changed(current, participants));
             }
             Err(failure) => self.failed(failure),
         }
@@ -121,7 +125,8 @@ impl ProjectPage {
                     success(value);
                     self.refresh();
                 }
-                Err(failure) => self.failed(failure),
+                Err(failure) if failure.status == 401 => self.failed(failure),
+                Err(failure) => self.error.set(failure.message),
             }
             self.busy.set(false);
         });
@@ -138,6 +143,14 @@ impl ProjectPage {
             })
         })
     }
+}
+
+fn replace_if_changed<T: PartialEq>(current: &mut T, next: T) -> bool {
+    if *current == next {
+        return false;
+    }
+    *current = next;
+    true
 }
 
 fn listen(
@@ -302,7 +315,7 @@ fn ProjectStream(page: ProjectPage) -> impl IntoView {
     );
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Invitation {
     id: String,

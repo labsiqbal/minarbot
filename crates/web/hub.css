@@ -8,9 +8,12 @@
 @import "../../app/node_modules/@fontsource-variable/inter/index.css";
 
 #leptos-root { height: 100%; }
-#appearance-fallback[hidden], .hub-shell [hidden] { display: none; }
+#appearance-fallback[hidden], #leptos-root [hidden], #leptos-root dialog:not([open]) { display: none; }
 .hub-center .hub-brand { padding-inline: 0; }
-.hub-dialog { width: min(440px, calc(100% - 32px)); padding: 24px; margin: auto; }
+#leptos-root dialog { inset: 50% auto auto 50%; margin: 0; color: var(--color-text-primary); }
+#leptos-root dialog::backdrop { background: var(--color-bg-scrim); }
+#leptos-root .system-dialog { padding: 0; }
+.hub-dialog { width: min(440px, calc(100% - 32px)); padding: 24px; }
 .hub-dialog h2 { margin: 0 0 20px; font-size: 18px; }
 .hub-dialog form + button, .hub-dialog > label + div { margin-top: 16px; }
 .hub-main > .k-alert { margin: 12px 24px; }
