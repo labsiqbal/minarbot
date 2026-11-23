@@ -223,7 +223,7 @@ try {
     const oldProject = await context.newPage();
     await oldProject.goto('https://' + project.host + '/');
     await oldProject.getByText(text, { exact: true }).waitFor();
-    await message.fill('Private Alice draft');
+    await oldProject.getByRole('textbox', { name: 'Message general' }).fill('Private Alice draft');
     // Reuse one browser context across identities. A signed-out Alice page
     // must not retain project data after Bob signs in.
     await page.goto('https://' + central + '/');
