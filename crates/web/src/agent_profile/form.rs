@@ -38,6 +38,14 @@ struct Models {
     models: Vec<String>,
     #[serde(default)]
     catalog: Vec<Model>,
+    #[serde(rename = "memoryDefault")]
+    memory_default: Option<MemoryDefault>,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+struct MemoryDefault {
+    model: String,
+    replaces: Option<Vec<String>>,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -45,6 +53,8 @@ struct Account {
     id: String,
     name: String,
     configured: bool,
+    #[serde(default, rename = "defaultModel")]
+    default_model: String,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -171,7 +181,7 @@ fn Text(
     #[prop(optional)] required: bool,
     #[prop(optional)] models: bool,
     #[prop(optional, into)] suggestions: Signal<bool>,
-    #[prop(optional)] placeholder: &'static str,
+    #[prop(optional, into)] placeholder: Signal<String>,
     #[prop(optional)] changed: Option<Callback<()>>,
 ) -> impl IntoView {
     let input = NodeRef::<leptos::html::Input>::new();
@@ -182,7 +192,7 @@ fn Text(
               <span class="k-field__optional" hidden=move || !optional.get()>"Optional"</span></label>
             <div class:k-combobox=models>
                 <input id=id name=id type="text" node_ref=input class="k-input" autofocus=id == "name" prop:value=value readonly=locked maxlength=max
-                  required=required placeholder=placeholder autocomplete="off" list=models.then_some("agent-model-catalog")
+                  required=required placeholder=move || placeholder.get() autocomplete="off" list=models.then_some("agent-model-catalog")
                   on:input=move |event| {
                       value.set(event_target_value(&event));
                       if let Some(changed) = changed { changed.run(()); }
@@ -658,6 +668,39 @@ pub(super) fn agent_form(
             .data
             .with(|data| data.as_ref().is_some_and(|data| !data.models.is_empty()))
     });
+    let memory_placeholder = Signal::derive(move || {
+        let main = model.get();
+        let main = main.trim();
+        let fallback = if main.is_empty() || main == "default" {
+            accounts.data.with(|data| {
+                data.iter()
+                    .flatten()
+                    .find(|item| item.id == account.get() && !item.default_model.is_empty())
+                    .map_or_else(|| main.to_owned(), |item| item.default_model.clone())
+            })
+        } else {
+            main.to_owned()
+        };
+        let default = models
+            .data
+            .with(|data| {
+                data.as_ref()
+                    .and_then(|data| data.memory_default.as_ref())
+                    .filter(|choice| {
+                        choice
+                            .replaces
+                            .as_ref()
+                            .is_none_or(|ids| ids.contains(&fallback))
+                    })
+                    .map(|choice| choice.model.clone())
+            })
+            .unwrap_or(fallback);
+        if default.is_empty() {
+            "Default".into()
+        } else {
+            format!("Default ({default})")
+        }
+    });
     let backup_open = backup.with_untracked(|value| !value.is_empty());
     let judge_open = goal.with_untracked(|value| !value.is_empty());
     let name_label = Signal::derive(move || {
@@ -677,7 +720,7 @@ pub(super) fn agent_form(
             <span class="agent-profile__name">{avatar_title}</span>
             <Button label="Change" disabled=locked click=Callback::new(move |()| tool.set(Some(Tool::Avatar))) />
         </div>
-        <Text id="name" label=name_label value=name locked max=80 placeholder="Iris" optional=move || !editing && setup.get() />
+        <Text id="name" label=name_label value=name locked max=80 placeholder=text("Iris") optional=move || !editing && setup.get() />
         <Text id="role" label=text("Role") value=role locked max=60 optional=true />
         <label class="k-field" for="instructions"><span class="k-field__label">
             {move || if !editing && setup.get() { "Brief" } else { "Instructions" }}
@@ -724,7 +767,7 @@ pub(super) fn agent_form(
         </Show>
         <div class="k-stack agent-model-field">
             <Text id="model" label=text("Model") value=model locked=Signal::derive(move || locked.get() || !discovers(&runtime.get()))
-                required=true models=true suggestions=suggestions placeholder="Enter model ID" changed=Callback::new(move |()| model_edited.set(true)) />
+                required=true models=true suggestions=suggestions placeholder=text("Enter model ID") changed=Callback::new(move |()| model_edited.set(true)) />
             <datalist id="agent-model-catalog">{move || models.data.with(|data| data.iter().flat_map(|data| data.models.iter().map(|id| {
                 let label = data.catalog.iter().find(|item| item.id == *id).map_or(id, |item| &item.label).clone();
                 view! { <option value=id.clone() label=label></option> }
@@ -735,20 +778,20 @@ pub(super) fn agent_form(
         {editing.then(|| view! {
             <ui::Disclosure title="Fallback model" open=backup_open>
                 <Text id="backupModel" label=text("Fallback model") value=backup locked=Signal::derive(move || locked.get() || runtime.with(|runtime| runtime != "api"))
-                    optional=true models=true suggestions=suggestions placeholder="Enter model ID" />
+                    optional=true models=true suggestions=suggestions placeholder=text("Enter model ID") />
             </ui::Disclosure>
             <ui::Disclosure title="Goal judge model" open=judge_open>
-                <Text id="goalJudgeModel" label=text("Goal judge model") value=goal locked optional=true models=true suggestions=suggestions placeholder="Use agent model" />
+                <Text id="goalJudgeModel" label=text("Goal judge model") value=goal locked optional=true models=true suggestions=suggestions placeholder=text("Use agent model") />
             </ui::Disclosure>
             <Card>{switch_row("Learn from conversations", learn.into(), locked, Callback::new(move |value| learn.set(value)))}</Card>
-            <Text id="memoryModel" label=text("Memory model") value=memory locked optional=true models=true suggestions=suggestions placeholder="Use agent model" />
+            <Text id="memoryModel" label=text("Memory model") value=memory locked optional=true models=true suggestions=suggestions placeholder=memory_placeholder />
         })}
     };
     let limits = move || {
         view! {
             {(!editing).then(|| view! {
                 <Text id="backupModel" label=text("Fallback model") value=backup locked=Signal::derive(move || locked.get() || runtime.with(|runtime| runtime != "api"))
-                    optional=true models=true suggestions=suggestions placeholder="Enter model ID" />
+                    optional=true models=true suggestions=suggestions placeholder=text("Enter model ID") />
             })}
             {number("threadLimit", "Parallel chats", threads, 1, 32, locked)}
             {number("toolBudget", "Tool step limit", budget, 10, 200, Signal::derive(move || locked.get() || runtime.with(|runtime| runtime != "api")))}

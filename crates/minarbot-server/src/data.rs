@@ -72,7 +72,7 @@ pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
 }
 
 type Result<T> = std::result::Result<T, Failure>;
-fn digest_bytes(bytes: &[u8]) -> String {
+pub(crate) fn digest_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
 }

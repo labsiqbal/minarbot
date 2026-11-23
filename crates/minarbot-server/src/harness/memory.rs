@@ -1,4 +1,5 @@
 use super::{
+    model_catalog,
     process::{ProbeHome, Process},
     store, Result,
 };
@@ -35,9 +36,27 @@ pub async fn call(state: &AppState, turn: &str, messages: &[Value], phase: &str)
         let redactions = crate::computer::vault::redactions(state, db)?;
         (agent, credential, redactions)
     };
-    let model = string(&agent, "learning_model");
     let runtime = string(&agent, "runtime");
     let binding = string(&agent, "provider_account");
+    let configured = string(&agent, "memory_model");
+    let main = string(&agent, "model");
+    let default = if configured.is_empty() {
+        if runtime == "claude" {
+            model_catalog::native_memory_default(runtime, &[]).map(str::to_owned)
+        } else {
+            model_catalog::models(state, runtime, binding, false)
+                .await
+                .ok()
+                .and_then(|catalog| model_catalog::memory_default(&catalog, main))
+        }
+    } else {
+        None
+    };
+    let model = default.as_deref().unwrap_or(if configured.is_empty() {
+        main
+    } else {
+        configured
+    });
     let scratch = ProbeHome::new().map_err(|_| Failure::storage())?;
     let executable = super::executable(state, runtime)
         .ok_or_else(|| error(503, "Memory engine is unavailable."))?;

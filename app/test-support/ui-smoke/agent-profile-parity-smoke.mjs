@@ -26,7 +26,10 @@ const templateFile = {
 const provider = createServer(async (request, response) => {
   for await (const chunk of request) void chunk;
   response.setHeader('Content-Type', 'application/json');
-  response.end(JSON.stringify(request.method === 'GET' ? { data: [{ id: 'fixture' }, { id: 'alternate' }] }
+  response.end(JSON.stringify(request.method === 'GET' ? { data: [
+    { id: 'fixture', context_length: 128_000, pricing: { prompt: '0.000003', completion: '0.000015' } },
+    { id: 'alternate', context_length: 128_000, pricing: { prompt: '0.000001', completion: '0.000005' } },
+  ] }
     : { choices: [{ finish_reason: 'stop', message: { content: 'Drafted fixture profile.' } }] }));
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
@@ -122,7 +125,10 @@ async function captures(page, prefix) {
   await page.waitForFunction(node => document.activeElement === node, await change.elementHandle());
   await edit.getByRole('tab', { name: 'Profile', exact: true }).press('ArrowRight');
   await edit.getByRole('tab', { name: 'Model', exact: true, selected: true }).waitFor();
-  await edit.getByLabel('Memory model').waitFor();
+  const memory = edit.getByPlaceholder('Default (alternate)', { exact: true });
+  await memory.waitFor();
+  assert.equal(await memory.inputValue(), '');
+  await memory.scrollIntoViewIfNeeded();
   await shot('model', edit);
   await edit.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await edit.getByRole('switch', { name: 'Computer', exact: true }).waitFor();

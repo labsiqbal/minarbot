@@ -21,6 +21,9 @@ test('scoped auto-recall, history, reflection and standing answer refresh', asyn
   const rounds: string[][] = [];
   let held: ServerResponse | undefined;
   const provider = createServer(async (req, res) => {
+    if (req.method === 'GET') {
+      return res.end(JSON.stringify({ data: [{ id: 'fixture' }] }));
+    }
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const { messages } = JSON.parse(Buffer.concat(chunks).toString()) as { messages: ProviderMessage[] };
@@ -139,5 +142,84 @@ test('scoped auto-recall, history, reflection and standing answer refresh', asyn
     provider.closeAllConnections();
     await new Promise<void>(resolve => provider.close(() => resolve()));
     rmSync(directory, { recursive: true });
+  }
+});
+
+test('background learning uses the binding catalog unless Memory model is set', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-memory-model-'));
+  const models = ['main', 'budget', 'override'];
+  const calls: string[] = [];
+  const provider = createServer(async (req, res) => {
+    if (req.method === 'GET' && req.url === '/v1/models') {
+      return res.end(JSON.stringify({ data: models.map((id, index) => ({
+        id, context_length: 65_536, pricing: { prompt: [3, 1, 2][index], completion: [3, 1, 2][index] },
+      })) }));
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const { model, messages } = JSON.parse(Buffer.concat(chunks).toString()) as { model: string; messages: ProviderMessage[] };
+    const system = messages[0]?.content ?? '';
+    let content = 'Synthetic reply.';
+    if (system.includes('Extract SIGNIFICANT facts')) {
+      calls.push(model);
+      const input = JSON.parse(messages[1].content);
+      content = JSON.stringify({ facts: input.role === 'assistant' ? [] : [{
+        what: 'Atlas uses the north cabinet.', fact_kind: 'conversation', fact_type: 'world', entities: ['Atlas'],
+      }] });
+    } else if (system.includes('You keep a long-term memory')) {
+      calls.push(model);
+      content = '{"facts":[{"fact_id":"F1","kind":"lasting","existing":[],"new":["Atlas uses the north cabinet."]}]}';
+    } else {
+      assert.equal(model, 'main');
+    }
+    res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content } }] }));
+  });
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+  const address = provider.address();
+  assert(address && typeof address !== 'string');
+  const app = await startApp({ database: join(directory, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, defaultModel: 'main', testMemoryExtraction: true }, { directory, servers: [provider] });
+  const agent = randomUUID();
+  const profile = { name: 'Memory model fixture', model: 'main', instructions: 'Reply to fixture prompts.' };
+  async function api(path: string, body?: unknown) {
+    const response = await fetch(app.origin + path, {
+      method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    assert(response.ok, `${path} ${response.status} ${await response.clone().text()}`);
+    return response.json();
+  }
+  async function checkTurn(model: string) {
+    calls.length = 0;
+    const id = randomUUID();
+    await api(`/api/agents/${agent}/turns`, { id, text: 'Atlas uses the north cabinet.' });
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const usage = await api('/api/usage') as { calls: { turn: string; model: string; phase: string; status: string }[] };
+      const background = usage.calls.filter(call => call.turn === id && call.phase.startsWith('memory_'));
+      if (background.length === 3 && background.every(call => call.status === 'received')) {
+        assert.deepEqual(calls, [model, model, model]);
+        assert.deepEqual(background.map(call => call.model), calls);
+        assert.deepEqual(background.map(call => call.phase).sort(), ['memory_consolidate_prompt', 'memory_extract_prompt', 'memory_extract_reply']);
+        return;
+      }
+      await delay(100);
+    }
+    assert.fail('Background extraction and consolidation did not finish.');
+  }
+  try {
+    const created = await api('/api/agents', { ...profile, id: agent, runtime: 'api' });
+    assert.equal(created.memory_model, '');
+    assert.deepEqual((await api('/api/models?runtime=api&account=')).memoryDefault, { model: 'budget', replaces: ['main', 'override'] });
+    await checkTurn('budget');
+    const updated = await api(`/api/agents/${agent}/edit`, { ...profile, id: randomUUID(), revision: created.revision, memoryModel: 'override' });
+    assert.equal(updated.memory_model, 'override');
+    await checkTurn('override');
+  } finally {
+    try {
+      await app.close();
+    } finally {
+      provider.closeAllConnections();
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+      rmSync(directory, { recursive: true });
+    }
   }
 });
