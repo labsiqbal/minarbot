@@ -1088,6 +1088,21 @@ fn computer_panel(agent: String, name: String, popout: bool, url: Option<String>
 }
 
 pub fn right_panel(chat: Chat) -> impl IntoView {
+    let visited =
+        Memo::new(move |previous| chat.details.get() || previous.copied().unwrap_or(false));
+    view! {
+        <Show when=move || visited.get()>
+            {move || crate::lazy_view::load("details panel", move || right_panel_chunk(chat))}
+        </Show>
+    }
+}
+
+#[leptos::wasm_split::wasm_split(details_panel, wasm_split_path = leptos::wasm_split, fallible)]
+fn right_panel_chunk(chat: Chat) -> crate::lazy_view::ChunkView {
+    Ok(right_panel_impl(chat).into_any())
+}
+
+fn right_panel_impl(chat: Chat) -> impl IntoView {
     let context = RwSignal::new(None::<Result<files::Context, String>>);
     let files_page = RwSignal::new(None::<Result<Vec<files::PanelFile>, String>>);
     let git = RwSignal::new(None::<Result<changes::Status, String>>);
@@ -1228,16 +1243,32 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
                 drawer.close();
             }
             if open && !drawer.open() {
-                if overlay {
-                    let _ = drawer.show_modal();
-                    if let Ok(Some(tab)) = drawer.query_selector("[role=tab][aria-selected=true]") {
-                        if let Ok(tab) = tab.dyn_into::<web_sys::HtmlElement>() {
-                            let _ = tab.focus();
-                        }
-                    }
-                } else {
+                if !overlay {
                     // Docked details leave keyboard focus in the conversation.
                     drawer.set_open(true);
+                } else {
+                    let connected = drawer.is_connected();
+                    let show = move || {
+                        if chat.details.try_get_untracked() != Some(true)
+                            || !drawer.is_connected()
+                            || drawer.open()
+                            || drawer.show_modal().is_err()
+                        {
+                            return;
+                        }
+                        if let Ok(Some(tab)) =
+                            drawer.query_selector("[role=tab][aria-selected=true]")
+                        {
+                            if let Ok(tab) = tab.dyn_into::<web_sys::HtmlElement>() {
+                                let _ = tab.focus();
+                            }
+                        }
+                    };
+                    if connected {
+                        show();
+                    } else {
+                        request_animation_frame(show);
+                    }
                 }
             }
         }

@@ -57,6 +57,8 @@
   font-size: 12px;
 }
 .agent-inbox .agent-inbox__reader dl :is(dt, dd) { padding: 0; border: 0; text-align: left; }
+.agent-inbox .agent-inbox__reader dt:not(:first-of-type),
+.agent-inbox .agent-inbox__reader dt:not(:first-of-type) + dd { border-top: 0.5px solid var(--color-border-tertiary); }
 .agent-inbox__reader dt { color: var(--color-text-secondary); }
 .agent-inbox__body {
   margin: 16px 0 0;

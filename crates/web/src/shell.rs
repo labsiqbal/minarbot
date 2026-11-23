@@ -891,7 +891,10 @@ pub(crate) fn WorkspaceShell(
                         }).collect_view()}
                 </div></section></div></div>
             </dialog>
-            {agent_profile::mount(lifecycle)}
+            {
+                #[cfg(not(feature = "hub"))]
+                {agent_profile::mount(lifecycle)}
+            }
             {agent_confirmation}
             {project_commands.dialogs(Signal::derive(move || projects.with(|data| data.as_ref().and_then(|result| result.as_ref().ok()).map_or_else(String::new, |data| data.root.clone()))))}
             <div class="leptos-workspace__outlet" inert=move || viewport.get() && narrow_open.get()>

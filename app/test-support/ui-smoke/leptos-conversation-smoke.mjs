@@ -65,6 +65,9 @@ try {
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce', permissions: ['clipboard-read', 'clipboard-write'],
   });
+  await context.addInitScript(() => {
+    if (localStorage.getItem('minarbot:details-open') === null) localStorage.setItem('minarbot:details-open', '0');
+  });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -76,8 +79,9 @@ try {
   await input.fill('Replay fixture');
   const modules = await page.evaluate(() => performance.getEntriesByType('resource')
     .map(entry => new URL(entry.name).pathname).filter(path => path.endsWith('.wasm')));
-  assert.equal(modules.length, 1);
-  assert.match(modules[0], /^\/_leptos\/assets\/conversation\.[a-f0-9]{16}\.wasm$/);
+  assert.equal(modules.filter(path => /^\/_leptos\/assets\/conversation\.[a-f0-9]{16}\.wasm$/.test(path)).length, 1);
+  assert.equal(modules.filter(path => path.includes('/conversation-split_conversation.')).length, 1);
+  assert(modules.every(path => /^\/_leptos\/assets\/conversation(?:-split_conversation|-chunk_\d+)?\.[a-f0-9]{16}\.wasm$/.test(path)));
   await page.reload();
   assert.equal(await input.inputValue(), 'Replay fixture');
   let original, replay;
@@ -122,6 +126,8 @@ try {
 
   await page.getByRole('button', { name: 'Inspect run' }).click();
   await page.getByRole('region', { name: 'Run inspector' }).waitFor();
+  assert.equal(await page.evaluate(() => performance.getEntriesByType('resource')
+    .filter(entry => /\/conversation-split_details_panel\.[a-f0-9]{16}\.wasm$/.test(entry.name)).length), 1);
   await page.getByRole('tab', { name: 'Chats' }).focus();
   await page.getByRole('tab', { name: 'Chats' }).press('ArrowRight');
   await page.getByRole('tabpanel', { name: 'files' }).getByRole('navigation', { name: 'Workspace path' }).waitFor();

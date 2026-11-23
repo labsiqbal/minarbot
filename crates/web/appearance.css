@@ -166,6 +166,9 @@
 
 .leptos-workspace .project-member-avatar { width: 30px; height: 30px; font-size: 13px; }
 .leptos-workspace #new-project .project-member-avatar { width: 28px; height: 28px; font-size: 12px; }
+#new-project .k-row__trailing .connection-select > select { field-sizing: content; width: auto; max-inline-size: 20ch; }
+#new-project .k-row__trailing .k-icon-btn svg { width: 14px; height: 14px; }
+.leptos-workspace .project-navigation__new > .appearance-icon > svg { width: 14px; height: 14px; }
 .project-home .mcp-tool-details { padding: 0 16px 12px; }
 .project-home .connection-checkbox { appearance: none; margin: 1px 0 0; }
 .project-home .connection-checkbox:checked { background: var(--color-brand); box-shadow: none; }

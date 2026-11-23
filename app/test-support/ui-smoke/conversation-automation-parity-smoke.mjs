@@ -346,6 +346,7 @@ async function exercise(client) {
       const tab = await bench.newPage();
       try {
         await open(pilot(chat), tab);
+        await tab.locator('.chat__pill').waitFor();
         for (const result of [workflowCold, workflowWarm]) {
           const began = performance.now();
           await workflowMenu(tab);
@@ -384,10 +385,14 @@ try {
     console.log(`${client} conversation automation parity passed (${receipt[client].captureNames.length * 4} captures).`);
   }
   if (samples && receipt.react && receipt.leptos) {
-    const react = receipt.react.timings.workflow.warm.p95Ms;
-    const leptos = receipt.leptos.timings.workflow.warm.p95Ms;
-    console.log(`Scoped Workflows warm p95 ${leptos} ms (Leptos), ${react} ms (React).`);
-    assert(leptos <= react * 1.1, 'Scoped Workflows exceeded the warm p95 budget');
+    for (const [route, timing] of Object.entries(receipt.react.timings)) {
+      for (const [phase, limit] of [['cold', 1.2], ['warm', 1.1]]) {
+        const react = timing[phase].p95Ms;
+        const leptos = receipt.leptos.timings[route][phase].p95Ms;
+        console.log(`${route} ${phase} p95 ${leptos} ms (Leptos), ${react} ms (React).`);
+        assert(leptos <= react * limit, `${route} exceeded the ${phase} p95 budget`);
+      }
+    }
   }
 } finally {
   await browser?.close();

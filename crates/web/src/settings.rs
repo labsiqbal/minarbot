@@ -1,5 +1,7 @@
-use crate::appearance::{self, ColorTheme};
-use crate::{general, routes::SettingsRoute};
+use crate::appearance::ColorTheme;
+use crate::routes::SettingsRoute;
+#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+use crate::{appearance, general};
 use leptos::prelude::*;
 use serde::Deserialize;
 use wasm_bindgen::JsCast;
@@ -93,6 +95,7 @@ fn visible(item: &Item, group: &str, query: &str, hub: bool) -> bool {
     (item.id != "hub" || hub) && query.split_whitespace().all(|term| label.contains(term))
 }
 
+#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
 pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl IntoView {
     provide_context(config.connection_icons.clone());
     let route = RwSignal::new(route);
@@ -242,18 +245,12 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                 let page = match section {
                     SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
                     SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
-                    SettingsRoute::Providers => crate::providers::panel().into_any(),
-                    SettingsRoute::Engines => crate::engines::panel().into_any(),
-                    SettingsRoute::CraftAnything => crate::craft_anything::panel().into_any(),
-                    SettingsRoute::Vault => crate::vault::panel().into_any(),
-                    SettingsRoute::Email => crate::email::panel().into_any(),
-                    SettingsRoute::Hub => crate::hub_connection::panel().into_any(),
-                    SettingsRoute::ConnectedApps => crate::connected_apps::panel().into_any(),
-                    SettingsRoute::Mcp => crate::mcp_connections::panel().into_any(),
-                    SettingsRoute::Skills => crate::skills::panel().into_any(),
+                    SettingsRoute::Skills => crate::lazy_view::load("Skills", skills).into_any(),
                     SettingsRoute::Machines | SettingsRoute::Devices | SettingsRoute::Computer
                     | SettingsRoute::Updates | SettingsRoute::Usage | SettingsRoute::Data
-                    | SettingsRoute::Backup | SettingsRoute::External => crate::system::panel(section),
+                    | SettingsRoute::Backup | SettingsRoute::External =>
+                        crate::lazy_view::load(section.title(), move || system(section)).into_any(),
+                    _ => crate::lazy_view::load(section.title(), move || connections(section)).into_any(),
                 };
                 view! {
                     <main class="app-settings__main" node_ref=main>
@@ -264,6 +261,37 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
             {confirmation}
         </dialog>
     }
+}
+
+#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[leptos::wasm_split::wasm_split(settings_skills, wasm_split_path = leptos::wasm_split, fallible)]
+fn skills() -> crate::lazy_view::ChunkView {
+    request_animation_frame(focus_heading);
+    Ok(crate::skills::panel().into_any())
+}
+
+#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[leptos::wasm_split::wasm_split(settings_system, wasm_split_path = leptos::wasm_split, fallible)]
+fn system(section: SettingsRoute) -> crate::lazy_view::ChunkView {
+    request_animation_frame(focus_heading);
+    Ok(crate::system::panel(section))
+}
+
+#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[leptos::wasm_split::wasm_split(settings_connections, wasm_split_path = leptos::wasm_split, fallible)]
+fn connections(section: SettingsRoute) -> crate::lazy_view::ChunkView {
+    request_animation_frame(focus_heading);
+    Ok(match section {
+        SettingsRoute::Providers => crate::providers::panel().into_any(),
+        SettingsRoute::Engines => crate::engines::panel().into_any(),
+        SettingsRoute::CraftAnything => crate::craft_anything::panel().into_any(),
+        SettingsRoute::Vault => crate::vault::panel().into_any(),
+        SettingsRoute::Email => crate::email::panel().into_any(),
+        SettingsRoute::Hub => crate::hub_connection::panel().into_any(),
+        SettingsRoute::ConnectedApps => crate::connected_apps::panel().into_any(),
+        SettingsRoute::Mcp => crate::mcp_connections::panel().into_any(),
+        _ => ().into_any(),
+    })
 }
 
 pub fn linked_section_url(path: &str) -> String {

@@ -146,7 +146,8 @@ async function exercise(browser, client) {
     await capture('guide-chat', page.locator('main.chat'));
     const menu = page.locator('.chat__pill');
     await menu.click();
-    await page.getByText('AI connection', { exact: true }).click();
+    await page.getByRole('button', { name: 'AI connection', exact: true })
+      .or(page.getByRole('menuitem', { name: 'AI connection', exact: true })).click();
     const connection = dialog(`AI connection for ${guide.name}`);
     await connection.getByRole('combobox', { name: 'Run with' }).waitFor();
     await capture('guide-connection', connection);

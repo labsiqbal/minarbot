@@ -393,7 +393,10 @@ pub(crate) fn routines_page() -> impl IntoView {
                                             {img.map_or_else(||first.into_any(),|src|view!{<img src=src alt="" />}.into_any())}
                                         </span> }
                                     })}<span>{owner}</span></span></td>
-                                    <td>{row["project_name"].as_str().unwrap_or("No project").to_owned()}</td>
+                                    <td>{row["project_name"].as_str().map_or_else(
+                                        || view! { <span class="k-field__hint">"No project"</span> }.into_any(),
+                                        |project| project.to_owned().into_any(),
+                                    )}</td>
                                     <td>{report(row)}</td><td>{trigger_label(row)}</td><td>{last}</td>
                                     <td>{if active && row["trigger"]=="schedule" {view! { <time datetime=iso(at) title=date_text(at)>{relative(at)}</time> }.into_any()}
                                         else {view! { <span class="k-field__hint">{if active {"On demand"} else if done_loop {"Finished"} else {"Paused"}}</span> }.into_any()}}</td>
@@ -817,10 +820,19 @@ fn RoutineDetail(
                 <h1 tabindex="-1" node_ref=heading>{move || meta("name","")}</h1><p>{move || format!("Owned by {}",meta("owner_name","local agent"))}</p>
             </div><div class="k-page-head__actions">
                 <kit::Button label=kit::text("All routines") variant="ghost" on_click=move || back.run(()) />
-                <kit::Button label=kit::text("Edit routine") disabled=locked on_click=move || edit.run(()) />
-                <kit::Button label=Signal::derive(move || if routine.with(|routine| enabled(&routine["enabled"])) {"Pause"} else {"Resume"})
-                    disabled=Signal::derive(move || locked.get() || loop_done()) on_click=toggle />
-                <kit::Button label=kit::text("Run now") variant="primary" disabled=Signal::derive(move || locked.get() || loop_done()) on_click=run />
+                <button type="button" class="k-btn k-btn--secondary k-btn--md" disabled=locked on:click=move |_| edit.run(())>
+                    <ui::Icon name="edit" />"Edit routine"
+                </button>
+                <button type="button" class="k-btn k-btn--secondary k-btn--md" disabled=move || locked.get() || loop_done() on:click=move |_| toggle()>
+                    {move || if routine.with(|row| enabled(&row["enabled"])) {
+                        view! { <ui::Icon name="pause" />"Pause" }.into_any()
+                    } else {
+                        view! { <ui::Icon name="play" />"Resume" }.into_any()
+                    }}
+                </button>
+                <button type="button" class="k-btn k-btn--primary k-btn--md" disabled=move || locked.get() || loop_done() on:click=move |_| run()>
+                    <ui::Icon name="play" />"Run now"
+                </button>
                 <kit::Menu name="Routine actions".into() disabled=locked
                     items=vec![kit::MenuItem{label:"Delete routine".into(),danger:true,action:remove}]>{kit::icon(kit::icons().more)}</kit::Menu>
             </div></header>

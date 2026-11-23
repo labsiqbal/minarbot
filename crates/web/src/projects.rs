@@ -416,7 +416,7 @@ fn overview(project: Project) -> impl IntoView {
     let calendar_panel = view! {
                 <Show when=move || tab.get() == "calendar">
                     <div id="project-calendar-panel" class="k-tabs__panel calendar-in-project" role="tabpanel" aria-labelledby="project-calendar-tab">
-                        <crate::automation::Calendar project=Some(project.with_value(|row| json!({"id":row.id,"archived":row.archived,"members":row.members}))) />
+                        {crate::automation::project_calendar(project.with_value(|row| json!({"id":row.id,"archived":row.archived,"members":row.members})))}
                     </div>
                 </Show>
     };

@@ -16,6 +16,13 @@ The command builds the separate Cargo workspace with the Rust toolchain pinned i
 
 Sources for tokens, kit styles, palette CSS and settings navigation live under `app/src`. Runtime theme and text size changes run in Rust. The JavaScript module loads the Wasm with two bounded fetch attempts. The HTML exposes the React fallback and return link throughout startup.
 
+The build splits WebAssembly before generating wasm-bindgen glue. Opened settings
+sections, profile and project dialogs, Memory, and route content share the
+primary module's runtime and document. The receipt lists split assets and their
+compressed sizes. The build fails before publishing if primary WASM exceeds
+960,000 gzip bytes for shell/settings, 430,000 for conversation, 610,000 for
+workflows, or 240,000 for the hosted hub.
+
 ## Mount route groups
 
 Use `shell::WorkspaceShell` once per Leptos document and pass the current workspace

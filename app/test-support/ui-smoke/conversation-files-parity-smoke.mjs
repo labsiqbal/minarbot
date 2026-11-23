@@ -184,7 +184,7 @@ try {
           await diff.getByText('+New line', { exact: true }).waitFor();
           await capture(page, client, key('changes'), diff);
           const layout = details.getByRole('combobox', { name: 'Diff layout' });
-          if (client === 'leptos') await layout.selectOption('split');
+          if (await layout.evaluate(element => element instanceof HTMLSelectElement)) await layout.selectOption('split');
           else { await layout.click(); await page.getByRole('option', { name: 'Split', exact: true }).click(); }
           const split = details.getByRole('region', { name: 'Split diff', exact: true });
           await split.focus();

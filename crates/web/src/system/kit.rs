@@ -208,8 +208,16 @@ pub fn Dialog(
     Effect::new(move |_| {
         if let Some(dialog) = node.get() {
             if open.get() && !dialog.open() {
-                let _ = dialog.show_modal();
-                if !confirmation {
+                let connected = dialog.is_connected();
+                let show = move || {
+                    if open.try_get_untracked() != Some(true)
+                        || !dialog.is_connected()
+                        || dialog.open()
+                        || dialog.show_modal().is_err()
+                        || confirmation
+                    {
+                        return;
+                    }
                     let field = dialog.query_selector(".k-dialog__body :is(input:not([type=hidden]):not([type=checkbox]), textarea):not([readonly]):not(:disabled), .k-dialog__body [autofocus]").ok().flatten();
                     if let Some(field) =
                         field.and_then(|field| field.dyn_into::<web_sys::HtmlElement>().ok())
@@ -228,6 +236,12 @@ pub fn Dialog(
                     } else {
                         let _ = dialog.focus();
                     }
+                };
+                if connected {
+                    show();
+                } else {
+                    // Lazy views can build the dialog before inserting it into the document.
+                    request_animation_frame(show);
                 }
             } else if !open.get() && dialog.open() {
                 dialog.close();

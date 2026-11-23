@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Pencil, Plug, Plus, Receipt, RefreshCw, RotateCcw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Trash2, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
-import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, LogOut, Redo2, Siren, Undo2, WrapText } from 'lucide-react';
+import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, LogOut, Pause, Play, Redo2, Siren, Undo2, WrapText } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -86,7 +86,7 @@ const appearanceConfig: Plugin = {
         systemIcons,
         conversationIcons,
         connectionIcons: iconMap({ ...connectionIcons, workflow: Workflow, calendar: CalendarDays, undo: Undo2, redo: Redo2,
-          slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot, schedule: CalendarClock }),
+          slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot, schedule: CalendarClock, pause: Pause, play: Play }),
       },
       conversation: {
         ...shell,

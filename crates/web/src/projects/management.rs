@@ -128,12 +128,26 @@ impl Commands {
     }
 
     pub fn dialogs(self, root: Signal<String>) -> impl IntoView {
+        #[cfg(not(feature = "hub"))]
+        let create = move || {
+            self.create.get().then(|| {
+                crate::lazy_view::load("new project dialog", move || create_dialog(self, root))
+            })
+        };
+        #[cfg(feature = "hub")]
+        let create = ();
         view! {
-            <Show when=move || self.create.get()>{move || create_project(self, root)}</Show>
+            {create}
             {move || self.name.get().map(|dialog| name_dialog(self, dialog))}
             <ConfirmDialog state=self.confirmation />
         }
     }
+}
+
+#[cfg(not(feature = "hub"))]
+#[leptos::wasm_split::wasm_split(project_dialog, wasm_split_path = leptos::wasm_split, fallible)]
+fn create_dialog(commands: Commands, root: Signal<String>) -> crate::lazy_view::ChunkView {
+    Ok(create_project(commands, root).into_any())
 }
 
 pub fn change(project: &str, revision: u64, operation: &str, mut body: Value) -> Command {

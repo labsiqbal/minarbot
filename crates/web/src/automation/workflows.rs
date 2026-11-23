@@ -581,6 +581,10 @@ fn focus_node(attribute: &str, id: &str) {
     if let Ok(Some(node)) = document().query_selector(&format!("[{attribute}='{id}']")) {
         if let Ok(node) = node.dyn_into::<web_sys::HtmlElement>() {
             let _ = node.focus();
+            let options = web_sys::ScrollIntoViewOptions::new();
+            options.set_block(web_sys::ScrollLogicalPosition::Nearest);
+            options.set_inline(web_sys::ScrollLogicalPosition::Nearest);
+            node.scroll_into_view_with_scroll_into_view_options(&options);
         }
     }
 }
@@ -1863,7 +1867,9 @@ pub(super) fn run_details(
                     let version = format!("Version {}", number(&run["version"]));
                     if return_to_step {
                         let label = if run["status"] == "done" { "Done".into() } else { step_label(run) };
-                        view! { <h2 class="k-section__title">{version} " " {kit::badge(badge_tone(text(&run["status"])), label)}</h2> }.into_any()
+                        view! { <div class="k-section__head"><h2 class="k-section__title">
+                            {version} " " {kit::badge(badge_tone(text(&run["status"])), label)}
+                        </h2></div> }.into_any()
                     } else {
                         view! { <div>{kit::badge("neutral",format!("{version} · {}",step_label(run)))}</div> }.into_any()
                     }
@@ -1874,7 +1880,15 @@ pub(super) fn run_details(
                 <section>
                 <Graph graph selected steps=steps clicked=Callback::new(move |id| {
                     selection.set(id);
-                    request_animation_frame(move || { if let Some(node)=details.get_untracked() { let _=node.focus(); } });
+                    request_animation_frame(move || {
+                        if let Some(node)=details.get_untracked() {
+                            let _=node.focus();
+                            let options = web_sys::ScrollIntoViewOptions::new();
+                            options.set_block(web_sys::ScrollLogicalPosition::Nearest);
+                            options.set_inline(web_sys::ScrollLogicalPosition::Nearest);
+                            node.scroll_into_view_with_scroll_into_view_options(&options);
+                        }
+                    });
                 }) />
                 <div class="workflow-step-detail" tabindex="-1" node_ref=details hidden=move || selection.with(String::is_empty)>
                     <h3>{move || format!("Step {}",selection.get())}</h3>
