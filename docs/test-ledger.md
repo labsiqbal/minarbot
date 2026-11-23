@@ -55,7 +55,7 @@ The larger Node suite retains the React tests during stage B part 1.
 | appearance | 20 | General and Appearance, settings focus and history, presentation storage, CSP and compressed Wasm, startup failures, setup, pairing |
 | automation | 40 | Routine schedules, workflow editor and graph, versioning, webhooks, run inspector |
 | calendar | 12 | Automation and project calendars, dates and timezone, run detail and downloads |
-| connections | 36 | Provider, engine, Hub, email, Vault, MCP and connected app screens and mutation contracts |
+| connections | 32 | Provider, engine, Hub, email, Vault, MCP and connected app screens and mutation contracts |
 | controls | 58 | Conversation routing and composer, dispatch, attachments, Goals and Needs you |
 | conversation | 4 | Named and room conversation navigation, history, sending, streaming and startup |
 | files | 52 | Workspace browser, results, Changes, Computer and secure requests |
@@ -69,8 +69,8 @@ The larger Node suite retains the React tests during stage B part 1.
 | shell | 36 | Workspace navigation, Quick switcher, prompts, command recovery, sidebar controls |
 | system | 32 | Usage, updates, devices, shared data, backup and external access, mutation recovery |
 
-The golden baseline run passed all 16 groups and 580 pairs. All pairs use the
-same pixel thresholds, including the ten narrow Hub Leptos baselines.
+The golden gate covers 16 groups and 576 pairs. All pairs use the same pixel
+thresholds, including the ten narrow Hub Leptos baselines.
 
 See the screenshot parity guide for the gate command and failure thresholds.
 Retained Node and Rust API cases below still cover the shared contracts.

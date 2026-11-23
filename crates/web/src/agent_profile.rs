@@ -31,7 +31,6 @@ pub(crate) struct Profile {
     pub thread_limit: Option<u64>,
     pub tool_budget: Option<u64>,
     pub web_access: Option<u8>,
-    pub library_docs_access: Option<u8>,
     pub learn_from_conversations: Option<u8>,
 }
 

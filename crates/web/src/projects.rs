@@ -27,12 +27,9 @@ pub(crate) struct Project {
     pub(crate) sections: Vec<Section>,
     #[serde(default)]
     pub(crate) threads: Vec<Thread>,
-    #[serde(default)]
-    codegraph_enabled: bool,
     #[cfg(not(feature = "workflows"))]
     #[serde(default)]
     allow_installation_apps: bool,
-    codegraph_index: Option<Index>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -59,42 +56,6 @@ pub(crate) struct Thread {
     pub(crate) id: String,
     pub(crate) agent: String,
     pub(crate) name: String,
-}
-
-#[derive(Clone, Deserialize)]
-struct Index {
-    state: String,
-    files: Option<u64>,
-    errors: Option<u64>,
-}
-
-fn index_label(index: Option<&Index>) -> String {
-    let Some(index) = index else {
-        return "Off".into();
-    };
-    match index.state.as_str() {
-        "noFolders" => "Add a folder to index code".into(),
-        "unavailable" => "Unavailable on this host".into(),
-        "queued" => "Indexing project folders".into(),
-        "error" => "Indexing failed".into(),
-        "ready" => {
-            let count = index.files.unwrap_or(0);
-            if count == 0 {
-                return "No supported source files".into();
-            }
-            let files = format!(
-                "{count} {} indexed",
-                if count == 1 { "file" } else { "files" }
-            );
-            index
-                .errors
-                .filter(|errors| *errors > 0)
-                .map_or(files.clone(), |errors| {
-                    format!("{files} · {errors} with errors")
-                })
-        }
-        _ => "Off".into(),
-    }
 }
 
 fn directory() -> impl Fn() -> Vec<shell::Agent> + Copy {
@@ -622,15 +583,6 @@ fn overview(project: Project) -> impl IntoView {
                     }).collect_view()}</div> }.into_any()
                 })}
             </section>
-            <div class="k-card"><div class="k-row"><div class="k-row__main"><span class="k-row__text">
-                <span class="k-row__title">"Minarbot CodeGraph"</span>
-                <span class="k-row__meta project-index-status" role="status">{project.with_value(|value| index_label(value.codegraph_index.as_ref()))}</span>
-            </span></div><span class="k-row__trailing">
-                <crate::general::Switch label="Minarbot CodeGraph"
-                    checked=Signal::derive(move || project.with_value(|value| value.codegraph_enabled))
-                    disabled=Signal::derive(move || locked() || editing.get() || project.with_value(|value| value.codegraph_index.as_ref().is_none_or(|index| index.state == "unavailable")))
-                    on_change=move |enabled| run("edit", json!({ "codegraphEnabled": enabled })) />
-            </span></div></div>
             <section class="k-section">
                 <div class="k-section__head"><h2 class="k-section__title">"Sections"</h2>
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked on:click=move |_| show("sections")>

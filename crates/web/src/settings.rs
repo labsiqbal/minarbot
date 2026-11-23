@@ -284,7 +284,6 @@ fn connections(section: SettingsRoute) -> crate::lazy_view::ChunkView {
     Ok(match section {
         SettingsRoute::Providers => crate::providers::panel().into_any(),
         SettingsRoute::Engines => crate::engines::panel().into_any(),
-        SettingsRoute::CraftAnything => crate::craft_anything::panel().into_any(),
         SettingsRoute::Vault => crate::vault::panel().into_any(),
         SettingsRoute::Email => crate::email::panel().into_any(),
         SettingsRoute::Hub => crate::hub_connection::panel().into_any(),

@@ -154,7 +154,8 @@ fn valid_edit(value: &Value) -> bool {
         && (pilot_change
             || (fields(value, &allowed)
                 && valid_base(value)
-                && ["webAccess", "libraryDocsAccess", "learnFromConversations"]
+                && value.get("libraryDocsAccess").is_none_or(Value::is_boolean)
+                && ["webAccess", "learnFromConversations"]
                     .iter()
                     .all(|key| value[*key].is_boolean())
                 && ["memoryModel", "goalJudgeModel", "harnessModel"]
@@ -330,11 +331,6 @@ pub(super) fn agent_form(
         saved["webAccess"]
             .as_bool()
             .unwrap_or(profile.web_access != Some(0)),
-    );
-    let docs = RwSignal::new(
-        saved["libraryDocsAccess"]
-            .as_bool()
-            .unwrap_or(profile.library_docs_access != Some(0)),
     );
     let learn = RwSignal::new(
         saved["learnFromConversations"]
@@ -614,7 +610,6 @@ pub(super) fn agent_form(
         if let Some(revision) = revision {
             body["revision"] = json!(revision);
             body["webAccess"] = json!(web.get_untracked());
-            body["libraryDocsAccess"] = json!(docs.get_untracked());
             body["learnFromConversations"] = json!(learn.get_untracked());
             body["memoryModel"] = json!(memory.get_untracked().trim());
             let changed_goal = goal.get_untracked();
@@ -815,7 +810,6 @@ pub(super) fn agent_form(
             {limits()}
             <Card>
                 {switch_row("Web access", web.into(), locked, Callback::new(move |value| web.set(value)))}
-                {switch_row("Library docs", Signal::derive(move || web.get() && docs.get()), Signal::derive(move || locked.get() || !web.get()), Callback::new(move |value| docs.set(value)))}
             </Card>
             <Show when=move || tab.get() == "advanced">
                 {move || resources::computer(id.get_value())}

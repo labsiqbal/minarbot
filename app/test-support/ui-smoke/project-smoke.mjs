@@ -150,13 +150,12 @@ async function run(client) {
   };
   try {
     await api('/api/agents', { id: agent, runtime: 'api', name: 'Project member', model: 'fixture', instructions: 'Synthetic fixture.' });
-    const created = await api('/api/projects', { id: project, name: 'Fixture project', description: 'Project parity fixture.',
+    await api('/api/projects', { id: project, name: 'Fixture project', description: 'Project parity fixture.',
       members: [{ agent, write: false }], folders: [{ mode: 'existing', path: folder }], confirmWrite: false });
-    // Keep background indexing from racing the screenshots.
-    await api(base + '/edit', { id: randomUUID(), revision: created.revision, codegraphEnabled: false });
     await page.goto(go());
     assert.equal(await page.locator('#leptos-root').count(), 1);
     await text('1 changed').waitFor();
+    assert.equal(await text('Minarbot CodeGraph').count(), 0);
     await capture('overview');
     await page.getByRole('button', { name: /notes\.md/ }).click();
     await page.getByRole('region', { name: 'Unified diff' }).getByText('+Changed notes', { exact: true }).waitFor();

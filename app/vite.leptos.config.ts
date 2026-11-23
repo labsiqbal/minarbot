@@ -5,7 +5,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
 import { mcpScopeCatalog } from './shared/mcp-scopes';
-import { settingsGroups } from './src/settings-groups';
+import { settingsGroups as sharedSettingsGroups } from './src/settings-groups';
 import { colorThemes, themeStyles } from './src/ui/themes';
 import app from './vite.config';
 
@@ -15,6 +15,10 @@ const input: Record<string, string> = JSON.parse(entrypoints);
 const conversation = fileURLToPath(new URL('./src/leptos-conversation.ts', import.meta.url));
 
 const svg = (icon: LucideIcon, size = 16) => renderToStaticMarkup(createElement(icon, { size, 'aria-hidden': true }));
+
+const settingsGroups = sharedSettingsGroups.map(group => ({
+  ...group, items: group.items.filter(item => item.id !== 'craft-anything'),
+}));
 
 const appearanceConfig: Plugin = {
   name: 'minarbot-appearance-config',

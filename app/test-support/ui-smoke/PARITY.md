@@ -15,7 +15,7 @@ cd app
 ```
 
 Each of 16 groups runs its Leptos smoke once against disposable data. The gate
-matches 580 captures to `baselines/<group>/<pair>.png`, frozen from `820e994`.
+matches 576 captures to `baselines/<group>/<pair>.png`, frozen from `820e994`.
 It fails on missing or extra PNGs, failed smokes, mismatched dimensions, more
 than 100 changed RGB pixels, or more than 24 pixels with a channel delta above
 16. The formerly exempt ten narrow Hub baselines are Leptos captures and use

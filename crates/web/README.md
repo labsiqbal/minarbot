@@ -67,7 +67,7 @@ route ownership.
 | Group | Public paths and surfaces | Default Leptos document |
 | --- | --- | --- |
 | First run and shell | Fresh install at `/`, sidebar and Quick switcher | `appearance.html` on first run, then the document for the active route |
-| Settings | `/settings/:section` including General, Appearance, Providers, Engines, Skills, minarbot.com, Connected apps, Email, MCP connections, Vault, Craft Anything, Machines, Devices, Computer, Updates, Usage, Shared data, Backup & restore, External access | `appearance.html` |
+| Settings | `/settings/:section` including General, Appearance, Providers, Engines, Skills, minarbot.com, Connected apps, Email, MCP connections, Vault, Machines, Devices, Computer, Updates, Usage, Shared data, Backup & restore, External access | `appearance.html` |
 | Pairing | `/pair` on a secure origin | Axum pairing form with the Leptos appearance bootstrap |
 | Conversation | Configured workspace at `/`, `/agents/:id`, `/agents/:id/conversations/:thread`, `/rooms/:id`, Guide, Files, Changes, workspace browser, results and standalone Computer | `conversation.html` |
 | Inbox and remote agents | `/agents/:id/inbox` and `/machines/:id/agents/:id` | `conversation.html` |
