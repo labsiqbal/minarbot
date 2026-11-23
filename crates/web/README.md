@@ -1,6 +1,6 @@
 # Leptos workspace and settings
 
-Axum serves Leptos by default for every route group. Set `MINARBOT_APPEARANCE_CLIENT=react` in the launcher environment file and restart to roll back. `MINARBOT_APPEARANCE_CLIENT=leptos` remains accepted. A missing or invalid Leptos document selects React automatically. The recovery page links to React for that visit with `?ui=react`. The launcher reads and passes the environment file unchanged.
+Axum serves Leptos by default for every route group. Set `MINARBOT_APPEARANCE_CLIENT=react` in the launcher environment file and restart to roll back. `MINARBOT_APPEARANCE_CLIENT=leptos` remains accepted. A missing or invalid Leptos document selects React automatically. The recovery page links to React for that visit with `?ui=react`. The launcher reads the selector from its environment file.
 
 Both clients use `minarbot-presentation-v1` in the browser's local storage. The same origin is required to retain preferences. Appearance uses `GET /api/agents` to determine hub-link visibility. It makes no settings API writes.
 
@@ -100,8 +100,9 @@ browser draft storage.
 
 ## Rollback rehearsal
 
-Use a staged release with both client builds. The rehearsal uses a private data
-directory and a loopback port.
+Use the versioned directory produced by the release dry run, such as
+\`<releases>/0.17.1-<commit>\`. The rehearsal uses a private data directory and a
+loopback port.
 
 ```sh
 MINARBOT_XTASK_BINARY="$PWD/target/debug/xtask" \

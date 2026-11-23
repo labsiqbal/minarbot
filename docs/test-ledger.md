@@ -1,44 +1,35 @@
 # Test migration ledger
 
-## #67 route ownership ledger
-
-Leptos owns route groups by default. React remains available through
-MINARBOT_APPEARANCE_CLIENT=react or ?ui=react during the two-release fallback window.
-
-| Group | Public paths and surfaces | Leptos document | React rollback |
-| --- | --- | --- | --- |
-| Shell and setup | /, first run, sidebar, Quick switcher | appearance.html or active route document | React recovery page |
-| Settings | /settings/:section, system and connection panels | appearance.html | index.html?ui=react |
-| Pairing | /pair on secure origin | pairing form with Leptos bootstrap | native pairing form |
-| Conversation | agents, rooms, project conversations, Guide, Files, Changes, Computer | conversation.html | index.html?ui=react |
-| Agent and Memory | profiles, templates, inbox, remote agent detail, Memory and History | active conversation or appearance document | React profile/conversation views |
-| Projects | /projects/:id, Overview, Connected apps, Environment, MCP | appearance.html | index.html?ui=react |
-| Automation | /routines, /workflows, /calendar, project Calendar, scoped Workflows | workflows.html | index.html?ui=react |
-| Hosted Hub | accounts, sign-in, join, members, invitations, rooms | Hub Leptos document | Hub React document |
-
-Public paths, API routes, settings keys, browser drafts, and recovery journal
-formats stay stable across client selection. Missing Leptos documents or
-startup assets use the React recovery document.
-
 ## #67 UI coverage ledger
 
-The parity gate names the client for every browser run. Groups without a per-run
-selector launch both clients inside one smoke. `app/rust-test-server.ts` pins
-non-UI Node tests to React so the production default cannot silently change
-their exercised client.
+The route ownership ledger lists each public surface and its default document.
+React and Leptos run against disposable servers and identical synthetic data.
+Shared Node fixtures pin React unless a smoke selects a client. Dedicated
+installer and rollback checks exercise the unset production selector.
+[Route ownership](../crates/web/README.md#route-ownership)
 
-| Gate group | Pairs | Client selection |
+| Gate group | Required pairs | Functional coverage |
 | --- | ---: | --- |
-| appearance, connections, system | 88 | React and Leptos explicit |
-| automation, calendar, scoped | 104 | React and Leptos explicit |
-| controls, conversation, files, rich | 146 | React and Leptos explicit |
-| guide, shell | 52 | React and Leptos explicit |
-| hub | 26 | React and Leptos explicit, 10 intentional narrow pairs |
-| memory, profiles, projects | 164 | React and Leptos explicit |
+| appearance | 20 | General and Appearance, settings focus and history, presentation storage, CSP and compressed Wasm, startup failures, setup, pairing |
+| automation | 40 | Routine schedules, workflow editor and graph, versioning, webhooks, run inspector |
+| calendar | 12 | Automation and project calendars, dates and timezone, run detail and downloads |
+| connections | 36 | Provider, engine, Hub, email, Vault, MCP and connected app screens and mutation contracts |
+| controls | 58 | Conversation routing and composer, dispatch, attachments, Goals and Needs you |
+| conversation | 4 | Named and room conversation navigation, history, sending, streaming and startup |
+| files | 52 | Workspace browser, results, Changes, Computer and secure requests |
+| guide | 16 | Guide entry, setup and connection behavior |
+| hub | 26 | Hosted login, projects, rooms, invitations, members, draft and send recovery. Ten intentional narrow differences |
+| memory | 32 | Personal and section notes, learned material, standing questions, history summary, journal recovery |
+| profiles | 64 | Agent creation, templates, profile editing, lifecycle and avatar actions |
+| projects | 68 | Creation, overview, source control, scoped integrations, sections, archives and restore |
+| rich | 32 | Markdown, attachments, rich replies, tool/activity display |
+| scoped | 52 | Upcoming routines, inbox deep links, agent Workflows, and inline run steps |
+| shell | 36 | Workspace navigation, Quick switcher, prompts, command recovery, sidebar controls |
+| system | 32 | Usage, updates, devices, shared data, backup and external access, mutation recovery |
 
-Coverage receipt is written by `parity:gate` to the supplied empty output
-directory as `summary.json`, per-group logs, and paired images. The release gate
-requires all 16 groups and at least 580 pairs.
+See the screenshot parity guide for the gate command and failure thresholds.
+Retained Node and Rust API cases below still cover the shared contracts.
+[Parity guide](../app/test-support/ui-smoke/PARITY.md)
 
 ## Issue #60 turn protocol
 
