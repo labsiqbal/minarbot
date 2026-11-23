@@ -241,7 +241,7 @@ pub(super) fn page(
             <aside class="hub-sidebar">
                 <a class="hub-link" href=accounts_href>{brand()}</a>
                 <Show when=move || page.access.get()>
-                    <nav aria-label="Project">
+                    <nav class="hub-project-nav" aria-label="Project">
                         <div class="hub-nav-heading">{move || page.data.with(|project| project.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| "Project".into()))}</div>
                         <a class="hub-nav-item" href="#members" aria-current=move || (page.selected.get() == "#members").then_some("page")><Icon name="users" />"Members"</a>
                         <a class="hub-nav-item" href="#agents" aria-current=move || (page.selected.get() == "#agents").then_some("page")><Icon name="bot" />"Agents"</a>
@@ -380,24 +380,19 @@ fn Members(page: ProjectPage) -> impl IntoView {
                 None => view! { <crate::connection_ui::Loading label="Loading invitations…" /> }.into_any(),
                 Some(rows) if rows.is_empty() => view! { <crate::connection_ui::Empty title="No invitations" /> }.into_any(),
                 Some(rows) => view! { <div class="k-card">{rows.into_iter().map(|invite| {
-                    let title = format!("Invitation {}", invite.id.chars().take(8).collect::<String>());
+                    let short_id = invite.id.chars().take(8).collect::<String>();
+                    let title = format!("Invitation {short_id}");
                     let expires = js_sys::Date::new(&invite.expires_at.into()).to_locale_string("en", &wasm_bindgen::JsValue::UNDEFINED).as_string().unwrap_or_default();
                     let pending = invite.state == "pending" && (owner || invite.role != "admin");
                     view! { <Row title=title
                         meta=Box::new(move || view! { {badge(invite.state)}<span>{invite.role}</span><span>{format!("Expires {expires}")}</span> }.into_any())
-                        trailing=Box::new(move || pending.then(|| view! {
-                            <button class=BUTTON type="button" disabled=page.busy on:click=move |_| {
-                                let id = invite.id.clone();
-                                crate::system::kit::ask(Some(page.confirm), "Revoke invitation?", "This invitation link will stop working.", "Revoke", true, move || {
-                                    page.change("/api/invitations/revoke",json!({"invitationId":id}), |_| ());
-                                });
-                            }>"Revoke invitation"</button>
-                        }).into_any()) /> }
+                        trailing=Box::new(move || pending.then(|| invitation_actions(page, invite.id, short_id)).into_any()) /> }
                 }).collect_view()}</div> }.into_any(),
             }}
         </Section> })}
-        <dialog class="k-dialog k-dialog--md bs-root hub-form-dialog" node_ref=invite_dialog aria-labelledby="hub-invite-title"
+        <dialog class="hub-form-dialog" node_ref=invite_dialog aria-labelledby="hub-invite-title"
             on:close=move |_| link.set(None) on:cancel=move |event: web_sys::Event| { if page.busy.get_untracked() { event.prevent_default(); } }>
+          <div class="k-dialog k-dialog--md bs-root">
             <div class="k-dialog__head">
                 <h2 class="k-dialog__title" id="hub-invite-title">{move || if link.get().is_some() { "Invitation ready" } else { "Invite member" }}</h2>
                 <button class="k-icon-btn" type="button" aria-label="Close" disabled=page.busy on:click=move |_| close_dialog(invite_dialog)><Icon name="close" /></button>
@@ -422,8 +417,25 @@ fn Members(page: ProjectPage) -> impl IntoView {
             <div class="k-dialog__foot"><Show when=move || link.get().is_some() fallback=move || view! {
                 <button class=PRIMARY type="submit" form="hub-invite" disabled=page.busy>"Create invitation"</button>
             }><button class=BUTTON type="button" on:click=move |_| close_dialog(invite_dialog)>"Done"</button></Show></div>
+          </div>
         </dialog>
     </div> }
+}
+
+fn invitation_actions(page: ProjectPage, id: String, short_id: String) -> impl IntoView {
+    view! {
+        <details class="hub-menu">
+            <summary class="k-icon-btn" aria-label=format!("Manage invitation {short_id}")><Icon name="ellipsis" /></summary>
+            <div class="k-pop hub-menu-items">
+                <button class="k-menu__item is-danger" type="button" disabled=page.busy on:click=move |_| {
+                    let id = id.clone();
+                    crate::system::kit::ask(Some(page.confirm), "Revoke invitation?", "This invitation link will stop working.", "Revoke", true, move || {
+                        page.change("/api/invitations/revoke",json!({"invitationId":id}), |_| ());
+                    });
+                }>"Revoke invitation"</button>
+            </div>
+        </details>
+    }
 }
 
 fn member_actions(page: ProjectPage, member: Member, owner: bool) -> impl IntoView {

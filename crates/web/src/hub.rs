@@ -511,8 +511,9 @@ fn Projects(actor: Session, config: StoredValue<Config>) -> impl IntoView {
                 }
             }).collect_view()}</div> }.into_any(),
         }}
-        <dialog class="k-dialog k-dialog--md bs-root hub-form-dialog" node_ref=create aria-labelledby="hub-create-title"
+        <dialog class="hub-form-dialog" node_ref=create aria-labelledby="hub-create-title"
             on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
+          <div class="k-dialog k-dialog--md bs-root">
             <div class="k-dialog__head">
                 <h2 class="k-dialog__title" id="hub-create-title">"Create project"</h2>
                 <button type="button" class="k-icon-btn" aria-label="Close" disabled=busy on:click=move |_| close_dialog(create)><Icon name="close" /></button>
@@ -530,6 +531,7 @@ fn Projects(actor: Session, config: StoredValue<Config>) -> impl IntoView {
                 <button class=BUTTON type="button" disabled=busy on:click=move |_| close_dialog(create)>"Cancel"</button>
                 <button class=PRIMARY type="submit" form="hub-create" disabled=busy>"Create project"</button>
             </div>
+          </div>
         </dialog>
     </div> }
 }
