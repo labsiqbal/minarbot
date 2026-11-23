@@ -23,6 +23,8 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+  const seed = await fetch(origin + '/api/agents', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: agent, name: 'Smoke agent', runtime: 'api', model: 'fixture', instructions: 'Fixture.' }) });
+  assert.equal(seed.status, 201);
   let state = disconnected;
   await page.route('**/api/**', route => {
     const { pathname } = new URL(route.request().url());
