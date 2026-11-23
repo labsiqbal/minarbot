@@ -1286,8 +1286,9 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
     });
     let base = chat.base();
     let text_base = base.clone();
+    let streaming = Memo::new(move |_| row.with(|turn| turn.reply.is_none() && turn.streaming()));
     let label = move || {
-        if row.with(Turn::streaming) {
+        if streaming.get() {
             "Streaming answer"
         } else {
             "Agent reply"
@@ -1540,6 +1541,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                                         view! { <div class="markdown" inner_html=move || markdown(&block, &scope, serde_json::to_string(&outputs.get()).ok())></div> }
                                     } />
                             </div>
+                            <span class="stream-caret" aria-hidden="true" hidden=move || !streaming.get()></span>
                         </div>
                         {move || row.with(|turn| {
                             if let Some(error) = turn.error.clone().filter(|_| turn.status != "cancelled") {
@@ -1548,7 +1550,7 @@ fn turn_view(chat: Chat, row: RwSignal<Turn>, id: String, latest: Memo<bool>) ->
                                 let text = turn.approval_subject().filter(|subject| *subject != "form").map(|subject| format!("Review the {subject} to continue."))
                                     .or_else(|| turn.events.iter().any(|event| event["status"] == "waiting").then(|| "Waiting for a signed event.".into()))
                                     .or_else(|| turn.waiting_for.is_some().then(|| "Waiting for child task results.".into()));
-                                text.map(|text| view! { <p class="message-muted">{text}</p> }).into_any()
+                                text.map(|text| view! { <p class="message-muted"><span>{text}</span></p> }).into_any()
                             }
                         })}
                     </div>

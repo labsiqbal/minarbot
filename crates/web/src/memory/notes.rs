@@ -543,7 +543,7 @@ pub(super) fn panel(
                     Some(page) => view! { <kit::Card>{page.items.into_iter().map(|entry| {
                         let pin = if entry.essential != 0 { "Pinned" } else { "Searchable" };
                         let selection = if entry.selection_locked == Some(0) { "Selection managed by agent" } else { "Selection locked by user" };
-                        view! { <kit::Row title=kit::text(entry.text.clone()) meta=kit::content(move || format!("{pin} · {selection}"))
+                        view! { <kit::Row title=kit::text(entry.text.clone()) meta=kit::content(move || view! { {pin}" · "{selection} })
                             trailing=kit::content(move || view! {
                                 <kit::Button label=kit::text("Edit note") size="sm" disabled=stale on_click=move || choose.run(Some(entry.clone())) />
                             }) />

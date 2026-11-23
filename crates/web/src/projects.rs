@@ -224,7 +224,6 @@ const TAB_FOCUS_KEY: &str = "minarbot:project-tab-focus";
 fn overview(project: Project) -> impl IntoView {
     let agents = directory();
     let icons = use_context::<shell::Icons>().unwrap_or_default();
-    let plus = StoredValue::new(icons.plus);
     let hash = StoredValue::new(icons.hash);
     let chevron = StoredValue::new(icons.chevron);
     let folder_icon = StoredValue::new(icons.folder);
@@ -446,21 +445,49 @@ fn overview(project: Project) -> impl IntoView {
     let apps_catalog = StoredValue::new(None);
     #[cfg(not(feature = "workflows"))]
     let environment_data = StoredValue::new(None);
+    #[cfg(not(feature = "workflows"))]
+    let messaging = RwSignal::new(false);
+    let items = if archived {
+        vec![management::restore_item(commands, project.get_value())]
+    } else {
+        vec![
+            MenuItem::new(
+                "Edit project",
+                UiAction::new(move |()| {
+                    select_tab("overview");
+                    edit(false);
+                }),
+            ),
+            #[cfg(not(feature = "workflows"))]
+            MenuItem::new(
+                "Discord and WhatsApp",
+                UiAction::new(move |()| messaging.set(true)),
+            ),
+            management::archive_item(commands, project.get_value(), "Archive project"),
+        ]
+    };
+    #[cfg(not(feature = "workflows"))]
+    let messaging_dialog = move || {
+        messaging.get().then(|| {
+            view! {
+                <ui::Modal title="Discord and WhatsApp".into() size="lg" close=UiAction::new(move |()| messaging.set(false))>
+                    {crate::messaging_connections::discord()}
+                    {crate::messaging_connections::whatsapp()}
+                </ui::Modal>
+            }
+        })
+    };
+    #[cfg(feature = "workflows")]
+    let messaging_dialog = ();
     view! {
         <div class="page legacy is-wide"><div class="k-page bs-root project-home">
             <header class="k-page-head">
                 {workspace::heading_text(project.with_value(|project| project.name.clone()), project.with_value(|project| project.description.clone()))}
                 <div class="k-page-head__actions">
-                    <Menu label="Project menu" disabled=move || commands.journal.locked() items=if archived {
-                        vec![management::restore_item(commands, project.get_value())]
-                    } else {
-                        vec![
-                            MenuItem::new("Edit project", UiAction::new(move |()| { select_tab("overview"); edit(false); })),
-                            management::archive_item(commands, project.get_value(), "Archive project"),
-                        ]
-                    } />
+                    <Menu label="Project menu" disabled=move || commands.journal.locked() items=items />
                 </div>
             </header>
+            {messaging_dialog}
             {commands.recovery()}
             <div class="k-tabs">
                 <div class="k-tabs__list" role="tablist" aria-label="Project sections"
@@ -583,7 +610,7 @@ fn overview(project: Project) -> impl IntoView {
             <section class="k-section" hidden=editing>
                 <div class="k-section__head"><h2 class="k-section__title">"Folders"</h2>
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked on:click=move |_| edit(true)>
-                        <span class="appearance-icon" inner_html=plus.get_value()></span>"Add folder"</button></div>
+                        <crate::connection_ui::Icon name="plus" />"Add folder"</button></div>
                 {project.with_value(|project| if project.folders.is_empty() {
                     view! { <p class="k-field__hint">"No folders"</p> }.into_any()
                 } else {
@@ -607,14 +634,16 @@ fn overview(project: Project) -> impl IntoView {
             <section class="k-section">
                 <div class="k-section__head"><h2 class="k-section__title">"Sections"</h2>
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked on:click=move |_| show("sections")>
-                        <span class="appearance-icon" inner_html=plus.get_value()></span>"New section"</button></div>
+                        <crate::connection_ui::Icon name="plus" />"New section"</button></div>
                 <div class="k-card">{project.with_value(|project| project.sections.iter().map(|section| view! {
-                    <div class="k-row is-clickable"><a class="k-row__main" href=format!("/rooms/{}", section.id)>
+                    <div class="k-row is-clickable" class:project-section--archived=section.archived><a class="k-row__main" href=format!("/rooms/{}", section.id)>
                         <span class="k-row__leading" inner_html=hash.get_value()></span><span class="k-row__text">
                         <span class="k-row__title">{section.name.clone()}</span>
                         {section.archived.then(|| view! { <span class="k-row__meta">"Archived"</span> })}
                     </span><span class="k-row__chev" inner_html=chevron.get_value()></span></a>
-                    {section.archived.then(|| management::section_menu(commands, project.clone(), section.clone()))}
+                    {section.archived.then(|| view! {
+                        <div class="project-section__actions">{management::section_menu(commands, project.clone(), section.clone())}</div>
+                    })}
                     </div>
                 }).collect_view())}</div>
             </section>
@@ -624,7 +653,7 @@ fn overview(project: Project) -> impl IntoView {
                         if project.with_value(|project| project.members.is_empty()) {
                             edit(false);
                         } else { show("thread"); }
-                    }><span class="appearance-icon" inner_html=plus.get_value()></span>"New conversation"</button></div>
+                    }><crate::connection_ui::Icon name="plus" />"New conversation"</button></div>
                 {project.with_value(|row| (!row.folders.is_empty()).then(|| view! {
                     <Select name="project-conversation-folder" label="Conversation folder" value=folder.into()
                         options=Signal::stored(row.folders.iter().map(|path| (path.clone(), path.clone())).collect())

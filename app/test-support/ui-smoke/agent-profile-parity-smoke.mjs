@@ -85,7 +85,11 @@ function settingsFixture(page) {
 }
 
 async function captures(page, prefix) {
-  const shot = (name, panel) => parityShot(page, join(output, `${prefix}-${name}.png`), panel);
+  const shot = async (name, panel) => {
+    // The mouse position from opening a layer can overlap a field in the new layer.
+    await page.mouse.move(0, 0);
+    await parityShot(page, join(output, `${prefix}-${name}.png`), panel);
+  };
   await createMenu(page, 'New agent');
   const create = dialog(page, 'New agent');
   await shot('new', create);
@@ -101,8 +105,14 @@ async function captures(page, prefix) {
   await createMenu(page, 'Import template');
   const importPanel = dialog(page, 'Import template');
   await shot('import', importPanel);
-  await importPanel.locator('input[type=file]').setInputFiles(templateFile);
+  const [fileChooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    button(importPanel, 'Choose file').click(),
+  ]);
+  await fileChooser.setFiles(templateFile);
   await importPanel.getByRole('heading', { name: 'New profile preview' }).waitFor();
+  // Focus the editable preview after the browser returns from the file picker.
+  await importPanel.getByRole('textbox', { name: 'Name', exact: true }).click();
   await shot('import-preview', importPanel);
   await close(page);
 

@@ -48,7 +48,6 @@ pub(super) fn minimap(
                     turn.parent.is_none()
                         && turn.origin.is_none()
                         && turn.routine_report.is_none()
-                        && !chat.queued(turn)
                         && turn.room.as_ref().is_none_or(|room| {
                             room["root"] == turn.id
                                 || !rows.iter().any(|row| room["root"] == row.id)

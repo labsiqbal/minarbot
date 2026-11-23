@@ -275,6 +275,7 @@ try {
             await message(checkpoint.id).getByRole('button', { name: 'View subtask', exact: true }).click();
             await page.getByText('Selected message', { exact: true }).waitFor();
             await message(child.id).waitFor();
+            await page.mouse.move(0, 0);
             await capture('task-family');
             await page.getByRole('button', { name: 'Back to latest messages', exact: true }).click();
 

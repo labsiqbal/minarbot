@@ -154,7 +154,7 @@ pub(super) fn computer(agent: String) -> impl IntoView {
     );
     let setup_link = StoredValue::new(setup_link);
     view! {
-        <div class="bs-root k-stack">
+        <div class="bs-root k-stack agent-profile__computer">
             {move || status.data.with(|data| data.as_ref().map(|value| {
                 let enabled = value["enabled"] == true;
                 let available = value["available"] == true;
@@ -181,7 +181,7 @@ pub(super) fn computer(agent: String) -> impl IntoView {
                         }) />
                         {available.then(|| view! {
                             <Row title=text("Always-on Computer") trailing=content(move || view! {
-                                <span tabindex=limit.then_some("0") title=limit.then_some("Computer limit reached. Stop another Computer or turn off its Always-on setting.")>
+                                <span class="agent-profile__computer-switch" tabindex=limit.then_some("0") title=limit.then_some("Computer limit reached. Stop another Computer or turn off its Always-on setting.")>
                                 <Switch label="Always-on Computer" checked=Signal::derive(move || journal.pending.with(|value| value.as_ref().and_then(|value| value["alwaysOn"].as_bool()).unwrap_or(always_on)))
                                   disabled=move || locked.get() || !enabled || limit change=Callback::new(move |always_on| apply(json!({"alwaysOn":always_on}))) />
                                 </span>

@@ -20,20 +20,62 @@
 .leptos-workspace .agent-avatar-filename { align-self: center; overflow-wrap: anywhere; }
 .leptos-workspace .agent-template-fields { padding: 12px; }
 .leptos-workspace .agent-template-fields > .k-field__hint { font-size: .8125rem; }
-.leptos-workspace .system-dialog:has(#agent-template-import-title) button[autofocus]:focus {
+@media (min-width: 768px) {
+  .leptos-workspace .system-dialog:has(#agent-template-import-title) button[autofocus]:focus {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+}
+.leptos-workspace [aria-labelledby="agent-lifecycle-confirm-title"] .k-dialog__foot button[autofocus]:focus {
   outline: 2px solid var(--color-border-focus);
   outline-offset: 1px;
 }
 .leptos-workspace .agent-model-field { gap: 4px; }
 .leptos-workspace .system-dialog:has(#agent-template-export-title) > .k-dialog__foot:empty { display: none; }
-.leptos-workspace .agent-profile__runtime-select > .agent-profile__runtime-icon { position: absolute; left: 10px; pointer-events: none; }
-.leptos-workspace .agent-profile__runtime-select > select { padding-left: 34px; }
+.leptos-workspace .agent-profile__runtime-select > .agent-profile__runtime-icon {
+  position: absolute;
+  display: flex;
+  inset-inline-start: 12px;
+  pointer-events: none;
+  translate: 0 -1px;
+}
+.leptos-workspace .agent-profile__runtime-select > select { padding-inline-start: 35px; padding-block-end: 2px; }
+.leptos-workspace :is(.agent-profile, [aria-labelledby="agent-folder-title"]) .connection-select > .k-select__chev { right: 12px; }
+.leptos-workspace .agent-profile .k-combobox__toggle svg,
+.leptos-workspace .agent-profile__resources .panel-row > .appearance-icon:last-child svg { width: 14px; height: 14px; }
+.leptos-workspace .agent-profile .k-collapsible__chev { display: inline-flex; }
+.leptos-workspace .agent-profile__computer .k-row__meta:empty { display: none; }
+.leptos-workspace .agent-profile__computer-switch { display: flex; }
 .leptos-workspace .agent-profile__resources .panel-row { display: flex; align-items: center; }
 .leptos-workspace .agent-profile__resources .panel-row:hover { color: var(--color-text-primary); }
 .leptos-workspace .k-avatar-picker__check svg { width: 10px; height: 10px; }
+.leptos-workspace .k-avatar-picker__swatch > span > .appearance-icon { display: inline; }
 .leptos-workspace .k-avatar-picker__swatch svg { width: 14px; height: 14px; color: #1c1c1c; }
+.leptos-workspace [aria-labelledby="agent-sites-title"] .k-empty__icon svg { width: 18px; height: 18px; }
 
-.leptos-workspace .agent-profile__initials { font-size: 17px; }
+/* Dialog bodies own scrolling. The native outer scroll container snaps fractional borders. */
+.leptos-workspace .system-dialog[aria-labelledby^="agent-"],
+.leptos-workspace .system-dialog[aria-labelledby="history-summary-title"] {
+  overflow: visible;
+}
+
+/* Stack the scrims behind the profile so nested dialogs leave its surface undimmed. */
+.leptos-workspace:has([aria-labelledby="agent-profile-title"]:modal)
+  .system-dialog:is([aria-labelledby^="agent-"]:not([aria-labelledby="agent-profile-title"]), [aria-labelledby="history-summary-title"])::backdrop {
+  background: transparent;
+}
+.leptos-workspace:has(.system-dialog:is([aria-labelledby^="agent-"]:not([aria-labelledby="agent-profile-title"]), [aria-labelledby="history-summary-title"]):modal)
+  .system-dialog[aria-labelledby="agent-profile-title"]::backdrop {
+  /* Two scrims leave the product of their transparencies. */
+  background: rgb(from var(--color-bg-scrim) r g b / calc(1 - (1 - alpha) * (1 - alpha)));
+}
+.leptos-workspace:has([aria-labelledby="agent-sites-title"]:modal):has([aria-labelledby="agent-site-editor-title"]:modal)
+  .system-dialog[aria-labelledby="agent-profile-title"]::backdrop {
+  background: linear-gradient(var(--color-bg-scrim), var(--color-bg-scrim)),
+    linear-gradient(var(--color-bg-scrim), var(--color-bg-scrim)), var(--color-bg-scrim);
+}
+
+.leptos-workspace .agent-profile__initials > .bs-avatar { width: 100%; height: 100%; font-size: 17px; }
 .leptos-workspace .agent-profile .k-combobox > input::-webkit-calendar-picker-indicator { display: none; }
 .leptos-workspace .hidden-agents[open] .machine-group__chevron { transform: rotate(90deg); }
 .leptos-workspace .agent-hidden-avatar { width: 36px; height: 36px; font-size: 15px; }

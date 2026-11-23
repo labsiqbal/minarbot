@@ -131,6 +131,7 @@ async function run(client) {
       }
       const activeTab = page.locator('.project-home > .k-tabs > [role=tablist] > [aria-selected=true]');
       if (await activeTab.isVisible()) await activeTab.scrollIntoViewIfNeeded();
+      await page.mouse.move(width - 1, 0);
       for (const theme of ['dark', 'light']) {
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         const file = name + '-' + layout + '-' + theme + (['project-messaging', 'project-whatsapp', 'restore', 'section-restore'].includes(name) ? '-diagnostic' : '') + '.png';
@@ -149,6 +150,8 @@ async function run(client) {
     await api('/api/agents', { id: agent, runtime: 'api', name: 'Project member', model: 'fixture', instructions: 'Synthetic fixture.' });
     const created = await api('/api/projects', { id: project, name: 'Fixture project', description: 'Project parity fixture.',
       members: [{ agent, write: false }], folders: [{ mode: 'existing', path: folder }], confirmWrite: false });
+    // Keep background indexing from racing the screenshots.
+    await api(base + '/edit', { id: randomUUID(), revision: created.revision, codegraphEnabled: false });
     await page.goto(go());
     assert.equal(await page.locator('#leptos-root').count(), client === 'leptos' ? 1 : 0);
     await text('1 changed').waitFor();
@@ -222,14 +225,16 @@ async function run(client) {
     await text('Connect apps').waitFor();
     await capture('apps');
     if (client === 'leptos') {
-      await page.getByText('Discord and WhatsApp', { exact: true }).click();
-      await button('Connect Discord').waitFor();
+      await button('Project menu').press('Enter');
+      await page.getByRole('menuitem', { name: 'Discord and WhatsApp', exact: true }).press('Enter');
+      const messaging = dialog('Discord and WhatsApp');
+      await button('Connect Discord', messaging).waitFor();
       await capture('project-messaging');
       await text('WhatsApp').click();
       await dialog('WhatsApp').waitFor();
       await capture('project-whatsapp');
       await page.keyboard.press('Escape');
-      await page.getByText('Discord and WhatsApp', { exact: true }).click();
+      await button('Close', messaging).click();
     }
     await page.getByRole('switch', { name: 'Allow global apps' }).click();
     await capture('global-apps');

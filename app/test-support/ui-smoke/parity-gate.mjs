@@ -8,6 +8,14 @@ import sharp from 'sharp';
 
 // The prior review's settled conversation pairs peaked at 61 changed pixels and 3 over delta 16.
 const maxChanged = 100, maxOver16 = 24;
+const intentionalHubPairs = new Set([
+  'room-narrow-dark.png', 'room-narrow-light.png',
+  'members-narrow-dark.png', 'members-narrow-light.png',
+  'invite-narrow-dark.png', 'invite-narrow-light.png',
+  'invitation-narrow-dark.png', 'invitation-narrow-light.png',
+  'create-project-narrow-dark.png', 'create-project-narrow-light.png',
+]);
+const failed = row => row.result !== 'pass' && row.result !== 'intentional';
 const cwd = resolve(import.meta.dirname, '../..');
 const root = process.argv[2] ? resolve(process.argv[2]) : await mkdtemp(join(tmpdir(), 'minarbot-parity-'));
 if (process.argv[2]) {
@@ -117,18 +125,22 @@ for (const [group, minimum, script, screenshotEnv, clientEnv] of selected) {
     }
   }
   const groupRows = [];
+  const intentionalPairs = group === 'hub' ? intentionalHubPairs : new Set();
   await mkdir(join(reports, group));
-  for (const name of new Set([...images.react.keys(), ...images.leptos.keys()])) {
+  for (const name of new Set([...images.react.keys(), ...images.leptos.keys(), ...intentionalPairs])) {
     const react = images.react.get(name), leptos = images.leptos.get(name);
-    const result = react && leptos ? await compare(react, leptos, join(reports, group, name))
-      : { changed: null, over16: null, box: '', result: `missing ${react ? 'Leptos' : 'React'}` };
-    groupRows.push({ pair: `${group}/${name}`, ...result });
+    const compared = react && leptos ? await compare(react, leptos, join(reports, group, name))
+      : { changed: null, over16: null, box: '', result: `missing ${react ? 'Leptos' : leptos ? 'React' : 'React and Leptos'}` };
+    if (intentionalPairs.has(name) && compared.changed !== null) compared.result = 'intentional';
+    groupRows.push({ pair: `${group}/${name}`, ...compared });
   }
   rows.push(...groupRows);
   const pairs = groupRows.filter(row => !row.result.startsWith('missing')).length;
-  const failures = groupRows.filter(row => row.result !== 'pass').length;
+  const intentional = groupRows.filter(row => row.result === 'intentional').length;
+  const failures = groupRows.filter(failed).length;
   const stats = { group, pairs, minimum, failures, maxChanged: Math.max(0, ...groupRows.map(row => row.changed ?? 0)),
-    maxOver16: Math.max(0, ...groupRows.map(row => row.over16 ?? 0)), checks };
+    maxOver16: Math.max(0, ...groupRows.map(row => row.over16 ?? 0)), intentional,
+    intentionalPairs: groupRows.filter(row => row.result === 'intentional').map(row => row.pair), checks };
   summary.push(stats);
   console.log(JSON.stringify(stats));
 }
@@ -136,6 +148,6 @@ const header = 'pair\tchanged\tover16\tbox\tresult';
 const tsv = entries => [header, ...entries.map(row => [row.pair, row.changed ?? '', row.over16 ?? '', row.box, row.result].join('\t')), ''].join('\n');
 await writeFile(join(reports, 'all.tsv'), tsv(rows));
 await writeFile(join(reports, 'nonidentical.tsv'), tsv(rows.filter(row => row.changed || row.result !== 'pass')));
-await writeFile(join(reports, 'failures.tsv'), tsv(rows.filter(row => row.result !== 'pass')));
+await writeFile(join(reports, 'failures.tsv'), tsv(rows.filter(failed)));
 await writeFile(join(reports, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
 if (summary.some(group => group.failures || group.pairs < group.minimum || Object.values(group.checks).some(code => code !== 0))) process.exitCode = 1;
