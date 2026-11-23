@@ -85,15 +85,25 @@ fn pager<Cursor: Clone + Send + Sync + 'static>(
     }
 }
 
+#[cfg(feature = "conversation")]
 pub(crate) fn panel(
     path: String,
     channel: bool,
     archived: bool,
-    in_dialog: bool,
     close: Callback<()>,
 ) -> impl IntoView {
+    notes_panel(path, channel, archived, close, None)
+}
+
+fn notes_panel(
+    path: String,
+    channel: bool,
+    archived: bool,
+    close: Callback<()>,
+    dialog_open: Option<RwSignal<bool>>,
+) -> impl IntoView {
     crate::lazy_view::load("Memory", move || {
-        memory_panel(path.clone(), channel, archived, in_dialog, close)
+        memory_panel(path.clone(), channel, archived, close, dialog_open)
     })
 }
 
@@ -102,11 +112,18 @@ fn memory_panel(
     path: String,
     channel: bool,
     archived: bool,
-    in_dialog: bool,
     close: Callback<()>,
+    dialog_open: Option<RwSignal<bool>>,
 ) -> crate::lazy_view::ChunkView {
     let path = StoredValue::new(path);
     let tab = RwSignal::new("notes");
+    if let Some(open) = dialog_open {
+        Effect::new(move |_| {
+            if !open.get() {
+                tab.set("notes");
+            }
+        });
+    }
     let heading = NodeRef::<html::H1>::new();
     let (confirm, confirmation) = kit::confirmation();
     provide_context(confirm);
@@ -125,7 +142,7 @@ fn memory_panel(
             );
         }
     };
-    if !in_dialog {
+    if dialog_open.is_none() {
         Effect::new(move |_| {
             if heading.get().is_some() {
                 request_animation_frame(move || {
@@ -163,7 +180,7 @@ fn memory_panel(
                 </div>
                 <div role="tabpanel" aria-labelledby="memory-tab-notes" tabindex="-1" class="k-tabs__panel"
                     hidden=move || tab.get() != "notes">
-                    {notes::panel(path.get_value(), archived, stored, Signal::derive(move || tab.get() == "notes"), heading)}
+                    {notes::panel(path.get_value(), archived, stored, Signal::derive(move || tab.get() == "notes"), heading, dialog_open)}
                 </div>
                 {move || {
                     let active = tab.get();
@@ -181,10 +198,13 @@ fn memory_panel(
 
 pub(crate) fn dialog(path: String, open: RwSignal<bool>) -> impl IntoView {
     let path = StoredValue::new(path);
+    let mounted = Memo::new(move |was_open| open.get() || was_open.copied().unwrap_or(false));
     view! {
         <kit::Dialog id="agent-memory" title=kit::text("Minarbot Memory") open=Signal::from(open)
             size="lg" hide_header=true on_close=move || open.set(false)>
-            {move || open.get().then(|| panel(path.get_value(), false, false, true, Callback::new(move |()| open.set(false))))}
+            <Show when=move || mounted.get()>
+                {notes_panel(path.get_value(), false, false, Callback::new(move |()| open.set(false)), Some(open))}
+            </Show>
         </kit::Dialog>
     }
 }

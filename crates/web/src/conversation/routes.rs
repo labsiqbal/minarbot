@@ -528,8 +528,8 @@ pub fn standalone() -> impl IntoView {
     view! {
         {move || if deleting() {
             view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any()
-        } else if let Some((_, back)) = workflow.get() {
-            crate::lazy_route::outlet("workflows", "workflows", nav.0.get_untracked(), String::new(), Some(back)).into_any()
+        } else if let Some((owner, back)) = workflow.get() {
+            crate::lazy_route::outlet("workflows", "workflows", nav.0.get_untracked(), owner, Some(back)).into_any()
         } else {
             config.get().map(|config| chat_view(config, restore_conversation_focus.get_untracked())).into_any()
         }}
@@ -742,6 +742,8 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
     let name = agent.name.clone();
     let more = StoredValue::new(icons.more.clone());
     let chat_icon = StoredValue::new(icons.chats.clone());
+    let main_menu = NodeRef::<leptos::html::Details>::new();
+    let main_menu_trigger = NodeRef::<leptos::html::Summary>::new();
     view! {
         <div class="details__scroll">
         <div class="details__identity">
@@ -774,14 +776,18 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
                 <a class="panel-row panel-row--link" class:is-current=main aria-current=main.then_some("true") href=link(&base)>
                     <span class="appearance-icon" inner_html=icons.chats></span><span class="panel-row__title">"Main chat"</span>
                 </a>
-                <details class="chat-pilot-menu chat-list-menu"><summary class="k-icon-btn" aria-label="Menu conversation Main chat" title="More actions">
+                <details class="chat-pilot-menu chat-list-menu" node_ref=main_menu><summary class="k-icon-btn" aria-label="Menu conversation Main chat" title="More actions" node_ref=main_menu_trigger>
                     <span class="appearance-icon" inner_html=more.get_value()></span></summary>
                     <div class="k-pop k-menu">
                         {if agent.builtin {
                             let from = link(&base);
                             view! { <a class="k-menu__item" href=crate::settings::section_url("/settings/providers", &from)>"AI connection"</a> }.into_any()
                         } else {
-                            view! { <button class="k-menu__item" type="button" on:click=move |_| edit_profile.run(())>"Edit profile"</button> }.into_any()
+                            view! { <button class="k-menu__item" type="button" on:click=move |_| {
+                                if let Some(menu) = main_menu.get_untracked() { menu.set_open(false); }
+                                if let Some(trigger) = main_menu_trigger.get_untracked() { let _ = trigger.focus(); }
+                                edit_profile.run(());
+                            }>"Edit profile"</button> }.into_any()
                         }}
                     </div>
                 </details>

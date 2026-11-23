@@ -132,7 +132,7 @@ enum Screen {
 pub(crate) fn workflows_page() -> impl IntoView {
     let search = window().location().search().unwrap_or_default();
     if let Some((owner, back)) = crate::lazy_route::workflow_scope(&format!("/workflows{search}")) {
-        return agent_library(owner, format!("{back}?ui=leptos")).into_any();
+        return agent_library(owner, format!("{back}?ui=leptos"), None).into_any();
     }
     let screen = RwSignal::new(Screen::List);
     let returning = return_state();
@@ -294,7 +294,11 @@ pub(crate) fn workflows_page() -> impl IntoView {
     }).into_any()
 }
 
-pub(crate) fn agent_library(owner: String, back: String) -> impl IntoView {
+pub(crate) fn agent_library(
+    owner: String,
+    back: String,
+    library: Option<js_sys::Promise>,
+) -> impl IntoView {
     let recovery = journal(&owner);
     let initial = recovery.pending.with_untracked(|pending| {
         pending
@@ -317,14 +321,17 @@ pub(crate) fn agent_library(owner: String, back: String) -> impl IntoView {
     let screen = RwSignal::new(initial);
     let owner = StoredValue::new(owner);
     let cursors = RwSignal::new(Vec::<String>::new());
-    let query = ui::query::<Value>(move || {
-        let path = owner.with_value(|owner| format!("/api/agents/{owner}/workflows"));
-        cursors.with_untracked(|cursors| {
-            cursors
-                .last()
-                .map_or_else(|| path.clone(), |after| url(&path, &[("after", after)]))
-        })
-    });
+    let query = ui::query_with_prefetch::<Value>(
+        move || {
+            let path = owner.with_value(|owner| format!("/api/agents/{owner}/workflows"));
+            cursors.with_untracked(|cursors| {
+                cursors
+                    .last()
+                    .map_or_else(|| path.clone(), |after| url(&path, &[("after", after)]))
+            })
+        },
+        library,
+    );
     let cached = LIBRARY_PAGE.with_borrow_mut(|slot| match slot.as_ref() {
         Some((agent, page)) if owner.with_value(|owner| owner == agent) => Some(page.clone()),
         _ => {

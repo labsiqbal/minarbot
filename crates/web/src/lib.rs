@@ -121,6 +121,17 @@ pub fn mount_appearance() -> Result<(), JsValue> {
 }
 
 #[cfg(feature = "workflows")]
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AutomationConfig {
+    colors: Vec<appearance::ColorTheme>,
+    workspace_icons: shell::Icons,
+    connection_icons: connection_ui::Icons,
+    system_icons: system::kit::Icons,
+    error_icon: String,
+}
+
+#[cfg(feature = "workflows")]
 #[wasm_bindgen]
 pub fn mount_workflows() -> Result<(), JsValue> {
     let document = document();
@@ -128,40 +139,43 @@ pub fn mount_workflows() -> Result<(), JsValue> {
         .get_element_by_id("leptos-root")
         .ok_or_else(|| JsValue::from_str("Automation document is incomplete"))?
         .dyn_into::<HtmlElement>()?;
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Config {
-        colors: Vec<appearance::ColorTheme>,
-        workspace_icons: shell::Icons,
-        connection_icons: connection_ui::Icons,
-        system_icons: system::kit::Icons,
-        error_icon: String,
-    }
     let config = document
         .get_element_by_id("appearance-config")
         .and_then(|element| element.text_content())
-        .and_then(|raw| serde_json::from_str::<Config>(&raw).ok())
+        .and_then(|raw| serde_json::from_str::<AutomationConfig>(&raw).ok())
         .ok_or_else(|| JsValue::from_str("Automation configuration is invalid"))?;
     let path = window().location().pathname()?;
     let route = workspace_route::WorkspaceRoute::from_path(&path)
         .ok_or_else(|| JsValue::from_str("Unknown automation route"))?;
     mount_to(root, move || {
-        let colors = StoredValue::new(config.colors);
-        provide_context(config.connection_icons);
-        provide_context(config.system_icons);
-        if route.is_automation() {
-            automation::mount(path, colors, config.workspace_icons).into_any()
-        } else {
-            view! {
-                <shell::WorkspaceShell base_path=path colors icons=config.workspace_icons>
-                    {workspace::page(route, config.error_icon)}
-                </shell::WorkspaceShell>
-            }
-            .into_any()
-        }
+        lazy_view::load("automation workspace", move || {
+            workflow_workspace(config.clone(), path.clone(), route.clone())
+        })
     })
     .forget();
     Ok(())
+}
+
+#[cfg(feature = "workflows")]
+#[leptos::wasm_split::wasm_split(workflow_workspace, wasm_split_path = leptos::wasm_split, fallible)]
+fn workflow_workspace(
+    config: AutomationConfig,
+    path: String,
+    route: workspace_route::WorkspaceRoute,
+) -> lazy_view::ChunkView {
+    let colors = StoredValue::new(config.colors);
+    provide_context(config.connection_icons);
+    provide_context(config.system_icons);
+    Ok(if route.is_automation() {
+        automation::mount(path, colors, config.workspace_icons).into_any()
+    } else {
+        view! {
+            <shell::WorkspaceShell base_path=path colors icons=config.workspace_icons>
+                {workspace::page(route, config.error_icon)}
+            </shell::WorkspaceShell>
+        }
+        .into_any()
+    })
 }
 
 #[cfg(feature = "hub")]
@@ -207,7 +221,11 @@ fn route_config<T: serde::de::DeserializeOwned>() -> Result<T, JsValue> {
 
 #[cfg(feature = "workflows")]
 #[wasm_bindgen]
-pub fn mount_scoped_workflows(root: HtmlElement, path: &str) -> Result<JsValue, JsValue> {
+pub fn mount_scoped_workflows(
+    root: HtmlElement,
+    path: &str,
+    library: js_sys::Promise,
+) -> Result<JsValue, JsValue> {
     let (owner, back) = lazy_route::workflow_scope(path)
         .ok_or_else(|| JsValue::from_str("Unknown workflow owner"))?;
     let config: RouteIcons = route_config()?;
@@ -219,7 +237,7 @@ pub fn mount_scoped_workflows(root: HtmlElement, path: &str) -> Result<JsValue, 
         leptos::task::spawn_local(async move {
             directory.try_set(Some(api::read("/api/agents").await));
         });
-        automation::agent_library(owner, back)
+        automation::agent_library(owner, back, Some(library))
     });
     Ok(wasm_bindgen::closure::Closure::once_into_js(move || {
         drop(mount)

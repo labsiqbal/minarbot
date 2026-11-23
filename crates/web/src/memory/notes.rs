@@ -355,6 +355,7 @@ pub(super) fn panel(
     stored: RwSignal<bool>,
     active: Signal<bool>,
     heading: NodeRef<html::H1>,
+    dialog_open: Option<RwSignal<bool>>,
 ) -> impl IntoView {
     let journal = Journal::new(&path, stored);
     let path = StoredValue::new(path);
@@ -371,6 +372,27 @@ pub(super) fn panel(
         });
         format!("{}?{params}", path.get_value())
     });
+    if let Some(open) = dialog_open {
+        Effect::new(move |previous| {
+            let open = open.get();
+            if !open {
+                query.set(String::new());
+                let first_page = search.with_untracked(String::is_empty)
+                    && cursors.with_untracked(Vec::is_empty);
+                if !first_page {
+                    read.invalidate();
+                    search.set(String::new());
+                    cursors.set(Vec::new());
+                    read.data.set(None);
+                }
+                journal.notice.set(String::new());
+                journal.undo.set(None);
+            } else if previous == Some(false) {
+                read.reload.run(());
+            }
+            open
+        });
+    }
     let change_page = Callback::new(move |()| {
         read.data.set(None);
         read.reload.run(());
@@ -387,7 +409,10 @@ pub(super) fn panel(
             || journal.pending.with(Option::is_some)
     });
     let stale = Signal::derive(move || {
-        locked.get() || !read.error.with(String::is_empty) || read.data.with(Option::is_none)
+        locked.get()
+            || read.busy.get()
+            || !read.error.with(String::is_empty)
+            || read.data.with(Option::is_none)
     });
     let confirm = use_context::<kit::Confirm>();
     let choose = Callback::new(move |entry: Option<Entry>| {

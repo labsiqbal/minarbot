@@ -333,7 +333,7 @@ try {
   for (const client of clients) {
     const app = await startApp({
       database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: 'leptos',
-      defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', stream: false, projectRoot: scratch,
+      defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', stream: false, projectRoot: scratch,
     });
     try {
       const response = await fetch(app.origin + '/api/agents', {

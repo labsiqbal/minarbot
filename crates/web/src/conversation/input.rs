@@ -256,7 +256,7 @@ pub(super) fn question(
 }
 
 fn code(label: String, value: String) -> impl IntoView {
-    view! { <pre class="k-code" tabindex="0" role="region" aria-label=label><code>{value}</code></pre> }
+    view! { <pre class="k-code" tabindex="0" role="region" aria-label=label>{value}</pre> }
 }
 
 pub(super) fn approval(

@@ -194,9 +194,10 @@ try {
   const editor = page.getByRole('dialog', { name: 'Agent profile' });
   await details.getByRole('button', { name: 'Edit profile', exact: true }).click();
   await editor.getByRole('button', { name: 'Cancel' }).click();
+  await editor.waitFor({ state: 'hidden' });
   await details.getByLabel('Menu conversation Main chat').click();
   await details.locator('.chat-list-menu').getByRole('button', { name: 'Edit profile', exact: true }).click();
-  assert.equal(await editor.getByLabel('Name', { exact: true }).inputValue(), agent.name);
+  assert.equal(await editor.getByRole('textbox', { name: 'Name', exact: true }).inputValue(), agent.name);
   const saved = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(`/api${main}/edit`));
   const reloaded = page.waitForEvent('load');
   await editor.getByRole('button', { name: 'Save changes', exact: true }).click();

@@ -346,6 +346,11 @@ pub(crate) fn WorkspaceShell(
     let resize = window_event_listener(leptos::ev::resize, move |_| viewport.set(narrow()));
     on_cleanup(move || resize.remove());
     let switcher = RwSignal::new(false);
+    let switcher_requested = RwSignal::new(false);
+    let open_switcher = move || {
+        switcher.set(true);
+        switcher_requested.set(true);
+    };
     let help = NodeRef::<leptos::html::Dialog>::new();
     let pending = attention::subscribe();
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
@@ -375,7 +380,7 @@ pub(crate) fn WorkspaceShell(
             "b" => toggle_sidebar(),
             "1" => choose_tab(false),
             "2" => choose_tab(true),
-            "k" => switcher.set(true),
+            "k" => open_switcher(),
             "," if !event.shift_key() => {
                 if let Ok(Some(link)) = document().query_selector(".sidebar-settings") {
                     if let Ok(link) = link.dyn_into::<web_sys::HtmlElement>() {
@@ -759,6 +764,15 @@ pub(crate) fn WorkspaceShell(
         })
         .collect_view();
     let switcher_icons = icons.clone();
+    let switcher_data = switcher::Data {
+        directory,
+        machines,
+        projects,
+        base_path: Signal::derive(current_url),
+        new_conversation: conversation_creation,
+        online,
+        attention,
+    };
     let (update_capsule, update_dialog) = crate::system::updates::workspace();
     view! {
         <div class="app bs-root leptos-workspace" class:is-sidebar-collapsed=hidden>
@@ -859,7 +873,7 @@ pub(crate) fn WorkspaceShell(
                     <div class="sidebar__fade" aria-hidden="true"></div>
                     <a class="provider-status" aria-label=provider_status title=provider_status href=move || settings_link("/settings/providers")><i class:is-on=provider_ready aria-hidden="true"></i></a>
                     <button type="button" class="k-icon-btn" aria-label="Quick switcher (Ctrl/Cmd+K)" title="Quick switcher (Ctrl/Cmd+K)"
-                        aria-keyshortcuts="Control+k Meta+k" on:click=move |_| switcher.set(true)>
+                        aria-keyshortcuts="Control+k Meta+k" on:click=move |_| open_switcher()>
                         <span class="appearance-icon" inner_html=icons.quick_search.clone()></span>
                     </button>
                     <button type="button" class="k-icon-btn" aria-label="Help" title="Help" on:click=move |_| {
@@ -869,10 +883,12 @@ pub(crate) fn WorkspaceShell(
                 </div>
             </aside>
             {update_dialog}
-            {switcher::render(switcher, switcher::Data {
-                directory, machines, projects, base_path: Signal::derive(current_url),
-                new_conversation: conversation_creation, online, attention,
-            }, switcher_icons)}
+            {
+                #[cfg(not(feature = "hub"))]
+                {switcher::mount(switcher_requested, switcher, switcher_data, switcher_icons)}
+                #[cfg(feature = "hub")]
+                {switcher::render(switcher, switcher_data, switcher_icons)}
+            }
             <dialog class="k-dialog k-dialog--lg workspace-dialog" node_ref=help aria-labelledby="workspace-help-title" closedby="any">
                 <div class="k-dialog__head"><h2 class="k-dialog__title" id="workspace-help-title">"Keyboard shortcuts"</h2>
                     <form method="dialog"><button type="submit" class="k-icon-btn k-dialog__close" aria-label="Close" autofocus><span class="appearance-icon" inner_html=icons.close></span></button></form>

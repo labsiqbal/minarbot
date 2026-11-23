@@ -61,6 +61,7 @@ impl Item {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct Data {
     pub directory: RwSignal<Option<Result<Directory, String>>>,
     pub machines: RwSignal<Option<Result<Machines, String>>>,
@@ -69,6 +70,33 @@ pub(super) struct Data {
     pub new_conversation: Signal<bool>,
     pub online: RwSignal<bool>,
     pub attention: RwSignal<bool>,
+}
+
+#[cfg(not(feature = "hub"))]
+pub(super) fn mount(
+    requested: RwSignal<bool>,
+    opened: RwSignal<bool>,
+    data: Data,
+    icons: Icons,
+) -> impl IntoView {
+    view! {
+        <Show when=move || requested.get()>
+            {crate::lazy_view::load("Quick switcher", {
+                let icons = icons.clone();
+                move || switcher_dialog(opened, data, icons.clone())
+            })}
+        </Show>
+    }
+}
+
+#[cfg(not(feature = "hub"))]
+#[leptos::wasm_split::wasm_split(switcher, wasm_split_path = leptos::wasm_split, fallible)]
+fn switcher_dialog(
+    opened: RwSignal<bool>,
+    data: Data,
+    icons: Icons,
+) -> crate::lazy_view::ChunkView {
+    Ok(render(opened, data, icons).into_any())
 }
 
 fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
@@ -286,7 +314,17 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
             if opened.get() && !dialog.open() {
                 query.set(String::new());
                 active.set(0);
-                let _ = dialog.show_modal();
+                let connected = dialog.is_connected();
+                let show = move || {
+                    if opened.try_get_untracked() == Some(true) && dialog.is_connected() {
+                        let _ = dialog.show_modal();
+                    }
+                };
+                if connected {
+                    show();
+                } else {
+                    request_animation_frame(show);
+                }
             } else if !opened.get() && dialog.open() {
                 dialog.close();
             }

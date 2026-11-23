@@ -143,6 +143,8 @@
 .leptos-workspace .system-disclosure > summary::before { content: none; }
 .leptos-workspace .system-disclosure > summary::-webkit-details-marker { display: none; }
 .leptos-workspace .system-disclosure[open] > summary .k-collapsible__chev { transform: rotate(180deg); }
+.leptos-workspace .system-disclosure .k-collapsible__chev { display: inline-flex; }
+.leptos-workspace .system-disclosure .k-collapsible__chev svg { width: 15px; height: 15px; }
 
 .leptos-workspace .sidebar-update[hidden] + .sidebar__footer .sidebar__fade { display: block; }
 

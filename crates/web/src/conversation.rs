@@ -1634,7 +1634,8 @@ fn header(
     let workspace = config.agent.as_ref().is_some_and(|agent| !agent.builtin);
     let builtin = config.agent.as_ref().is_some_and(|agent| agent.builtin);
     let channel = config.channel;
-    let named = config.thread.is_some() && use_context::<EmbeddedStep>().is_none();
+    let embedded = use_context::<EmbeddedStep>().is_some();
+    let named = config.thread.is_some() && !embedded;
     let settings = RwSignal::new(false);
     let toggle_details = move || chat.set_details(!chat.details.get_untracked());
     let keys = window_event_listener(leptos::ev::keydown, move |event| {
@@ -1664,6 +1665,14 @@ fn header(
         .as_ref()
         .filter(|agent| !agent.builtin)
         .map(|agent| agent.id.clone());
+    let workflow_owner = StoredValue::new(profile_agent.clone().filter(|_| !embedded));
+    let preload_workflows = move |include_library| {
+        workflow_owner.with_value(|owner| {
+            if let Some(owner) = owner {
+                crate::lazy_route::preload_workflows(owner, include_library);
+            }
+        });
+    };
     let main_chat = config.thread.is_none();
     view! {
         <header class="chat__header">
@@ -1674,7 +1683,14 @@ fn header(
                     if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                 }
             }>
-                <summary class="chat__pill" node_ref=trigger>
+                <summary class="chat__pill" node_ref=trigger
+                    on:focus=move |_| preload_workflows(false)
+                    on:mouseenter=move |_| preload_workflows(false)
+                    on:click=move |_| {
+                    if menu.get_untracked().is_some_and(|menu| !menu.open()) {
+                        preload_workflows(true);
+                    }
+                }>
                     {avatar(config.agent, &config.name, config.channel, 24)}
                     <span class="chat__pill-name">{title.clone()}</span>
                     <span class="appearance-icon chat__pill-chev" inner_html=icons.chevron></span>
@@ -2108,7 +2124,7 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
         {context}
         <Show when=move || memory_open.get()>
             <main class="chat page-view bs-root"><div class="page-scroll"><div class="page legacy">
-                {memory::panel(memory_path.get_value(), channel, archived, false, Callback::new(move |()| {
+                {memory::panel(memory_path.get_value(), channel, archived, Callback::new(move |()| {
                     memory_open.set(false);
                     memory::focus_chat_menu();
                 }))}

@@ -2,9 +2,20 @@ use gloo_net::http::Request;
 use leptos::prelude::window;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
+use wasm_bindgen::JsCast;
 
 pub async fn read<T: DeserializeOwned>(path: &str) -> Result<T, String> {
     read_status(path).await.map_err(|(_, message)| message)
+}
+
+pub(crate) async fn read_prefetched<T: DeserializeOwned>(
+    response: js_sys::Promise,
+) -> Result<T, String> {
+    let response = wasm_bindgen_futures::JsFuture::from(response)
+        .await
+        .and_then(|value| value.dyn_into::<web_sys::Response>())
+        .map_err(|_| "Minarbot connection lost. Try again.".to_owned())?;
+    decode(response.into()).await
 }
 
 pub async fn read_status<T: DeserializeOwned>(path: &str) -> Result<T, (u16, String)> {

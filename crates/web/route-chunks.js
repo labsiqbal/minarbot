@@ -2,6 +2,8 @@ export const workflowMarkdown = (text, scope) =>
   import('minarbot-workflow-markdown').then(({ renderWorkflowMarkdown }) => renderWorkflowMarkdown(text, scope));
 
 let workflows;
+let pendingLibrary;
+
 function loadWorkflows() {
   workflows ??= Promise.all([
     import('./workflows.js'),
@@ -17,12 +19,30 @@ function loadWorkflows() {
   return workflows;
 }
 
+function fetchLibrary(owner) {
+  return fetch(`/api/agents/${encodeURIComponent(owner)}/workflows`).catch(() => null);
+}
+
+export function preloadWorkflows(owner, includeLibrary) {
+  if (includeLibrary) {
+    const now = performance.now();
+    if (pendingLibrary?.owner !== owner || pendingLibrary.expires <= now) {
+      pendingLibrary = { owner, expires: now + 3000, response: fetchLibrary(owner) };
+    }
+  }
+  return loadWorkflows().catch(() => {});
+}
+
 export async function mountRoute(host, kind, first, second) {
   if (kind === 'workflows') {
+    const prefetched = pendingLibrary;
+    pendingLibrary = undefined;
+    const library = prefetched?.owner === second && performance.now() < prefetched.expires
+      ? prefetched.response : fetchLibrary(second);
     const runtime = await loadWorkflows();
     if (!host.isConnected) throw new Error('Workflow outlet closed');
     globalThis.minarbotWorkflowMarkdown = workflowMarkdown;
-    return runtime.mount_scoped_workflows(host, first);
+    return runtime.mount_scoped_workflows(host, first, library);
   }
   const [runtime, { browserAdapter }] = await Promise.all([
     import('./conversation.js'), import('minarbot-conversation-adapter'),

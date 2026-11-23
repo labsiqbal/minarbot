@@ -24,8 +24,12 @@ fn workflows_screen() -> crate::lazy_view::ChunkView {
     Ok(workflows::workflows_page().into_any())
 }
 
-pub(crate) fn agent_library(owner: String, back: String) -> impl IntoView {
-    workflows::agent_library(owner, back)
+pub(crate) fn agent_library(
+    owner: String,
+    back: String,
+    library: Option<js_sys::Promise>,
+) -> impl IntoView {
+    workflows::agent_library(owner, back, library)
 }
 
 #[leptos::wasm_split::wasm_split(routines, wasm_split_path = leptos::wasm_split, fallible)]

@@ -361,11 +361,19 @@ pub fn build(root: &Path) -> Result<()> {
         let glue = temp.path().join(format!("{name}.js"));
         fs::write(&glue, fs::read_to_string(&glue)?.replace(&wasm_name, &wasm))?;
         let adapter = match name {
-            "conversation" => "globalThis.MinarbotConversation = (await import('minarbot-conversation-adapter')).browserAdapter;
-                globalThis.minarbotMountRoute = (...args) => import('./route-chunks.js').then(({ mountRoute }) => mountRoute(...args));",
-            "workflows" => "const chunks = await import('./route-chunks.js');
+            "conversation" => {
+                "const [adapter, routes] = await Promise.all([
+                    import('minarbot-conversation-adapter'), import('./route-chunks.js')
+                ]);
+                globalThis.MinarbotConversation = adapter.browserAdapter;
+                globalThis.minarbotPreloadWorkflows = routes.preloadWorkflows;
+                globalThis.minarbotMountRoute = routes.mountRoute;"
+            }
+            "workflows" => {
+                "const chunks = await import('./route-chunks.js');
                 globalThis.minarbotWorkflowMarkdown = chunks.workflowMarkdown;
-                globalThis.minarbotMountRoute = chunks.mountRoute;",
+                globalThis.minarbotMountRoute = chunks.mountRoute;"
+            }
             _ => "",
         };
         let start = temp.path().join(format!("{name}-start.js"));

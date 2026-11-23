@@ -162,6 +162,7 @@ fn preview_field(
 
 pub(super) fn import(lifecycle: Lifecycle) -> impl IntoView {
     let file = NodeRef::<leptos::html::Input>::new();
+    let choose = NodeRef::<leptos::html::Button>::new();
     let journal = Journal::new(IMPORT_STORAGE.into(), LIMIT, valid_import);
     let draft = RwSignal::new(journal.pending.with_untracked(|pending| {
         pending
@@ -202,7 +203,14 @@ pub(super) fn import(lifecycle: Lifecycle) -> impl IntoView {
                 return;
             }
             match result {
-                Ok(value) => draft.set(Some(value)),
+                Ok(value) => {
+                    draft.set(Some(value));
+                    request_animation_frame(move || {
+                        if let Some(button) = choose.get_untracked() {
+                            let _ = button.focus();
+                        }
+                    });
+                }
                 Err(message) => journal.error.set(message.into()),
             }
         });
@@ -246,8 +254,11 @@ pub(super) fn import(lifecycle: Lifecycle) -> impl IntoView {
             <div class="k-page bs-root">
                 <Section title="Template file">
                     <input node_ref=file hidden type="file" accept=".json,application/json" disabled=locked on:change=move |_| read() />
-                    <div><button type="button" class="k-btn k-btn--md k-btn--secondary" autofocus disabled=locked on:click=move |_| {
-                        if let Some(file) = file.get_untracked() { file.click(); }
+                    <div><button node_ref=choose type="button" class="k-btn k-btn--md k-btn--secondary" autofocus
+                      disabled=locked on:click=move |_| {
+                        if !locked.get_untracked() {
+                            if let Some(file) = file.get_untracked() { file.click(); }
+                        }
                     }>"Choose file"</button></div>
                     <p role="status" class="k-field__hint" hidden=move || !processing.get()>"Processing template..."</p>
                     <Recovery journal confirm title="Creation is not confirmed yet" retry=Callback::new(move |()| apply())

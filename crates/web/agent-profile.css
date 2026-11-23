@@ -19,6 +19,11 @@
 .leptos-workspace .agent-template-avatar { border-radius: 12px; }
 .leptos-workspace .agent-avatar-filename { align-self: center; overflow-wrap: anywhere; }
 .leptos-workspace .agent-template-fields { padding: 12px; }
+.leptos-workspace .agent-template-fields > .k-field__hint { font-size: .8125rem; }
+.leptos-workspace .system-dialog:has(#agent-template-import-title) button[autofocus]:focus {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
 .leptos-workspace .agent-model-field { gap: 4px; }
 .leptos-workspace .system-dialog:has(#agent-template-export-title) > .k-dialog__foot:empty { display: none; }
 .leptos-workspace .agent-profile__runtime-select > .agent-profile__runtime-icon { position: absolute; left: 10px; pointer-events: none; }

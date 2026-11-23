@@ -30,6 +30,10 @@ pub(crate) fn workflow_scope(path: &str) -> Option<(String, String)> {
 
 #[wasm_bindgen]
 extern "C" {
+    #[cfg(feature = "conversation")]
+    #[wasm_bindgen(js_name = minarbotPreloadWorkflows)]
+    pub(crate) fn preload_workflows(owner: &str, include_library: bool);
+
     #[wasm_bindgen(catch, js_name = minarbotMountRoute)]
     async fn mount_route(
         host: &web_sys::HtmlElement,

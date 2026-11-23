@@ -6,12 +6,16 @@ import { createServer, request } from 'node:http';
 import { createServer as controlServer } from 'node:net';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { fileManifest, verifyRelease } from './test-support/release.ts';
+import { fileManifest, fixtureRunner, verifyRelease } from './test-support/release.ts';
 
 async function api(origin: string, path: string, body?: unknown) {
   const response = await fetch(origin + path, body === undefined ? {} : { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const value = await response.json(); assert(response.ok, JSON.stringify({ status: response.status, value })); return value;
 }
+
+// Prepare fixture before Node starts protocol test deadline. Shared Cargo slots and artifact locks
+// can outlast deadline during full suite.
+fixtureRunner();
 
 // The peer runs the current server with its update capabilities hidden, so the sender takes the
 // synchronous apply path that releases before peerApplyPolling still use.

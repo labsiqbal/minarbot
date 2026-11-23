@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const buildEnv = { ...process.env };
 let fixtureBinary = buildEnv.MINARBOT_XTASK_FIXTURE_BINARY;
 
-function fixtureRunner() {
+export function fixtureRunner() {
   if (fixtureBinary) return fixtureBinary;
   const args = ['test', '-p', 'xtask', '--bin', 'xtask', '--no-run', '--message-format=json'];
   const messages = execFileSync('cargo', args, {

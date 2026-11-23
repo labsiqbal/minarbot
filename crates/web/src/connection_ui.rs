@@ -24,11 +24,19 @@ impl<T: Send + Sync + 'static> Clone for Query<T> {
 pub fn query<T: DeserializeOwned + PartialEq + Send + Sync + 'static>(
     path: impl Fn() -> String + Send + Sync + 'static,
 ) -> Query<T> {
+    query_with_prefetch(path, None)
+}
+
+pub(crate) fn query_with_prefetch<T: DeserializeOwned + PartialEq + Send + Sync + 'static>(
+    path: impl Fn() -> String + Send + Sync + 'static,
+    initial: Option<js_sys::Promise>,
+) -> Query<T> {
     let data = RwSignal::new(None);
     let error = RwSignal::new(String::new());
     let busy = RwSignal::new(true);
     let generation = RwSignal::new(0_u64);
     let path = StoredValue::new(path);
+    let initial = StoredValue::new_local(initial);
     let reload = UiAction::new(move |()| {
         let path = path.with_value(|path| path());
         generation.update(|n| *n += 1);
@@ -40,8 +48,12 @@ pub fn query<T: DeserializeOwned + PartialEq + Send + Sync + 'static>(
             return;
         }
         busy.set(true);
+        let prefetched = initial.try_update_value(Option::take).flatten();
         spawn_local(async move {
-            let result = api::read(&path).await;
+            let result = match prefetched {
+                Some(response) => api::read_prefetched(response).await,
+                None => api::read(&path).await,
+            };
             if generation.try_get_untracked() != Some(current) {
                 return;
             }
