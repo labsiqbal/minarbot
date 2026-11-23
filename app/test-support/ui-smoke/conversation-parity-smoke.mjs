@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fixDate, parityShot } from './parity-shot.mjs';
+import { fixDate, parityShot, withFixtureText } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -77,7 +77,7 @@ try {
   const rich = await thread('October report');
   const richTurn = await seed(rich.scope, 'Show the report', turn => turn.harnessApprovals?.some(item => item.kind === 'form' && item.state === 'approval'));
   const screen = 'data:image/png;base64,' + (await desktopImage).toString('base64');
-  const fixed = Date.parse(completed.created) + 5_000;
+  const fixed = Date.parse(completed.created) + 4_000;
   const selector = (path, client) => app.origin + path;
   browser = await chromium.launch({ headless: true });
 
@@ -93,13 +93,15 @@ try {
             localStorage.setItem('minarbot-presentation-v1', JSON.stringify({ version: 1, theme, textSize: 'standard', colorTheme: 'minarbot' }));
             localStorage.setItem('minarbot:details-open', '0');
           }, theme);
-          async function capture(name, anchor) {
+          async function capture(name, anchor, fixtureText = []) {
             await page.evaluate(async () => {
               await document.fonts.ready;
               await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
             });
             if (anchor) await anchor.scrollIntoViewIfNeeded();
-            await parityShot(page, join(out, `${viewport}-${theme}-${name}-${client}.png`));
+            const path = join(out, `${viewport}-${theme}-${name}-${client}.png`);
+            if (fixtureText.length) await withFixtureText(page, fixtureText, () => parityShot(page, path));
+            else await parityShot(page, path);
           }
           const details = page.getByRole('complementary', { name: 'Conversation details' });
           const transcript = page.getByRole('region', { name: 'Conversation history' });
@@ -125,7 +127,9 @@ try {
           await details.getByRole('tab', { name: 'Run', exact: true }).waitFor();
           await details.locator('.run-inspector').waitFor();
           await details.getByText('Provider calls', { exact: true }).waitFor();
-          await capture('run');
+          const providerState = await details.locator('.run-inspector__providers .run-inspector__state').innerText();
+          assert.match(providerState, /^Failed · [0-9.]+ ms$/);
+          await capture('run', undefined, [[providerState, 'Failed · 30 ms']]);
 
           await page.goto(selector(rich.path, client));
           const chartHeading = transcript.getByRole('heading', { name: 'Weekly signups', exact: true });
