@@ -276,7 +276,9 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
             ],
         },
     )?;
-    if v.get("codegraphEnabled").is_some_and(|value| !value.is_boolean()) {
+    if v.get("codegraphEnabled")
+        .is_some_and(|value| !value.is_boolean())
+    {
         return Err(error(400, "Invalid CodeGraph setting."));
     }
     revision(&v["revision"])?;

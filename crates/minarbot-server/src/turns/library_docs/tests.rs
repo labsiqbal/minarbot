@@ -469,11 +469,15 @@ async fn api_and_mcp_follow_web_access_and_ignore_the_old_docs_flag() -> db::Res
         )?;
     }
     let (_, list) = rpc("tools/list", json!({})).await?;
-    assert!(list.to_string().contains("project_stack") && list.to_string().contains("library_docs"));
+    assert!(
+        list.to_string().contains("project_stack") && list.to_string().contains("library_docs")
+    );
     assert_eq!(rpc("tools/call", call.clone()).await?.0, StatusCode::OK);
     {
         let guard = state.database.lock().map_err(|_| "database lock")?;
-        guard.connection.execute("UPDATE agents SET web_access=0 WHERE id=?", [AGENT])?;
+        guard
+            .connection
+            .execute("UPDATE agents SET web_access=0 WHERE id=?", [AGENT])?;
     }
     let (_, list) = rpc("tools/list", json!({})).await?;
     assert!(
@@ -500,7 +504,10 @@ fn existing_agents_migrate_old_docs_and_craft_access() -> db::Result<()> {
     db.execute_batch(
         "CREATE TABLE craft_grants(agent TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE) STRICT;",
     )?;
-    db.execute("UPDATE agents SET library_docs_access=0 WHERE id=?", [AGENT])?;
+    db.execute(
+        "UPDATE agents SET library_docs_access=0 WHERE id=?",
+        [AGENT],
+    )?;
     db.execute("UPDATE local_projects SET codegraph_enabled=0", [])?;
     db.execute(
         "INSERT INTO agent_edits VALUES('legacy-edit',?,'{\"libraryDocsAccess\":false}','{\"library_docs_access\":0}')",
@@ -509,15 +516,25 @@ fn existing_agents_migrate_old_docs_and_craft_access() -> db::Result<()> {
     crate::data::initialize(&database)?;
     assert!(enabled(db, AGENT).map_err(|error| error.message)?);
     assert_eq!(
-        db.query_row("SELECT library_docs_access FROM agents WHERE id=?", [AGENT], |row| row.get::<_, i64>(0))?,
+        db.query_row(
+            "SELECT library_docs_access FROM agents WHERE id=?",
+            [AGENT],
+            |row| row.get::<_, i64>(0)
+        )?,
         1
     );
     assert_eq!(
-        db.query_row("SELECT codegraph_enabled FROM local_projects", [], |row| row.get::<_, i64>(0))?,
+        db.query_row("SELECT codegraph_enabled FROM local_projects", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
         1
     );
     assert_eq!(
-        db.query_row("SELECT request,result FROM agent_edits WHERE id='legacy-edit'", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?,
+        db.query_row(
+            "SELECT request,result FROM agent_edits WHERE id='legacy-edit'",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        )?,
         ("{}".into(), "{\"library_docs_access\":1}".into())
     );
     assert!(!crate::data::table(db, "craft_grants").map_err(|error| error.message)?);
