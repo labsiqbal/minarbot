@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertP95 } from './timing-budgets.mjs';
 import { fixDate, parityChromiumArgs, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -8,7 +9,6 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { chromium } from 'playwright-core';
-import sharp from 'sharp';
 import { startApp } from '../../test-bridge.ts';
 
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-memory-ui-'));
@@ -20,7 +20,7 @@ const note = 'Start the greenhouse inventory on Mondays.';
 const shared = 'Water the seedlings before noon.';
 const summary = 'Keep orchid labels in the north cabinet.';
 const observationText = 'The north cabinet holds orchid tray labels and inventory sheets.';
-const clients = process.env.MINARBOT_SMOKE_UI ? [process.env.MINARBOT_SMOKE_UI] : ['react', 'leptos'];
+const clients = ['leptos'];
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
 const samples = Number(process.env.MINARBOT_MEMORY_BENCH ?? 0);
 const images = new Map(), errors = [], timings = {};
@@ -33,7 +33,7 @@ const provider = createServer((request, response) => {
 let app, browser;
 try {
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startApp({ database, dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture', appearanceClient: 'leptos', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic' });
+  app = await startApp({ appearanceClient: 'leptos', database, dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic' });
   async function api(path, data) {
     const response = await fetch(app.origin + path, data ? { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {});
     assert(response.ok, `${path}: ${response.status} ${await response.clone().text()}`);
@@ -94,9 +94,9 @@ try {
   }
 
   async function go(page, client, path) {
-    await page.goto(`${app.origin}${path}?ui=${client}`);
+    await page.goto(`${app.origin}${path}`);
     await page.locator('.chat__pill').waitFor();
-    assert.equal(await page.locator('#leptos-root').count(), Number(client === 'leptos'));
+    assert.equal(await page.locator('#leptos-root').count(), Number(true));
   }
 
   async function menu(page, name) {
@@ -104,7 +104,7 @@ try {
     await role(page, 'menuitem', name).or(button(page, name)).first().click();
   }
 
-  async function profile(page, client, fromSidebar = client === 'react') {
+  async function profile(page, client, fromSidebar = false) {
     const profile = dialog(page, 'Agent profile').or(dialog(page, 'Edit profile'));
     if (fromSidebar) {
       const expand = button(page, 'Expand sidebar');
@@ -145,7 +145,6 @@ try {
       // Launch controls can leave the pointer over different rows in the opened panel.
       await page.mouse.move(0, 0);
       await parityShot(page, file, region);
-      images.set(key, { ...images.get(key), [client]: file });
     }
     try {
       await go(page, client, main);
@@ -268,14 +267,6 @@ try {
     } finally { await page.close(); }
   }
 
-  for (const [name, files] of images) {
-    if (!files.react || !files.leptos) continue;
-    const [left, right] = await Promise.all([files.react, files.leptos].map(file => sharp(file).metadata()));
-    await sharp({ create: { width: left.width + right.width + 12, height: Math.max(left.height, right.height), channels: 3, background: '#808080' } })
-      .composite([{ input: files.react, left: 0, top: 0 }, { input: files.leptos, left: left.width + 12, top: 0 }])
-      .png().toFile(join(output, `compare-${name}.png`));
-  }
-
   function stats(values) {
     values.sort((a, b) => a - b);
     const percentile = p => Number(values[Math.ceil(values.length * p) - 1].toFixed(1));
@@ -302,9 +293,10 @@ try {
   }
   await writeFile(join(output, 'timings.json'), JSON.stringify(timings, null, 2) + '\n');
   assert.deepEqual(errors, []);
-  if (timings.react && timings.leptos) {
-    assert(timings.leptos.cold.p95 <= timings.react.cold.p95 * 1.2, 'Cold p95 exceeds 20% budget');
-    assert(timings.leptos.warm.p95 <= timings.react.warm.p95 * 1.1, 'Warm p95 exceeds 10% budget');
+
+  if (samples) {
+    assertP95('memory', 'cold', timings.leptos.cold.p95);
+    assertP95('memory', 'warm', timings.leptos.warm.p95);
   }
   console.log(`Memory, summary, sources, pin, forget and undo passed (${clients.join(', ')}). Screenshots: ${output}`);
 } finally {

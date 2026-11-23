@@ -9,7 +9,7 @@ import sharp from 'sharp';
 const maxChanged = 100, maxOver16 = 24;
 const baselines = join(import.meta.dirname, 'baselines');
 const failed = row => row.result !== 'pass';
-const png = file => file.endsWith('.png') && !/-(failure|diagnostic)\.png$/.test(file);
+const png = file => file.endsWith('.png') && !/^(side-by-side-|pair-)|-(failure|diagnostic)\.png$/.test(file);
 const groups = [
   ['appearance', 20, 'appearance', 'MINARBOT_APPEARANCE_SCREENSHOTS'],
   ['automation', 40, 'automation-parity'],

@@ -10,11 +10,10 @@ import { chromium } from 'playwright-core';
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-computer-ui-'));
 const output = process.env.MINARBOT_COMPUTER_SCREENSHOTS ?? await mkdtemp(join(tmpdir(), 'minarbot-computer-shots-'));
 await mkdir(output, { recursive: true });
-const appearanceClient = process.env.MINARBOT_SMOKE_UI === 'leptos' ? 'leptos' : 'react';
-const agentQuery = appearanceClient === 'leptos' ? '?ui=leptos' : '';
+const agentQuery = '';
 let app, browser;
 try {
-  app = await startApp({ database: join(scratch, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture', appearanceClient });
+  app = await startApp({ appearanceClient: 'leptos', database: join(scratch, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
   const agent = randomUUID();
   let status;

@@ -25,7 +25,7 @@ async function check(name, run) {
 }
 try {
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startApp({ database: join(scratch, 'app.sqlite'), port: Number(process.env.CP1_PORT ?? 0), provider: 'openai-compatible', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: 'fixture' });
+  app = await startApp({ appearanceClient: 'leptos', database: join(scratch, 'app.sqlite'), port: Number(process.env.CP1_PORT ?? 0), provider: 'openai-compatible', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: 'fixture' });
   console.log('Disposable server', app.origin);
   const agent = await fetch(app.origin + '/api/agents', { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ runtime: 'api', id: randomUUID(), name: 'Clipboard fixture', instructions: 'Synthetic clipboard test.', model: 'fixture' }) }).then(r => r.json());
   assert(agent.id, JSON.stringify(agent));

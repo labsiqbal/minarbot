@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertP95 } from './timing-budgets.mjs';
 import { fixDate, parityChromiumArgs, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -8,7 +9,6 @@ import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import sharp from 'sharp';
 import { startRustServer } from '../../rust-test-server.ts';
 
 const output = resolve(process.argv[2] ?? '/tmp/minarbot-75-screenshots');
@@ -31,8 +31,8 @@ const stats = times => {
 try {
   await mkdir(output, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startRustServer({
-    database: join(work, 'state.sqlite'), dist, appearanceClient: 'leptos', stream: false,
+  app = await startRustServer({ appearanceClient: 'leptos',
+    database: join(work, 'state.sqlite'), dist, stream: false,
     baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', defaultModel: 'fixture',
   });
   const api = async (path, data) => {
@@ -82,14 +82,12 @@ try {
   const forkRoute = main + '/conversations/' + fork.id;
   for (const path of ['/', main, named, projectChat, room]) {
     await doc(path, 'conversation');
-    await doc(path + '?ui=react', 'react');
   }
   await doc(main + '/inbox', 'conversation');
-  await doc(main + '/inbox?ui=react', 'react');
   const result = encodeURIComponent(JSON.stringify({ view: 'url', path: 'https://example.test/', name: 'Fixture' }));
   await doc(main + '?result=' + result, 'conversation');
   await doc('/?computer=' + agent.id, 'conversation');
-  if (process.env.MINARBOT_CONVERSATION_ROUTES_ONLY === '1') { console.log('PASS fresh setup, ordinary routes and React rollback'); process.exitCode = 0; }
+  if (process.env.MINARBOT_CONVERSATION_ROUTES_ONLY === '1') { console.log('PASS fresh setup, ordinary routes and legacy deep links'); process.exitCode = 0; }
 
   if (process.env.MINARBOT_CONVERSATION_ROUTES_ONLY !== '1') {
     const time = '2026-11-22T08:05:00.000Z';
@@ -120,11 +118,10 @@ try {
     roomRoot.room = { root: roomRoot.id, generation: roomRoot.id, active: true, round: 0, stopped: false, silent: null, note: null, quiet: [], messages: [] };
     roomChild.room = { ...roomRoot.room, round: 1 };
     browser = await chromium.launch({ headless: true, args: parityChromiumArgs });
-    const selectClient = (path, client) => app.origin + path + (client === 'react' ? '?ui=react' : '');
+    const selectClient = (path, client) => app.origin + path;
     for (const [size, width, height] of [['desktop', 1440, 900], ['narrow', 430, 850]]) {
       for (const theme of ['dark', 'light']) {
-        const images = new Map();
-        for (const client of ['react', 'leptos']) {
+        for (const client of ['leptos']) {
           const context = await browser.newContext({ viewport: { width, height }, reducedMotion: 'reduce', colorScheme: theme });
           let page;
           try {
@@ -195,23 +192,8 @@ try {
               assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), name + ' overflows');
               assert.deepEqual(await page.evaluate(() => window.fixtureCsp), [], name);
               const file = join(output, `${size}-${theme}-${name}-${client}.png`);
-              const image = await parityShot(page, file);
-              if (client === 'react') {
-                images.set(name, image);
-                return;
-              }
-              const react = images.get(name);
-              assert(react, name);
-              const pair = join(output, `${size}-${theme}-${name}-pair.png`);
-              await sharp({ create: { width: 2 * width, height, channels: 3, background: '#000' } })
-                .composite([{ input: react, left: 0, top: 0 }, { input: image, left: width, top: 0 }]).png().toFile(pair);
-              const [left, right] = await Promise.all([react, image].map(input => sharp(input).removeAlpha().raw().toBuffer()));
-              let different = 0;
-              for (let i = 0; i < left.length; i += 3) {
-                if (Math.max(Math.abs(left[i] - right[i]), Math.abs(left[i + 1] - right[i + 1]), Math.abs(left[i + 2] - right[i + 2])) > 16) different++;
-              }
-              evidence.push({ size, theme, name, pair, different, pixels: width * height });
-              console.log(`${size} ${theme} ${name} ${different}/${width * height} pixels above channel delta 16`);
+              await parityShot(page, file);
+              evidence.push({ size, theme, name, file });
             };
             const open = async path => {
               await page.goto(selectClient(path, client));
@@ -326,7 +308,7 @@ try {
             await page.getByRole('main', { name: 'Conversation Named chat', exact: true }).waitFor();
             await capture('named-chat');
 
-            if (client === 'leptos') {
+            {
               await page.locator('.chat__pill').click();
               await page.getByRole('button', { name: 'Search chat history', exact: true }).click();
               const all = page.getByRole('dialog', { name: 'Search chat history', exact: true });
@@ -379,14 +361,14 @@ try {
             await context.close();
           }
         }
-        assert.equal(evidence.filter(item => item.size === size && item.theme === theme).length, images.size);
+        assert.equal(evidence.filter(item => item.size === size && item.theme === theme).length, size === 'desktop' ? 15 : 14);
       }
     }
     const samples = Number(process.env.MINARBOT_CONVERSATION_NAV_BENCH ?? 20);
-    const clients = ['react', 'leptos'];
+    const clients = ['leptos'];
     if (samples) {
       const options = { viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' };
-      const coldTimes = { react: [], leptos: [] };
+      const coldTimes = { leptos: [] };
       for (let n = 0; n < samples; n++) {
         for (const client of n % 2 === 0 ? clients : [...clients].reverse()) {
           const page = await browser.newPage(options);
@@ -399,7 +381,7 @@ try {
         }
       }
       const pages = {};
-      const warmTimes = { react: [], leptos: [] };
+      const warmTimes = { leptos: [] };
       for (const client of clients) {
         cold[client] = stats(coldTimes[client]);
         const page = pages[client] = await browser.newPage(options);
@@ -439,11 +421,11 @@ try {
     console.log('Cold conversation readiness (ms)', JSON.stringify(cold));
     console.log('Warm conversation navigation (ms)', JSON.stringify(navigation));
     if (samples >= 20) {
-      assert(cold.leptos.p95 <= cold.react.p95 * 1.2, 'Cold readiness exceeds the 20% budget.');
-      assert(navigation.leptos.p95 <= navigation.react.p95 * 1.1, 'Warm navigation exceeds the 10% budget.');
+      assertP95('controls', 'cold', cold.leptos.p95);
+      assertP95('controls', 'warm', navigation.leptos.p95);
     }
     assert.deepEqual(faults, []);
-    console.log(`PASS route selection, controls, API payloads and CSP. ${evidence.length} screenshot pairs.`);
+    console.log(`PASS route selection, controls, API payloads and CSP. ${evidence.length} screenshots.`);
   }
 } finally {
   if (browser) await writeFile(join(output, 'receipt.json'), JSON.stringify({ browser: browser.version(), evidence, faults, cold, navigation }, null, 2));

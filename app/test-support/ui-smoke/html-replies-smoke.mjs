@@ -9,8 +9,8 @@ import { chromium } from 'playwright-core';
 import { startRustServer } from '../../rust-test-server.ts';
 import { readHtmlReplyMessage } from '../../src/html-reply.ts';
 
-const client = process.env.MINARBOT_SMOKE_CLIENT === 'leptos' ? 'leptos' : 'react';
-const selector = client === 'leptos' ? '?ui=leptos' : '';
+const client = 'leptos';
+const selector = '';
 
 const work = await mkdtemp(join(tmpdir(), 'minarbot-html-replies-'));
 const name = 'Metrics';
@@ -105,8 +105,8 @@ probe.src = '${base}/private-check';
 
 let app, browser;
 try {
-  app = await startRustServer({
-    appearanceClient: client, database: join(work, 'state.sqlite'),
+  app = await startRustServer({ appearanceClient: 'leptos',
+    database: join(work, 'state.sqlite'),
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),
     baseURL: base + '/v1', apiKey: 'fixture-key', defaultModel: model, concurrency: 2,
   });

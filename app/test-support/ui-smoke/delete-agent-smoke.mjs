@@ -3,14 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export async function deleteAgentSmoke({ page, check, origin, root, client = 'react', evidence = join(root, 'app/test-support/ui-smoke/artifacts/delete-agent') }) {
+export async function deleteAgentSmoke({ page, check, origin, root, client = 'leptos', evidence = join(root, 'app/test-support/ui-smoke/artifacts/delete-agent') }) {
   await mkdir(evidence, { recursive: true });
   const viewport=page.viewportSize();
-  const leptos = client === 'leptos';
+  const leptos = true;
   const initial = page.url();
-  const rowFor = name => leptos
-    ? page.locator('.sidebar-agent > .bot-row').filter({ has: page.getByText(name, { exact: true }) })
-    : page.getByRole('button', { name: `${name} Idle`, exact: true });
+  const rowFor = name => page.locator('.sidebar-agent > .bot-row').filter({ has: page.getByText(name, { exact: true }) });
   await check('Agent menu supports edit, hide, restore, right-click and permanent deletion', async () => {
     const agent = await page.request.post(origin + '/api/agents', { headers:{Origin:origin},data:{ runtime: 'api',id:randomUUID(),name:'Delete fixture',model:'smoke-primary',instructions:'Help'}});
     assert.equal(agent.status(),201); const {id}=await agent.json();
@@ -25,8 +23,7 @@ export async function deleteAgentSmoke({ page, check, origin, root, client = 're
     await menu.getByRole('menuitem',{name:'Hide',exact:true}).click();
     await row.locator('.bot-row__preview').filter({hasText:'Hidden'}).waitFor();
     assert.equal(await row.getAttribute('aria-current'),'page');
-    if (leptos) await rowFor('Smoke Lead').click();
-    else await page.getByRole('button',{name:/^Smoke Lead/}).first().click();
+    await rowFor('Smoke Lead').click();
     await row.waitFor({state:'hidden'});
     await page.locator('.hidden-agents .machine-group__header').click();
     await page.screenshot({path:join(evidence,'hidden.png'),animations:'disabled'});
@@ -63,8 +60,7 @@ export async function deleteAgentSmoke({ page, check, origin, root, client = 're
   await check('Agent deletion aborts pending chat polls', async () => {
     const response = await page.request.post(origin + '/api/agents', { headers: { Origin: origin }, data: { runtime: 'api', id: randomUUID(), name: 'Delete polling fixture', model: 'smoke-primary', instructions: 'Help' } });
     assert.equal(response.status(), 201); const { id } = await response.json();
-    if (leptos) await page.goto(initial);
-    else await page.reload();
+    await page.goto(initial);
     await page.getByRole('tab', { name: /^Agents/ }).click();
     const row = rowFor('Delete polling fixture');
     const pattern = new RegExp(`/api/agents/${id}/(?:dispatch|turns)(?:\\?.*)?$`);

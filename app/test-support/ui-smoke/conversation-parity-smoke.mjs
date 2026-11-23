@@ -8,7 +8,6 @@ import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import sharp from 'sharp';
 import { startRustServer } from '../../rust-test-server.ts';
 import { desktopImage, installVncFixture } from './computer-smoke.mjs';
 
@@ -48,7 +47,7 @@ let app, browser;
 try {
   await mkdir(out, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startRustServer({ database: join(work, 'state.sqlite'), dist, appearanceClient: 'leptos', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: model, stream: false });
+  app = await startRustServer({ appearanceClient: 'leptos', database: join(work, 'state.sqlite'), dist, baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic', defaultModel: model, stream: false });
   async function api(path, payload) {
     const res = await fetch(app.origin + path, payload === undefined ? undefined : { method: 'POST', headers: { origin: app.origin, 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     assert(res.ok, `${path} ${res.status} ${await res.clone().text()}`);
@@ -78,13 +77,13 @@ try {
   const richTurn = await seed(rich.scope, 'Show the report', turn => turn.harnessApprovals?.some(item => item.kind === 'form' && item.state === 'approval'));
   const screen = 'data:image/png;base64,' + (await desktopImage).toString('base64');
   const fixed = Math.max(Date.now(), Date.parse(completed.created) + 5_000);
-  const selector = (path, client) => app.origin + path + '?ui=' + client;
+  const selector = (path, client) => app.origin + path;
   browser = await chromium.launch({ headless: true });
 
   for (const [viewport, width, height] of [['desktop', 1440, 900], ['narrow', 430, 850]]) {
     for (const theme of ['dark', 'light']) {
-      const images = new Map();
-      for (const client of ['react', 'leptos']) {
+
+      for (const client of ['leptos']) {
         const context = await browser.newContext({ viewport: { width, height }, colorScheme: theme, reducedMotion: 'reduce' });
         try {
           const page = await context.newPage();
@@ -99,9 +98,7 @@ try {
               await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
             });
             if (anchor) await anchor.scrollIntoViewIfNeeded();
-            const raw = await parityShot(page, join(out, `${viewport}-${theme}-${name}-${client}.png`));
-            const entries = images.get(name) ?? [];
-            images.set(name, [...entries, raw]);
+            await parityShot(page, join(out, `${viewport}-${theme}-${name}-${client}.png`));
           }
           const details = page.getByRole('complementary', { name: 'Conversation details' });
           const transcript = page.getByRole('region', { name: 'Conversation history' });
@@ -163,18 +160,6 @@ try {
           await capture('computer');
 
         } finally { await context.close(); }
-      }
-      for (const [name, [react, leptos]] of images) {
-        assert(react && leptos, name);
-        await sharp({ create: { width: 2 * width, height, channels: 3, background: '#000' } })
-          .composite([{ input: react, left: 0, top: 0 }, { input: leptos, left: width, top: 0 }]).png()
-          .toFile(join(out, `${viewport}-${theme}-${name}-pair.png`));
-        const [left, right] = await Promise.all([react, leptos].map(image => sharp(image).removeAlpha().raw().toBuffer()));
-        let changed = 0;
-        for (let i = 0; i < left.length; i += 3) {
-          if (Math.max(Math.abs(left[i] - right[i]), Math.abs(left[i + 1] - right[i + 1]), Math.abs(left[i + 2] - right[i + 2])) > 16) changed++;
-        }
-        console.log(`${viewport} ${theme} ${name}: ${changed}/${width * height} pixels over channel delta 16`);
       }
     }
   }

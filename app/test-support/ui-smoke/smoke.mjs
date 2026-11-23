@@ -37,7 +37,7 @@ import { chromium } from 'playwright-core';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
-const leptosConversation = process.env.MINARBOT_SMOKE_CONVERSATION_LEPTOS === '1';
+const leptosConversation = true;
 const output = await mkdtemp(join(root, 'app/node_modules/.ui-smoke-'));
 const gitAgent = randomUUID(), gitName = 'Source Control Fixture';
 let gitWorkspace;
@@ -1015,7 +1015,7 @@ try {
   page.on('response', response => { if (new URL(response.url()).pathname.startsWith('/api/') && response.status() >= 500) receipt.failedRequests.push({ check: activeCheck, url: response.url(), method: response.request().method(), status: response.status(), atMs: Date.now() - started }); });
   receipt.timings.startupMs = Date.now() - started;
 
-  if (leptosConversation) {
+  {
     const agent = await page.request.post(origin + '/api/agents', { headers: { Origin: origin }, data: { runtime: 'api', id: gitAgent, name: lead, model: models[0], instructions: 'Synthetic conversation fixture.' } });
     assert(agent.ok(), await agent.text());
     const openChat = async () => {

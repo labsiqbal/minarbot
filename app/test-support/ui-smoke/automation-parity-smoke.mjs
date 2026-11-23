@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertP95 } from './timing-budgets.mjs';
 import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -25,7 +26,9 @@ let appPort = 0;
 let browser;
 const receipts = {};
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
-const clients = process.env.MINARBOT_SMOKE_UI ? [process.env.MINARBOT_SMOKE_UI] : ['react', 'leptos'];
+const clients = ['leptos'];
+const warmSamples = Number(process.env.MINARBOT_AUTOMATION_WARM_BENCH ?? 80);
+assert(Number.isSafeInteger(warmSamples) && warmSamples >= 0);
 const coldSamples = Number(process.env.MINARBOT_AUTOMATION_COLD_BENCH ?? 0);
 assert(Number.isSafeInteger(coldSamples) && coldSamples >= 0);
 const routes = [
@@ -36,10 +39,9 @@ const routes = [
 const fixtureIds = { agent: randomUUID(), other: randomUUID(), workflow: randomUUID(), routine: randomUUID(), webhookRoutine: randomUUID() };
 
 async function exercise(client) {
-  const app = await startApp({ database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: appPort, appearanceClient: client,
-    fixedClock: fixtureClock,
+  const app = await startApp({ appearanceClient: 'leptos', database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: appPort, fixedClock: fixtureClock,
     defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', stream: false });
-  // Both clients display the server's full webhook URL.
+  // The client displays the server's full webhook URL.
   appPort = Number(new URL(app.origin).port);
   const context = await browser.newContext({ viewport: sizes.desktop, timezoneId: 'UTC' });
   const errors = [], failedExpected = [];
@@ -61,10 +63,10 @@ async function exercise(client) {
   const open = async (path, title) => {
     const response = await page.goto(origin + path);
     assert.equal(response.status(), 200);
-    assert.equal((await response.headerValue('content-security-policy')).includes('wasm-unsafe-eval'), client === 'leptos');
+    assert.equal((await response.headerValue('content-security-policy')).includes('wasm-unsafe-eval'), true);
     await heading(title).waitFor();
-    assert.equal(await page.locator('#leptos-root').count(), client === 'leptos' ? 1 : 0);
-    if (client === 'leptos') {
+    assert.equal(await page.locator('#leptos-root').count(), 1);
+    {
       assert.equal(await page.locator('script[src*="/workflows-start."]').count(), 1);
       assert.equal(await page.locator('script[src*="/appearance-start."], script[src*="/conversation-start."]').count(), 0);
     }
@@ -180,7 +182,7 @@ async function exercise(client) {
     await inspectGraph('editor');
     await page.getByText(/^Saved, version \d+\.$/).waitFor();
     await capture('workflow-editor');
-    if (client === 'leptos') {
+    {
       const download = page.waitForEvent('download');
       await button('Export graph').click();
       const exported = JSON.parse(await readFile(await (await download).path(), 'utf8'));
@@ -238,7 +240,7 @@ async function exercise(client) {
     await page.locator('main .markdown strong').filter({ hasText: 'Automation fixture completed.' }).first().waitFor();
     await inspectGraph('completed run');
     await capture('workflow-run', heading('Run history'));
-    if (client === 'leptos') {
+    {
       const step = page.getByRole('link', { name: 'Open step work', exact: true });
       await step.press('Enter');
       await page.waitForURL('**/conversations/*');
@@ -251,7 +253,7 @@ async function exercise(client) {
     await capture('calendar');
 
     const automation = page.getByRole('navigation', { name: 'Automation', exact: true });
-    if (client === 'leptos') {
+    {
       await automation.getByLabel('Workflows', { exact: true }).click();
       await heading('Workflows').waitFor();
       await page.getByRole('button', { name: /^Daily summary\b/ }).click();
@@ -290,7 +292,7 @@ async function exercise(client) {
     assert.deepEqual(await page.evaluate(() => window.automationCsp), []);
     console.log(`PASS ${client}: routines, flow, webhook templates, workflow keyboard and layout checks, exact run replay, Markdown and calendar.`);
     const cold = coldSamples ? await coldNavigation(origin) : {};
-    const timings = client === clients.at(-1) ? await warmNavigation(origin) : null;
+    const timings = warmSamples ? await warmNavigation(origin) : {};
     return { mutations: mutations.map(({ id, ...body }) => body), replayed: runBody.length, consoleErrors: errors.length, timings, cold };
   } finally {
     await context.close();
@@ -343,7 +345,7 @@ function navigate(page, title) {
     const observer = new MutationObserver(check);
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
     const timeout = setTimeout(() => { observer.disconnect(); reject(new Error('Timed out waiting for ' + title)); }, 5000);
-    // Compare from the same point in the frame cycle in both clients.
+    // Compare from the same point in the frame cycle .
     requestAnimationFrame(frame => {
       startFrame = frame;
       start = performance.now();
@@ -362,11 +364,11 @@ async function warmNavigation(origin) {
       const page = await context.newPage();
       runs.push({ client, context, page, samples: Object.fromEntries(titles.map(title => [title, []])) });
       await fixDate(page);
-      await page.goto(origin + `/calendar?ui=${client}`);
+      await page.goto(origin + `/calendar`);
       await page.locator(routes.at(-1).ready).first().waitFor();
-      assert.equal(await page.locator('#leptos-root').count(), Number(client === 'leptos'));
+      assert.equal(await page.locator('#leptos-root').count(), Number(true));
     }
-    for (let i = 0; i < 85; i++) {
+    for (let i = 0; i < warmSamples + 5; i++) {
       for (const { page, samples } of i % 2 ? runs.toReversed() : runs) {
         await page.bringToFront();
         for (const { title, ready } of routes) {
@@ -389,27 +391,21 @@ async function warmNavigation(origin) {
 try {
   browser = await chromium.launch({ headless: true });
   for (const client of clients) receipts[client] = await exercise(client);
-  const pairedTimings = receipts[clients.at(-1)].timings;
-  for (const client of clients) receipts[client].timings = pairedTimings[client];
+  receipts.leptos.timings = receipts.leptos.timings.leptos ?? {};
   await writeFile(join(output, 'receipt.json'), JSON.stringify(receipts, null, 2) + '\n');
-  if (receipts.react && receipts.leptos) {
-    const { timings: reactTiming, cold: reactCold, ...react } = receipts.react;
-    const { timings: leptosTiming, cold: leptosCold, ...leptos } = receipts.leptos;
-    assert.deepEqual(leptos, react);
-    for (const key of Object.keys(reactTiming)) {
-      console.log(`${key} warm p95: React ${reactTiming[key].p95.toFixed(1)} ms, Leptos ${leptosTiming[key].p95.toFixed(1)} ms`);
-      console.log(`${key} route commit p95: React ${reactTiming[key].commit.p95.toFixed(1)} ms, Leptos ${leptosTiming[key].commit.p95.toFixed(1)} ms`);
-    }
-    for (const key of Object.keys(reactCold)) {
-      console.log(`${key} cold p95: React ${reactCold[key].p95.toFixed(1)} ms, Leptos ${leptosCold[key].p95.toFixed(1)} ms`);
-    }
-    for (const key of Object.keys(reactTiming)) {
-      assert(leptosTiming[key].p95 <= reactTiming[key].p95 * 1.1, `${key} exceeded the warm p95 regression budget`);
-    }
-    for (const key of Object.keys(reactCold)) {
-      assert(leptosCold[key].p95 <= reactCold[key].p95 * 1.2, `${key} exceeded the cold p95 regression budget`);
-    }
-  }
+  const { timings, cold, ...functional } = receipts.leptos;
+  assert.deepEqual(functional, {
+    mutations: [
+      { revision: 1, name: 'Morning digest edited', prompt: 'Prepare the digest.', trigger: 'schedule',
+        schedule: { kind: 'cron', expression: '0 9 * * 1-5' }, zone: 'UTC', project: null, reportTo: 'direct', enabled: true },
+      { revision: 0, enabled: true, rotate: true },
+    ],
+    replayed: 2,
+    consoleErrors: 0,
+  });
+  const route = { Routines: 'automation routines', Workflows: 'automation workflows', 'Automation calendar': 'automation calendar' };
+  for (const [name, timing] of Object.entries(cold)) assertP95(route[name], 'cold', timing.p95);
+  for (const [name, timing] of Object.entries(timings)) assertP95(route[name], 'warm', timing.p95);
 } finally {
   await browser?.close();
   provider.closeAllConnections();

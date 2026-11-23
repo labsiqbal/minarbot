@@ -23,7 +23,7 @@ const stamp = Date.parse('2026-11-15T00:00:00Z');
 const created = new Date(stamp).toISOString();
 const release = { id: '0.2.0-12345678', version: '0.2.0', commit: '12345678'.repeat(5), created, notes: 'Synthetic release notes.', source: 'Local feed' };
 const current = { ...release, id: '0.1.0-87654321', version: '0.1.0', commit: '87654321'.repeat(5) };
-const pathFor = (route, client) => `/settings/${route}${client === 'react' ? '?ui=react' : ''}`;
+const pathFor = (route, client) => `/settings/${route}`;
 const settings = page => page.getByRole('dialog', { name: 'Settings', exact: true });
 const button = (scope, name) => scope.getByRole('button', { name, exact: true });
 const modal = (page, name) => page.getByRole('dialog', { name, exact: true });
@@ -121,11 +121,11 @@ async function open(page, client, route) {
   const [name, populated] = names[route];
   const response = await page.goto(origin + pathFor(route, client));
   assert.equal(response.status(), 200);
-  assert.equal((await response.headerValue('content-security-policy')).includes("'wasm-unsafe-eval'"), client === 'leptos');
+  assert.equal((await response.headerValue('content-security-policy')).includes("'wasm-unsafe-eval'"), true);
   const panel = settings(page);
   await visible(panel.getByRole('heading', { name, exact: true }));
   await visible(exact(panel, populated).first());
-  assert.equal(await page.locator('#appearance-dialog[open]').count(), client === 'leptos' ? 1 : 0);
+  assert.equal(await page.locator('#appearance-dialog[open]').count(), 1);
   return panel;
 }
 
@@ -201,7 +201,7 @@ async function exercise(page, client, route, panel, state, commands) {
       Object.assign(state.computer, { state: 'ready', message: null, canSetup: false });
       await page.evaluate(() => window.dispatchEvent(new Event('focus')));
       await visible(exact(panel, 'Ready · Podman'));
-      if (client === 'leptos') {
+      {
         assert.equal(await panel.getByRole('link', { name: /computer viewer/ }).getAttribute('href'), `/?computer=${agentId}`);
       }
       break;
@@ -223,7 +223,7 @@ async function exercise(page, client, route, panel, state, commands) {
       uuid(attempts[0].id);
       // React's update modal sits above workspace.
       // Reloading with both Radix portals open hides both from assistive technology.
-      if (client === 'react') await page.goto(origin + '/routines');
+
       await page.reload();
       await visible(modal(page, 'Updating 1 machine'));
       state.update.lastAttempt.status = 'done';
@@ -231,7 +231,7 @@ async function exercise(page, client, route, panel, state, commands) {
       await visible(completed);
       await button(completed, 'Close').last().click();
       assert.deepEqual(posts('/api/updates/apply'), attempts);
-      if (client === 'react') await open(page, client, route);
+
       await panel.getByRole('switch', { name: 'Also update Studio workstation' }).press('Space');
       await button(panel, 'Update selected (1)').click();
       await button(plan, 'Update').click();
@@ -310,12 +310,12 @@ async function exercise(page, client, route, panel, state, commands) {
   }
 }
 
-const clients = process.env.MINARBOT_SYSTEM_CLIENT ? [process.env.MINARBOT_SYSTEM_CLIENT] : ['react', 'leptos'];
+const clients = ['leptos'];
 const routes = process.env.MINARBOT_SYSTEM_ROUTE ? [process.env.MINARBOT_SYSTEM_ROUTE] : Object.keys(names);
 const failures = [];
 let app, browser;
 try {
-  app = await startRustServer({ database: join(data, 'state.sqlite'), defaultModel: 'fixture-model', dist, port: 0, appearanceClient: 'leptos' });
+  app = await startRustServer({ appearanceClient: 'leptos', database: join(data, 'state.sqlite'), defaultModel: 'fixture-model', dist, port: 0, });
   origin = app.origin;
   assert.match(origin, /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.notEqual(new URL(origin).port, '4317');
@@ -325,7 +325,6 @@ try {
   });
   assert.equal(seed.status, 201);
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
-  assert(clients.every(client => client === 'react' || client === 'leptos'));
   assert(routes.every(route => Object.hasOwn(names, route)));
   for (const client of clients) {
     for (const route of routes) {
@@ -364,7 +363,7 @@ try {
         await page.setViewportSize({ width: 1440, height: 900 });
         const panel = await open(page, client, route);
         await exercise(page, client, route, panel, state, commands);
-        if (client === 'leptos' && route === 'backup') {
+        if (true && route === 'backup') {
           const start = await page.evaluate(() => performance.timeOrigin);
           await button(panel, 'Usage').click();
           await visible(panel.getByRole('heading', { name: 'Usage', exact: true }));

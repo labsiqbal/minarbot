@@ -12,7 +12,7 @@ import { testDatabase } from '../database.ts';
 import relay from '../../../deploy/email-routing/worker.mjs';
 
 const output = fileURLToPath(new URL('./artifacts/agent-email/', import.meta.url));
-const leptos = process.env.MINARBOT_SMOKE_UI === 'leptos';
+const leptos = true;
 const temp = await mkdtemp(join(tmpdir(), 'minarbot-email-smoke-'));
 const database = join(temp, 'state.sqlite');
 const fixtureCode = '0' + String(36419);
@@ -48,7 +48,7 @@ const provider = createServer((req, res) => {
 let app, browser;
 try {
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startApp({ database, appearanceClient: leptos ? 'leptos' : 'react', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, defaultModel: 'email-fixture', stream: false });
+  app = await startApp({ appearanceClient: 'leptos', database, baseURL: `http://127.0.0.1:${provider.address().port}/v1`, defaultModel: 'email-fixture', stream: false });
   browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const { origin } = app;
@@ -59,12 +59,8 @@ try {
     data: { id: agent, runtime: 'api', name: 'Mail fixture', model: 'email-fixture', instructions: 'Help with fixture mail.' },
   });
   assert.equal(created.status(), 201);
-  if (leptos) {
-    await page.goto(origin + '/settings/email?' + new URLSearchParams({ ui: 'react', from: `/agents/${agent}` }));
-  } else {
-    await page.goto(origin + `/agents/${agent}`);
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('button', { name: 'Email', exact: true }).click();
+  {
+    await page.goto(origin + '/settings/email?' + new URLSearchParams({ from: `/agents/${agent}` }));
   }
   await page.getByRole('textbox', { name: 'Receiving domain' }).fill('agents.example.test');
   await page.getByRole('button', { name: 'Save domain' }).click();
@@ -102,8 +98,8 @@ try {
   assert.equal(await receive('unknown@agents.example.test', 'Rejected', 'Wrong recipient'), 'Unknown recipient.');
   assert.equal(await receive(fixtureAddress, 'Fixture receipt', 'Payment receipt for the smoke.'), undefined);
   assert.equal(await receive(fixtureAddress, 'Fixture confirmation', 'Second message.'), undefined);
-  if (leptos) await page.goto(origin + `/agents/${agent}?ui=leptos`);
-  const agentRow = leptos ? page.locator('.bot-row').filter({ hasText: 'Mail fixture' }) : page.getByRole('button', { name: /^Mail fixture Idle/ });
+  await page.goto(origin + `/agents/${agent}`);
+  const agentRow = page.locator('.bot-row').filter({ hasText: 'Mail fixture' });
   await agentRow.hover();
   await page.getByRole('button', { name: 'Actions for Mail fixture' }).press('Enter');
   await page.getByRole('menuitem', { name: 'Inbox' }).press('Enter');
@@ -121,8 +117,8 @@ try {
   await page.getByRole('button', { name: 'Back to message list' }).click();
   await page.getByRole('button', { name: /^Fixture receipt/ }).waitFor();
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole(leptos ? 'link' : 'button', { name: 'Back to chat' }).click();
-  if (leptos) await page.goto(origin + `/agents/${agent}?ui=react`);
+  await page.getByRole('link', { name: 'Back to chat' }).click();
+
 
   const requestTurn = async text => {
     const id = randomUUID();

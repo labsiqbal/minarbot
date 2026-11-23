@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { assertP95 } from './timing-budgets.mjs';
 import { parityShot } from './parity-shot.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -26,7 +27,7 @@ const wasm = '/_leptos/assets/' + wasmName;
 const data = await mkdtemp(join(tmpdir(), 'minarbot-appearance-'));
 let server, browser;
 
-async function startup(client, port = 0, config = {}) {
+async function startup(port = 0, config = {}) {
   server = spawn(binary, ['--test-config'], {
     env: { ...process.env, MINARBOT_TEST_SERVER: 'rust' },
     stdio: ['pipe', 'pipe', 'inherit'],
@@ -41,7 +42,7 @@ async function startup(client, port = 0, config = {}) {
     server.once('exit', code => reject(new Error('Minarbot stopped before readiness (' + code + ')')));
   });
   server.stdin.end(JSON.stringify({
-    database: join(data, 'state.sqlite'), dist, port, appearanceClient: client, ...config,
+    database: join(data, 'state.sqlite'), dist, port, ...config,
   }));
   return Promise.race([ready, wait(60000, undefined, { ref: false }).then(() => {
     throw new Error('Minarbot did not report readiness');
@@ -203,13 +204,6 @@ async function rollout(page, origin) {
   await page.getByRole('heading', { name: 'Workflows', exact: true }).waitFor();
   await page.waitForFunction(() => document.activeElement?.classList.contains('sidebar-settings'));
   await open(page, origin, 'leptos', url.slice(origin.length));
-  await page.goto(origin + general + '?ui=react');
-  await panel(page).getByRole('heading', { name: 'General' }).waitFor();
-  await button(page, 'Appearance').click();
-  await ready(page, 'react');
-  assert.equal(new URL(page.url()).searchParams.get('ui'), 'react');
-  await page.reload({ waitUntil: 'commit' });
-  await ready(page, 'react');
   await open(page, origin, 'leptos', url.slice(origin.length));
   const settingsStart = await page.evaluate(() => performance.timeOrigin);
   const connectionChunk = '**/appearance-split_settings_connections.*.wasm';
@@ -237,21 +231,20 @@ async function faults(context, origin) {
     await open(page, origin, 'leptos');
     assert.equal(requests, 2);
     await page.unroute('**/*.wasm', intercept);
-    await page.route('**/*.wasm', request => {
+    const fail = request => {
       requests += 1;
       return request.fulfill({ status: 503, body: 'Intentional fixture failure' });
-    });
+    };
+    await page.route('**/*.wasm', fail);
     requests = 0;
     await page.goto(origin + route + '?from=%2Fworkflows');
     await page.getByRole('status').filter({ hasText: 'Appearance could not load' }).waitFor();
     assert.equal(requests, 2);
-    const fallback = page.getByRole('link', { name: 'Open standard Appearance' });
-    if (screenshots) await page.screenshot({ path: join(screenshots, 'failed-wasm-fallback.png') });
-    await fallback.focus();
-    await page.keyboard.press('Enter');
-    await ready(page, 'react');
+    if (screenshots) await page.screenshot({ path: join(screenshots, 'failed-wasm-diagnostic.png') });
+    await page.unroute('**/*.wasm', fail);
+    await page.reload({ waitUntil: 'commit' });
+    await ready(page, 'leptos');
     assert.equal(new URL(page.url()).searchParams.get('from'), '/workflows');
-    assert.equal(new URL(page.url()).searchParams.get('ui'), 'react');
     assert.equal(await button(page, 'GitHub').getAttribute('aria-pressed'), 'true');
   } finally {
     await page.close();
@@ -262,7 +255,8 @@ async function crossTab(context, page, origin) {
   await open(page, origin, 'leptos');
   const peer = await context.newPage();
   try {
-    await open(peer, origin, 'react', route + '?ui=react');
+    await open(peer, origin, 'leptos');
+
     await radio(peer, 'Dark').click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     assert.equal(await panel(page).getByRole('status').filter({ hasText: 'Appearance updated from another tab.' }).count(), 1);
@@ -292,11 +286,7 @@ async function headers(origin) {
   }
   const generalResponse = await fetch(origin + general);
   assert.equal(generalResponse.headers.get('content-security-policy').includes('wasm-unsafe-eval'), true);
-  assert.match(await generalResponse.text(), /Open standard General/);
-  for (const path of ['/settings/general?ui=react', '/calendar?ui=react']) {
-    const other = await fetch(origin + path);
-    assert.equal(other.headers.get('content-security-policy').includes('wasm-unsafe-eval'), false);
-  }
+  assert.match(await generalResponse.text(), /id="leptos-root"/);
   for (const path of ['/routines', '/workflows', '/calendar']) {
     const owned = await fetch(origin + path);
     assert.equal(owned.headers.get('content-security-policy').includes('wasm-unsafe-eval'), true);
@@ -566,7 +556,7 @@ async function setupAndDirectory(origin, client) {
 }
 
 async function pairing(client) {
-  const origin = await startup(client, 0, { testRemotePairing: true });
+  const origin = await startup(0, { testRemotePairing: true });
   const context = await browser.newContext();
   try {
     const issued = await context.request.post(origin + '/api/device-pairing/code', { headers: { Origin: origin }, data: {} });
@@ -614,57 +604,40 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   const page = await context.newPage();
   page.setDefaultTimeout(12000);
-  let origin = await startup('react');
+  const origin = await startup();
   const port = Number(new URL(origin).port);
-  const reactCalls = await generalParity(context, origin, 'react');
-  const reactTokens = await exercise(page, origin, 'react');
-  const react = samples && await benchmark(origin, 'react');
-  await stop();
-  origin = await startup('leptos', port);
-  const leptosCalls = await generalParity(context, origin, 'leptos');
-  assert.deepEqual(leptosCalls, reactCalls);
-  const leptosTokens = await exercise(page, origin, 'leptos');
-  assert.deepEqual(leptosTokens, reactTokens);
+  assert.deepEqual(await generalParity(context, origin, 'leptos'), [
+    'GET /api/conversations/settings', 'GET /api/settings/web-search', 'POST /api/conversations/settings',
+    'POST /api/settings/web-search', 'POST /api/settings/web-search/test',
+  ]);
+  const tokens = await exercise(page, origin, 'leptos');
+  assert.equal(tokens.at(-1), '18px');
+  assert(tokens.slice(0, -1).every(Boolean));
   await headers(origin);
   await crossTab(context, page, origin);
   await rollout(page, origin);
   await faults(context, origin);
-  const leptos = samples && await benchmark(origin, 'leptos');
-  await stop();
-  origin = await startup('react', port);
-  await open(page, origin, 'react');
-  const value = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
-  assert.deepEqual(value, { version: 1, colorTheme: 'github', theme: 'light', textSize: 'large' });
-  await context.close();
   if (samples) {
-    console.log(JSON.stringify({ chromium: browser.version(), samples, unit: 'ms', react, leptos }, null, 2));
+    const timing = await benchmark(origin, 'leptos');
+    console.log(JSON.stringify({ chromium: browser.version(), samples, unit: 'ms', leptos: timing }, null, 2));
     if (samples >= 20) {
-      assert(leptos.cold.tti.p95 <= react.cold.tti.p95 * 1.2, 'Leptos cold settings start exceeds React p95 by over 20%');
-      assert(leptos.warmNavigation.tti.p95 <= react.warmNavigation.tti.p95 * 1.1, 'Leptos warm settings navigation exceeds React p95 by over 10%');
+      assertP95('appearance', 'cold', timing.cold.tti.p95);
+      assertP95('appearance', 'warm', timing.warmNavigation.tti.p95);
     }
   }
-  console.log('Preferences parity passed (React and Leptos, API, focus, tokens, browser history, gzip/CSP, failed WASM, and selector rollback).');
-  for (const client of ['react', 'leptos']) {
-    await stop();
-    origin = await startup(client, 0, { database: join(data, `${client}.sqlite`) });
-    await setupAndDirectory(origin, client);
-    await stop();
-    await pairing(client);
-  }
-  console.log('First-run, project navigation and browser pairing passed in both clients.');
-  const incomplete = join(data, 'incomplete-dist');
-  await mkdir(join(incomplete, '_leptos'), { recursive: true });
-  await copyFile(join(dist, 'index.html'), join(incomplete, 'index.html'));
-  origin = await startup('leptos', 0, { dist: incomplete });
-  const assertReactFallback = async () => {
-    const response = await fetch(origin + route);
-    assert.equal(response.status, 200);
-    assert.match(await response.text(), /id="root"/);
-  };
-  await assertReactFallback();
-  await writeFile(join(incomplete, '_leptos/appearance.html'), '<html>Incomplete Leptos document</html>');
-  await assertReactFallback();
-  console.log('Missing and incomplete Leptos documents served React.');
+  await stop();
+  const restarted = await startup(port);
+  await open(page, restarted, 'leptos');
+  assert.deepEqual(await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key),
+    { version: 1, colorTheme: 'github', theme: 'light', textSize: 'large' });
+  await context.close();
+  await stop();
+  console.log('Preferences smoke passed for Leptos, including API, focus, tokens, browser history, gzip/CSP, and failed Wasm.');
+  const fresh = await startup(0, { database: join(data, 'first-run.sqlite') });
+  await setupAndDirectory(fresh, 'leptos');
+  await stop();
+  await pairing('leptos');
+  console.log('First-run, project navigation and browser pairing passed for Leptos.');
 } finally {
   await browser?.close();
   await stop();

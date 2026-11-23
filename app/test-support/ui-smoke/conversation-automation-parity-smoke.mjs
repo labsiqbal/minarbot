@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertP95 } from './timing-budgets.mjs';
 import { fixDate, fixtureClock, parityShot, withFixtureId } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -24,7 +25,7 @@ await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
 const now = Date.UTC(2026, 10, 20, 12, 0);
-const clients = process.env.MINARBOT_SMOKE_UI ? [process.env.MINARBOT_SMOKE_UI] : ['react', 'leptos'];
+const clients = ['leptos'];
 const benchmark = process.env.MINARBOT_CONVERSATION_AUTOMATION_BENCH;
 const samples = Number(benchmark ?? 20);
 const timedRoutes = benchmark === undefined ? ['workflow'] : ['inbox', 'remote', 'upcoming', 'workflow'];
@@ -36,7 +37,7 @@ const workflowRunId = randomUUID();
 let browser;
 
 async function exercise(client, app) {
-  const leptos = client === 'leptos';
+  const leptos = true;
   const { origin } = app;
   const errors = [], captureNames = [];
   const machine = {
@@ -91,7 +92,7 @@ async function exercise(client, app) {
   const chat = `/agents/${ids.agent}`;
   const inbox = chat + '/inbox';
   const remote = `/machines/${ids.machine}/agents/${ids.remote}`;
-  const pilot = path => path + (leptos && !path.includes('?') ? '?ui=leptos' : '');
+  const pilot = path => path + (leptos && !path.includes('?') ? '' : '');
   const details = page.getByRole('complementary', { name: 'Conversation details' });
 
   async function api(path, body) {
@@ -212,7 +213,7 @@ async function exercise(client, app) {
     await open(pilot(chat));
     await page.locator('.chat__pill').waitFor();
     const documentStart = await page.evaluate(() => performance.timeOrigin);
-    if (leptos) {
+    {
       assert(!(await page.evaluate(() => performance.getEntriesByType('resource')
         .some(entry => /\/workflows\.[\da-f]+\.wasm$/.test(entry.name)))), 'Workflows WASM loaded with chat');
     }
@@ -225,7 +226,7 @@ async function exercise(client, app) {
     assert.equal(await page.getByText('Other agent workflow', { exact: true }).count(), 0);
     assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
     await capture('workflow-library');
-    if (leptos) {
+    {
       assert.equal(new URL(page.url()).searchParams.get('agent'), ids.agent);
       await page.goBack();
       await page.waitForFunction(() => document.activeElement?.classList.contains('chat__pill'));
@@ -330,7 +331,7 @@ async function exercise(client, app) {
 
     assert.deepEqual(await page.evaluate(() => window.violations), []);
     assert.deepEqual(errors, []);
-    await open(inbox + '?ui=react', page, false);
+    await open(inbox, page, true);
     await heading('Inbox').waitFor();
 
     const boundary = {
@@ -390,9 +391,8 @@ try {
   const receipt = {};
   const benchmarks = [];
   for (const client of clients) {
-    const app = await startApp({
-      database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: client,
-      fixedClock: fixtureClock,
+    const app = await startApp({ appearanceClient: 'leptos',
+      database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, fixedClock: fixtureClock,
       defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
       stream: false,
     });
@@ -410,6 +410,7 @@ try {
         results[client].push(await sample(route));
       }
     }
+    if (!samples) continue;
     for (const client of clients) {
       receipt[client].timings[route] = {
         cold: stats(results[client].map(timing => timing.cold)),
@@ -418,19 +419,11 @@ try {
     }
   }
   await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
-  if (samples && receipt.react && receipt.leptos) {
-    const failures = [];
-    for (const [route, timing] of Object.entries(receipt.react.timings)) {
-      // docs/full-rust-plan.md: cold start within React p95 + 20%, warm navigation within + 10% (#84).
-      for (const [phase, limit] of [['cold', 1.2], ['warm', 1.1]]) {
-        const react = timing[phase].p95Ms;
-        const leptos = receipt.leptos.timings[route][phase].p95Ms;
-        console.log(`${route} ${phase} p95 ${leptos} ms (Leptos), ${react} ms (React).`);
-        if (leptos > react * limit) failures.push(`${route} exceeded the ${phase} p95 budget`);
-      }
-    }
-    assert.deepEqual(failures, []);
+  for (const [route, timings] of Object.entries(receipt.leptos.timings)) {
+    assertP95('scoped ' + route, 'cold', timings.cold.p95Ms);
+    assertP95('scoped ' + route, 'warm', timings.warm.p95Ms);
   }
+
 } finally {
   await Promise.all(apps.map(app => app.close()));
   await browser?.close();
