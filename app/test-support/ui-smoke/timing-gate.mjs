@@ -42,12 +42,12 @@ try {
     const env = { ...process.env, MINARBOT_TIMING_REPORT: report };
     for (const [key, value] of Object.entries(flags)) env[`MINARBOT_${key}_BENCH`] = String(value);
     console.log(`Running ${group} at one-minute load ${load.at(-1).toFixed(2)}`);
-    const code = await new Promise((resolve, reject) => {
+    const code = await new Promise((done, reject) => {
       const child = spawn(process.execPath, ['--experimental-strip-types', join(import.meta.dirname, script + '-smoke.mjs'), output], {
         cwd: resolve(import.meta.dirname, '../..'), env, stdio: 'inherit',
       });
       child.once('error', reject);
-      child.once('close', (code, signal) => resolve(code ?? signal));
+      child.once('close', (code, signal) => done(code ?? signal));
     });
     const rows = (await readFile(report, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
     const expected = routes.flatMap(route => ['cold', 'warm'].map(phase => `${route} ${phase}`)).sort();
