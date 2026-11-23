@@ -361,9 +361,11 @@ try {
             const body = saved.request().postDataJSON();
             assert.deepEqual(body.members, [agent.id]);
             assert.equal(body.lead, null);
-            const edited = await saved.json();
-            assert.deepEqual(edited.members, [agent.id]);
             await section.waitFor({ state: 'hidden' });
+            const channels = await page.request.get(app.origin + '/api/channels');
+            assert(channels.ok(), 'Read saved section settings');
+            const edited = (await channels.json()).find(channel => channel.id === standalone.id);
+            assert.deepEqual(edited.members, [agent.id]);
             await api('/api/channels/' + standalone.id + '/edit', {
               id: randomUUID(), revision: edited.revision, archived: false, name: standalone.name,
               instructions: standalone.instructions, members: standalone.members, lead: standalone.lead,
