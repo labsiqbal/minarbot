@@ -1,79 +1,60 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { createServer } from 'vite';
+import { startRustServer } from '../../rust-test-server.ts';
 
-const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await mkdtemp(join(tmpdir(), 'minarbot-discord-smoke-'));
-const fixture = `<!doctype html>
-<html lang="en" data-theme="dark" data-color-theme="minarbot">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connected apps</title>
-<div id="root"></div>
-<script type="module">
-  import { createElement } from 'react';
-  import { createRoot } from 'react-dom/client';
-  import { ConnectedAppsPanel } from '/src/ConnectedAppsPanel.tsx';
-  import { ConfirmProvider } from '/src/ui/kit.tsx';
-  import '/src/ui/tokens.css';
-  import '/src/ui/base.css';
-  import '/src/ui/kit.css';
-  import '@fontsource-variable/inter';
-
-  let state = { generation: '', bot: null, status: 'disconnected', routes: [], deliveries: [] };
-  async function request(path, data) {
-    switch (path) {
-      case '/api/connected-apps/discord': return state;
-      case '/api/connected-apps/discord/connect':
-        if (data?.token?.length < 24) throw new Error('Token rejected');
-        state = { ...state, generation: data.id, bot: '1234', status: 'connected' };
-        return state;
-      case '/api/connected-apps/discord/add-route':
-        state = { ...state, routes: [...state.routes, { id: data.id, channel: data.channel, kind: data.kind, target: data.target, users: data.users }] };
-        return state;
-      case '/api/connected-apps/discord/remove-route':
-        state = { ...state, routes: state.routes.filter(route => route.id !== data.route) };
-        return state;
-      case '/api/connected-apps/discord/disconnect':
-        state = { generation: data.id, bot: null, status: 'disconnected', routes: [], deliveries: [] };
-        return state;
-      case '/api/projects':
-        return { projects: [{ id: 'project', name: 'Smoke project', sections: [{ id: 'section', name: 'General' }] }] };
-      case '/api/connected-apps/key': return { source: 'none', revision: 0 };
-      default: return path.includes('?') ? { configured: false, items: [], categories: [] } : { items: [] };
-    }
-  }
-  createRoot(document.getElementById('root')).render(createElement(ConfirmProvider, null,
-    createElement(ConnectedAppsPanel, { agents: [{ id: 'agent', name: 'Smoke agent' }], request })));
-</script>`;
-const server = await createServer({
-  root,
-  server: { host: '127.0.0.1', port: 0, hmr: false },
-  plugins: [{
-    name: 'discord-settings-fixture',
-    configureServer(server) {
-      server.middlewares.use('/discord-settings.html', async (_request, response) => {
-        response.setHeader('Content-Type', 'text/html');
-        response.end(await server.transformIndexHtml('/discord-settings.html', fixture));
-      });
-    },
-  }],
-});
-let browser;
+const data = await mkdtemp(join(tmpdir(), 'minarbot-discord-state-'));
+const agent = '40000000-0000-4000-8000-000000000080';
+const project = '40000000-0000-4000-8000-000000000081';
+const section = '40000000-0000-4000-8000-000000000082';
+const disconnected = { generation: null, bot: null, status: 'disconnected', routes: [], deliveries: [] };
+const discordPath = '/api/connected-apps/discord';
+let app, browser;
 try {
-  await server.listen(0);
-  const address = server.httpServer.address();
-  assert(address && typeof address === 'object');
-  const origin = 'http://127.0.0.1:' + address.port;
+  app = await startRustServer({ appearanceClient: 'leptos', database: join(data, 'state.sqlite'),
+    dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
+  const { origin } = app;
   browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
-  const page = await browser.newPage({ viewport: { width: 980, height: 820 } });
+  const page = await browser.newPage({ viewport: { width: 980, height: 820 }, colorScheme: 'dark' });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
-  await page.goto(origin + '/discord-settings.html');
+  let state = disconnected;
+  await page.route('**/api/**', route => {
+    const { pathname } = new URL(route.request().url());
+    if (pathname === '/api/agents') return route.fulfill({ json: { agents: [{ id: agent, name: 'Smoke agent', runtime: 'api' }] } });
+    if (pathname === '/api/projects') return route.fulfill({ json: { projects: [{ id: project, name: 'Smoke project', sections: [{ id: section, name: 'General' }] }] } });
+    if (pathname === discordPath) return route.fulfill({ json: state });
+    if (!pathname.startsWith(discordPath + '/')) return route.continue();
+    const body = route.request().postDataJSON();
+    switch (pathname.slice(discordPath.length + 1)) {
+      case 'connect':
+        if (body.token === 'invalid') return route.fulfill({ status: 400, json: { error: 'Token rejected' } });
+        assert(body.token === 'synthetic.discord.fixture-key', 'Unexpected fixture token');
+        state = { ...state, generation: body.id, bot: '1234', status: 'connected' };
+        break;
+      case 'add-route':
+        assert.deepEqual(body.users, ['9002', '9003']);
+        assert.equal(body.target, body.channel === '10001' ? agent : section);
+        state = { ...state, routes: [...state.routes, body] };
+        break;
+      case 'remove-route':
+        state = { ...state, routes: state.routes.filter(row => row.id !== body.route) };
+        break;
+      case 'disconnect':
+        state = { ...disconnected, generation: body.id };
+        break;
+      default:
+        assert.fail('Unexpected Discord fixture mutation');
+    }
+    return route.fulfill({ json: state });
+  });
+  await page.goto(origin + '/settings/connected-apps');
+  await page.getByRole('button', { name: 'Discord', exact: true }).click();
   const discord = page.getByRole('region', { name: 'Discord', exact: true });
   const token = discord.getByLabel('Bot token');
   await token.waitFor();
@@ -92,8 +73,7 @@ try {
     await discord.getByRole('button', { name: 'Add route' }).click();
     await discord.getByLabel('Discord channel, thread, or DM ID').fill(channel);
     await discord.getByLabel('Allowed Discord user IDs').fill('9002, 9003');
-    await discord.getByRole('combobox', { name: 'Destination' }).press('Enter');
-    await page.getByRole('option', { name: label }).click();
+    await discord.getByRole('combobox', { name: 'Destination' }).selectOption({ label });
     await discord.getByRole('button', { name: 'Save route' }).click();
     await discord.getByText(channel + ' · 2 allowed users').waitFor();
   }
@@ -113,5 +93,6 @@ try {
   console.log('Discord Settings smoke passed. Screenshots:', output);
 } finally {
   await browser?.close();
-  await server.close();
+  await app?.close();
+  await rm(data, { recursive: true });
 }
