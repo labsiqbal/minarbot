@@ -12,7 +12,7 @@ pub fn page(route: WorkspaceRoute, error_icon: String) -> impl IntoView {
         #[cfg(feature = "workflows")]
         WorkspaceRoute::Routines => automation::routines_page().into_any(),
         #[cfg(feature = "workflows")]
-        WorkspaceRoute::Workflows => automation::workflows_page().into_any(),
+        WorkspaceRoute::Workflows => automation::workflows_page(Signal::stored(true)).into_any(),
         #[cfg(feature = "workflows")]
         WorkspaceRoute::Calendar => automation::calendar_page(Signal::stored(true)).into_any(),
         #[cfg(not(feature = "workflows"))]

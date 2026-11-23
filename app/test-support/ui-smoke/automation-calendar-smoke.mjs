@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
+import { fixDate, fixtureClock, parityChromiumArgs, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -64,7 +64,7 @@ try {
   }
   await api('/api/agents/' + agent.id + '/workflows', { id: fixtureId(17), revision: 0, name: 'Daily summary', graph: { entry: 'out', maxSteps: 8, nodes: [{ id: 'out', kind: 'output' }] } });
 
-  browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
+  browser = await chromium.launch({ headless: true, args: parityChromiumArgs, ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'America/Los_Angeles' });
   const page = await context.newPage();
   await fixDate(page);

@@ -129,29 +129,13 @@ enum Screen {
     Inbox,
 }
 
-pub(crate) fn workflows_page() -> impl IntoView {
+pub(crate) fn workflows_page(active: Signal<bool>) -> impl IntoView {
     let search = window().location().search().unwrap_or_default();
     if let Some((owner, back)) = crate::lazy_route::workflow_scope(&format!("/workflows{search}")) {
         return agent_library(owner, format!("{back}?ui=leptos"), None).into_any();
     }
     let screen = RwSignal::new(Screen::List);
-    let returning = return_state();
-    let return_id = text(&returning["workflow"]);
-    let restore_run = text(&returning["run"]);
     let restore_error = RwSignal::new(String::new());
-    if valid_id(return_id) && valid_id(restore_run) {
-        let path = format!("/api/workflows/{return_id}");
-        spawn_local(async move {
-            match api::read::<Value>(&path).await {
-                Ok(workflow) => {
-                    screen.try_set(Screen::Detail(workflow));
-                }
-                Err(error) => {
-                    restore_error.try_set(error);
-                }
-            }
-        });
-    }
     let deleted = RwSignal::new(false);
     let cursors = RwSignal::new(Vec::<String>::new());
     let query = ui::query::<Value>(move || {
@@ -167,7 +151,7 @@ pub(crate) fn workflows_page() -> impl IntoView {
     });
     poll(
         Callback::new(move |_| {
-            if matches!(screen.get_untracked(), Screen::List) {
+            if active.get_untracked() && matches!(screen.get_untracked(), Screen::List) {
                 query.reload.run(());
             }
         }),
@@ -175,6 +159,61 @@ pub(crate) fn workflows_page() -> impl IntoView {
     );
     let refresh = Callback::new(move |_| query.reload.run(()));
     let choose = RwSignal::new(String::new());
+    let (confirm, confirmation) = kit::confirmation();
+    let activation = RwSignal::new(0_u64);
+    Effect::watch(
+        move || active.get(),
+        move |is_active, previous, _| {
+            activation.update(|version| *version += 1);
+            let version = activation.get_untracked();
+            if *is_active {
+                let returning = return_state();
+                let id = text(&returning["workflow"]);
+                if valid_id(id) && valid_id(text(&returning["run"])) {
+                    let path = format!("/api/workflows/{id}");
+                    spawn_local(async move {
+                        let result = api::read::<Value>(&path).await;
+                        if activation.try_get_untracked() != Some(version) {
+                            return;
+                        }
+                        match result {
+                            Ok(workflow) => screen.set(Screen::Detail(workflow)),
+                            Err(error) => restore_error.set(error),
+                        }
+                    });
+                }
+                if previous.is_some() {
+                    request_animation_frame(move || {
+                        if activation.try_get_untracked() != Some(version) {
+                            return;
+                        }
+                        refresh.run(());
+                        if let Ok(Some(heading)) = document()
+                            .query_selector(".automation-workflows-route:not([hidden]) h1")
+                        {
+                            if let Ok(heading) = heading.dyn_into::<web_sys::HtmlElement>() {
+                                let _ = heading.focus();
+                            }
+                        }
+                    });
+                }
+            } else {
+                query.invalidate();
+                confirm.set(None);
+                if deleted.get_untracked() || !cursors.with_untracked(Vec::is_empty) {
+                    deleted.set(false);
+                    cursors.set(Vec::new());
+                    query.data.set(None);
+                }
+                choose.set(String::new());
+                restore_error.set(String::new());
+                if !matches!(screen.get_untracked(), Screen::List) {
+                    screen.set(Screen::List);
+                }
+            }
+        },
+        true,
+    );
     let available = Signal::derive(directory);
     let owner = Signal::derive(move || {
         let id = choose.get();
@@ -220,7 +259,6 @@ pub(crate) fn workflows_page() -> impl IntoView {
         query.data.set(None);
         refresh.run(());
     };
-    let (confirm, confirmation) = kit::confirmation();
     route_page(view! {
         {move || match screen.get() {
             Screen::List | Screen::Owner => {

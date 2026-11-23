@@ -46,17 +46,25 @@
 .leptos-workspace .agent-profile .k-collapsible__chev { display: inline-flex; }
 .leptos-workspace .agent-profile__computer .k-row__meta:empty { display: none; }
 .leptos-workspace .agent-profile__computer-switch { display: flex; }
+.leptos-workspace .agent-profile__computer .k-switch:not([data-state='checked']) { transform: translateZ(0); }
 .leptos-workspace .agent-profile__resources .panel-row { display: flex; align-items: center; }
 .leptos-workspace .agent-profile__resources .panel-row:hover { color: var(--color-text-primary); }
-.leptos-workspace .k-avatar-picker__check svg { width: 10px; height: 10px; }
-.leptos-workspace .k-avatar-picker__swatch > span > .appearance-icon { display: inline; }
-.leptos-workspace .k-avatar-picker__swatch svg { width: 14px; height: 14px; color: #1c1c1c; }
 .leptos-workspace [aria-labelledby="agent-sites-title"] .k-empty__icon svg { width: 18px; height: 18px; }
+.leptos-workspace [aria-labelledby="agent-sites-title"] .k-empty__icon,
+.leptos-workspace [aria-labelledby="agent-sites-title"] .k-section__actions .k-btn:not(:active) { transform: translateZ(0); }
+
+@media (max-width: 767px) and (min-height: 600px) {
+  .leptos-workspace [aria-labelledby="agent-folder-title"] > .k-dialog__body { overflow: visible; }
+}
 
 /* Dialog bodies own scrolling. The native outer scroll container snaps fractional borders. */
 .leptos-workspace .system-dialog[aria-labelledby^="agent-"],
 .leptos-workspace .system-dialog[aria-labelledby="history-summary-title"] {
   overflow: visible;
+}
+@media (min-width: 768px) {
+  /* Give Chromium a stable layer for the centered editor's fractional footer edges. */
+  .leptos-workspace .system-dialog[aria-labelledby="agent-site-editor-title"]:modal { will-change: transform; }
 }
 
 /* Stack the scrims behind the profile so nested dialogs leave its surface undimmed. */

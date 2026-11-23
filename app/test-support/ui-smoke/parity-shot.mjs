@@ -1,5 +1,9 @@
 export const fixtureClock = Date.UTC(2026, 10, 23, 7);
 
+// Render full tiles in grayscale AA. Headless LCD rasterization depends on layer
+// history, even when the native dialog and its React counterpart have identical geometry.
+export const parityChromiumArgs = ['--disable-lcd-text', '--disable-partial-raster'];
+
 export function fixDate(page, time = fixtureClock, { tick = false } = {}) {
   return page.addInitScript(({ time, tick }) => {
     const now = () => time + (tick ? Math.floor(performance.now()) : 0);

@@ -219,14 +219,21 @@ async function exercise(client) {
     await heading('Workflows').waitFor();
     await page.getByText('Daily summary', { exact: true }).click();
     await heading('Daily summary').waitFor();
+    const replay = page.waitForResponse(response => response.url().endsWith(`/api/workflows/${workflow.id}/run`)
+      && response.request().method() === 'POST');
     await button('Retry request').click();
+    assert((await replay).ok());
     await page.waitForFunction(async id => {
       const response = await fetch('/api/workflow-runs/' + id);
       return response.ok && (await response.json()).status === 'done';
     }, runBody[0].id);
     assert.deepEqual(runBody[0], runBody[1]);
     assert.equal((await api(`/api/workflows/${workflow.id}/runs`)).length, 1);
-    await button('Open run').first().click();
+    await page.waitForFunction(key => !sessionStorage.getItem(key), `minarbot:workflow-command:${agent.id}`);
+    // Replay selects the run itself. Open it separately from a fresh history view.
+    await open('/workflows', 'Workflows');
+    await page.getByText('Daily summary', { exact: true }).click();
+    await button('Open run').click();
     await page.locator('.workflow-run-node').filter({ hasText: 'Completed' }).first().waitFor();
     await page.locator('main .markdown strong').filter({ hasText: 'Automation fixture completed.' }).first().waitFor();
     await inspectGraph('completed run');
@@ -243,8 +250,14 @@ async function exercise(client) {
     await page.getByRole('button', { name: /^Morning digest edited, Routine, Scheduled/ }).first().waitFor();
     await capture('calendar');
 
-    const timings = await warmNavigation(page);
+    const automation = page.getByRole('navigation', { name: 'Automation', exact: true });
     if (client === 'leptos') {
+      await automation.getByLabel('Workflows', { exact: true }).click();
+      await heading('Workflows').waitFor();
+      await page.getByRole('button', { name: /^Daily summary\b/ }).click();
+      await heading('Daily summary').waitFor();
+      await automation.getByLabel('Automation calendar', { exact: true }).click();
+      await heading('Automation calendar').waitFor();
       await page.goBack();
       await heading('Workflows').waitFor();
       await page.goForward();
@@ -277,6 +290,7 @@ async function exercise(client) {
     assert.deepEqual(await page.evaluate(() => window.automationCsp), []);
     console.log(`PASS ${client}: routines, flow, webhook templates, workflow keyboard and layout checks, exact run replay, Markdown and calendar.`);
     const cold = coldSamples ? await coldNavigation(origin) : {};
+    const timings = client === clients.at(-1) ? await warmNavigation(origin) : null;
     return { mutations: mutations.map(({ id, ...body }) => body), replayed: runBody.length, consoleErrors: errors.length, timings, cold };
   } finally {
     await context.close();
@@ -309,37 +323,74 @@ async function coldNavigation(origin) {
   return Object.fromEntries(Object.entries(samples).map(([title, values]) => [title, summarize(values)]));
 }
 
-async function warmNavigation(page) {
+function navigate(page, title) {
+  return page.evaluate(title => new Promise((resolve, reject) => {
+    const control = document.querySelector('[aria-label="Automation"] [aria-label="' + title + '"]');
+    let start, startFrame;
+    const check = () => {
+      if (start === undefined) return;
+      const heading = document.querySelector('main h1:not([hidden], [hidden] *)');
+      if (heading?.textContent !== title) return;
+      observer.disconnect();
+      const commit = performance.now() - start;
+      // Let Chromium lay out and paint normally before sampling the visible heading.
+      requestAnimationFrame(frame => {
+        clearTimeout(timeout);
+        if (!heading.getClientRects().length) reject(new Error('Hidden heading for ' + title));
+        else resolve({ commit, frame: frame - startFrame });
+      });
+    };
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    const timeout = setTimeout(() => { observer.disconnect(); reject(new Error('Timed out waiting for ' + title)); }, 5000);
+    // Compare from the same point in the frame cycle in both clients.
+    requestAnimationFrame(frame => {
+      startFrame = frame;
+      start = performance.now();
+      control.click();
+      check();
+    });
+  }), title);
+}
+
+async function warmNavigation(origin) {
   const titles = routes.map(({ title }) => title);
-  await page.getByRole('navigation', { name: 'Automation', exact: true }).waitFor();
-  const samples = Object.fromEntries(titles.map(title => [title, []]));
-  for (let i = 0; i < 45; i += 1) {
-    for (const title of titles) {
-      const elapsed = await page.evaluate(title => new Promise((resolve, reject) => {
-        const control = document.querySelector('[aria-label="Automation"] [aria-label="' + title + '"]');
-        const check = () => {
-          const heading = document.querySelector('main:not([hidden]) h1');
-          if (heading?.textContent !== title || !heading.getClientRects().length) return;
-          observer.disconnect();
-          clearTimeout(timeout);
-          resolve(performance.now() - start);
-        };
-        const observer = new MutationObserver(check);
-        observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
-        const timeout = setTimeout(() => { observer.disconnect(); reject(new Error('Timed out waiting for ' + title)); }, 5000);
-        const start = performance.now();
-        control.click();
-        check();
-      }), title);
-      if (i >= 5) samples[title].push(elapsed);
+  const runs = [];
+  try {
+    for (const client of clients) {
+      const context = await browser.newContext({ viewport: sizes.desktop, timezoneId: 'UTC' });
+      const page = await context.newPage();
+      runs.push({ client, context, page, samples: Object.fromEntries(titles.map(title => [title, []])) });
+      await fixDate(page);
+      await page.goto(origin + `/calendar?ui=${client}`);
+      await page.locator(routes.at(-1).ready).first().waitFor();
+      assert.equal(await page.locator('#leptos-root').count(), Number(client === 'leptos'));
     }
+    for (let i = 0; i < 85; i++) {
+      for (const { page, samples } of i % 2 ? runs.toReversed() : runs) {
+        await page.bringToFront();
+        for (const { title, ready } of routes) {
+          const elapsed = await navigate(page, title);
+          if (i >= 5) samples[title].push(elapsed);
+          // Finish loading the destination before timing the next navigation.
+          await page.locator(ready).filter({ visible: true }).first().waitFor();
+        }
+      }
+    }
+    return Object.fromEntries(runs.map(({ client, samples }) => [client,
+      Object.fromEntries(Object.entries(samples).map(([title, values]) => [title, {
+        ...summarize(values.map(value => value.frame)), commit: summarize(values.map(value => value.commit)),
+      }]))]));
+  } finally {
+    await Promise.all(runs.map(({ context }) => context.close()));
   }
-  return Object.fromEntries(Object.entries(samples).map(([title, values]) => [title, summarize(values)]));
 }
 
 try {
   browser = await chromium.launch({ headless: true });
   for (const client of clients) receipts[client] = await exercise(client);
+  const pairedTimings = receipts[clients.at(-1)].timings;
+  for (const client of clients) receipts[client].timings = pairedTimings[client];
   await writeFile(join(output, 'receipt.json'), JSON.stringify(receipts, null, 2) + '\n');
   if (receipts.react && receipts.leptos) {
     const { timings: reactTiming, cold: reactCold, ...react } = receipts.react;
@@ -347,6 +398,7 @@ try {
     assert.deepEqual(leptos, react);
     for (const key of Object.keys(reactTiming)) {
       console.log(`${key} warm p95: React ${reactTiming[key].p95.toFixed(1)} ms, Leptos ${leptosTiming[key].p95.toFixed(1)} ms`);
+      console.log(`${key} route commit p95: React ${reactTiming[key].commit.p95.toFixed(1)} ms, Leptos ${leptosTiming[key].commit.p95.toFixed(1)} ms`);
     }
     for (const key of Object.keys(reactCold)) {
       console.log(`${key} cold p95: React ${reactCold[key].p95.toFixed(1)} ms, Leptos ${leptosCold[key].p95.toFixed(1)} ms`);

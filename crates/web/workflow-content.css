@@ -26,9 +26,11 @@
 }
 .leptos-workspace .automation-result { white-space: pre-wrap; overflow-wrap: anywhere; }
 .leptos-workspace .automation-markdown { min-width: 0; max-width: 100%; overflow-x: auto; }
-.leptos-workspace__outlet:has(> .automation-calendar-route) { position: relative; }
-.leptos-workspace .automation-calendar-route { position: absolute; inset: 0; }
-.leptos-workspace .automation-calendar-route[hidden] { display: flex; visibility: hidden; }
+.leptos-workspace__outlet:has(> :is(.automation-calendar-route, .automation-workflows-route)) { position: relative; }
+.leptos-workspace :is(.automation-calendar-route, .automation-workflows-route) { position: absolute; inset: 0; }
+.leptos-workspace .automation-workflows-route { display: flex; flex-direction: column; }
+.leptos-workspace :is(.automation-calendar-route, .automation-workflows-route)[hidden] { display: flex; visibility: hidden; }
+.leptos-workspace .automation-routines-route:not([hidden]) { display: contents; }
 .leptos-workspace .routine-avatar { width: 24px; height: 24px; font-size: 10px; }
 .leptos-workspace .page-view .k-check input[type=checkbox] { accent-color: var(--color-brand); width: 18px; height: 18px; margin: 1px 0 0; flex: none; }
 .leptos-workspace .automation-select { overflow-y: auto; }

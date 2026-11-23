@@ -313,6 +313,8 @@ async function exercise(client) {
     assert.equal(await page.locator('.human-bubble').count(), 1);
     await button('Send message').waitFor();
     await page.getByRole('main').click({ position: { x: 16, y: 400 } });
+    await page.keyboard.press('Escape');
+    await page.locator('.k-tooltip').filter({ hasText: 'Send (Enter)' }).waitFor({ state: 'hidden' });
     await capture('remote-reply');
     machine.status = 'offline';
     await page.getByText('Offline. Reconnect the machine before sending.', { exact: true }).waitFor();

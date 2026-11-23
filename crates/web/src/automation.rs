@@ -15,13 +15,13 @@ pub(crate) fn routines_page() -> impl IntoView {
     crate::lazy_view::load("Routines", routines_screen)
 }
 
-pub(crate) fn workflows_page() -> impl IntoView {
-    crate::lazy_view::load("Workflows", workflows_screen)
+pub(crate) fn workflows_page(active: Signal<bool>) -> impl IntoView {
+    crate::lazy_view::load("Workflows", move || workflows_screen(active))
 }
 
 #[leptos::wasm_split::wasm_split(workflows_screen, wasm_split_path = leptos::wasm_split, fallible)]
-fn workflows_screen() -> crate::lazy_view::ChunkView {
-    Ok(workflows::workflows_page().into_any())
+fn workflows_screen(active: Signal<bool>) -> crate::lazy_view::ChunkView {
+    Ok(workflows::workflows_page(active).into_any())
 }
 
 pub(crate) fn agent_library(
@@ -363,20 +363,64 @@ pub(crate) fn mount(
         }
     });
     on_cleanup(move || listener.remove());
+    let routines_active = Memo::new(move |_| route.with(|route| route == "/routines"));
+    let routines_mounted = RwSignal::new(routines_active.get_untracked());
+    Effect::watch(
+        move || routines_active.get(),
+        move |active, _, _| {
+            if *active {
+                routines_mounted.set(true);
+                document().set_title("Routines · Minarbot");
+            } else {
+                // Hide routines at once and release its view after the destination paints.
+                request_animation_frame(move || {
+                    request_animation_frame(move || {
+                        if routines_active.try_get_untracked() == Some(false) {
+                            routines_mounted.try_set(false);
+                        }
+                    });
+                });
+            }
+        },
+        true,
+    );
     let calendar_active = Memo::new(move |_| route.with(|route| route == "/calendar"));
     let calendar_visited = RwSignal::new(calendar_active.get_untracked());
+    let workflows_scoped = Memo::new(move |_| {
+        route.with(|route| route == "/workflows")
+            && window().location().search().is_ok_and(|search| {
+                crate::lazy_route::workflow_scope(&format!("/workflows{search}")).is_some()
+            })
+    });
+    let workflows_active =
+        Memo::new(move |_| route.with(|route| route == "/workflows") && !workflows_scoped.get());
+    let workflows_visited = RwSignal::new(workflows_active.get_untracked());
     Effect::new(move |_| {
         if calendar_active.get() {
             calendar_visited.set(true);
             document().set_title("Automation calendar · Minarbot");
         }
+        if workflows_active.get() {
+            workflows_visited.set(true);
+            document().set_title("Workflows · Minarbot");
+        }
     });
     view! {
         <crate::shell::WorkspaceShell base_path=path colors icons>
             {move || crate::workspace_route::WorkspaceRoute::from_path(&route.get())
-                .filter(|route| *route != crate::workspace_route::WorkspaceRoute::Calendar)
+                .filter(|route| *route == crate::workspace_route::WorkspaceRoute::Workflows && workflows_scoped.get())
                 .map(|route| workspace::page(route, String::new()))}
+            <Show when=move || routines_mounted.get()>
+                <div class="automation-routines-route" hidden=move || !routines_active.get() inert=move || !routines_active.get()>
+                    {routines_page()}
+                </div>
+            </Show>
             <Show when=move || calendar_visited.get()>{calendar_page(calendar_active.into())}</Show>
+            <Show when=move || workflows_visited.get()>
+                <div class="automation-workflows-route" hidden=move || !workflows_active.get() inert=move || !workflows_active.get()>
+                    {workflows_page(workflows_active.into())}
+                </div>
+            </Show>
         </crate::shell::WorkspaceShell>
     }
 }

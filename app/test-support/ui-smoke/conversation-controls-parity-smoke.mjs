@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fixDate, parityShot } from './parity-shot.mjs';
+import { fixDate, parityChromiumArgs, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -119,7 +119,7 @@ try {
     const roomChild = { ...mk(202, 'Another member'), agent: helper.id, agent_name: helper.name, parent: roomRoot.id, reply: null, status: 'queued', paused: 1, history_page: 1 };
     roomRoot.room = { root: roomRoot.id, generation: roomRoot.id, active: true, round: 0, stopped: false, silent: null, note: null, quiet: [], messages: [] };
     roomChild.room = { ...roomRoot.room, round: 1 };
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, args: parityChromiumArgs });
     const selectClient = (path, client) => app.origin + path + (client === 'react' ? '?ui=react' : '');
     for (const [size, width, height] of [['desktop', 1440, 900], ['narrow', 430, 850]]) {
       for (const theme of ['dark', 'light']) {

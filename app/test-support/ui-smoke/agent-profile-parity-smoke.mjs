@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
 import { deleteAgentSmoke } from './delete-agent-smoke.mjs';
-import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
+import { fixDate, fixtureClock, parityChromiumArgs, parityShot } from './parity-shot.mjs';
 
 const output = resolve(process.argv[2] ?? 'test-support/ui-smoke/artifacts/agent-profile');
 const scratch = await mkdtemp(join(tmpdir(), 'minarbot-agent-profile-'));
@@ -335,7 +335,7 @@ async function deletion(browser, origin, client) {
 let browser;
 const receipt = {};
 try {
-  browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
+  browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, args: parityChromiumArgs });
   for (const client of clients) {
     const app = await startApp({
       database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: 'leptos',

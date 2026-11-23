@@ -201,9 +201,10 @@ async function exercise(page, slug) {
       const key = editor.getByLabel('Composio API key', { exact: true });
       await key.waitFor();
       assert.equal(await key.getAttribute('type'), 'password');
-      await page.keyboard.press('Escape');
+      await key.press('Escape');
       await editor.waitFor({ state: 'hidden' });
-      await page.getByRole('button', { name: /^WhatsApp\b/ }).click();
+      await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button')
+        .filter({ has: page.getByText('WhatsApp', { exact: true }) }).click();
       await dialog('WhatsApp').getByRole('button', { name: 'Link WhatsApp' }).waitFor();
       await page.keyboard.press('Escape');
       break;

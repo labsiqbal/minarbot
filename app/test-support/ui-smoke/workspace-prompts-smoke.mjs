@@ -14,7 +14,7 @@ import { testDatabase } from '../database.ts';
 const scratch = await mkdtemp(join(tmpdir(), 'mb78-'));
 const output = resolve(process.argv[2] ?? scratch);
 const dist = fileURLToPath(new URL('../../dist', import.meta.url));
-const samples = Number(process.env.MINARBOT_PROMPTS_BENCH ?? 20);
+const samples = Number(process.env.MINARBOT_PROMPTS_BENCH ?? 60);
 assert(Number.isInteger(samples) && samples > 0);
 await mkdir(output, { recursive: true });
 
@@ -75,7 +75,7 @@ function observer(page, errors) {
   return page;
 }
 
-async function exercise(browser, client) {
+async function* exercise(browser, client) {
   const ctl = await launcher(client);
   let app, context;
   try {
@@ -136,7 +136,24 @@ async function exercise(browser, client) {
         for (const theme of themes) {
           await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
           assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-          if (center) await region.evaluate(node => node.scrollIntoView({ block: 'center', behavior: 'instant' }));
+          if (center) await region.evaluate(async node => {
+            await document.fonts.ready;
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            node.scrollIntoView({ block: 'center', behavior: 'instant' });
+            const transcript = node.closest('.transcript');
+            const visible = () => {
+              const card = node.getBoundingClientRect();
+              const viewport = transcript.getBoundingClientRect();
+              return card.top >= viewport.top && card.bottom <= viewport.bottom;
+            };
+            for (let frame = 0; frame < 8; frame++) {
+              const before = transcript.scrollTop;
+              await new Promise(resolve => requestAnimationFrame(resolve));
+              if (transcript.scrollTop === before && visible()) return;
+              node.scrollIntoView({ block: 'center', behavior: 'instant' });
+            }
+            throw new Error('Approval card did not settle inside the transcript');
+          });
           await parityShot(page, join(output, `${client}-${name}-${layout}-${theme}.png`), region);
         }
         if (needsSidebar && layout === 'narrow') await page.keyboard.press('Escape');
@@ -165,13 +182,6 @@ async function exercise(browser, client) {
       await search.waitFor();
       assert(await search.evaluate(node => node === document.activeElement));
     };
-    for (let i = 0; i < samples; i++) {
-      const start = performance.now();
-      await openQuick();
-      warm.push(performance.now() - start);
-      await page.keyboard.press('Escape');
-      await quick.waitFor({ state: 'hidden' });
-    }
     await action('Quick switcher (Ctrl/Cmd+K)').click();
     await search.fill('follow daily');
     await quick.getByRole('option', { name: /Daily follow-up/ }).waitFor();
@@ -267,15 +277,29 @@ async function exercise(browser, client) {
     assert.deepEqual(await page.evaluate(() => window.promptViolations), []);
     assert.deepEqual(errors, []);
 
+    await page.goto(app.origin + guidePath);
+    await compose.waitFor();
+    await openQuick();
+    await page.keyboard.press('Escape');
+    await quick.waitFor({ state: 'hidden' });
+    yield;
+
     for (let i = 0; i < samples; i++) {
+      await page.bringToFront();
+      const start = performance.now();
+      await openQuick();
+      warm.push(performance.now() - start);
+      await page.keyboard.press('Escape');
+      await quick.waitFor({ state: 'hidden' });
       const coldContext = await browser.newContext({ viewport: shapes.desktop });
       try {
         const page = observer(await coldContext.newPage(), errors);
-        const start = performance.now();
+        const began = performance.now();
         await page.goto(app.origin + guidePath, { waitUntil: 'commit' });
         await page.getByRole('textbox', { name: `Message ${guide.name}`, exact: true }).waitFor();
-        cold.push(performance.now() - start);
+        cold.push(performance.now() - began);
       } finally { await coldContext.close(); }
+      yield;
     }
     assert.deepEqual(errors, []);
     return { coldGuideMs: stats(cold), warmSwitcherMs: stats(warm), updateSubmissions: ctl.commands.length,
@@ -312,23 +336,31 @@ async function compare() {
 }
 
 const browser = await chromium.launch({ executablePath: process.env.CHROME ?? '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+const client = process.env.MINARBOT_PROMPTS_CLIENT;
+const clients = client ? [client] : ['react', 'leptos'];
+const runs = clients.map(name => exercise(browser, name));
 try {
-  const client = process.env.MINARBOT_PROMPTS_CLIENT;
+  assert(clients.every(name => ['react', 'leptos'].includes(name)));
+  for (const run of runs) await run.next();
+  for (let i = 0; i < samples; i++) {
+    // Reverse who goes first so changes in host load affect both clients.
+    for (const run of i % 2 ? runs.toReversed() : runs) await run.next();
+  }
+  const results = [];
+  for (const run of runs) results.push((await run.next()).value);
   if (client) {
-    assert(['react', 'leptos'].includes(client));
-    const result = await exercise(browser, client);
+    const [result] = results;
     await writeFile(join(output, `${client}-receipt.json`), JSON.stringify(result, null, 2));
     console.log(JSON.stringify({ client, ...result, output }));
   } else {
-    const react = await exercise(browser, 'react');
-    const leptos = await exercise(browser, 'leptos');
+    const [react, leptos] = results;
     const screenshots = await compare();
-    const results = { react, leptos, screenshots };
-    await writeFile(join(output, 'receipt.json'), JSON.stringify(results, null, 2));
+    await writeFile(join(output, 'receipt.json'), JSON.stringify({ react, leptos, screenshots }, null, 2));
     console.log(JSON.stringify({ react, leptos, screenshotPairs: Object.keys(screenshots).length, output }));
     assert(leptos.coldGuideMs.p95 <= react.coldGuideMs.p95 * 1.2, 'Guide cold p95 exceeds 20% budget');
     assert(leptos.warmSwitcherMs.p95 <= react.warmSwitcherMs.p95 * 1.1, 'Switcher warm p95 exceeds 10% budget');
   }
 } finally {
+  await Promise.allSettled(runs.map(run => run.return()));
   await browser.close();
 }

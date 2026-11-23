@@ -10,6 +10,7 @@ const MAX_IMAGE: usize = 512 * 1024;
 const IMAGE_ERROR: &str = "Choose a PNG, JPEG, or WebP image up to 512 KiB.";
 const EYES: &str =
     "M43 49a3.5 3.5 0 0 0-7 0v5a3.5 3.5 0 0 0 7 0ZM64 49a3.5 3.5 0 0 0-7 0v5a3.5 3.5 0 0 0 7 0Z";
+const CHECK: &str = "M20 6 9 17l-5-5";
 
 #[derive(Deserialize, Default)]
 struct Looks {
@@ -33,6 +34,16 @@ fn looks() -> &'static Looks {
         serde_json::from_str(include_str!("../../../../app/src/ui/avatar-looks.json"))
             .unwrap_or_default()
     })
+}
+
+fn check_icon(size: u8, stroke: &'static str) -> impl IntoView {
+    view! {
+        <svg xmlns="http://www.w3.org/2000/svg" width=size height=size viewBox="0 0 24 24"
+            fill="none" stroke=stroke stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            class="lucide lucide-check" aria-hidden="true">
+            <path d=CHECK></path>
+        </svg>
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -190,7 +201,7 @@ fn picker(
                           tabindex=move || if selected() || index == 0 && look.with(Option::is_none) { 0 } else { -1 }
                           on:click=move |_| choose(Some(Look { shape:index, color:color() }))>
                             {move || mascot(Look { shape:index, color:color() }, 42)}
-                            <Show when=selected><span class="k-avatar-picker__check"><ui::Icon name="check" /></span></Show>
+                            <Show when=selected><span class="k-avatar-picker__check">{check_icon(10, "currentColor")}</span></Show>
                         </button>
                     }
                 }).collect_view()}
@@ -202,7 +213,7 @@ fn picker(
                       disabled=locked aria-checked=move || selected().to_string() data-state=move || if selected() {"checked"} else {"unchecked"}
                       tabindex=move || if selected() { 0 } else { -1 }
                       on:click=move |_| choose(Some(Look { shape:look.with_untracked(|look| look.map_or(0, |look| look.shape)), color:index }))>
-                        <span style:background=swatch.fill.clone()><Show when=selected><ui::Icon name="check" /></Show></span>
+                        <span style:background=swatch.fill.clone()><Show when=selected><span>{check_icon(14, "#1C1C1C")}</span></Show></span>
                     </button> }
                 }).collect_view()}
             </div>

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fixDate, parityShot } from './parity-shot.mjs';
+import { fixDate, parityChromiumArgs, parityShot } from './parity-shot.mjs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -69,7 +69,7 @@ try {
       .run(bank, randomUUID(), 'Where are the orchid supplies?', 'Labels and inventory sheets are in the north cabinet.', JSON.stringify([{ id: observation, kind: 'observation', text: 'North cabinet', source: [source] }]), bank);
   } finally { db.close(); }
   await mkdir(output, { recursive: true });
-  browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ?? '/usr/bin/google-chrome' });
+  browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ?? '/usr/bin/google-chrome', args: parityChromiumArgs });
   const role = (root, kind, name) => root.getByRole(kind, { name, exact: true });
   const button = (root, name) => role(root, 'button', name);
   const dialog = (page, name) => role(page, 'dialog', name);
