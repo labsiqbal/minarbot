@@ -3,14 +3,14 @@ import { once, EventEmitter } from 'node:events';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
-import { createHubServer } from './hub/server.ts';
-import { createStubVerifier, type SessionIdentity } from './hub/sessions.ts';
+import type { SessionIdentity } from './hub/sessions.ts';
 import { generateKeyPairSync, randomUUID, createPublicKey } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { testDatabase } from './test-support/database.ts';
 import { startRustHub } from './test-support/hosted-hub.ts';
+import { rustBinary } from './rust-binary.ts';
 import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import WebSocket from 'ws';
 import { startApp } from './test-bridge.ts';
@@ -37,7 +37,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     const dir = mkdtempSync(join(tmpdir(), 'minarbot-hub-link-')), hubDb = testDatabase(join(dir, 'hub.sqlite'));
     initializeHubSchema(hubDb);
     let clock = Date.now();
-    const rustBinary = process.env.MINARBOT_HOSTED_HUB_BINARY;
+    const binary = rustBinary('minarbot-server', process.env.MINARBOT_HOSTED_HUB_BINARY ?? process.env.MINARBOT_RUST_BINARY);
     const now = () => clock;
     const a = createHubAuthority(hubDb, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now });
     const r = createHubRouting(a), signer = generateKeyPairSync('ed25519').privateKey, hubKey = createPublicKey(signer).export({ type: 'spki', format: 'der' }).toString('base64url');
@@ -48,29 +48,21 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     const accountsHost = 'accounts.minarbot.test', origin = `https://${accountsHost}`;
     const identities = new Map(['alice', 'bob', 'eve'].map(subject => [subject, { ...who(subject), sessionId: `${subject}-session`, expiresAt: clock + 3600000 } satisfies SessionIdentity]));
     async function startFixtureHub() {
-        if (rustBinary) {
-            const mailboxKeyPath = join(dir, 'mailbox.key'), tokensPath = join(dir, 'tokens.json'), signingKeyPath = join(dir, 'signer.pem');
-            writeFileSync(mailboxKeyPath, Buffer.alloc(32, 8), { mode: 0o600 });
-            writeFileSync(tokensPath, JSON.stringify(Object.fromEntries(identities)), { mode: 0o600 });
-            writeFileSync(signingKeyPath, signer.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
-            const rust = await startRustHub(rustBinary, dir, { domain: 'minarbot.test', accountsHost, dataPath: join(dir, 'hub.sqlite'),
-                mailboxKeyPath, identity: { mode: 'stub', tokensPath }, nodeLink: { signingKeyPath } }, 0, true);
-            try {
-                await rust.control({ now: clock });
-            } catch (error) {
-                await rust.close();
-                throw error;
-            }
-            return { ...rust, transport: { flush() { /* Hosted Rust polls its own outbox. */ } } };
+        const mailboxKeyPath = join(dir, 'mailbox.key'), tokensPath = join(dir, 'tokens.json'), signingKeyPath = join(dir, 'signer.pem');
+        writeFileSync(mailboxKeyPath, Buffer.alloc(32, 8), { mode: 0o600 });
+        writeFileSync(tokensPath, JSON.stringify(Object.fromEntries(identities)), { mode: 0o600 });
+        writeFileSync(signingKeyPath, signer.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+        const rust = await startRustHub(binary, dir, { domain: 'minarbot.test', accountsHost, dataPath: join(dir, 'hub.sqlite'),
+            mailboxKeyPath, identity: { mode: 'stub', tokensPath }, nodeLink: { signingKeyPath } }, 0, true);
+        try {
+            await rust.control({ now: clock });
+        } catch (error) {
+            await rust.close();
+            throw error;
         }
-        const node = createHubServer({ authority: a, verifier: createStubVerifier(identities), accountsHost, domain: 'minarbot.test', nodeLink: { origin, signingKey: signer, now } });
-        await new Promise<void>(resolve => node.server.listen(0, '127.0.0.1', resolve));
-        const address = node.server.address();
-        assert(address && typeof address !== 'string');
-        return { port: address.port, close: node.close, transport: node.nodeLink!, control: undefined };
+        return rust;
     }
     const hub = await startFixtureHub();
-    const { transport } = hub;
     const localOrigin = `http://127.0.0.1:${hub.port}`;
     // Test transport dials disposable loopback; production URL/Host and signed origin stay exact.
     const localFetch: typeof fetch = (input, init) => new Promise((resolve, reject) => {
@@ -148,16 +140,9 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         await api(app, '/api/hub-link/enrollment/poll', {});
         await until(() => app.hubLink!.status().connected, 'node online');
         const agentId = randomUUID();
-        if (rustBinary) await browser(accountsHost, '/api/agents', { agentId, nodeId: started.nodeId, name }, session);
-        else a.registerAgent(account, String(started.nodeId), agentId, name);
-        return { get app() { return app; }, agent, agentId, nodeId: String(started.nodeId), database, account, options, async restart() { await app.close().catch(() => {}); app = await startApp(options); apps.push(app); await until(() => app.hubLink!.status().connected, 'reconnected'); }, async participate(invocation: InvocationPolicy = { mode: 'owner' }) { const policy: ParticipationPolicy = { sectionIds: [project.sectionId], invocation, scopes: ['read', 'invoke'], localPolicyDigest: (await api(app, `/api/hub-link/agents/${agent.id}/policy`)).localPolicyDigest, payerBindingRef: 'local_provider', maxCostMicros: 10000 }; const proposal = rustBinary
-            ? (await browser(accountsHost, '/api/participations', { projectHost: project.host, agentId, policy, providerMaxCostMicros: 100 }, session)).data
-            : a.propose(ctx(account), agentId, policy);
-        if (rustBinary) {
-            await browser(project.host, '/api/participants/consent', proposal, await projectSession(alice));
-        } else {
-            a.consent(ctx(alice), proposal.participationId, proposal.revision, proposal.policyDigest, 'project');
-        } await api(app, '/api/hub-link/grants/approve', { projectId: project.projectId, participationId: proposal.participationId, agentId, localAgentId: agent.id, revision: proposal.revision, policy, providerMaxCostMicros: 100 }); await until(() => r.grants({ nodeId: String(started.nodeId), accountId: account, nodeGeneration: 1, connectionGeneration: Number(a.one('SELECT connection_generation FROM nodes WHERE id=?', String(started.nodeId))!.connection_generation) }).some(g => g.participationId === proposal.participationId)); return proposal; } };
+        await browser(accountsHost, '/api/agents', { agentId, nodeId: started.nodeId, name }, session);
+        return { get app() { return app; }, agent, agentId, nodeId: String(started.nodeId), database, account, options, async restart() { await app.close().catch(() => {}); app = await startApp(options); apps.push(app); await until(() => app.hubLink!.status().connected, 'reconnected'); }, async participate(invocation: InvocationPolicy = { mode: 'owner' }) { const policy: ParticipationPolicy = { sectionIds: [project.sectionId], invocation, scopes: ['read', 'invoke'], localPolicyDigest: (await api(app, `/api/hub-link/agents/${agent.id}/policy`)).localPolicyDigest, payerBindingRef: 'local_provider', maxCostMicros: 10000 }; const proposal = (await browser(accountsHost, '/api/participations', { projectHost: project.host, agentId, policy, providerMaxCostMicros: 100 }, session)).data;
+        await browser(project.host, '/api/participants/consent', proposal, await projectSession(alice)); await api(app, '/api/hub-link/grants/approve', { projectId: project.projectId, participationId: proposal.participationId, agentId, localAgentId: agent.id, revision: proposal.revision, policy, providerMaxCostMicros: 100 }); await until(() => r.grants({ nodeId: String(started.nodeId), accountId: account, nodeGeneration: 1, connectionGeneration: Number(a.one('SELECT connection_generation FROM nodes WHERE id=?', String(started.nodeId))!.connection_generation) }).some(g => g.participationId === proposal.participationId)); return proposal; } };
     }
     t.after(async () => {
         for (const app of apps)
@@ -180,14 +165,14 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     }
     const post = (account: string, mentions: string[]) => r.post(ctx(account), { requestId: randomUUID(), sectionId: project.sectionId, text: 'Explain transport', mentions });
     async function advance(ms: number) {
-        if (hub.control) await hub.control({ now: clock + ms });
+        await hub.control({ now: clock + ms });
         clock += ms;
     }
     async function queuedPost(input: Parameters<typeof r.post>[1], advanceMs = 0): Promise<ReturnType<typeof r.post>> {
         clock += advanceMs;
-        return hub.control ? hub.control({ now: clock, post: { projectId: project.projectId, accountId: alice, input } }) : r.post(ctx(alice), input);
+        return hub.control({ now: clock, post: { projectId: project.projectId, accountId: alice, input } });
     }
-    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, frames, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, advance, queuedPost, receiveFrames(intercept?: HubLinkOptions['receive']) { receive = intercept; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
+    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, frames, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, advance, queuedPost, receiveFrames(intercept?: HubLinkOptions['receive']) { receive = intercept; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
 }
 test('signed envelopes reject forged payloads, keys and directions', () => {
     const pair = generateKeyPairSync('ed25519'), key = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'), body = { kind: 'heartbeat' };
@@ -277,7 +262,7 @@ test('duplicate delivery, final ACK loss and restart never execute twice', async
     const turn = f.r.turn(f.ctx(f.alice), post.turnIds[0]);
     assert(['done', 'unknown'].includes(String(turn.state)));
 });
-test('revocation mid-stream stops local work before another effect and does not execute offline', async (t) => { let release: (text: string) => void = () => { }; const f = await fixture(t, () => new Promise<string>(resolve => { release = resolve; })), node = await f.node('Held', f.alice), p = await node.participate(), post = f.post(f.alice, [p.participationId]); await until(() => f.calls === 1); f.a.withdraw(f.ctx(f.alice), p.participationId); f.transport.flush(); await until(async () => { const status = await api(node.app, '/api/hub-link'); return !status.connected || f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown'; }); release('Late answer'); await sleep(300); assert.equal(f.calls, 1); assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'unknown'); assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError); });
+test('revocation mid-stream stops local work before another effect and does not execute offline', async (t) => { let release: (text: string) => void = () => { }; const f = await fixture(t, () => new Promise<string>(resolve => { release = resolve; })), node = await f.node('Held', f.alice), p = await node.participate(), post = f.post(f.alice, [p.participationId]); await until(() => f.calls === 1); f.a.withdraw(f.ctx(f.alice), p.participationId); await until(async () => { const status = await api(node.app, '/api/hub-link'); return !status.connected || f.r.turn(f.ctx(f.alice), post.turnIds[0]).state === 'unknown'; }); release('Late answer'); await sleep(300); assert.equal(f.calls, 1); assert.equal(f.r.turn(f.ctx(f.alice), post.turnIds[0]).state, 'unknown'); assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError); });
 test('foreign project and forged signed hub frames never reach local engine', async (t) => {
     const f = await fixture(t), node = await f.node('Isolated', f.alice), p = await node.participate();
     const forged = generateKeyPairSync('ed25519').privateKey;
@@ -357,7 +342,6 @@ test('reconnect fences old generation; session expiry renews with node key and n
     const session = () => f.a.one('SELECT expires_at FROM node_link_sessions WHERE node_id=?', node.nodeId)!.expires_at;
     const before = connectionGeneration(), expiresAt = session();
     await f.advance(900001);
-    f.transport.flush();
     await until(() => connectionGeneration() > before && node.app.hubLink!.status().connected, 'signed renewal');
     assert(Number(session()) > Number(expiresAt));
     assert.equal(f.calls, 1);
@@ -407,7 +391,6 @@ test('revoking alpha preserves simultaneous beta work on the same node',async t=
     const message=typeof data==='string'?JSON.parse(data).body:undefined;
     if(message?.kind==='turn.result'&&message.frame.kind==='turn.final'&&message.frame.turnId===a.turnIds[0]){
       f.a.withdraw(f.ctx(f.alice),alpha.participationId);
-      f.transport.flush();
     }
     return Reflect.apply(send,this,[data,...args]);
   };
@@ -535,7 +518,7 @@ test('computer input requires local approval and action lease; revoke leaves unc
     const pending = node.app.hubLink!.approvals()[0];
     await api(node.app, '/api/hub-link/approvals', { actionId: pending.actionId, actionDigest: pending.actionDigest, approved: true });
     await until(() => effects === 2, 'computer effect dispatched');
-    f.a.withdraw(f.ctx(f.alice), p.participationId); f.transport.flush();
+    f.a.withdraw(f.ctx(f.alice), p.participationId);
     await until(() => node.app.hubLink!.approvals().length === 0 && f.r.turn(f.ctx(f.alice), second.turnIds[0]).state === 'unknown');
     release();
     await node.restart();
@@ -601,7 +584,7 @@ test('connected app calls require local approval and lease; revocation after dis
     const nextResume = node.app.hubLink!.approvals()[0];
     await api(node.app, '/api/hub-link/approvals', { actionId: nextResume.actionId, actionDigest: nextResume.actionDigest, approved: true });
     await until(() => effects === 2);
-    f.a.withdraw(f.ctx(f.alice), p.participationId); f.transport.flush(); release();
+    f.a.withdraw(f.ctx(f.alice), p.participationId); release();
     await until(() => f.r.turn(f.ctx(f.alice), second.turnIds[0]).state === 'unknown');
     await node.restart(); await sleep(200); assert.equal(effects, 2);
     assert.throws(() => f.post(f.alice, [p.participationId]), e => e instanceof ProtocolError);
@@ -646,7 +629,7 @@ test('MCP async discovery cannot dispatch after revoke; lost result remains unce
     const first = f.post(f.alice, [p.participationId]); await approve(); await f.done(first.turnIds[0]); assert.equal(effects, 1);
     holdCatalogue = true;
     const second = f.post(f.alice, [p.participationId]); await approve(); await until(() => held);
-    f.a.withdraw(f.ctx(f.alice), p.participationId); f.transport.flush();
+    f.a.withdraw(f.ctx(f.alice), p.participationId);
     await until(() => f.r.turn(f.ctx(f.alice), second.turnIds[0]).state === 'unknown');
     // Wait for node's local cancellation, not just synchronous hub state change.
     await until(() => { try { node.app.hubLink!.check(second.turnIds[0]); return false; } catch { return true; } });
@@ -688,7 +671,7 @@ test('two session-enrolled nodes answer browser mention; revoking one live strea
     const revokedTurn = post.turnIds.find((id: string) => f.r.turn(f.ctx(f.alice), id).node_id === alice.nodeId);
     const otherTurn = post.turnIds.find((id: string) => id !== revokedTurn);
     await until(() => f.r.history(f.ctx(f.alice), f.project.sectionId).results.some(row => row.turnId === revokedTurn && row.kind === 'turn.partial'), 'live partial before revoke');
-    f.a.withdraw(f.ctx(f.alice), pa.participationId); f.transport.flush();
+    f.a.withdraw(f.ctx(f.alice), pa.participationId);
     await until(() => { try { alice.app.hubLink!.check(revokedTurn); return false; } catch { return true; } });
     const results = await f.done(otherTurn);
     assert.equal(results.at(-1)!.nodeId, bob.nodeId);
