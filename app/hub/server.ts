@@ -1,16 +1,11 @@
-import { createPrivateKey } from 'node:crypto';
 import { hubAssets, hubLeptosAssets, hubDocument, createHubWebApi } from './web.ts';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { closedObject, id, parseJson, ProtocolError, sha256 } from '../shared/protocol.ts';
 import { createHostGateway, notFound, singleHeader } from './host-gateway.ts';
-import { createHubSessions, createClerkVerifier, createStubVerifier, cookie, requireOrigin, type SessionIdentity, type SessionVerifier } from './sessions.ts';
-import { createHubAuthority, type HubAuthority } from './project-authority.ts';
+import { createHubSessions, cookie, requireOrigin, type SessionVerifier } from './sessions.ts';
+import type { HubAuthority } from './project-authority.ts';
 import { createHubRouting, type HubRouting, type PostMessage } from './routing.ts';
-import { openHubDatabase } from './schema.ts';
 import { attachNodeLink, type NodeLinkDeps } from './node-link.ts';
 
 export type NodeUpgradeHandler = (request: IncomingMessage, socket: Duplex, head: Buffer,
@@ -291,33 +286,4 @@ export function createHubServer(options: {
       await new Promise<void>((resolve, reject) => { if (!server.listening) { resolve(); return; } server.close(error => error ? reject(error) : resolve()); server.closeIdleConnections(); });
     },
   };
-}
-
-/** Operator-owned config points only at a new, isolated hub database. No implicit local data/config. */
-export function startHub(config: {
-  domain: string; accountsHost: string; dataPath: string; mailboxKeyPath: string; port?: number; trustedGatewayAddresses?: string[];
-  web?: { distPath: string; developmentIdentity?: boolean };
-  nodeLink?: { signingKeyPath: string };
-  identity: { mode: 'clerk'; issuer: string; jwksPath: string; audience?: string } | { mode: 'stub'; tokensPath: string };
-}) {
-  if (!Number.isInteger(config.port ?? 4318) || (config.port ?? 4318) < 0 || (config.port ?? 4318) > 65535 || !config.dataPath || !config.mailboxKeyPath) throw new Error('Explicit hub data/key paths and valid port required.');
-  const mailboxKey = readFileSync(config.mailboxKeyPath);
-  const identity = config.identity;
-  let verifier: SessionVerifier;
-  if (identity.mode === 'clerk') verifier = createClerkVerifier({ issuer: identity.issuer, accountsOrigin: `https://${config.accountsHost}`, audience: identity.audience, jwks: JSON.parse(readFileSync(identity.jwksPath, 'utf8')) });
-  else if (identity.mode === 'stub') verifier = createStubVerifier(new Map(Object.entries(JSON.parse(readFileSync(identity.tokensPath, 'utf8'))) as [string, SessionIdentity][]));
-  else throw new Error('Explicit clerk or stub identity mode required.');
-  const storage = openHubDatabase(config.dataPath);
-  try {
-    const hub = createHubServer({ authority: createHubAuthority(storage.db, { domain: config.domain, mailboxKey }), verifier, accountsHost: config.accountsHost, domain: config.domain, trustedGatewayAddresses: config.trustedGatewayAddresses, web: config.web, ...(config.nodeLink ? { nodeLink: { origin: `https://${config.accountsHost}`, signingKey: createPrivateKey(readFileSync(config.nodeLink.signingKeyPath)) } } : {}) });
-    hub.server.once('close', () => storage.close()); hub.server.once('error', () => { void hub.close().finally(() => storage.close()); });
-    hub.server.listen(config.port ?? 4318, '127.0.0.1');
-    return hub;
-  } catch (error) { storage.close(); throw error; }
-}
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const file = process.env.MINARBOT_HUB_CONFIG;
-  if (!file) throw new Error('MINARBOT_HUB_CONFIG must name an explicit isolated hub JSON configuration.');
-  const hub = startHub(JSON.parse(readFileSync(file, 'utf8')));
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void hub.close(); });
 }

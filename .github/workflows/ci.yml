@@ -37,11 +37,13 @@ jobs:
           npm ci
           npx playwright-core install --with-deps chromium
           node appearance-smoke.mjs
-      - working-directory: app
+      - name: App tests against Rust workspace and hosted Hub
+        working-directory: app
         env:
           NODE_OPTIONS: --max-old-space-size=2048
           MINARBOT_XTASK_BINARY: ${{ github.workspace }}/target/debug/xtask
           MINARBOT_RUST_BINARY: ${{ github.workspace }}/target/debug/minarbot-server
+          MINARBOT_HOSTED_HUB_BINARY: ${{ github.workspace }}/target/debug/minarbot-server
           MINARBOT_RUST_LAUNCHER_BINARY: ${{ github.workspace }}/target/debug/minarbot-launcher
         run: npm test
       - run: cargo xtask install-smoke target/debug

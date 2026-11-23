@@ -1,6 +1,6 @@
-import { createPublicKey, randomBytes, verify, type JsonWebKey } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
-import { closedObject, normalizeEmail, parseJson, ProtocolError, sha256 } from '../shared/protocol.ts';
+import { closedObject, ProtocolError, sha256 } from '../shared/protocol.ts';
 import { transaction } from './schema.ts';
 import { singleHeader, type HostGateway } from './host-gateway.ts';
 import type { HubAuthority, IdentityVerifier, VerifiedIdentity } from './project-authority.ts';
@@ -14,44 +14,6 @@ function proof(value: unknown): string {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value)) throw invalid();
   return value;
 }
-function httpsOrigin(value: string) {
-  const url = new URL(value);
-  if (url.protocol !== 'https:' || url.origin !== value || url.username || url.password) throw new Error('Exact HTTPS identity origin required.');
-  return value;
-}
-
-/** Clerk RS256 verification using operator-pinned public JWKS only. Never fetches keys or users. */
-export function createClerkVerifier(config: { issuer: string; accountsOrigin: string; audience?: string; jwks: { keys: (JsonWebKey & { kid: string; alg?: string; use?: string })[] }; now?: () => number }): SessionVerifier {
-  httpsOrigin(config.issuer); httpsOrigin(config.accountsOrigin);
-  const keys = new Map(config.jwks.keys.map(jwk => {
-    if (!jwk.kid || jwk.kty !== 'RSA' || jwk.d || jwk.alg && jwk.alg !== 'RS256' || jwk.use && jwk.use !== 'sig') throw new Error('Pinned RSA signing JWKS required.');
-    const key = createPublicKey({ key: jwk, format: 'jwk' });
-    if ((key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048) throw new Error('RSA key must be at least 2048 bits.');
-    return [jwk.kid, key] as const;
-  }));
-  if (!keys.size || keys.size !== config.jwks.keys.length) throw new Error('Unique pinned signing keys required.');
-  const now = config.now ?? Date.now;
-  return { async verify(token) {
-    try {
-      if (typeof token !== 'string' || token.length > 16384) throw invalid();
-      const parts = token.split('.');
-      if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part) || Buffer.from(part, 'base64url').toString('base64url') !== part)) throw invalid();
-      const header = parseJson(Buffer.from(parts[0], 'base64url').toString('utf8'), 2048) as Record<string, unknown>;
-      const claims = parseJson(Buffer.from(parts[1], 'base64url').toString('utf8'), 12288) as Record<string, unknown>;
-      if (!header || !claims || header.alg !== 'RS256' || header.crit !== undefined || header.b64 !== undefined || typeof header.kid !== 'string') throw invalid();
-      const key = keys.get(header.kid);
-      if (!key || !verify('RSA-SHA256', Buffer.from(`${parts[0]}.${parts[1]}`), key, Buffer.from(parts[2], 'base64url'))) throw invalid();
-      if (claims.iss !== config.issuer || claims.azp !== config.accountsOrigin || typeof claims.sub !== 'string' || !claims.sub || claims.sub.length > 256 || typeof claims.sid !== 'string' || !claims.sid || claims.sid.length > 256
-        || !Number.isSafeInteger(claims.exp) || Number(claims.exp) * 1000 <= now() || !Number.isSafeInteger(claims.nbf) || Number(claims.nbf) * 1000 > now()
-        || !Number.isSafeInteger(claims.iat) || Number(claims.iat) * 1000 > now() || Number(claims.iat) > Number(claims.exp) || claims.sts === 'pending'
-        || config.audience !== undefined && !(claims.aud === config.audience || Array.isArray(claims.aud) && claims.aud.includes(config.audience))) throw invalid();
-      // Optional signed Clerk custom claims; absent evidence never becomes a verified mailbox.
-      const verifiedMailboxes = claims.email_verified === true && typeof claims.email === 'string' ? [normalizeEmail(claims.email)] : [];
-      return { issuer: config.issuer, subject: claims.sub, sessionId: claims.sid, expiresAt: Number(claims.exp) * 1000, verifiedMailboxes };
-    } catch { throw invalid(); }
-  } };
-}
-
 /** Explicit local/dev fixture tokens. No subject supplied by an HTTP client can mint an account. */
 export function createStubVerifier(tokens: ReadonlyMap<string, SessionIdentity>): SessionVerifier {
   const fixtures = new Map([...tokens].map(([token, identity]) => [token, structuredClone(identity)]));
