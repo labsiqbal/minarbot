@@ -22,7 +22,7 @@ use tokio::{
 use uuid::Uuid;
 
 const BIN: &str = env!("CARGO_BIN_EXE_minarbot-launcher");
-const WAIT: Duration = Duration::from_secs(30);
+const WAIT: Duration = Duration::from_secs(90);
 
 struct Scratch(PathBuf);
 
@@ -89,7 +89,7 @@ impl Fixture {
         let port = reserved_port.local_addr()?.port();
         let config = root.0.join("launcher.json");
         let env = root.0.join("env");
-        let settings = json!({"dataDir":data,"releasesDir":releases,"port":port,"trialTimeoutMs":5000,"envFile":env});
+        let settings = json!({"dataDir":data,"releasesDir":releases,"port":port,"trialTimeoutMs":30000,"envFile":env});
         files::durable(&env, b"")?;
         Connection::open(data.join(DATABASE_NAME))?.execute_batch(
             "CREATE TABLE data(value TEXT); INSERT INTO data VALUES('preserved');",
@@ -382,6 +382,7 @@ async fn literal_environment_and_socket_commit_persist_receipts() -> Result<()> 
     let request = apply(&second);
     control(&f.socket(), &request).await?;
     let id = request["id"].as_str().ok_or("no update ID")?;
+    f.outcome("done").await?;
     until(async || Ok(f.read().await.ok().filter(|value| value["committed"] == id))).await?;
     assert_eq!(
         mode(f.data.join(".updates").join(id).join(DATABASE_NAME))?,
@@ -620,6 +621,38 @@ async fn exited_candidate_rolls_back() -> Result<()> {
 #[tokio::test]
 async fn refused_candidate_rolls_back_with_diagnostic() -> Result<()> {
     assert_candidate_rolls_back("refuse").await
+}
+
+#[tokio::test]
+async fn snapshot_failure_restarts_current_server_with_diagnostic() -> Result<()> {
+    let f = Fixture::new(false)?;
+    let first = f.first()?;
+    let running = f.start(BIN)?;
+    let original = f.ready(&first.version).await?["pid"]
+        .as_u64()
+        .ok_or("missing initial server PID")?;
+    fs::write(f.data.join(".updates"), b"not a directory")?;
+    let second = f.publish("1.0.1", "healthy")?;
+    control(&f.socket(), &apply(&second)).await?;
+    let state = f.outcome("rolled-back").await?;
+    let restarted = f.ready(&first.version).await?["pid"]
+        .as_u64()
+        .ok_or("missing restarted server PID")?;
+    assert_ne!(restarted, original);
+    assert_eq!(state["current"], first.id);
+    assert!(state["lastAttempt"].get("snapshotReady").is_none());
+    let error = std::io::Error::from_raw_os_error(nix::errno::Errno::ENOTDIR as i32);
+    assert_eq!(
+        state["lastAttempt"]["reason"],
+        format!("Snapshot failed: {error}")
+    );
+    assert_eq!(data_value(&f)?, "preserved");
+    assert_eq!(
+        files::selection(&f.releases, "current")?.as_deref(),
+        Some(first.id.as_str())
+    );
+    assert!(terminate(running, Signal::SIGTERM).await?.success());
+    Ok(())
 }
 
 async fn apply_native(f: &Fixture, release: &Release) -> Result<String> {

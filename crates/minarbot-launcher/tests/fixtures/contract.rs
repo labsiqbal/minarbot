@@ -92,7 +92,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         }
-        let body = format!("{{\"version\":{},\"native\":true,\"connected\":true,\"committed\":{committed},\"env\":{{{variables}}}}}", quote(if mode == "wrong" { "0.0.0" } else { version }));
+        let pid = std::process::id();
+        let body = format!("{{\"version\":{},\"pid\":{pid},\"native\":true,\"connected\":true,\"committed\":{committed},\"env\":{{{variables}}}}}", quote(if mode == "wrong" { "0.0.0" } else { version }));
         write_response(
             &mut connection,
             format_args!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n", body.len(), body),
