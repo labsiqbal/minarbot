@@ -7,7 +7,7 @@ export const HUB_SCHEMA_VERSION = 1;
 // Same marker and message as crates/minarbot-launcher/src/data_format.rs.
 const MINARBOT_APPLICATION_ID = 0x4d4e5231;
 const UNMARKED = 'This database does not carry the Minarbot data marker. It was made by Minarbot 0.14.0 or earlier, or by another program. Install fresh: https://github.com/labsiqbal/minarbot#install';
-const migration = readFileSync(new URL('./migrations/001-hub.sql', import.meta.url), 'utf8');
+const migration = readFileSync(new URL('../../crates/minarbot-server/src/hub/migrations/001-hub.sql', import.meta.url), 'utf8');
 const checksum = createHash('sha256').update(migration).digest('hex');
 
 export function transaction<T>(db: DatabaseSync, work: () => T): T {

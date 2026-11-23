@@ -7,7 +7,7 @@ use std::{
     path::Path,
 };
 
-const MIGRATION: &str = include_str!("../../../../app/hub/migrations/001-hub.sql");
+const MIGRATION: &str = include_str!("migrations/001-hub.sql");
 const EXTENSIONS: &str = include_str!("extensions.sql");
 
 pub(super) struct Writer {

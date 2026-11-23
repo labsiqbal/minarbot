@@ -127,7 +127,6 @@ pub fn stage_runtime(source: &Path, stage: &Path) -> Result<()> {
         "novnc.LICENSE",
         "t3/NOTICE",
         "t3/provenance.json",
-        "scripts/minarbot-command.sh",
         "shared-data-worker.py",
     ] {
         let from = source.join(name);
