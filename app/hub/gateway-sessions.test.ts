@@ -15,7 +15,7 @@ const accounts = 'accounts.minarbot.test', issuer = 'https://clerk.example.test'
 const origin = (host: string) => `https://${host}`;
 type Response = { status: number; headers: IncomingMessage['headers']; data: any; raw: string; cookies: string[] };
 type Project = { host: string; projectId: string; sectionId: string };
-type Settings = { tokens?: Record<string, SessionIdentity>; clerk?: boolean; trusted?: string[]; nodeLink?: boolean };
+type Settings = { tokens?: Record<string, SessionIdentity>; clerk?: boolean; trusted?: string[]; nodeLink?: boolean; omitInvite?: boolean };
 function files(dir: string, tokens: Record<string, SessionIdentity>, settings: Settings) {
   const dataPath = resolve(dir, 'hub.sqlite');
   const mailboxKeyPath = resolve(dir, 'mailbox.key');
@@ -126,12 +126,15 @@ async function fixture(t: TestContext, settings: Settings = {}) {
     const socket = connect(port(), '127.0.0.1'); await once(socket, 'connect'); let result = '';
     socket.setEncoding('utf8'); socket.on('data', chunk => result += chunk); socket.setTimeout(5000, () => socket.destroy(new Error('Raw request timed out'))); socket.write(`GET ${path} HTTP/1.1\r\n${headers}\r\nConnection: close\r\n\r\n`); await once(socket, 'close'); return result;
   }
-  const alice = await login(), bob = await login('bob');
-  const invitation = await request(alpha.host, '/api/invitations', { body: { mailbox: 'bob@example.test', role: 'member' }, cookies: alice.cookies, csrf: alice.data.csrf });
-  assert.equal(invitation.status, 200, invitation.raw);
-  const proof = Object.fromEntries(new URLSearchParams(new URL(invitation.data.url).hash.slice(1)));
-  const accepted = await request(alpha.host, '/api/invitations/accept', { body: proof, cookies: bob.cookies, csrf: bob.data.csrf });
-  assert.equal(accepted.status, 200, accepted.raw);
+  const alice = await login();
+  if (!settings.omitInvite) {
+    const bob = await login('bob');
+    const invitation = await request(alpha.host, '/api/invitations', { body: { mailbox: 'bob@example.test', role: 'member' }, cookies: alice.cookies, csrf: alice.data.csrf });
+    assert.equal(invitation.status, 200, invitation.raw);
+    const proof = Object.fromEntries(new URLSearchParams(new URL(invitation.data.url).hash.slice(1)));
+    const accepted = await request(alpha.host, '/api/invitations/accept', { body: proof, cookies: bob.cookies, csrf: bob.data.csrf });
+    assert.equal(accepted.status, 200, accepted.raw);
+  }
   async function editMember(accountId: string, revision: number, role: string) {
     const result = await request(alpha.host, '/api/members', { body: { accountId, revision, role }, cookies: alice.cookies, csrf: alice.data.csrf });
     assert.equal(result.status, 200, result.raw);
@@ -415,4 +418,55 @@ test('central renewal requires fresh exact-origin verification, rotates parent a
   const renewed = await f.request(accounts, '/auth/session', options); assert.equal(renewed.status, 200); assert.equal(renewed.data.expiresAt, expiry + 30000);
   assert.equal((await f.request(f.alpha.host, '/api/session', { cookies: child.cookies })).status, 401);
   const next = await f.login('alice', f.alpha.host, renewed); assert.equal(next.data.expiresAt, expiry + 30000);
+});
+
+
+test('pilot web adapters: no outsider reads, exact mailbox acceptance, owner node/agent binding, role and participation policies', async t => {
+  const f = await fixture(t, { omitInvite: true });
+  const alice = await f.login(), bob = await f.login('bob'), eve = await f.login('eve');
+  const post = (host: string, path: string, body: unknown, session: Response) =>
+    f.request(host, path, { body, cookies: session.cookies, csrf: session.data.csrf });
+  const view = (path: string, session = alice) => f.request(f.alpha.host, path, { cookies: session.cookies });
+  for (const path of ['/api/members', '/api/invitations', '/api/participants', '/api/turns?sectionId=' + f.alpha.sectionId])
+    assert.equal((await view(path, eve)).status, 404);
+
+  const invite = await post(f.alpha.host, '/api/invitations', { mailbox: 'bob@example.test', role: 'member' }, alice);
+  assert.equal(invite.status, 200, invite.raw);
+  const proof = Object.fromEntries(new URLSearchParams(new URL(invite.data.url).hash.slice(1)));
+  assert.equal((await post(f.alpha.host, '/api/invitations/accept', proof, eve)).status, 403);
+  assert.equal((await post(f.alpha.host, '/api/invitations/accept', proof, bob)).status, 200);
+  assert.equal((await post(f.alpha.host, '/api/invitations/accept', proof, bob)).status, 409);
+  const invites = await view('/api/invitations');
+  assert.equal(invites.data[0].state, 'accepted');
+  assert(!invites.raw.includes(proof.token));
+  assert.equal((await view('/api/members')).data.length, 2);
+  assert.deepEqual((await view('/api/turns?sectionId=' + f.alpha.sectionId)).data, []);
+
+  const nodeId = randomUUID();
+  const spki = (kind: 'ed25519' | 'x25519') => {
+    const keys = kind === 'ed25519' ? generateKeyPairSync('ed25519') : generateKeyPairSync('x25519');
+    return keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
+  };
+  f.db.prepare("INSERT INTO nodes(id,owner_account_id,installation_id,signing_public_key,encryption_public_key,capabilities_json) VALUES(?,?,?,?,?,?)")
+    .run(nodeId, f.ids.bob, randomUUID(), spki('ed25519'), spki('x25519'), '["chat"]');
+  const agent = { agentId: randomUUID(), nodeId, name: 'Bob agent' };
+  const centralAlice = await f.central(), centralBob = await f.central('bob');
+  assert.equal((await post(accounts, '/api/agents', agent, centralAlice)).status, 404);
+  for (let attempt = 0; attempt < 2; attempt++)
+    assert.equal((await post(accounts, '/api/agents', agent, centralBob)).status, 200);
+  assert.equal((await post(accounts, '/api/agents', { ...agent, name: 'Changed' }, centralBob)).status, 403);
+
+  const policy = { sectionIds: [f.alpha.sectionId], scopes: ['read', 'invoke'], invocation: { mode: 'all-members' }, payerBindingRef: 'local', localPolicyDigest: '1'.repeat(64), maxCostMicros: 100 };
+  const proposal = await post(accounts, '/api/participations', { projectHost: f.alpha.host, agentId: agent.agentId, policy }, centralBob);
+  assert.equal(proposal.status, 200, proposal.raw);
+  const participant = (await view('/api/participants')).data[0];
+  assert.equal(participant.id, proposal.data.participationId);
+  assert.equal(participant.ownerName, 'bob');
+  assert.equal(participant.nodeStatus, 'offline');
+  const projectBob = await f.login('bob', f.alpha.host, centralBob);
+  const projectAlice = await f.login('alice', f.alpha.host, centralAlice);
+  assert.equal((await post(f.alpha.host, '/api/participants/consent', proposal.data, projectBob)).status, 403);
+  assert.equal((await post(f.alpha.host, '/api/participants/consent', proposal.data, projectAlice)).status, 200);
+  assert.equal((await view('/api/participants', projectAlice)).data[0].state, 'proposed');
+  assert.equal((await post(f.alpha.host, '/api/invitations', { mailbox: 'eve@example.test', role: 'admin' }, projectBob)).status, 403);
 });
