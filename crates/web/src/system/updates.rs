@@ -2,7 +2,7 @@
 // The upstream T3 MIT notice is recorded in app/t3/provenance.json.
 #[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
 use super::date;
-use super::{api, discard, kit::*, machines, poll, restore, save, uuid, Query};
+use super::{api, discard, kit::*, machines, restore, save, uuid, Query};
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -870,7 +870,11 @@ pub(crate) fn workspace() -> (impl IntoView, impl IntoView) {
             peers.retry();
         });
     };
-    poll(1000, advance);
+    crate::connection_ui::poll_with_backoff(
+        1000,
+        move || (!flight.get_untracked()).then(|| !command_issue.with_untracked(String::is_empty)),
+        advance,
+    );
     let begin = move || {
         if run.with_untracked(Option::is_some)
             || !state.fresh.get_untracked()

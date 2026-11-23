@@ -3,7 +3,7 @@ use leptos::prelude::*;
 pub(crate) fn reload() {
     // Hide the old view immediately, including while a new document is loading.
     if let Some(root) = document().get_element_by_id("leptos-root") {
-        let _ = root.set_attribute("hidden", "");
+        root.remove();
     }
     let _ = window().location().reload();
 }
