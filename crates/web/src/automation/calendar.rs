@@ -193,14 +193,7 @@ pub(crate) fn Calendar(
             }
         }
     });
-    poll(
-        Callback::new(move |_| {
-            if active.get_untracked() {
-                query.reload.run(());
-            }
-        }),
-        5000,
-    );
+    query.poll(5000, move || active.get_untracked());
     Effect::new(move |_| {
         if !active.get() {
             return;
@@ -1368,7 +1361,7 @@ fn inspect_state(state: &str, run: &str) -> &'static str {
 
 fn routine_run_details(id: String) -> impl IntoView {
     let query = ui::query::<Value>(move || format!("/api/turns/{id}/inspect"));
-    poll(query.reload, 1200);
+    query.poll(1200, || true);
     view! {
         <div class="right-panel__body run-inspector">
             <ReadError query />

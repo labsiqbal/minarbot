@@ -9,7 +9,6 @@ mod connected_apps;
 mod connection_ui;
 #[cfg(feature = "conversation")]
 pub mod conversation;
-mod craft_anything;
 mod email;
 mod engines;
 mod general;
@@ -35,6 +34,7 @@ mod routine_label;
 #[cfg(any(feature = "conversation", feature = "workflows"))]
 #[path = "automation/select.rs"]
 mod select;
+mod session;
 mod settings;
 mod settings_recovery;
 mod shell;

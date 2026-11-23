@@ -421,7 +421,7 @@ async fn context7_failure_and_retry_after_fall_through_to_official_sources() -> 
 }
 
 #[tokio::test]
-async fn api_and_mcp_use_the_same_project_and_agent_controls() -> db::Result<()> {
+async fn api_and_mcp_follow_web_access_and_ignore_the_old_docs_flag() -> db::Result<()> {
     let home = ProbeHome::new()?;
     let (state, turn) = app(&home)?;
     assert!(summary(&state, &turn)
@@ -470,6 +470,17 @@ async fn api_and_mcp_use_the_same_project_and_agent_controls() -> db::Result<()>
     }
     let (_, list) = rpc("tools/list", json!({})).await?;
     assert!(
+        list.to_string().contains("project_stack") && list.to_string().contains("library_docs")
+    );
+    assert_eq!(rpc("tools/call", call.clone()).await?.0, StatusCode::OK);
+    {
+        let guard = state.database.lock().map_err(|_| "database lock")?;
+        guard
+            .connection
+            .execute("UPDATE agents SET web_access=0 WHERE id=?", [AGENT])?;
+    }
+    let (_, list) = rpc("tools/list", json!({})).await?;
+    assert!(
         !list.to_string().contains("project_stack") && !list.to_string().contains("library_docs")
     );
     assert!(summary(&state, &turn)
@@ -481,5 +492,51 @@ async fn api_and_mcp_use_the_same_project_and_agent_controls() -> db::Result<()>
         .is_err());
     let (status, result) = rpc("tools/call", call).await?;
     assert!(status.is_client_error() || result.get("error").is_some());
+    Ok(())
+}
+
+#[test]
+fn existing_agents_migrate_old_docs_and_craft_access() -> db::Result<()> {
+    let home = ProbeHome::new()?;
+    let (state, _) = app(&home)?;
+    let database = state.database.lock().map_err(|_| "database lock")?;
+    let db = &database.connection;
+    db.execute_batch(
+        "CREATE TABLE craft_grants(agent TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE) STRICT;",
+    )?;
+    db.execute(
+        "UPDATE agents SET library_docs_access=0 WHERE id=?",
+        [AGENT],
+    )?;
+    db.execute("UPDATE local_projects SET codegraph_enabled=0", [])?;
+    db.execute(
+        "INSERT INTO agent_edits VALUES('legacy-edit',?,'{\"libraryDocsAccess\":false}','{\"library_docs_access\":0}')",
+        [AGENT],
+    )?;
+    crate::data::initialize(&database)?;
+    assert!(enabled(db, AGENT).map_err(|error| error.message)?);
+    assert_eq!(
+        db.query_row(
+            "SELECT library_docs_access FROM agents WHERE id=?",
+            [AGENT],
+            |row| row.get::<_, i64>(0)
+        )?,
+        1
+    );
+    assert_eq!(
+        db.query_row("SELECT codegraph_enabled FROM local_projects", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        1
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT request,result FROM agent_edits WHERE id='legacy-edit'",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        )?,
+        ("{}".into(), "{\"library_docs_access\":1}".into())
+    );
+    assert!(!crate::data::table(db, "craft_grants").map_err(|error| error.message)?);
     Ok(())
 }

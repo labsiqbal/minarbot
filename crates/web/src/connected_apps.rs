@@ -384,11 +384,12 @@ pub(crate) fn scoped_panel(project: Option<ProjectApps>) -> impl IntoView {
             }
         });
     });
-    poll(15, move || {
-        if !apps.journal.busy.get_untracked() {
-            apps.refresh();
-        }
-    });
+    let can_poll = move || !apps.journal.busy.get_untracked();
+    apps.key.poll(15000, can_poll);
+    apps.catalog.poll(15000, can_poll);
+    apps.accounts.poll(15000, can_poll);
+    apps.grants.poll(15000, can_poll);
+    apps.policies.poll(15000, can_poll);
     let refresh = UiAction::new(move |()| apps.refresh());
     let retry = UiAction::new(move |()| {
         if let Some(command) = apps.journal.pending.get_untracked() {

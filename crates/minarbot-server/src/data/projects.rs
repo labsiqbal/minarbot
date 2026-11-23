@@ -45,7 +45,7 @@ pub fn read(db: &Connection, id: &str) -> Result<Value> {
     }
     let latest=one(db,"SELECT CAST((julianday(max(created))-2440587.5)*86400000 AS INTEGER) AS created FROM turns WHERE channel IN(SELECT channel FROM local_project_sections WHERE project=?) OR thread IN(SELECT thread FROM local_project_threads WHERE project=?)",[id,id])?.and_then(|v|v["created"].as_i64()).unwrap_or(0);
     Ok(
-        json!({"id":id,"name":p["name"],"description":p["description"],"archived":p["archived"]==1,"allowInstallationApps":p["allow_installation_apps"]==1,"codegraphEnabled":p["codegraph_enabled"]==1,"revision":p["revision"],"updated":p["updated"].as_i64().unwrap_or(0).max(latest),"folders":all(db,"SELECT directory FROM local_project_folders WHERE project=? ORDER BY rowid",[id])?.into_iter().map(|v|v["directory"].clone()).collect::<Vec<_>>(),"members":members,"channel":p["channel"],"sections":sections,"threads":all(db,"SELECT t.id,t.agent,t.name,p.folder,EXISTS(SELECT 1 FROM conversation_attention a WHERE a.thread=t.id) AS needs_you FROM local_project_threads p JOIN threads t ON t.id=p.thread WHERE p.project=? AND t.deleted=0 ORDER BY t.rowid DESC LIMIT 100",[id])?}),
+        json!({"id":id,"name":p["name"],"description":p["description"],"archived":p["archived"]==1,"allowInstallationApps":p["allow_installation_apps"]==1,"codegraphEnabled":true,"revision":p["revision"],"updated":p["updated"].as_i64().unwrap_or(0).max(latest),"folders":all(db,"SELECT directory FROM local_project_folders WHERE project=? ORDER BY rowid",[id])?.into_iter().map(|v|v["directory"].clone()).collect::<Vec<_>>(),"members":members,"channel":p["channel"],"sections":sections,"threads":all(db,"SELECT t.id,t.agent,t.name,p.folder,EXISTS(SELECT 1 FROM conversation_attention a WHERE a.thread=t.id) AS needs_you FROM local_project_threads p JOIN threads t ON t.id=p.thread WHERE p.project=? AND t.deleted=0 ORDER BY t.rowid DESC LIMIT 100",[id])?}),
     )
 }
 fn fields(v: &Value, keys: &[&str]) -> Result<()> {
@@ -132,6 +132,7 @@ fn create(state: &AppState, db: &Connection, v: &Value) -> Result<Value> {
             "folders",
             "members",
             "confirmWrite",
+            "codegraphEnabled",
         ],
     )?;
     let id = string(v, "id");
@@ -275,9 +276,17 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
             ],
         },
     )?;
+    if v.get("codegraphEnabled")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(error(400, "Invalid CodeGraph setting."));
+    }
     revision(&v["revision"])?;
     let id = string(v, "id");
     let mut request = v.clone();
+    if let Some(fields) = request.as_object_mut() {
+        fields.shift_remove("codegraphEnabled");
+    }
     request["projectId"] = json!(pid);
     request["action"] = json!(op);
     if let Some(old) = prior(db, id, &request)? {
@@ -408,15 +417,6 @@ fn edit(state: &AppState, db: &Connection, pid: &str, op: &str, v: &Value) -> Re
                 )?;
             }
             "edit" => {
-                if let Some(enabled) = v.get("codegraphEnabled") {
-                    let enabled = enabled
-                        .as_bool()
-                        .ok_or_else(|| error(400, "Invalid CodeGraph setting."))?;
-                    db.execute(
-                        "UPDATE local_projects SET codegraph_enabled=? WHERE id=?",
-                        rusqlite::params![enabled, pid],
-                    )?;
-                }
                 if let Some(allow) = v.get("allowInstallationApps") {
                     if !allow.is_boolean() || allow == true && v["confirmed"] != true {
                         return Err(error(400, "Confirm allowing installation apps."));

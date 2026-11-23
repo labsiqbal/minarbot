@@ -51,7 +51,7 @@ pub fn project(state: &AppState, db: &Connection, turn: &Value) -> Result<Option
     };
     if !data::exists(
         db,
-        "SELECT 1 FROM local_projects WHERE id=? AND deleted=0 AND archived=0 AND codegraph_enabled=1",
+        "SELECT 1 FROM local_projects WHERE id=? AND deleted=0 AND archived=0",
         [string(&context, "project")],
     )? {
         return Ok(None);
@@ -177,9 +177,6 @@ impl Project {
 }
 
 pub fn project_status(state: &AppState, project: &Value) -> Value {
-    if project["codegraphEnabled"] != true {
-        return json!({"state":"off"});
-    }
     let folders: Vec<_> = project["folders"]
         .as_array()
         .into_iter()
@@ -237,7 +234,7 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
                 };
                 data::all(&db.connection,
                     "SELECT DISTINCT f.directory FROM local_project_folders f JOIN local_projects p ON p.id=f.project
-                     WHERE p.deleted=0 AND p.archived=0 AND p.codegraph_enabled=1", [])
+                     WHERE p.deleted=0 AND p.archived=0", [])
                     .unwrap_or_default()
             };
             for path in paths {

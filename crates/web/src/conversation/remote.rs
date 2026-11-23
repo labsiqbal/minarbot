@@ -199,7 +199,7 @@ pub(super) fn page(machine: String, agent: String) -> impl IntoView {
     let machine_id = StoredValue::new(machine);
     let agent_id = StoredValue::new(agent);
     let directory = ui::query::<Directory>(|| "/api/machines".into());
-    poll_visible(directory.reload, 5000);
+    directory.poll(5000, || true);
     let machine = Memo::new(move |_| {
         directory.data.with(|data| {
             data.as_ref()?
@@ -234,14 +234,9 @@ pub(super) fn page(machine: String, agent: String) -> impl IntoView {
         history.reload.run(());
     });
     let busy = RwSignal::new(false);
-    poll_visible(
-        Callback::new(move |()| {
-            if !busy.get_untracked() && agent.with_untracked(Option::is_some) {
-                history.reload.run(());
-            }
-        }),
-        1000,
-    );
+    history.poll(1000, move || {
+        !busy.get_untracked() && agent.with_untracked(Option::is_some)
+    });
     let reason = Memo::new(move |_| {
         if invalid.get() {
             Some(

@@ -15,7 +15,7 @@ fn state(scratch: &Path) -> db::Result<AppState> {
     database.connection.execute_batch(&format!(
         "INSERT INTO agents(id,name,model,instructions) VALUES('{AGENT}','Test','','');
          INSERT INTO threads(id,agent,name) VALUES('thread','{AGENT}','Test');
-         INSERT INTO local_projects(id,name,description,created,updated,channel,codegraph_enabled) VALUES('project','Test','',0,0,'section',1);
+         INSERT INTO local_projects(id,name,description,created,updated,channel) VALUES('project','Test','',0,0,'section');
          INSERT INTO local_project_threads VALUES('thread','project','');
          INSERT INTO local_project_members VALUES('project','{AGENT}',0);
          INSERT INTO turns(id,agent,thread,text,status,created) VALUES('turn','{AGENT}','thread','Test','running','');",
@@ -69,8 +69,10 @@ fn configuration_follows_project_access() -> db::Result<()> {
         .is_none());
     assert!(configs(None).iter().all(Value::is_null));
     let project = selected()?;
-    db.execute("UPDATE local_projects SET codegraph_enabled=0", [])?;
+    db.execute("UPDATE local_projects SET archived=1", [])?;
     assert!(selected()?.is_none());
+    db.execute("UPDATE local_projects SET archived=0", [])?;
+    assert!(selected()?.is_some());
     let Some(project) = project else {
         return Ok(());
     };
@@ -95,7 +97,6 @@ fn configuration_follows_project_access() -> db::Result<()> {
             .windows(3)
             .any(|part| part == [json!("--ro-bind-fd"), json!("4"), json!("/index")]));
     }
-    db.execute("UPDATE local_projects SET codegraph_enabled=1", [])?;
     db.execute("DELETE FROM local_project_members", [])?;
     assert!(selected().is_err_and(|e| e.contains("not a project member")));
     Ok(())

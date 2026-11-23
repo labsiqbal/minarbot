@@ -184,87 +184,6 @@ fn conversations(error_icon: String) -> impl IntoView {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LibraryDocsStatus {
-    reachable: bool,
-    key_set: bool,
-}
-
-fn library_docs(error_icon: String) -> impl IntoView {
-    let info_icon = use_context::<crate::shell::Icons>()
-        .map(|icons| icons.info)
-        .unwrap_or_default();
-    let status = RwSignal::new(None::<LibraryDocsStatus>);
-    let busy = RwSignal::new(false);
-    let error = RwSignal::new(String::new());
-    let check = move || {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        error.set(String::new());
-        leptos::task::spawn_local(async move {
-            match api::read::<LibraryDocsStatus>("/api/settings/library-docs").await {
-                Ok(next) => {
-                    status.try_set(Some(next));
-                }
-                Err(_) => {
-                    error.try_set("Could not check library docs status.".into());
-                }
-            }
-            busy.try_set(false);
-        });
-    };
-    check();
-    let badge = move || {
-        status.with(|value| {
-            value.as_ref().map(|value| {
-                let (tone, label) = if value.reachable {
-                    ("success", "Reachable")
-                } else {
-                    ("warn", "Unavailable")
-                };
-                crate::system::kit::badge(tone, label)
-            })
-        })
-    };
-    let key = move || {
-        status.with(|value| match value.as_ref() {
-            Some(value) if value.key_set => "Set in Vault",
-            Some(_) => "Optional",
-            None => "Unknown",
-        })
-    };
-    let help = "In Vault, add a Secret named context7-api-key for https://context7.com and leave agents unselected.";
-    view! {
-        <section class="k-section" aria-labelledby="library-docs-heading">
-            <div class="k-section__head">
-                <h2 class="k-section__title" id="library-docs-heading">"Library docs"</h2>
-                <div class="k-section__actions">
-                    <button type="button" class="k-btn k-btn--secondary k-btn--sm" disabled=busy
-                        on:click=move |_| check()>"Check status"</button>
-                </div>
-            </div>
-            <div class="k-card">
-                <Row title="Context7">
-                    <span class="settings-fact" hidden=move || status.with(Option::is_some)>
-                        {move || if busy.get() { "Checking…" } else { "Unknown" }}
-                    </span>
-                    <span role="status">{badge}</span>
-                </Row>
-                <Row title="Context7 API key">
-                    <span class="settings-fact">{key}</span>
-                    <button type="button" class="k-icon-btn" aria-label="How to set a Context7 API key" aria-description=help title=help>
-                        <span class="appearance-icon" aria-hidden="true" inner_html=info_icon></span>
-                    </button>
-                </Row>
-            </div>
-            <ErrorAlert message=error icon=error_icon />
-        </section>
-    }
-}
-
 #[derive(Clone, Deserialize)]
 struct SearchSettings {
     url: Option<String>,
@@ -394,7 +313,6 @@ pub fn panel(error_icon: String) -> impl IntoView {
             {notifications(error_icon.clone())}
             {crate::voice::settings()}
             {conversations(error_icon.clone())}
-            {library_docs(error_icon.clone())}
             {web_search(error_icon)}
         </div>
     }

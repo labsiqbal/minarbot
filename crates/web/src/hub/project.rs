@@ -61,6 +61,8 @@ struct ProjectPage {
     error: RwSignal<String>,
     access: RwSignal<bool>,
     busy: RwSignal<bool>,
+    reading: RwSignal<bool>,
+    read_failed: RwSignal<bool>,
     refresh: RwSignal<u64>,
     selected: RwSignal<String>,
     confirm: Confirm,
@@ -83,6 +85,8 @@ impl ProjectPage {
         if self.refresh.try_get_untracked() != Some(revision) || !self.access.get_untracked() {
             return;
         }
+        self.reading.set(false);
+        self.read_failed.set(result.is_err());
         match result {
             Ok((project, sections, members, participants)) => {
                 self.data
@@ -199,6 +203,8 @@ pub(super) fn page(
         error,
         access: RwSignal::new(true),
         busy: RwSignal::new(false),
+        reading: RwSignal::new(false),
+        read_failed: RwSignal::new(false),
         refresh: RwSignal::new(0),
         selected: RwSignal::new(hash_fragment()),
         confirm,
@@ -207,14 +213,20 @@ pub(super) fn page(
         page.selected.set(hash_fragment())
     });
     on_cleanup(move || changed.remove());
-    if let Ok(timer) =
-        set_interval_with_handle(move || page.refresh(), std::time::Duration::from_secs(3))
-    {
-        on_cleanup(move || timer.clear());
-    }
+    crate::connection_ui::poll_with_backoff(
+        3000,
+        move || {
+            (page.access.get_untracked() && !page.reading.get_untracked())
+                .then(|| page.read_failed.get_untracked())
+        },
+        move || page.refresh(),
+    );
     Effect::new(move |_| {
         let revision = page.refresh.get();
-        spawn_local(page.read(revision));
+        if page.access.get_untracked() {
+            page.reading.set(true);
+            spawn_local(page.read(revision));
+        }
     });
     let section_dialog = NodeRef::new();
     let manager = actor.manager();

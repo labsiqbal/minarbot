@@ -84,7 +84,7 @@ pub(super) fn workflow_url(agent: &str) -> String {
 pub(super) fn upcoming(agent: String) -> impl IntoView {
     let href = StoredValue::new(manage(&agent));
     let list = ui::query::<Vec<Value>>(move || format!("/api/agents/{agent}/routines"));
-    poll_visible(list.reload, 1200);
+    list.poll(1200, || true);
     let upcoming = Memo::new(move |_| {
         list.data.with(|rows| {
             let mut rows = rows
@@ -180,7 +180,11 @@ pub(super) fn section(channel: String) -> impl IntoView {
         });
     });
     reload.run(());
-    poll_visible(reload, 5000);
+    crate::connection_ui::poll_with_backoff(
+        5000,
+        move || Some(!error.with_untracked(String::is_empty)),
+        move || reload.run(()),
+    );
     view! {
         <section class="activity-section" aria-label="Routines reporting here" hidden=move || error.with(String::is_empty) && rows.with(|rows| rows.as_ref().is_none_or(Vec::is_empty))>
             {move || {

@@ -58,10 +58,14 @@ fn normalize(mut value: Value) -> Result<Value, &'static str> {
                 "threadLimit",
                 "toolBudget",
                 "avatar",
+                "libraryDocsAccess",
             ],
         )
     {
         return Err("Unsupported template format or version.");
+    }
+    if let Some(fields) = value.as_object_mut() {
+        fields.remove("libraryDocsAccess");
     }
     for (key, limit, message) in [
         ("name", 80, "Field name is invalid."),

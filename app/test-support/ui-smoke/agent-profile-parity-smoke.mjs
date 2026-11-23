@@ -22,7 +22,7 @@ const agentId = '0035128a-b125-450c-a39c-1b678657d2ec';
 const templateFile = {
   name: 'fixture.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
     format: 'minarbot-agent', version: 1, name: 'Imported fixture', model: 'fixture',
-    instructions: 'Help the user.', threadLimit: 2,
+    instructions: 'Help the user.', threadLimit: 2, libraryDocsAccess: false,
   })),
 };
 const provider = createServer(async (request, response) => {
@@ -191,7 +191,7 @@ async function mutations(page) {
   await edit.getByText('Goal judge model', { exact: true }).click();
   await edit.getByLabel('Goal judge model').fill('alternate');
   await edit.getByRole('tab', { name: 'Advanced', exact: true }).click();
-  await edit.getByRole('switch', { name: 'Library docs', exact: true }).click();
+  assert.equal(await edit.getByRole('switch', { name: 'Library docs', exact: true }).count(), 0);
   await button(edit, 'Save changes').click();
   await edit.waitFor({ state: 'hidden' });
   await agentRow(page, 'Lifecycle updated').waitFor();
@@ -378,7 +378,7 @@ try {
       }
       assert.deepEqual(errors, []);
       assert.deepEqual(commands, [
-        {"path": "/api/agents/:id/edit", "payload": {"revision": 1, "webAccess": true, "libraryDocsAccess": false, "learnFromConversations": false, "memoryModel": "alternate", "goalJudgeModel": "alternate", "providerAccount": "", "name": "Lifecycle updated", "role": "", "model": "fixture", "backupModel": "", "instructions": "Help the user.", "threadLimit": 2, "toolBudget": 90}},
+        {"path": "/api/agents/:id/edit", "payload": {"revision": 1, "webAccess": true, "learnFromConversations": false, "memoryModel": "alternate", "goalJudgeModel": "alternate", "providerAccount": "", "name": "Lifecycle updated", "role": "", "model": "fixture", "backupModel": "", "instructions": "Help the user.", "threadLimit": 2, "toolBudget": 90}},
         {"path": "/api/agents/:id/folder", "payload": {"path": folder, "mode": "read-write", "revision": 0}},
         {"path": "/api/agents/:id/folder/reset", "payload": {"revision": 1}},
         {"path": "/api/agents/:id/computer", "payload": {"revision": 1, "alwaysOn": true}},

@@ -387,7 +387,6 @@ fn navigation(path: &str) -> bool {
             "machines",
             "devices",
             "computer",
-            "craft-anything",
             "updates",
             "usage",
             "data",
@@ -940,6 +939,7 @@ mod tests {
         assert!(navigation("/settings/engines"));
         for path in ["/", "/routines", "/workflows", "/settings/appearance", "/settings/email", "/agents/00000000-0000-4000-8000-000000000000", "/agents/00000000-0000-4000-8000-000000000000/inbox", "/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001"] { assert!(navigation(path), "{path}"); }
         for path in [
+            "/settings/craft-anything",
             "/settings/nope",
             "/agents/malformed",
             "/rooms/deleted",

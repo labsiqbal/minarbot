@@ -11,6 +11,7 @@ import { createInterface } from 'node:readline';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { testDatabase } from '../database.ts';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const dist = join(root, 'app/dist');
@@ -302,12 +303,6 @@ async function generalParity(context, origin, client) {
   const focus = () => page.waitForFunction(() => document.activeElement?.textContent === 'General');
   const archive = () => panel(page).getByRole('switch', { name: 'Auto-archive agent deliveries' });
   const search = () => panel(page).getByRole('textbox', { name: 'SearXNG URL' });
-  const docs = panel(page).getByRole('region', { name: 'Library docs', exact: true });
-  let docsStatus = { reachable: true, keySet: false };
-  await page.route('**/api/settings/library-docs', route => {
-    assert.equal(route.request().method(), 'GET');
-    return route.fulfill({ json: docsStatus });
-  });
   const waitArchive = value => page.waitForFunction(value => {
     const control = document.querySelector('[role="switch"][aria-label="Auto-archive agent deliveries"]');
     return control && !control.disabled && control.getAttribute('aria-checked') === value;
@@ -318,7 +313,7 @@ async function generalParity(context, origin, client) {
   });
   page.on('request', request => {
     const path = new URL(request.url()).pathname;
-    if (path === '/api/conversations/settings' || path.startsWith('/api/settings/web-search')) calls.push([request.method(), path]);
+    if (path === '/api/conversations/settings' || path === '/api/settings/library-docs' || path.startsWith('/api/settings/web-search')) calls.push([request.method(), path]);
   });
   // Hold the initial read so the disabled state can be checked in both clients.
   let release;
@@ -340,13 +335,7 @@ async function generalParity(context, origin, client) {
     await page.unroute(chats, initial);
     await archive().press('Space');
     await waitArchive('false');
-    await docs.getByRole('status').filter({ hasText: 'Reachable' }).waitFor();
-    await docs.getByText('Optional', { exact: true }).waitFor();
-    docsStatus = { reachable: false, keySet: true };
-    await docs.getByRole('button', { name: 'Check status' }).press('Enter');
-    await docs.getByRole('status').filter({ hasText: 'Unavailable' }).waitFor();
-    await docs.getByText('Set in Vault', { exact: true }).waitFor();
-    docsStatus.keySet = false;
+    assert.equal(await panel(page).getByRole('heading', { name: 'Library docs', exact: true }).count(), 0);
     await search().waitFor();
     assert.equal(await button(page, 'Save').isDisabled(), true);
     assert.equal(await button(page, 'Test').isDisabled(), true);
@@ -390,8 +379,6 @@ async function generalParity(context, origin, client) {
           await focus();
           await search().waitFor();
           await waitArchive('true');
-          await docs.getByText('Optional', { exact: true }).waitFor();
-          await docs.getByRole('button', { name: 'Check status', disabled: false }).waitFor();
           await page.evaluate(() => document.fonts.ready);
           await parityShot(page, join(screenshots, `general-${client}-${label}-${mode.toLowerCase()}.png`));
         }
@@ -595,6 +582,29 @@ async function pairing(client) {
     });
     assert.equal(result.devices.find(device => device.id === result.current)?.name, 'Parity browser');
     assert.deepEqual(errors, []);
+    // The local installation has one owner. Expire its paired browser while
+    // a Leptos conversation still holds private data in memory.
+    const mutation = { headers: { Origin: origin } };
+    const agent = await context.request.post(origin + '/api/agents', {
+      ...mutation, data: { id: randomUUID(), runtime: 'api', name: 'Paired workspace canary',
+        instructions: 'Help.', model: 'fixture' },
+    });
+    assert.equal(agent.status(), 201, await agent.text());
+    const { id } = await agent.json();
+    const conversation = await context.newPage();
+    await conversation.goto(origin + '/agents/' + id);
+    const privateView = conversation.getByRole('main', { name: 'Conversation Paired workspace canary' });
+    await privateView.waitFor();
+    const required = await context.request.post(origin + '/api/device-pairing', { ...mutation, data: { required: true } });
+    assert.equal(required.status(), 200);
+    const db = testDatabase(join(data, 'state.sqlite'));
+    try {
+      assert.equal(db.prepare('UPDATE browser_devices SET expires_at=0 WHERE id=?').run(result.current).changes, 1);
+    } finally { db.close(); }
+    await conversation.getByRole('heading', { name: 'Pair this device', exact: true }).waitFor({ timeout: 12000 });
+    assert.equal(await privateView.count(), 0);
+    await conversation.close();
+    console.log('PASS expired local browser session clears mounted workspace');
   } finally { await context.close(); await stop(); }
 }
 

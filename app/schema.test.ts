@@ -80,8 +80,7 @@ for (const mode of ['canonical', 'local'] as const) {
       const frozenLedger = mode === 'canonical' ? expected.prepare(ledger).all() : [];
       if (mode === 'local') {
         expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8'));
-        expected.exec(`CREATE TABLE craft_grants(agent TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE) STRICT;
-          CREATE TABLE craft_deep(project TEXT PRIMARY KEY REFERENCES local_projects(id) ON DELETE CASCADE) STRICT;
+        expected.exec(`CREATE TABLE craft_deep(project TEXT PRIMARY KEY REFERENCES local_projects(id) ON DELETE CASCADE) STRICT;
           CREATE TABLE install_token_targets(
             token BLOB PRIMARY KEY REFERENCES install_tokens(digest) ON DELETE CASCADE,
             origin TEXT NOT NULL

@@ -38,11 +38,7 @@ pub fn panel(project: StoredValue<String>, folder: String) -> impl IntoView {
         query::<Status>(move || format!("{}?folder={}", base.get_value(), folder.get_value()));
     let file = RwSignal::new(None::<String>);
     let refresh = UiAction::new(move |()| status.reload.run(()));
-    poll(5, move || {
-        if !status.busy.get_untracked() {
-            refresh.run(());
-        }
-    });
+    status.poll(5000, || true);
     let show_diff = move || {
         file.get().map(|path| {
         let encoded = encode(&path);

@@ -54,7 +54,7 @@ The golden gate runs Leptos against disposable servers and committed screenshots
 | appearance | 20 | General and Appearance, settings focus and history, presentation storage, CSP and compressed Wasm, startup failures, setup, pairing |
 | automation | 40 | Routine schedules, workflow editor and graph, versioning, webhooks, run inspector |
 | calendar | 12 | Automation and project calendars, dates and timezone, run detail and downloads |
-| connections | 36 | Provider, engine, Hub, email, Vault, MCP and connected app screens and mutation contracts |
+| connections | 32 | Provider, engine, Hub, email, Vault, MCP and connected app screens and mutation contracts |
 | controls | 58 | Conversation routing and composer, dispatch, attachments, Goals and Needs you |
 | conversation | 4 | Named and room conversation navigation, history, sending, streaming and startup |
 | files | 52 | Workspace browser, results, Changes, Computer and secure requests |
@@ -68,8 +68,8 @@ The golden gate runs Leptos against disposable servers and committed screenshots
 | shell | 36 | Workspace navigation, Quick switcher, prompts, command recovery, sidebar controls |
 | system | 32 | Usage, updates, devices, shared data, backup and external access, mutation recovery |
 
-The golden baseline run passed all 16 groups and 580 pairs. All pairs use the
-same pixel thresholds, including the ten narrow Hub Leptos baselines.
+The golden gate covers 16 groups and 576 pairs. All pairs use the same pixel
+thresholds, including the ten narrow Hub Leptos baselines.
 
 See the screenshot parity guide for the gate command and failure thresholds.
 Retained Node and Rust API cases below still cover the shared contracts.
@@ -103,9 +103,9 @@ in the [golden gate guide](../app/test-support/ui-smoke/PARITY.md).
 | `needs-you-notifications.test.ts` | Removed. `needs-you-notifications-smoke.mjs` checks request/completion identity and notification deduplication across reload. |
 | `next-frame.test.ts` | The tested frame queue is shared by the Leptos HTML reply and MCP app bridges. |
 | `optimistic-turns.test.ts` | Leptos conversation retry checks cover an in-flight send, stale history, reload and exact receipt reconciliation. |
-| `polling.test.ts` | Leptos stream/reconnect and profile deletion smokes check cleanup and stale updates. Download helper is still shared. React-specific polling backoff and visibility scheduling use a different implementation and need a product contract before an equivalent port. |
+| `polling.test.ts` | Leptos Usage smoke uses Chromium fake time to check hidden-tab pause, foreground refresh, exponential backoff capped at 60 s, and recovery to the normal cadence. Stream and profile smokes cover cleanup and stale updates. Download helper is still shared. |
 | `presentation.test.ts` | Appearance smoke covers local storage, palettes, mode, text size and tabs. Theme values are shared with the Leptos build. Conversation files checks dock and narrow layouts. |
-| `query-cache.test.ts` | Leptos uses route-local caches and generation checks. Model catalog smoke ports the stale-response assertion by releasing a Codex response after switching to API. React LRU and identity-clear policies have no Leptos equivalent. |
+| `query-cache.test.ts` | Leptos uses route-local caches and generation checks. Hosted Hub and paired-browser smokes exercise account and project switches, sign-out from another tab, and expired sessions. Session loss tears down the old document. The model catalog smoke releases a stale Codex response after switching to API. |
 | `right-panel-state.test.ts` | Leptos controls/files smokes exercise docking, tabs, close/reopen, history navigation and narrow overlays. |
 | `run-inspector.test.ts` | Leptos renders work logs through the shared `turnActivitySteps` adapter. Files and rich cover inspector display and API errors. |
 | `timeline-minimap.test.ts` | Shared preview utility and Leptos `timeline-minimap-smoke.mjs` cover previews, keyboard movement, pointer bounds and narrow behavior. |
@@ -121,6 +121,23 @@ keep the journal format. Leptos transcript and minimap checks cover the retired 
 poll cadence, turn projection and rail geometry. Shared preview and run
 inspector tests keep exercising their adapters. The conversation and rich
 golden groups own the old chat-like-t3 harness coverage.
+
+### Leptos polling
+
+| Surface | Periodic reads or retries |
+| --- | --- |
+| Workspace shell | Paired browser session, machines, Quick switcher threads, local/peer update state and update receipt recovery |
+| Chat | History and active dispatch, goal state, room read position, queue order and pending edit recovery, details context/files/Git/Computer, Computer control, Guide machine pairing |
+| Agent and project screens | Agent folders, resources and sites, local project Git, Memory notes, learned material, standing questions and compaction |
+| Automation | Routine list and run lists, workflow list and run inspector, calendar and routine inspector, automation notifications, scoped routine lists, agent inbox, remote agent directory and history |
+| Settings and setup | Machines, environment, host metrics, devices, Usage, external access, Computer setup, Skills, Connected apps, Discord, WhatsApp, MCP and local Hub link |
+| Hosted Hub | Browser session and project metadata, sections, members and participants |
+
+Periodic requests pause while hidden and back off after failures. Chat uses
+shorter intervals while work is live. Queue-edit renewal is a write heartbeat
+with a 30 s lease. It slows from 10 s to about 20 s while hidden or after a
+failed renewal. SSE subscriptions retain their push and browser reconnect
+behavior. Recording, activity and token expiry timers read local clocks.
 
 ## Issue #60 turn protocol
 

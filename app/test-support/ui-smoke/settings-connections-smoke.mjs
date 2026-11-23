@@ -46,7 +46,6 @@ const routes = [
   ['email', 'Email', 'Endpoint path'],
   ['mcp', 'MCP connections', 'Fixture connection'],
   ['vault', 'Vault', 'fixture-login'],
-  ['craft-anything', 'Craft Anything', 'Version 1.2.3'],
 ];
 
 function showFor(client, slug) {
@@ -80,7 +79,6 @@ function fixtureRequests() {
     '/api/whatsapp': { state: 'disconnected', connected: false, qr: null, chats: [], deliveryProblems: [], transcription: null },
     '/api/hub-link': { enrolled: false, connected: false, disabled: false, nodeId: null, accountId: null, approvals: [] },
     '/api/vault': [entry],
-    '/api/settings/craft-anything': { version: '1.2.3', installed: true, available: true, computerReady: true, agents: [], deepProjects: [] },
   };
   const mcp = () => ({ id: connection, name: 'Fixture connection', url: 'https://mcp.example.test', hasToken: true, enabled: connectionEnabled, revision: connectionEnabled ? 1 : 2 });
   const route = async http => {
@@ -121,11 +119,6 @@ function fixtureRequests() {
     if (path === '/api/mcp/' + connection) {
       connectionEnabled = body.enabled ? 1 : 0;
       return http.fulfill({ json: mcp() });
-    }
-    if (path === '/api/settings/craft-anything/grant') {
-      const data = fixtures['/api/settings/craft-anything'];
-      data.agents = body.enabled ? [agent] : [];
-      return http.fulfill({ json: data });
     }
     return http.fulfill({ status: 400, json: { error: 'Unexpected fixture mutation.' } });
   };
@@ -242,12 +235,6 @@ async function exercise(page, slug) {
       await editor.waitFor({ state: 'hidden' });
       break;
     }
-    case 'craft-anything': {
-      const access = page.getByRole('switch', { name: 'Craft Anything access for Fixture agent' });
-      await access.press('Space');
-      await access.and(page.locator('[aria-checked=true]')).locator('.k-switch__thumb[data-state=checked]').waitFor();
-      break;
-    }
   }
 }
 
@@ -255,6 +242,7 @@ let browser;
 try {
   if (output) await mkdir(output, { recursive: true });
   const origin = await Promise.race([ready, wait(20000, undefined, { ref: false }).then(() => { throw new Error('Server readiness timed out'); })]);
+  assert.equal((await fetch(origin + '/settings/craft-anything')).status, 404);
   browser = await chromium.launch();
   const receipts = {};
   for (const client of ['leptos']) {
@@ -279,6 +267,7 @@ try {
       const panel = page.getByRole('dialog', { name: 'Settings', exact: true });
       const heading = panel.getByRole('heading', { level: 1, name: title, exact: true });
       await focused(page, heading, client);
+      assert.equal(await panel.getByRole('button', { name: 'Craft Anything', exact: true }).count(), 0);
       await panel.getByText(content, { exact: true }).first().waitFor();
       for (const [size, viewport] of [['desktop', { width: 1440, height: 900 }], ['narrow', { width: 430, height: 850 }]]) {
         await page.setViewportSize(viewport);
@@ -305,7 +294,7 @@ try {
       await context.close();
     }
   }
-  console.log('Nine settings pages passed in both clients with four viewports/theme captures per page.');
+  console.log('Eight settings pages passed with four viewport/theme captures per page.');
 } finally {
   await browser?.close();
   if (server.pid && server.exitCode === null && server.signalCode === null) {

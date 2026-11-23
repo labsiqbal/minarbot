@@ -212,6 +212,8 @@ try {
   await inner.getByText('139 shipments').waitFor();
   assert.equal(effects.lookup, 1);
   assert.equal(await page.getByRole('alertdialog').count(), 0);
+  assert(await page.locator('dialog[role="alertdialog"]:not([open])').count() > 0,
+    'Exercise approval while the workspace has a closed alert dialog mounted');
 
   const dialog = page.getByRole('alertdialog');
   const save = inner.getByRole('button', { name: 'Save selection' });
@@ -220,6 +222,7 @@ try {
   assert.equal(effects.save, 0);
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await inner.getByText('Request declined.').waitFor();
+  assert.equal(await page.locator('dialog:modal').count(), 0);
   assert.equal(effects.save, 0);
   await save.click();
   await dialog.getByRole('button', { name: 'Run tool' }).click();

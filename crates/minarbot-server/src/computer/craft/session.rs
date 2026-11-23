@@ -25,7 +25,6 @@ const RESPONSE_LIMIT: u64 = 512 * 1024;
 pub struct Slot {
     pub mcp: AsyncMutex<Option<Mcp>>,
     pub stop: watch::Sender<bool>,
-    agent: String,
     project: String,
 }
 
@@ -52,7 +51,6 @@ impl Sessions {
                 Arc::new(Slot {
                     mcp: AsyncMutex::new(None),
                     stop: watch::channel(false).0,
-                    agent: access.agent.clone(),
                     project: access.project.clone(),
                 })
             })
@@ -73,9 +71,6 @@ impl Sessions {
 
     pub fn clear(&self) -> Result<()> {
         self.revoke(|_, _, _| true)
-    }
-    pub fn revoke_agent(&self, agent: &str) -> Result<()> {
-        self.revoke(|_, _, slot| slot.agent == agent)
     }
     pub fn revoke_deep(&self, project: &str) -> Result<()> {
         self.revoke(|_, deep, slot| deep && slot.project == project)
