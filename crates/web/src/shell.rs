@@ -40,6 +40,8 @@ pub(crate) struct Agent {
     #[serde(default)]
     pub runnable: bool,
     #[serde(default)]
+    pub provider_available: Option<bool>,
+    #[serde(default)]
     pub revision: u64,
     #[serde(default)]
     pub avatar_revision: u64,
@@ -522,7 +524,7 @@ pub(crate) fn WorkspaceShell(
             if agent.hidden { detail = "Hidden".into(); }
             let working = summary.is_some_and(|row| row.status == "running");
             let status = if active > 0 { "Needs you" } else if working { "Working" } else { "Idle" };
-            let dot = if active > 0 { "is-attention" } else if working { "is-working" } else { "is-idle" };
+            let dot = if active > 0 || agent.provider_available == Some(false) { "is-attention" } else if working { "is-working" } else { "is-idle" };
             let time = summary.filter(|_| active == 0).and_then(|row| row.time.as_deref());
             let avatar = (agent.avatar_revision > 0).then(|| format!("/api/agents/{}/avatar/image?v={}", agent.id, agent.avatar_revision));
             let initial = agent.name.chars().next().map(|initial| initial.to_uppercase().to_string());
@@ -547,7 +549,7 @@ pub(crate) fn WorkspaceShell(
                     <span class="bot-row__avatar" aria-hidden="true"><span class="avatar bs-avatar">
                         {if let Some(src) = avatar { view! { <img src=src alt="" /> }.into_any() } else { initial.into_any() }}
                     </span><span class=format!("status-dot {dot}")></span></span>
-                    <span class="sr-only">{status}</span>
+                    <span class="sr-only">{status}{(agent.provider_available == Some(false)).then_some(" - Provider account unavailable")}</span>
                     <span class="bot-row__text"><span class="bot-row__name">{agent.name}</span><span class="bot-row__preview">{detail}</span></span>
                     {time.map(|time| view! { <time class="bot-row__time" datetime=time.to_owned()>{relative_time(time)}</time> })}
                     {(active > 0).then(|| view! { <span class="needs-you-badge"><span class="k-badge is-warn" title=badge.clone()><span aria-hidden="true">{active}</span><span class="sr-only">{badge.clone()}</span></span></span> })}
@@ -658,7 +660,7 @@ pub(crate) fn WorkspaceShell(
                                 <button class="k-icon-btn" type="button" aria-expanded=move || if open() { "true" } else { "false" }
                                     aria-label=move || format!("{} project {name}", if open() { "Collapse" } else { "Expand" })
                                     on:click=move |_| change(!expanded.get_untracked())>
-                                    <span class:is-open=open inner_html=chevron_icon.get_value()></span>
+                                    <span class="project-navigation__chevron" class:is-open=open inner_html=chevron_icon.get_value()></span>
                                 </button>
                                 <a class="project-navigation__name" href=path aria-current=current.then_some("page")
                                     on:keydown=move |event: web_sys::KeyboardEvent| match event.key().as_str() {

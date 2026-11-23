@@ -53,7 +53,7 @@ fn screen(id: &str, origin: Option<&str>) -> Option<AnyView> {
         href.push(separator);
         href.push_str(&query);
     }
-    Some(view! { <a class="k-link" href=href>{format!("Open {title}")}</a> }.into_any())
+    Some(view! { <a class="k-link" href=href>"Open "{title.clone()}</a> }.into_any())
 }
 
 #[derive(Deserialize)]

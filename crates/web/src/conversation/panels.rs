@@ -1254,8 +1254,11 @@ fn right_panel_impl(chat: Chat) -> impl IntoView {
                 drawer.close();
             }
             if open && !drawer.open() {
-                if !overlay {
-                    // Docked details leave keyboard focus in the conversation.
+                if !overlay
+                    || drawer
+                        .query_selector(".secure-entry-dialog:modal")
+                        .is_ok_and(|modal| modal.is_some())
+                {
                     drawer.set_open(true);
                 } else {
                     let connected = drawer.is_connected();
@@ -1286,7 +1289,8 @@ fn right_panel_impl(chat: Chat) -> impl IntoView {
         overlay
     });
     view! {
-        <dialog class="conversation-panel-shell" node_ref=drawer aria-label="Conversation panel"
+        <div class="right-panel-backdrop conversation-panel-backdrop" aria-hidden="true"></div>
+        <dialog class="conversation-panel-shell" class:is-overlay=narrow node_ref=drawer aria-label="Conversation panel"
             on:cancel=move |event: web_sys::Event| { event.prevent_default(); chat.set_details(false); }>
         <aside class="details right-panel conversation-panel bs-root" aria-label="Conversation details">
             <div class="right-panel__header"><div>
@@ -1630,11 +1634,31 @@ fn result_preview(
 fn secure_request(agent: String, wait: ComputerWait, controls: ComputerControl) -> impl IntoView {
     let dialog = NodeRef::<leptos::html::Dialog>::new();
     let input = NodeRef::<leptos::html::Input>::new();
+    let trigger = NodeRef::<leptos::html::Button>::new();
     let busy = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let Some(entry) = wait.secret_entry else {
         return ().into_any();
     };
+    let drawer = StoredValue::new_local(None::<web_sys::HtmlDialogElement>);
+    let restore_drawer = move || {
+        let Some(Some(drawer)) = drawer.try_update_value(Option::take) else {
+            return;
+        };
+        if drawer.is_connected()
+            && drawer.open()
+            && drawer.matches(".is-overlay:not(:modal)").unwrap_or(false)
+        {
+            drawer.close();
+            let _ = drawer.show_modal();
+        }
+    };
+    on_cleanup(move || {
+        if let Some(Some(dialog)) = dialog.try_get_untracked() {
+            dialog.close();
+        }
+        restore_drawer();
+    });
     let data = StoredValue::new((agent, wait.turn, wait.call_id));
     let icon = use_context::<Icons>().unwrap_or_default().close;
     let origin = wait.secret_origin.unwrap_or_default();
@@ -1687,11 +1711,34 @@ fn secure_request(agent: String, wait: ComputerWait, controls: ComputerControl) 
         });
     };
     view! {
-        <button type="button" class="k-btn k-btn--sm k-btn--primary" hidden=move || controls.user()
-            disabled=move || controls.locked() || busy.get() on:click=move |_| { clear(); controls::dialog_open(dialog); }>"Enter value"</button>
-        <dialog class="k-dialog k-dialog--md conversation-kit-dialog" aria-label="Enter a secure value" node_ref=dialog
+        <button type="button" class="k-btn k-btn--sm k-btn--primary" node_ref=trigger hidden=move || controls.user()
+            disabled=move || controls.locked() || busy.get() on:click=move |_| {
+                clear();
+                let Some(dialog) = dialog.get_untracked() else { return; };
+                if let Some(host) = dialog.closest(".conversation-panel-shell").ok().flatten()
+                    .and_then(|host| host.dyn_into::<web_sys::HtmlDialogElement>().ok()) {
+                    // Secure entry owns the top layer while the open sheet supplies its background.
+                    if host.matches(":modal").unwrap_or(false) {
+                        host.close();
+                        host.show();
+                    }
+                    drawer.set_value(Some(host));
+                }
+                if dialog.show_modal().is_err() {
+                    restore_drawer();
+                }
+            }>"Enter value"</button>
+        <dialog class="k-dialog k-dialog--md conversation-kit-dialog secure-entry-dialog" aria-label="Enter a secure value" node_ref=dialog
             on:cancel=move |event: web_sys::Event| { event.prevent_default(); cancel(); }
-            on:close=move |_| clear()>
+            on:close=move |_| {
+                clear();
+                restore_drawer();
+                if let Some(trigger) = trigger.get_untracked() {
+                    let options = web_sys::FocusOptions::new();
+                    options.set_prevent_scroll(true);
+                    let _ = trigger.focus_with_options(&options);
+                }
+            }>
             <div class="k-dialog__head"><div><h2 class="k-dialog__title">"Enter a secure value"</h2>
                 <p class="k-dialog__desc">{origin}</p></div>
                 <button type="button" class="k-icon-btn" aria-label="Close" title="Close" disabled=busy on:click=move |_| cancel()><span class="appearance-icon" inner_html=icon></span></button>

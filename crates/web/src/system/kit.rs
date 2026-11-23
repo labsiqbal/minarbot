@@ -5,12 +5,14 @@ use wasm_bindgen::JsCast;
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Icons {
     pub alert: String,
+    pub compact_alert: String,
     pub info: String,
     pub warn: String,
     pub close: String,
     pub monitor: String,
     pub monitor_empty: String,
     pub download: String,
+    pub update: String,
     pub smartphone: String,
     pub database: String,
     pub database_empty: String,

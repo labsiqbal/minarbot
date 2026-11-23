@@ -222,9 +222,17 @@ try {
           await page.waitForFunction(() => window.__vncFake?.frames > 0);
           assert.deepEqual(requests.find(request => request.pathname.endsWith('/open-url'))?.body, { url: resultUrl });
           await capture(page, client, key('computer-result'), page.locator('.computer-viewer canvas'));
-          await page.getByRole('button', { name: 'Enter value', exact: true }).click();
+          const enterValue = page.getByRole('button', { name: 'Enter value', exact: true });
+          await enterValue.click();
           const secure = page.getByRole('dialog', { name: 'Enter a secure value' });
           await capture(page, client, key('secure-request'), secure);
+          if (client === 'leptos' && viewport.width === 430) {
+            await page.keyboard.press('Escape');
+            await secure.waitFor({ state: 'hidden' });
+            await enterValue.and(page.locator('button:focus')).waitFor();
+            await page.locator('dialog:modal').and(page.getByRole('dialog', { name: 'Conversation panel' })).waitFor();
+            await enterValue.click();
+          }
           const value = secure.getByLabel(wait.secret_entry, { exact: true });
           assert.equal(await value.getAttribute('type'), 'password');
           await value.fill('synthetic-entry');

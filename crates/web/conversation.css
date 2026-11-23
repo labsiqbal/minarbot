@@ -54,11 +54,12 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
   background: transparent; max-width: none; max-height: none; height: 100%; flex: 0 1 360px; min-width: 0;
 }
 .conversation-panel-shell > .conversation-panel { width: 100%; }
-.conversation-panel-shell:modal {
+.conversation-panel-shell.is-overlay[open] {
   position: fixed; top: 0; right: 0; bottom: 0; width: 100%; height: 100dvh;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  background: var(--color-bg-pane); box-shadow: var(--shadow-popover); overscroll-behavior: contain;
+  background: var(--color-bg-pane); box-shadow: var(--shadow-popover); overscroll-behavior: contain; z-index: 81;
 }
+.conversation-panel-backdrop:not(:has(+ .conversation-panel-shell.is-overlay[open]:not(:modal))) { display: none; }
 .conversation-panel-shell:modal::backdrop { background: var(--color-bg-scrim); overflow: hidden; overscroll-behavior: contain; }
 .conversation-disclosure > summary { list-style: none; }
 .conversation-disclosure > summary::-webkit-details-marker { display: none; }
@@ -71,6 +72,7 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .run-inspector summary > .appearance-icon { flex: none; }
 .run-inspector details[open] > summary > .appearance-icon { transform: rotate(90deg); }
 .computer-actions { position: relative; }
+.computer-window .computer-actions summary > .appearance-icon { display: contents; }
 .computer-actions .task-actions { top: calc(100% + 4px); bottom: auto; }
 .composer__cta--stop svg { fill: currentColor; }
 
@@ -95,7 +97,7 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .file-actions { flex: none; }
 .file-actions > button { width: 32px; height: 32px; }
 .file-actions .k-menu { position: fixed; inset: auto; margin: 0; }
-.conversation-kit-dialog { margin: 0; padding: 0; color: var(--color-text-primary); }
+.conversation-kit-dialog { margin: 0; padding: 0; color: var(--color-text-primary); font-size: 14px; line-height: 20px; }
 .conversation-kit-dialog::backdrop { background: var(--color-bg-scrim); }
 .conversation-kit-dialog:not([open]) { display: none; }
 .conversation-html-preview { min-height: 320px; }
@@ -123,7 +125,12 @@ body[data-view="conversation"] .automation-select .k-menu__item:is(:hover, :focu
 }
 .conversation-layout .turn-controls .chat-control-dialog .k-icon-btn { width: 30px; height: 30px; }
 .conversation-layout .turn-controls .chat-control-dialog .k-icon-btn svg { width: 16px; height: 16px; }
-:is(.chat-control-dialog, .section-settings) .k-check__box svg { width: 12px; height: 12px; stroke-width: 3; }
+.message-find .k-icon-btn svg { width: 15px; height: 15px; }
+.queued-run__actions :is(.lucide-arrow-up, .lucide-x) { width: 14px; height: 14px; }
+.queue-order-row-actions .k-icon-btn svg { width: 16px; height: 16px; }
+:is(.jump-btn, .timeline-minimap__next) svg { width: 16px; height: 16px; }
+:is(.chat-control-dialog, .section-settings) .k-check__box svg { width: 12px; height: 12px; stroke-width: 3; translate: 0 -1px; }
+.system-dialog:has(#guide-connection-title) .connection-select .k-select__chev { right: 12px; }
 .section-settings .k-dialog__foot { flex-wrap: wrap; }
 .queue-order-row-actions { margin-top: 6px; }
 .event-connection .k-field__hint { margin: 0; }

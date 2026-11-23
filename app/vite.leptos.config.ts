@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Pencil, Plug, Plus, Receipt, RefreshCw, RotateCcw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Trash2, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Pencil, Plug, Plus, Receipt, RefreshCw, RotateCcw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Trash2, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
 import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, LogOut, Pause, Play, Redo2, Siren, Undo2, WrapText } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -33,8 +33,8 @@ const appearanceConfig: Plugin = {
       },
     };
     const systemIcons = {
-          alert: svg(CircleAlert), info: svg(Info), warn: svg(AlertTriangle), close: svg(X),
-          monitor: svg(Monitor), monitorEmpty: svg(Monitor, 18), download: svg(Download, 17),
+          alert: svg(CircleAlert), compactAlert: svg(CircleAlert, 15), info: svg(Info), warn: svg(AlertTriangle), close: svg(X),
+          monitor: svg(Monitor), monitorEmpty: svg(Monitor, 18), download: svg(Download, 17), update: svg(ArrowDownToLine, 15),
           smartphone: svg(Smartphone), database: svg(Database), databaseEmpty: svg(Database, 18),
           key: svg(KeyRound), keyEmpty: svg(KeyRound, 18), receipt: svg(Receipt, 18),
           plus: svg(Plus, 14), down: svg(ChevronDown, 14), left: svg(ChevronLeft), right: svg(ChevronRight),
@@ -45,13 +45,13 @@ const appearanceConfig: Plugin = {
           'arrow-left': ArrowLeft, blocks: Blocks, book: BookOpen, bot: Bot, brain: Brain, history: History,
           'chevron-down': ChevronDown, 'chevron-left': ChevronLeft, 'chevron-right': ChevronRight,
           close: X, copy: Copy, ellipsis: Ellipsis, error: CircleAlert, 'external-link': ExternalLink, globe: Globe, check: Check,
-          file: FileText, info: Info, key: KeyRound, link: Link, message: MessageCircle, package: Package, plug: Plug, plus: Plus,
+          file: FileText, info: Info, key: KeyRound, link: Link, message: MessageCircle, package: Package, plug: Plug, plus: Plus, 'plus-md': Plus,
           download: Download, edit: Pencil, inbox: Inbox, eye: Eye, 'eye-off': EyeOff, trash: Trash2,
           folder: Folder, 'git-branch': GitBranch, refresh: RefreshCw,
           search: Search, server: Server, shield: ShieldCheck, warn: AlertTriangle,
     };
     const iconMap = (icons: Record<string, LucideIcon>) => Object.fromEntries(Object.entries(icons)
-      .map(([name, icon]) => [name, svg(icon, ['arrow-left', 'external-link', 'plus', 'search'].includes(name) ? 14 : name === 'server' ? 20 : 16)]));
+      .map(([name, icon]) => [name, svg(icon, ['arrow-left', 'external-link', 'plus', 'search'].includes(name) ? 14 : name === 'plus-md' ? 15 : ['server', 'blocks'].includes(name) ? 20 : 16)]));
     const conversationIcons = {
       attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
       chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),

@@ -49,6 +49,7 @@
 #appearance-fallback { min-height: 100%; }
 #appearance-fallback .k-btn { text-decoration: none; }
 
+dialog.k-dialog:modal { overflow: visible; }
 .leptos-workspace [hidden] { display: none; }
 #leptos-root { height: 100%; }
 .leptos-workspace .appearance-icon { display: contents; }
@@ -63,20 +64,14 @@
 .leptos-workspace .machine-group__header .lucide-monitor { width: 15px; height: 15px; }
 .leptos-workspace .machine-group__content { padding-block: 4px 12px; }
 .leptos-workspace .project-home a { text-decoration: none; }
-.leptos-workspace .first-run .k-field:has(> select) { position: relative; }
-.leptos-workspace .first-run .k-field:has(> select)::after {
-  content: "";
-  position: absolute;
-  right: 16px;
-  bottom: 17px;
-  width: 5px;
-  height: 5px;
-  border-right: 1px solid var(--color-text-secondary);
-  border-bottom: 1px solid var(--color-text-secondary);
-  transform: rotate(45deg);
-  pointer-events: none;
-}
-.leptos-workspace .first-run select.k-input { appearance: none; padding-right: 30px; }
+.first-run .connection-select select:disabled { opacity: 1; }
+.first-run .connection-select .k-select__chev { right: 12px; }
+.leptos-workspace .project-navigation__chevron { display: flex; color: var(--color-ink); }
+.project-navigation__chevron svg { width: 14px; height: 14px; }
+.leptos-workspace .project-navigation__name .lucide { flex-shrink: 0; color: var(--color-text-secondary); }
+.leptos-workspace .project-navigation__header [aria-haspopup="menu"] .lucide-ellipsis { width: 15px; height: 15px; }
+.leptos-workspace .project-navigation__section .lucide-ellipsis { width: 14px; height: 14px; }
+.leptos-workspace .project-home .k-row__chev { display: flex; }
 .leptos-workspace #workspace-filters { margin: auto; }
 .leptos-workspace__outlet { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; height: 100%; }
 .leptos-workspace__header { display: flex; align-items: center; min-height: 60px; padding-inline: 16px; }
@@ -95,6 +90,7 @@
 .connection-dialog { inset: 50% auto auto 50%; margin: 0; padding: 0; color: var(--color-text-primary); }
 .connection-dialog::backdrop { background: var(--color-bg-scrim); }
 .connection-dialog .k-dialog__foot { flex-wrap: wrap; }
+.connection-dialog .connection-select .k-select__chev { right: 12px; }
 #appearance-dialog .connection-dialog .k-fieldset { padding: 0; border: 0; background: transparent; }
 .project-home .connection-dialog #mcp-connection .k-fieldset { margin: 0; padding: 0; border: 0; background: transparent; }
 .project-home .connection-dialog #mcp-connection .k-input { font-size: 13.5px; }
@@ -107,14 +103,17 @@
 .legacy .connection-disclosure > summary { display: inline-flex; list-style: none; }
 .connection-disclosure > summary::before { content: none; }
 .connection-disclosure > summary::-webkit-details-marker { display: none; }
+.connection-disclosure .k-collapsible__chev { display: inline-flex; }
 .connection-disclosure .k-collapsible__chev svg { width: 15px; height: 15px; }
 .connection-disclosure[open] > summary .k-collapsible__chev { transform: rotate(180deg); }
 .project-home .connection-disclosure:not([open]) > .k-collapsible__content { display: none; }
+.connection-menu-trigger .lucide-chevron-down { width: 14px; height: 14px; }
 .connection-menu { margin: 0; inset: 0 auto auto 0; color: var(--color-ink); }
 .connection-menu > button { border: 0; background: transparent; width: 100%; text-align: left; }
 .connection-menu > button:is(:focus, :hover) { background: var(--color-bg-hover); }
 .bs-root:is(.bs-set3-apps, .bs-set3-mcp) .k-row__title { white-space: normal; overflow-wrap: anywhere; }
 .bs-root:is(.bs-set3-apps, .bs-set3-mcp) .k-row__meta { overflow-wrap: anywhere; }
+.bs-set3-apps .k-row__chev { display: flex; }
 .apps-search { align-items: flex-end; }
 .bs-set3-skills .k-row__title, .bs-set3-skills .k-row__meta { white-space: normal; overflow-wrap: anywhere; }
 .bs-set3-skills .k-empty__icon > .appearance-icon > svg { width: 18px; height: 18px; }
@@ -128,6 +127,7 @@
 .workspace-dialog:not([open]) { display: none; }
 .workspace-dialog::backdrop { background: var(--color-bg-scrim); overflow: hidden; overscroll-behavior: contain; }
 .workspace-dialog .quick-switcher__item { text-decoration: none; }
+.workspace-dialog .quick-switcher__search svg { width: 18px; height: 18px; }
 .workspace-dialog .quick-switcher__item:hover { background: var(--color-bg-hover); }
 
 .sidebar-create { position: relative; }

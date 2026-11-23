@@ -1119,9 +1119,9 @@ pub(crate) fn workspace() -> (impl IntoView, impl IntoView) {
         <div class="sidebar-update" hidden=move || !capsule.with(|(visible, _, _, _)| *visible)>
           <button type="button" class="k-btn k-btn--md k-btn--secondary sidebar-update__capsule" aria-haspopup="dialog" on:click=move |_| show(Select::All)>
             <span class="appearance-icon k-btn__icon" aria-hidden="true" inner_html=move || {
-              if capsule.with(|(_, _, _, attention)| *attention) { capsule_icons.alert.clone() }
+              if capsule.with(|(_, _, _, attention)| *attention) { capsule_icons.compact_alert.clone() }
               else if run.with(Option::is_some) && !active() { capsule_icons.check.clone() }
-              else { capsule_icons.download.clone() }
+              else { capsule_icons.update.clone() }
             }></span>
             <span class="sidebar-update__text">
               <span>{move || capsule.with(|(_, label, _, _)| label.clone())}</span>
