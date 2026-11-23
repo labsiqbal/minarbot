@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { assertP95 } from './timing-budgets.mjs';
-import { parityShot } from './parity-shot.mjs';
+import { parityShot, withFixtureText } from './parity-shot.mjs';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -22,7 +22,7 @@ const name = 'File and Computer fixture';
 const wait = { turn, call_id: 'fixture-call', reason: '', state: 'waiting',
   secret_entry: 'Example sign-in', secret_origin: 'https://example.test' };
 const html = '<h1>Fixture artifact</h1><script>throw new Error("Preview must be inert");</script>';
-const shots = new Map(), report = { screenshots: {}, timing: {} };
+const report = { screenshots: {}, timing: {} };
 const samples = Number(process.env.MINARBOT_FILES_BENCH ?? 20);
 assert(Number.isSafeInteger(samples) && samples >= 0);
 let app, browser;
@@ -50,11 +50,11 @@ try {
   await post(`${api}/files/${textFile}`, 'Text fixture\n', { 'Content-Type': 'application/octet-stream', 'X-File-Name': 'notes.txt' });
   const site = await post(`${api}/sites`, JSON.stringify({ id: randomUUID(), name: 'Local report', source: '<h1>Fixture site</h1>' }));
   const resultUrl = app.origin + '/sites/' + site.id;
+  const displayedResult = 'http://127.0.0.1:34791/sites/2c159761-3057-4dca-9eec-500000000000';
   const screen = 'data:image/png;base64,' + (await desktopImage).toString('base64');
   browser = await chromium.launch({ headless: true });
   const route = (client, target) => {
     const location = new URL(chat, app.origin);
-    location.searchParams.delete('ui');
     if (target) location.searchParams.set('result', JSON.stringify(target));
     return location.href;
   };
@@ -116,10 +116,9 @@ try {
     await surface.waitFor({ state: 'visible' });
     await page.evaluate(() => document.fonts.ready);
     await page.mouse.move(1, 1);
-    const png = await parityShot(page, join(output, `${key}-${client}.png`));
-    const pair = shots.get(key) ?? {};
-    pair[client] = png;
-    shots.set(key, pair);
+    const path = join(output, `${key}-${client}.png`);
+    await withFixtureText(page, [[resultUrl, displayedResult]], () => parityShot(page, path));
+    report.screenshots[key] = path;
   }
 
   for (const viewport of [{ width: 1440, height: 900 }, { width: 430, height: 850 }]) {
@@ -292,7 +291,7 @@ try {
     warm: { leptos: summary(warm.leptos) } };
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report.timing));
-  console.log(`Captured ${shots.size} screenshots in ${output}`);
+  console.log(`Captured ${Object.keys(report.screenshots).length} screenshots in ${output}`);
   if (samples) {
     assertP95('files', 'cold', report.timing.cold.leptos.p95);
     assertP95('files', 'warm', report.timing.warm.leptos.p95);

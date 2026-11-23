@@ -1,4 +1,4 @@
-# React and Leptos screenshot parity
+# Leptos golden screenshot gate
 
 Build the React app and Leptos route bundles. Install the smoke package with
 `npm ci --prefix test-support/ui-smoke` from `app/` and install its Playwright

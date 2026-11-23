@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { assertP95 } from './timing-budgets.mjs';
 import { fixDate, parityChromiumArgs, parityShot } from './parity-shot.mjs';
-import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -23,7 +22,49 @@ const observationText = 'The north cabinet holds orchid tray labels and inventor
 const clients = ['leptos'];
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
 const samples = Number(process.env.MINARBOT_MEMORY_BENCH ?? 0);
-const images = new Map(), errors = [], timings = {};
+// Source IDs visible in the three frozen summary captures.
+const sourceIds = [
+  [
+    '4d742fe9-fdfc-4e9e-b4af-85b9f99d9114',
+    '18cfc3df-8518-43aa-9dd9-c65e58bd8c7e',
+    'da2aae6a-19a9-4245-8b3d-f8302b52161a',
+    'fdec64dd-f588-4c41-9803-50ed179c292d',
+    '40c68213-e839-4509-b667-248927a7bb14',
+    '042f9629-ef1f-4816-9aab-15d3cec9b85d',
+    'c35b2b78-74e2-442a-9f95-f902d762f173',
+    '302c5d9a-5b2c-4ed5-ba83-947791907cc0',
+    '56e0ec58-0f37-45a7-9488-57b924a88229',
+    'e95c60a7-d498-46f0-ac41-3ed2fd6a822a',
+    'e004464b-0c1d-4919-b69f-4a4a09d49912',
+  ],
+  [
+    '17172bd4-b9cb-44a2-96b9-81355f1e6fe6',
+    '61f9ba53-7969-4d0a-988e-5d0e8b4584bb',
+    '67e2e4b2-b7e6-4295-84cb-6284f523f618',
+    '6759cff7-e75a-4439-b8fb-6fc70012965f',
+    '673a9b39-854f-4a93-950b-a304a2a2445c',
+    'e7fb18b8-284e-4249-a71f-3c2de3d199c5',
+    'd719f4af-ea46-4cc1-a45b-108362f46526',
+    '7c1f15fd-fd29-426d-a01e-cc8bcd4a48d8',
+    'bcacc281-0f4a-43da-aca7-d018c07f7a1e',
+    '9df68dcd-c3b1-46ee-b208-a82dc112ea93',
+    '5f5ee39d-c40e-471f-bb98-6ce801a87f28',
+  ],
+  [
+    '457022c1-8000-495e-ba6e-d3c5d5161c19',
+    '663c61c0-124a-4ff7-b9a6-f367e9706441',
+    '0fe09060-9a4a-476c-aa2f-dae2d4db8751',
+    '46909f5b-28f2-4287-8eee-aa946e46f358',
+    'c72fad74-8f52-43f7-9b1d-1a6b0fe639c4',
+    'ee700044-3e73-45ea-91d9-71dbc24f955d',
+    '36e00da3-c235-426a-bee0-e0f5c2a930a5',
+    '9566ec45-7a35-418a-9309-5e8f9d3660a2',
+    'fc3b87bd-8f5d-45c1-9228-c235e3276792',
+    'd1ce30c6-f39c-4238-b51d-245d501c25c5',
+    '908cdbac-58f4-4b13-b713-5829b4ef05a0',
+  ],
+];
+const errors = [], timings = {};
 let nextId = 60;
 const stableId = () => `40000000-0000-4000-8000-${String(nextId++).padStart(12, '0')}`;
 const bank = `agents:${agent}`, memory = `/api/agents/${agent}/memory`;
@@ -52,23 +93,23 @@ try {
     const raw = db.prepare("INSERT INTO memory_units(bank,origin,source_id,kind,text,source) VALUES(?,'prompt',?,'experience',?,?) RETURNING id")
       .get(bank, turn, 'The north shelf has unlabelled orchid trays.', JSON.stringify(source)).id;
     const retained = db.prepare("INSERT INTO memory_units(bank,origin,source_id,kind,text,source) VALUES(?,'retained',?,?,?,?) RETURNING id");
-    const fact = retained.get(bank, randomUUID(), 'experience', 'Orchid tray labels are in the north cabinet.', JSON.stringify({ kind: 'fact', raw, message: source })).id;
-    const observation = retained.get(bank, randomUUID(), 'observation', 'The north cabinet holds orchid tray labels and inventory sheets.', JSON.stringify({ kind: 'observation' })).id;
+    const fact = retained.get(bank, stableId(), 'experience', 'Orchid tray labels are in the north cabinet.', JSON.stringify({ kind: 'fact', raw, message: source })).id;
+    const observation = retained.get(bank, stableId(), 'observation', 'The north cabinet holds orchid tray labels and inventory sheets.', JSON.stringify({ kind: 'observation' })).id;
     db.prepare('INSERT INTO memory_facts(unit,raw,offset,consolidated) VALUES(?,?,0,1)').run(fact, raw);
     db.prepare('INSERT INTO memory_observations VALUES(?,?,?,?)').run(observation, bank, agent, 'cabinet');
     db.prepare('INSERT INTO memory_observation_evidence VALUES(?,?)').run(observation, fact);
     const addTurn = db.prepare("INSERT INTO turns(id,agent,channel,thread,text,reply,status,created) VALUES (?,?,?,?,?,?,'done',?) RETURNING seq,revision");
-    for (const [scope, roomId, threadId] of [[bank, null, null], [`threads:${thread}`, null, thread], [`channels:${channel}`, channel, null]]) {
+    for (const [source, [scope, roomId, threadId]] of [[bank, null, null], [`threads:${thread}`, null, thread], [`channels:${channel}`, channel, null]].entries()) {
       let through = 0;
       for (let index = 1; index <= 21; index++) {
-        const row = addTurn.get(randomUUID(), agent, roomId, threadId, `Fixture message ${index}`, 'Fixture reply', '2026-11-19T10:30:00Z');
+        const row = addTurn.get(sourceIds[source][index - 1] ?? stableId(), agent, roomId, threadId, `Fixture message ${index}`, 'Fixture reply', '2026-11-19T10:30:00Z');
         through = row.seq;
         db.prepare("INSERT INTO compaction_sources(scope,seq,revision,status) VALUES(?,?,?,'done')").run(scope, row.seq, row.revision);
       }
-      db.prepare('INSERT INTO compactions(scope,version,through,summary) VALUES(?,?,?,?)').run(scope, randomUUID(), through, summary);
+      db.prepare('INSERT INTO compactions(scope,version,through,summary) VALUES(?,?,?,?)').run(scope, stableId(), through, summary);
     }
     db.prepare('INSERT INTO memory_mental_models(bank,id,question,answer,evidence,generation) SELECT ?,?,?,?,?,generation FROM memory_bank_generations WHERE bank=?')
-      .run(bank, randomUUID(), 'Where are the orchid supplies?', 'Labels and inventory sheets are in the north cabinet.', JSON.stringify([{ id: observation, kind: 'observation', text: 'North cabinet', source: [source] }]), bank);
+      .run(bank, stableId(), 'Where are the orchid supplies?', 'Labels and inventory sheets are in the north cabinet.', JSON.stringify([{ id: observation, kind: 'observation', text: 'North cabinet', source: [source] }]), bank);
   } finally { db.close(); }
   await mkdir(output, { recursive: true });
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ?? '/usr/bin/google-chrome', args: parityChromiumArgs });
@@ -150,9 +191,7 @@ try {
     }
     try {
       await go(page, client, main);
-      // Open from conversation details in both clients so the same layers are visible.
       const parent = await profile(page, client, false);
-      // React fetches the summary when its row intersects the profile viewport.
       await parent.locator('.summary-row').scrollIntoViewIfNeeded();
       await button(parent, 'History summary Up to date').waitFor();
       await button(parent, 'Agent memory').scrollIntoViewIfNeeded();
