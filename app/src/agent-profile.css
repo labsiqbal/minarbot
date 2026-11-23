@@ -3,7 +3,7 @@
 .bs-root .agent-profile__name { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
 .bs-root .agent-profile__runtime { display: block; }
 .bs-root .agent-profile__runtime .k-select { width: 100%; }
-.bs-root .agent-profile .k-tabs__tab { min-height: 40px; }
+.bs-root .agent-profile > .k-tabs > .k-tabs__list > .k-tabs__tab { min-height: 40px; }
 .bs-root .agent-profile:not(.agent-profile--edit) .k-tabs__list { display: none; }
 .bs-root .agent-profile .k-fieldset:has(> [role='tabpanel'][hidden]):not(:has(> [role='tabpanel']:not([hidden]))) { display: none; }
 .bs-root .agent-profile .k-input[type='number'] { max-width: 160px; }

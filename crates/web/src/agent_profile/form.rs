@@ -772,7 +772,9 @@ pub(super) fn agent_form(
                 {move || resources::folder(id.get_value())}
             </Show>
             <div class="details-list agent-profile__resources">
-                <div id="agent-memory-mount" data-agent=id.get_value()></div>
+                <Show when=move || tab.get() == "advanced">
+                    {move || crate::memory::profile_resources(id.get_value())}
+                </Show>
                 <button type="button" class="panel-row panel-row--link" on:click=move |_| tool.set(Some(Tool::Sites))>
                     <ui::Icon name="globe" /><span class="panel-row__title">"Agent sites"</span><ui::Icon name="chevron-right" />
                 </button>

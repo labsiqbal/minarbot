@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Plug, Plus, Receipt, RefreshCw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
-import { CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, Inbox, ListTodo, Pencil, Siren, Trash2, WrapText } from 'lucide-react';
+import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, Pencil, Siren, Trash2, WrapText } from 'lucide-react';
+import { Brain, CircleDot, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, Pencil, Siren, Trash2, WrapText } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -42,7 +43,7 @@ const appearanceConfig: Plugin = {
           more: svg(Ellipsis), refresh: svg(RefreshCw, 15),
     };
     const connectionIcons = {
-          'arrow-left': ArrowLeft, blocks: Blocks, book: BookOpen, bot: Bot,
+          'arrow-left': ArrowLeft, blocks: Blocks, book: BookOpen, bot: Bot, brain: Brain, history: History,
           'chevron-down': ChevronDown, 'chevron-left': ChevronLeft, 'chevron-right': ChevronRight,
           close: X, copy: Copy, ellipsis: Ellipsis, error: CircleAlert, 'external-link': ExternalLink, globe: Globe, check: Check,
           file: FileText, info: Info, key: KeyRound, link: Link, message: MessageCircle, package: Package, plug: Plug, plus: Plus,
@@ -88,9 +89,23 @@ const appearanceConfig: Plugin = {
       conversation: {
         ...shell,
         systemIcons,
-        connectionIcons: iconMap({ ...connectionIcons, clock: Clock, workflow: Workflow, schedule: CalendarClock, calendar: CalendarDays,
-          slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot }),
+        connectionIcons: iconMap({ ...connectionIcons, clock: Clock, workflow: Workflow, schedule: CalendarClock,
+          calendar: CalendarDays, slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot }),
+        conversationIcons: {
+          attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
+          chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),
+          copy: svg(Copy, 14), fork: svg(GitFork, 14),
+          inspect: svg(Wrench, 14), close: svg(X),
+          chats: svg(MessageSquare, 14), files: svg(Files, 14), file: svg(FileText, 16), filter: svg(Filter, 15),
+          settings: svg(Settings, 16), computer: svg(Monitor, 14), members: svg(Users, 14),
+          shield: svg(ShieldCheck, 18), more: svg(Ellipsis, 16), external: svg(ExternalLink, 14),
+          folder: svg(Folder), next: svg(ChevronRight, 14), alert: svg(CircleAlert, 14),
+          book: svg(BookOpen, 15), summary: svg(ListRestart, 15),
+          back: svg(ArrowLeft, 15), download: svg(Download, 15), globe: svg(Globe, 14), diff: svg(FileDiff, 14),
+          branch: svg(GitBranch, 14), wrap: svg(WrapText, 15),
+        },
       },
+    };
     };
     for (const [group, config] of Object.entries(configs)) {
       this.emitFile({ type: 'asset', fileName: `${group}-config.json`, source: JSON.stringify(config) });
