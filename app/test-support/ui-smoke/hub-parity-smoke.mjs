@@ -118,6 +118,8 @@ try {
       dropMessageResponse = true;
       await message.press('Enter');
       await page.getByText('Message not confirmed', { exact: true }).waitFor();
+      await page.reload();
+      await page.getByText('Message not confirmed', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Retry message', exact: true }).first().click();
       await page.locator('.human-bubble').getByText(text, { exact: true }).waitFor();
       await page.waitForFunction(() => document.querySelector('textarea[placeholder="Message general"]')?.value === '');
@@ -140,8 +142,18 @@ try {
       await invite.getByRole('button', { name: 'Create invitation' }).click();
       await page.getByRole('heading', { name: 'Invitation ready' }).waitFor();
       await page.getByLabel('Private invitation link', { exact: true }).waitFor();
+      await page.goto('https://' + central + '/');
+      await page.getByRole('button', { name: 'Create project', exact: true }).click();
+      const create = page.getByRole('dialog', { name: 'Create project' });
+      await create.getByLabel('Project name', { exact: true }).fill('New project ' + client);
+      await create.getByLabel('Project address', { exact: true }).fill('pilot-' + client);
+      await create.getByRole('button', { name: 'Create project', exact: true }).click();
+      await page.waitForURL(url => url.hostname === 'pilot-' + client + '.' + domain);
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await page.getByRole('button', { name: 'Continue', exact: true }).click();
+      await page.getByRole('heading', { name: 'New project ' + client, exact: true }).waitFor();
       assert.equal(errors.length, 0, errors.join('\n'));
-      console.log(client + ': HTTPS handoff, durable draft, exact replay after response loss, room SSE, invitation form, dark/light');
+      console.log(client + ': HTTPS handoff, durable draft, exact replay after response loss, room SSE, invitation and project creation, dark/light');
     } finally {
       await context.close();
     }
