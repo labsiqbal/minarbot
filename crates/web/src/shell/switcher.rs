@@ -134,7 +134,7 @@ fn items(data: &Data, icons: &Icons, threads: Vec<Thread>) -> Vec<Item> {
         }
     }
     let thread_link = |agent: &str, id: &str, name: String, detail: String| {
-        let path = chat(format!("/agents/{agent}/conversations/{id}"));
+        let path = format!("/agents/{agent}/conversations/{id}");
         Item::link(name, "Conversations", detail, icons.message.clone(), path)
     };
     if let Some(Ok(projects)) = data.projects.get() {

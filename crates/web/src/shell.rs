@@ -554,11 +554,10 @@ pub(crate) fn WorkspaceShell(
                     let has_sections = project.sections.iter().any(|section| matching(&section));
                     let sections = project.sections.iter().filter(matching).map(|section| {
                         let path = format!("/rooms/{}", section.id);
-                        let current = base_path.with_value(|base| base == &path);
-                        let href = if conversation_navigation { format!("{path}?ui=leptos") } else { path };
+                        let current = route_path() == path;
                         let unread = section.activity > section.read_position;
-                        view! { <div class="project-navigation__section">
-                            <a class="project-navigation__room" class:is-selected=current href=href aria-current=current.then_some("page")
+                        view! { <div class="project-navigation__section" class:is-selected=current>
+                            <a class="project-navigation__room" class:is-selected=current href=path aria-current=current.then_some("page")
                                 aria-label=format!("# {} in {}{}", section.name, project.name, if unread { " - Unread" } else { "" })>
                                 <span class="appearance-icon" inner_html=section_icon.get_value()></span><span>{section.name.clone()}</span>
                                 {unread.then(|| view! { <span class="project-navigation__unread" role="img" aria-label="Unread"></span> })}
