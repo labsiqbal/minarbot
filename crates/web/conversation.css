@@ -77,6 +77,7 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .computer-window .computer-actions summary > .appearance-icon { display: contents; }
 .computer-actions .task-actions { top: calc(100% + 4px); bottom: auto; }
 .composer__cta--stop svg { fill: currentColor; }
+.conversation-layout .composer__input { height: round(nearest, calc(2lh + 8px), 1px); }
 .remote-conversation .composer__input { min-height: round(up, calc(2lh + 8px), 1px); field-sizing: content; }
 .remote-conversation .composer__cta .appearance-icon[hidden] { display: none; }
 .leptos-workspace:has(.calendar-in-project, .automation-calendar-route:not([hidden]), [aria-label="Routines reporting here"]) .project-navigation__name svg { color: var(--color-text-secondary); }
