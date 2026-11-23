@@ -123,7 +123,14 @@ impl<T: Clone + PartialEq + DeserializeOwned + Send + Sync + 'static> Query<T> {
             }
             refresh(true);
         });
-        poll_with_backoff(tick, move || (!busy.get_untracked() && !running.get_untracked()).then(|| !error.with_untracked(String::is_empty)), move || refresh(false));
+        poll_with_backoff(
+            tick,
+            move || {
+                (!busy.get_untracked() && !running.get_untracked())
+                    .then(|| !error.with_untracked(String::is_empty))
+            },
+            move || refresh(false),
+        );
         query
     }
 

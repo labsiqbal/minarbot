@@ -35,9 +35,9 @@ mod routine_label;
 #[cfg(any(feature = "conversation", feature = "workflows"))]
 #[path = "automation/select.rs"]
 mod select;
+mod session;
 mod settings;
 mod settings_recovery;
-mod session;
 mod shell;
 #[path = "../../shared/skill_files.rs"]
 mod skill_files;

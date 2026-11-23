@@ -180,7 +180,11 @@ pub(super) fn section(channel: String) -> impl IntoView {
         });
     });
     reload.run(());
-    crate::connection_ui::poll_with_backoff(5000, move || Some(!error.with_untracked(String::is_empty)), move || reload.run(()));
+    crate::connection_ui::poll_with_backoff(
+        5000,
+        move || Some(!error.with_untracked(String::is_empty)),
+        move || reload.run(()),
+    );
     view! {
         <section class="activity-section" aria-label="Routines reporting here" hidden=move || error.with(String::is_empty) && rows.with(|rows| rows.as_ref().is_none_or(Vec::is_empty))>
             {move || {

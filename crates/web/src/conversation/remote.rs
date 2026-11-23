@@ -234,7 +234,9 @@ pub(super) fn page(machine: String, agent: String) -> impl IntoView {
         history.reload.run(());
     });
     let busy = RwSignal::new(false);
-    history.poll(1000, move || !busy.get_untracked() && agent.with_untracked(Option::is_some));
+    history.poll(1000, move || {
+        !busy.get_untracked() && agent.with_untracked(Option::is_some)
+    });
     let reason = Memo::new(move |_| {
         if invalid.get() {
             Some(

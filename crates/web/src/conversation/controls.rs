@@ -676,7 +676,11 @@ fn goal_chip(chat: Chat) -> impl IntoView {
         });
     };
     refresh();
-    crate::connection_ui::poll_with_backoff(1800, move || (!reading.get_untracked() && !busy.get_untracked()).then(|| failed.get_untracked()), refresh);
+    crate::connection_ui::poll_with_backoff(
+        1800,
+        move || (!reading.get_untracked() && !busy.get_untracked()).then(|| failed.get_untracked()),
+        refresh,
+    );
     view! {
         {move || result.with(|goal| {
             let target = goal["target"].as_str()?.to_owned();

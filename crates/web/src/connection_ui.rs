@@ -103,8 +103,10 @@ impl<T: Send + Sync + 'static> Query<T> {
     pub fn poll(self, milliseconds: u64, enabled: impl Fn() -> bool + 'static) {
         poll_with_backoff(
             milliseconds,
-            move || (enabled() && !self.busy.get_untracked())
-                .then(|| !self.error.with_untracked(String::is_empty)),
+            move || {
+                (enabled() && !self.busy.get_untracked())
+                    .then(|| !self.error.with_untracked(String::is_empty))
+            },
             move || self.reload.run(()),
         );
     }
@@ -694,7 +696,9 @@ struct Poll {
 }
 
 pub(crate) fn backoff(interval: u64, failures: u32) -> u64 {
-    interval.saturating_mul(1 << failures.min(5)).min(interval.max(60_000))
+    interval
+        .saturating_mul(1 << failures.min(5))
+        .min(interval.max(60_000))
 }
 
 impl Poll {
@@ -706,12 +710,16 @@ impl Poll {
 
     fn schedule(self, delay: u64, retry: bool) {
         self.clear();
-        self.retry_at.set_value(retry.then(|| js_sys::Date::now() + delay as f64));
+        self.retry_at
+            .set_value(retry.then(|| js_sys::Date::now() + delay as f64));
         if !document().hidden() {
-            self.timer.set_value(set_timeout_with_handle(
-                move || self.run(retry),
-                std::time::Duration::from_millis(delay),
-            ).ok());
+            self.timer.set_value(
+                set_timeout_with_handle(
+                    move || self.run(retry),
+                    std::time::Duration::from_millis(delay),
+                )
+                .ok(),
+            );
         }
     }
 
@@ -770,11 +778,15 @@ pub fn poll_with_backoff(
 
 pub(crate) fn on_visibility(changed: impl FnMut() + 'static) {
     let changed = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(changed);
-    let _ = document().add_event_listener_with_callback("visibilitychange", changed.as_ref().unchecked_ref());
+    let _ = document()
+        .add_event_listener_with_callback("visibilitychange", changed.as_ref().unchecked_ref());
     let changed = StoredValue::new_local(changed);
     on_cleanup(move || {
         changed.with_value(|changed| {
-            let _ = document().remove_event_listener_with_callback("visibilitychange", changed.as_ref().unchecked_ref());
+            let _ = document().remove_event_listener_with_callback(
+                "visibilitychange",
+                changed.as_ref().unchecked_ref(),
+            );
         });
     });
 }

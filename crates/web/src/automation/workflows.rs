@@ -171,7 +171,9 @@ pub(crate) fn workflows_page(active: Signal<bool>) -> impl IntoView {
             None => format!("/api/workflows?deleted={deleted}"),
         }
     });
-    query.poll(5000, move || active.get_untracked() && matches!(screen.get_untracked(), Screen::List));
+    query.poll(5000, move || {
+        active.get_untracked() && matches!(screen.get_untracked(), Screen::List)
+    });
     let refresh = Callback::new(move |_| query.reload.run(()));
     let choose = RwSignal::new(String::new());
     let (confirm, confirmation) = kit::confirmation();

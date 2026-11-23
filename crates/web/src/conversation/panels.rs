@@ -586,7 +586,11 @@ impl ComputerControl {
         let failed = RwSignal::new(false);
         let refresh = move || control.refresh(reading, failed);
         refresh();
-        crate::connection_ui::poll_with_backoff(1000, move || (!reading.get_untracked()).then(|| failed.get_untracked()), refresh);
+        crate::connection_ui::poll_with_backoff(
+            1000,
+            move || (!reading.get_untracked()).then(|| failed.get_untracked()),
+            refresh,
+        );
         control
     }
 

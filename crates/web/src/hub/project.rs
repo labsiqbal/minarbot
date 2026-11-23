@@ -215,8 +215,10 @@ pub(super) fn page(
     on_cleanup(move || changed.remove());
     crate::connection_ui::poll_with_backoff(
         3000,
-        move || (page.access.get_untracked() && !page.reading.get_untracked())
-            .then(|| page.read_failed.get_untracked()),
+        move || {
+            (page.access.get_untracked() && !page.reading.get_untracked())
+                .then(|| page.read_failed.get_untracked())
+        },
         move || page.refresh(),
     );
     Effect::new(move |_| {

@@ -255,11 +255,15 @@ pub fn panel() -> impl IntoView {
         confirmation: Confirm::new(None),
     };
     hub.reload();
-    poll_with_backoff(3000, move || (!hub.loading.get_untracked()).then(|| !hub.error.with_untracked(String::is_empty)), move || {
-        if !hub.unavailable.get_untracked() {
-            hub.reload();
-        }
-    });
+    poll_with_backoff(
+        3000,
+        move || (!hub.loading.get_untracked()).then(|| !hub.error.with_untracked(String::is_empty)),
+        move || {
+            if !hub.unavailable.get_untracked() {
+                hub.reload();
+            }
+        },
+    );
     let next_poll = RwSignal::new(0.0);
     let reload = UiAction::new(move |()| hub.reload());
     let linked = move || {

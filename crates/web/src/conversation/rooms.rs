@@ -319,7 +319,11 @@ pub(super) fn read(chat: Chat, follow: RwSignal<bool>) {
             busy.try_set(false);
         });
     };
-    crate::connection_ui::poll_with_backoff(1200, move || (!busy.get_untracked()).then(|| failed.get_untracked()), read);
+    crate::connection_ui::poll_with_backoff(
+        1200,
+        move || (!busy.get_untracked()).then(|| failed.get_untracked()),
+        read,
+    );
 }
 
 pub(super) fn stop(chat: Chat, rows: Memo<Vec<Turn>>, icon: String) -> impl IntoView {

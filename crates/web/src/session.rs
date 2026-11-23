@@ -31,7 +31,8 @@ pub(crate) fn watch_device() {
             failed.set(result.is_err());
             match result {
                 Ok(device) => {
-                    if previous.with_value(|id| id.as_ref().is_some_and(|id| *id != device.current)) {
+                    if previous.with_value(|id| id.as_ref().is_some_and(|id| *id != device.current))
+                    {
                         reload();
                     } else {
                         previous.set_value(Some(device.current));
@@ -43,5 +44,9 @@ pub(crate) fn watch_device() {
         });
     };
     refresh();
-    crate::connection_ui::poll_with_backoff(5000, move || (!busy.get_untracked()).then(|| failed.get_untracked()), refresh);
+    crate::connection_ui::poll_with_backoff(
+        5000,
+        move || (!busy.get_untracked()).then(|| failed.get_untracked()),
+        refresh,
+    );
 }

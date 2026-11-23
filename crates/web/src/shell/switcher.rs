@@ -303,7 +303,11 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
     Effect::new(move |_| {
         if opened.get() {
             fetch_threads();
-            crate::connection_ui::poll_with_backoff(30000, move || (pending.get_untracked() == 0).then(|| thread_error.get_untracked()), fetch_threads);
+            crate::connection_ui::poll_with_backoff(
+                30000,
+                move || (pending.get_untracked() == 0).then(|| thread_error.get_untracked()),
+                fetch_threads,
+            );
         }
     });
     Effect::new(move |_| {

@@ -90,7 +90,10 @@ pub(super) fn watch<T>(
     let running = RwSignal::new(false);
     crate::connection_ui::poll_with_backoff(
         5000,
-        move || (!running.get_untracked()).then(|| data.with_untracked(|data| data.as_ref().is_some_and(Result::is_err))),
+        move || {
+            (!running.get_untracked())
+                .then(|| data.with_untracked(|data| data.as_ref().is_some_and(Result::is_err)))
+        },
         move || tick.update(|n| *n = n.wrapping_add(1)),
     );
     let generation = StoredValue::new(0_u64);

@@ -224,28 +224,29 @@ pub(crate) fn page(config: Config) -> impl IntoView {
         3000,
         move || (!checking.get_untracked()).then(|| failed.get_untracked()),
         move || {
-        let Some(Ok(actor)) = session.get_untracked() else {
-            return;
-        };
-        if checking.get_untracked() {
-            return;
-        }
-        checking.set(true);
-        spawn_local(async move {
-            let result = read::<Session>(endpoint).await;
-            if checking.try_set(false).is_some() {
+            let Some(Ok(actor)) = session.get_untracked() else {
+                return;
+            };
+            if checking.get_untracked() {
                 return;
             }
-            failed.set(result.is_err());
-            let changed = match result {
-                Ok(current) => actor != current,
-                Err(failure) => failure.access_ended(),
-            };
-            if changed {
-                crate::session::reload();
-            }
-        });
-    });
+            checking.set(true);
+            spawn_local(async move {
+                let result = read::<Session>(endpoint).await;
+                if checking.try_set(false).is_some() {
+                    return;
+                }
+                failed.set(result.is_err());
+                let changed = match result {
+                    Ok(current) => actor != current,
+                    Err(failure) => failure.access_ended(),
+                };
+                if changed {
+                    crate::session::reload();
+                }
+            });
+        },
+    );
     view! {
         {move || match session.get() {
             None => view! { <main class="hub-center" role="status">"Loading Minarbot…"</main> }.into_any(),

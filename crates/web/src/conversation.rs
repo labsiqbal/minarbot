@@ -1040,7 +1040,18 @@ fn polling(
             }
         }
         set_timeout(
-            move || polling(chat, snapshots, generation, epoch, abort, dispatch_busy, dispatch_retry, failures),
+            move || {
+                polling(
+                    chat,
+                    snapshots,
+                    generation,
+                    epoch,
+                    abort,
+                    dispatch_busy,
+                    dispatch_retry,
+                    failures,
+                )
+            },
             delay,
         );
     });

@@ -31,12 +31,23 @@ fn params(query: &str, after: &str, kind: Option<&str>) -> String {
     params.to_string().as_string().unwrap_or_default()
 }
 
-fn visible_poll<T: Send + Sync + 'static>(root: NodeRef<html::Div>, query: ui::Query<T>, enabled: impl Fn() -> bool + 'static) {
-    query.poll(5000, move || enabled() && root.get_untracked().is_some_and(|root| {
-        let rect = root.get_bounding_client_rect();
-        let height = window().inner_height().ok().and_then(|h| h.as_f64()).unwrap_or_default();
-        rect.height() > 0.0 && rect.bottom() > 0.0 && rect.top() < height
-    }));
+fn visible_poll<T: Send + Sync + 'static>(
+    root: NodeRef<html::Div>,
+    query: ui::Query<T>,
+    enabled: impl Fn() -> bool + 'static,
+) {
+    query.poll(5000, move || {
+        enabled()
+            && root.get_untracked().is_some_and(|root| {
+                let rect = root.get_bounding_client_rect();
+                let height = window()
+                    .inner_height()
+                    .ok()
+                    .and_then(|h| h.as_f64())
+                    .unwrap_or_default();
+                rect.height() > 0.0 && rect.bottom() > 0.0 && rect.top() < height
+            })
+    });
 }
 
 fn retry(error: RwSignal<String>, reload: Callback<()>) -> impl IntoView {

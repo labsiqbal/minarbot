@@ -153,7 +153,11 @@ fn install_command(install: Install, token: String, target: Value) -> impl IntoV
         });
     };
     refresh();
-    crate::connection_ui::poll_with_backoff(5000, move || (!busy.get_untracked()).then(|| failed.get_untracked()), refresh);
+    crate::connection_ui::poll_with_backoff(
+        5000,
+        move || (!busy.get_untracked()).then(|| failed.get_untracked()),
+        refresh,
+    );
     let command = StoredValue::new(command);
     view! {
         <span role="status">{move || if online.get() { "Machine paired and online." } else if expired.get() { "Install command expired." } else { "Waiting for the machine to pair." }}</span>

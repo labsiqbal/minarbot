@@ -312,7 +312,9 @@ pub(crate) fn WorkspaceShell(
     let new_project = move || project_commands.create.set(true);
     let machines_reading = RwSignal::new(false);
     let refresh_machines = move || {
-        if machines_reading.get_untracked() { return; }
+        if machines_reading.get_untracked() {
+            return;
+        }
         machines_reading.set(true);
         leptos::task::spawn_local(async move {
             let next = Some(api::read("/api/machines").await);
@@ -339,8 +341,14 @@ pub(crate) fn WorkspaceShell(
         refresh_machines();
     };
     retry();
-    crate::connection_ui::poll_with_backoff(5000, move || (!machines_reading.get_untracked())
-        .then(|| machines.with_untracked(|data| data.as_ref().is_some_and(Result::is_err))), refresh_machines);
+    crate::connection_ui::poll_with_backoff(
+        5000,
+        move || {
+            (!machines_reading.get_untracked())
+                .then(|| machines.with_untracked(|data| data.as_ref().is_some_and(Result::is_err)))
+        },
+        refresh_machines,
+    );
     let agent_search = RwSignal::new(String::new());
     let project_search = RwSignal::new(String::new());
     let search = move || {

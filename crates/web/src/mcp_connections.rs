@@ -327,24 +327,34 @@ pub(crate) fn scoped_panel(
             }
         }
     });
-    poll_with_backoff(5000, move || {
-        let states = [(state.page.busy, state.page.error), (state.detail.busy, state.detail.error)];
-        (!states.iter().any(|(busy, _)| busy.get_untracked()))
-            .then(|| states.iter().any(|(_, error)| !error.with_untracked(String::is_empty)))
-    }, move || {
-        if !state.locked()
-            && !state.open.get_untracked()
-            && state.detail.data.with_untracked(|detail| {
-                detail.as_ref().is_none_or(|row| {
-                    state
-                        .tools
-                        .with_untracked(|tools| tools == &row.grant.tools)
-                })
+    poll_with_backoff(
+        5000,
+        move || {
+            let states = [
+                (state.page.busy, state.page.error),
+                (state.detail.busy, state.detail.error),
+            ];
+            (!states.iter().any(|(busy, _)| busy.get_untracked())).then(|| {
+                states
+                    .iter()
+                    .any(|(_, error)| !error.with_untracked(String::is_empty))
             })
-        {
-            state.refresh();
-        }
-    });
+        },
+        move || {
+            if !state.locked()
+                && !state.open.get_untracked()
+                && state.detail.data.with_untracked(|detail| {
+                    detail.as_ref().is_none_or(|row| {
+                        state
+                            .tools
+                            .with_untracked(|tools| tools == &row.grant.tools)
+                    })
+                })
+            {
+                state.refresh();
+            }
+        },
+    );
     let reload = UiAction::new(move |()| state.refresh());
     let retry = UiAction::new(move |()| {
         if let Some(command) = state.journal.pending.get_untracked() {

@@ -598,7 +598,11 @@ fn computer(error_icon: String, monitor: String) -> impl IntoView {
         });
     };
     refresh(false);
-    crate::connection_ui::poll_with_backoff(5000, move || (!busy.get_untracked()).then(|| !error.with_untracked(String::is_empty)), move || refresh(false));
+    crate::connection_ui::poll_with_backoff(
+        5000,
+        move || (!busy.get_untracked()).then(|| !error.with_untracked(String::is_empty)),
+        move || refresh(false),
+    );
     view! {
         <div class="first-run__computer k-stack">
             <div class="k-card" hidden=move || status.with(Option::is_none)>
