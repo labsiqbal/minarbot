@@ -8,7 +8,7 @@ import { generateKeyPairSync, randomUUID, createPublicKey } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { testDatabase } from './test-support/database.ts';
+import { markMinarbotData, testDatabase } from './test-support/database.ts';
 import { hubCommand, startRustHub } from './test-support/hosted-hub.ts';
 import { rustBinary } from './rust-binary.ts';
 import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
@@ -48,6 +48,9 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     writeFileSync(mailboxKeyPath, Buffer.alloc(32, 8), { mode: 0o600 });
     writeFileSync(tokensPath, JSON.stringify(identities), { mode: 0o600 });
     writeFileSync(signingKeyPath, signer.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+    const marker = testDatabase(dataPath);
+    markMinarbotData(marker);
+    marker.close();
     const ids = Object.fromEntries(subjects.map(subject => [subject,
         String(JSON.parse(hubCommand(binary, dir, config, 'admit', identities[subject].issuer, subject)).accountId)]));
     const { alice, bob, eve } = ids;

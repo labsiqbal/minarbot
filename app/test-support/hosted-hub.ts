@@ -16,7 +16,12 @@ export type HostedHubConfig = {
   nodeLink?: { signingKeyPath: string };
 };
 type PostInput = { requestId: string; sectionId: string; text: string; mentions: string[] };
-type Control = { now: number; post?: { projectId: string; accountId: string; input: PostInput } };
+type Principal = { nodeId: string; accountId: string; nodeGeneration: number; connectionGeneration: number };
+type Control = {
+  now: number;
+  post?: { projectId: string; accountId: string; input: PostInput };
+  withdraw_node?: { principal: Principal; input: { projectId: string; participationId: string; revision: number } };
+};
 
 function hubEnvironment(dir: string, config: HostedHubConfig, port: number) {
   const file = join(dir, 'hub-config.json');
