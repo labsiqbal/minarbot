@@ -36,6 +36,36 @@ Retained Node and Rust API cases below still cover the shared contracts.
 
 ## Issue #60 turn protocol
 
+## #67 Leptos-only smoke and React-only npm tests
+
+All Playwright smoke clients run Leptos with explicit server configuration.
+React selectors and smoke environment toggles are removed. Timing checks use
+absolute p95 ceilings recorded in `app/test-support/ui-smoke/timing-budgets.mjs`
+and sourced in `app/test-support/ui-smoke/PARITY.md`.
+
+| Test file | Decision |
+| --- | --- |
+| `app/markdown.test.ts` | Port needed. Add Leptos/Rust parser assertions. |
+| `app/markdown-stream-blocks.test.ts` | Port needed. Add Rust stream-block boundary tests. |
+| `app/csp.test.ts` | Covered by Leptos appearance headers and failed-Wasm checks. |
+| `app/clipboard.test.ts` | Covered by Leptos controls browser assertions. |
+| `app/polling.test.ts` | Port needed. Add Rust stream and poll lifecycle tests. |
+| `app/attachments.test.ts` | Covered by Leptos controls/files smokes and Rust validation. |
+| `app/audio-recording.test.ts` | Port needed. Add Leptos media-permission fixture. |
+| `app/optimistic-turns.test.ts` | Covered by Leptos retry and persisted-turn assertions. |
+| `app/query-cache.test.ts` | Port needed. Add Rust/web invalidation tests. |
+| `app/right-panel-state.test.ts` | Covered by Leptos controls/files keyboard assertions. |
+| `app/run-inspector.test.ts` | Covered by Leptos files and rich smokes. |
+| `app/timeline-minimap.test.ts` | Covered by Leptos controls timeline capture. |
+| `app/presentation.test.ts` | Covered by Leptos appearance theme and storage assertions. |
+| `app/navigation.test.ts`, `app/guide.test.ts` | Covered by Leptos route and inventory tests. |
+| `app/next-frame.test.ts`, `app/needs-you-notifications.test.ts` | Port needed. Add Rust/web lifecycle tests. |
+
+`model-catalog-smoke.mjs` remains a React fixture probe outside the 16-group
+gate and needs a Leptos fixture port before React source removal. Discord
+settings now uses the Leptos settings route. Hub-link tests remain owned by
+parallel Hub work.
+
 Issue #60 runs production `minarbot-server` with stdin config, an OS-assigned IPv4 loopback port, and a private temporary SQLite and config root. Axum providers use their own loopback ports. The lifecycle test verifies startup rejection, child teardown, temporary root removal, and closure of both listeners.
 
 The pre-change run used a clean snapshot of `13bfb19a5dbb1b9bb306521e67c19148f90f82f8` and a server built from the same production source. From `app/`, the Node slot ran:
