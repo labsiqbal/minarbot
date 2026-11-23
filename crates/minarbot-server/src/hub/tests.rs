@@ -304,7 +304,10 @@ fn exact_hosts_and_immutable_project_ownership() -> Check {
         transfer.commit()?;
     }
     assert_eq!(ok(authority::member(&db, &ctx, &[]))?["role"], "admin");
-    assert_eq!(ok(authority::member(&db, &context(&alpha, &bob), &[]))?["role"], "owner");
+    assert_eq!(
+        ok(authority::member(&db, &context(&alpha, &bob), &[]))?["role"],
+        "owner"
+    );
     db.execute(
         "UPDATE projects SET status='deleted' WHERE id=?",
         [ctx.project],
