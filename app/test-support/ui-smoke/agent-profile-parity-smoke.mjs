@@ -85,7 +85,11 @@ function settingsFixture(page) {
 }
 
 async function captures(page, prefix) {
-  const shot = (name, panel) => parityShot(page, join(output, `${prefix}-${name}.png`), panel);
+  const shot = async (name, panel) => {
+    // The mouse position from opening a layer can overlap a field in the new layer.
+    await page.mouse.move(0, 0);
+    await parityShot(page, join(output, `${prefix}-${name}.png`), panel);
+  };
   await createMenu(page, 'New agent');
   const create = dialog(page, 'New agent');
   await shot('new', create);

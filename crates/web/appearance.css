@@ -156,8 +156,11 @@
   content: ""; width: 8px; height: 5px; border: solid currentColor; border-width: 0 0 2px 2px;
   transform: translateY(-1px) rotate(-45deg);
 }
-.leptos-workspace .memory-toolbar .connection-select > select { field-sizing: content; width: auto; }
+.leptos-workspace .memory-toolbar .connection-select > select { field-sizing: content; width: auto; padding-inline-end: 33px; }
+.leptos-workspace .system-dialog .memory-toolbar .connection-select > .k-select__chev { right: 12px; }
 .memory-toolbar .connection-select > .k-select__chev svg { width: 14px; height: 14px; }
+.leptos-workspace [aria-labelledby="history-summary-title"] .k-collapsible__chev { display: inline-flex; }
+.leptos-workspace [aria-labelledby="history-summary-title"] .k-collapsible__chev svg { width: 15px; height: 15px; }
 .memory-view .system-menu { inset: auto; margin: 0; }
 .memory-view .system-menu > button { width: 100%; }
 .memory-view .system-menu > button:focus-visible { background: var(--color-bg-hover); }

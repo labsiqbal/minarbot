@@ -142,12 +142,15 @@ try {
       assert(await region.evaluate(el => el.scrollWidth <= el.clientWidth + 1), `${name} overflow`);
       const key = `${name}-${theme}-${size}`;
       const file = join(output, `${client}-${key}.png`);
+      // Launch controls can leave the pointer over different rows in the opened panel.
+      await page.mouse.move(0, 0);
       await parityShot(page, file, region);
       images.set(key, { ...images.get(key), [client]: file });
     }
     try {
       await go(page, client, main);
-      const parent = await profile(page, client);
+      // Open from conversation details in both clients so the same layers are visible.
+      const parent = await profile(page, client, false);
       const memory = await openMemory(page, parent);
       assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
       await capture('agent-notes', memory);
@@ -167,7 +170,7 @@ try {
       const history = await openSummary(page, parent);
       await capture('profile-summary', history);
       await button(history, 'Next sources').click();
-      await page.waitForFunction(el => document.activeElement === el, await role(history, 'heading', 'Source list').elementHandle());
+      await role(history, 'heading', 'Source list').and(page.locator(':focus')).waitFor();
       assert.equal(await history.locator('.k-row').count(), 1);
       await button(history, 'Previous sources').click();
       await page.keyboard.press('Escape');
