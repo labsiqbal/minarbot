@@ -1,5 +1,12 @@
 # Test migration ledger
 
+## #67 hosted Hub test migration
+
+| Case | Rust interface and matched assertions |
+| --- | --- |
+| `app/schema.test.ts` - fresh Hub startup | `minarbot-server --hub` creates a disposable database. Its complete schema, data marker, user version and migration ledger match the frozen `85373b3` snapshot with the Rust Hub extensions applied. |
+| `app/release-runtime-imports.test.ts` - staged runtime | Staging excludes server-side JavaScript and the retired npm shims. Direct native `skills list` and `restore` calls retain the previous result and diagnostic assertions. |
+
 ## #67 UI coverage ledger
 
 The route ownership ledger lists each public surface and its default document.

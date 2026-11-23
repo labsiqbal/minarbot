@@ -1,11 +1,11 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ProtocolError } from '../shared/protocol.ts';
 
-type Config = {
+export type HostedHubConfig = {
   domain: string;
   accountsHost: string;
   dataPath: string;
@@ -18,12 +18,22 @@ type Config = {
 type PostInput = { requestId: string; sectionId: string; text: string; mentions: string[] };
 type Control = { now: number; post?: { projectId: string; accountId: string; input: PostInput } };
 
-export async function startRustHub(binary: string, dir: string, config: Config, port = 0, testFixture = false) {
-  if (existsSync(config.dataPath)) chmodSync(config.dataPath, 0o600);
+function hubEnvironment(dir: string, config: HostedHubConfig, port: number) {
   const file = join(dir, 'hub-config.json');
   writeFileSync(file, JSON.stringify({ ...config, port }), { mode: 0o600 });
+  return { ...process.env, MINARBOT_HUB_CONFIG: file };
+}
+
+export function hubCommand(binary: string, dir: string, config: HostedHubConfig, ...args: string[]) {
+  return execFileSync(binary, ['--hub', ...args], {
+    env: hubEnvironment(dir, config, 0), encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+export async function startRustHub(binary: string, dir: string, config: HostedHubConfig, port = 0, testFixture = false) {
+  if (existsSync(config.dataPath)) chmodSync(config.dataPath, 0o600);
   const child = spawn(binary, testFixture ? ['--hub', 'test-fixture'] : ['--hub'], {
-    env: { ...process.env, MINARBOT_HUB_CONFIG: file, ...(testFixture ? { MINARBOT_TEST_SERVER: 'rust' } : {}) },
+    env: { ...hubEnvironment(dir, config, port), ...(testFixture ? { MINARBOT_TEST_SERVER: 'rust' } : {}) },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const closed = once(child, 'close');
