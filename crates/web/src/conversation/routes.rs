@@ -507,8 +507,12 @@ pub(crate) fn workflow_step(agent: String, thread: String) -> impl IntoView {
                 return;
             }
             match load(route).await {
-                Ok(value) => { config.try_set(Some(value)); }
-                Err(reason) => { error.try_set(reason.message); }
+                Ok(value) => {
+                    config.try_set(Some(value));
+                }
+                Err(reason) => {
+                    error.try_set(reason.message);
+                }
             }
         });
     });

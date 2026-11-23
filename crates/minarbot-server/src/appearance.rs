@@ -18,7 +18,8 @@ pub fn conversation_route(path: &str, query: &str) -> bool {
         return true;
     }
     if crate::navigation(path)
-        && (path.starts_with("/machines/") || path.starts_with("/agents/") && path.ends_with("/inbox"))
+        && (path.starts_with("/machines/")
+            || path.starts_with("/agents/") && path.ends_with("/inbox"))
     {
         return !form_urlencoded::parse(query.as_bytes())
             .any(|(key, _)| matches!(key.as_ref(), "computer" | "result"));

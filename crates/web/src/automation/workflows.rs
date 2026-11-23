@@ -288,15 +288,22 @@ pub(crate) fn workflows_page() -> impl IntoView {
 }
 
 fn agent_scope() -> Option<(String, String)> {
-    let params = web_sys::UrlSearchParams::new_with_str(&window().location().search().ok()?).ok()?;
+    let params =
+        web_sys::UrlSearchParams::new_with_str(&window().location().search().ok()?).ok()?;
     let owner = params.get("agent")?.to_ascii_lowercase();
     if !valid_id(&owner) {
         return None;
     }
     let base = format!("/agents/{owner}");
-    let back = params.get("from").filter(|path| {
-        path == &base || path.strip_prefix(&format!("{base}/conversations/")).is_some_and(valid_id)
-    }).unwrap_or(base);
+    let back = params
+        .get("from")
+        .filter(|path| {
+            path == &base
+                || path
+                    .strip_prefix(&format!("{base}/conversations/"))
+                    .is_some_and(valid_id)
+        })
+        .unwrap_or(base);
     Some((owner, format!("{back}?ui=leptos")))
 }
 

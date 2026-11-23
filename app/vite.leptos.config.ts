@@ -63,6 +63,7 @@ const appearanceConfig: Plugin = {
       folder: svg(Folder), next: svg(ChevronRight, 14), alert: svg(CircleAlert, 14),
       back: svg(ArrowLeft, 15), download: svg(Download, 15), globe: svg(Globe, 14), diff: svg(FileDiff, 14),
       branch: svg(GitBranch, 14), wrap: svg(WrapText, 15),
+      book: svg(BookOpen, 15), summary: svg(ListRestart, 15),
     };
     const configs = {
       appearance: {
@@ -90,19 +91,7 @@ const appearanceConfig: Plugin = {
         systemIcons,
         connectionIcons: iconMap({ ...connectionIcons, clock: Clock, workflow: Workflow, schedule: CalendarClock,
           calendar: CalendarDays, slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot }),
-        conversationIcons: {
-          attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
-          chevron: svg(ChevronDown, 14), panel: svg(PanelRight), search: svg(Search, 15),
-          copy: svg(Copy, 14), fork: svg(GitFork, 14),
-          inspect: svg(Wrench, 14), close: svg(X),
-          chats: svg(MessageSquare, 14), files: svg(Files, 14), file: svg(FileText, 16), filter: svg(Filter, 15),
-          settings: svg(Settings, 16), computer: svg(Monitor, 14), members: svg(Users, 14),
-          shield: svg(ShieldCheck, 18), more: svg(Ellipsis, 16), external: svg(ExternalLink, 14),
-          folder: svg(Folder), next: svg(ChevronRight, 14), alert: svg(CircleAlert, 14),
-          book: svg(BookOpen, 15), summary: svg(ListRestart, 15),
-          back: svg(ArrowLeft, 15), download: svg(Download, 15), globe: svg(Globe, 14), diff: svg(FileDiff, 14),
-          branch: svg(GitBranch, 14), wrap: svg(WrapText, 15),
-        },
+        conversationIcons,
       },
     };
     for (const [group, config] of Object.entries(configs)) {

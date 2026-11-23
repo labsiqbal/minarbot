@@ -48,7 +48,9 @@ the same bundle. Setup and Settings use `appearance`. Guide uses the
 pilots use that bundle with `?ui=leptos`, including Memory, History summary,
 Files, Changes, workspace browsing, result links, and Computer. Standalone
 Computer uses the same bundle when Leptos is enabled and supports `ui=react` for
-rollback. The workspace shell
+rollback. Agent email inbox at `/agents/:id/inbox` and paired-machine agent
+detail at `/machines/:id/agents/:id` use the conversation bundle on ordinary URLs
+when Leptos is enabled. The workspace shell
 mounts agent creation, profile editing, and template dialogs. Agent creation and
 import open the conversation bundle through the pilot selector. Settings return
 links and browser history retain the selected route. Advanced profile mounts
@@ -74,9 +76,11 @@ issue.
 | Canonical hub | Clerk sign-in/session handoff, project directory and creation, invitation acceptance, account/machine enrollment, join agent, project members/roles/invitations, participating agents/policies/consent, sections and room chat. | `hub/main.tsx`, `hub/HubApp.tsx`, `hub/client.ts` |
 | Fallback and retirement | Workspace loading/error/404, then the full React workspace, setup, Settings, Project and Automation when explicitly selected or when a Leptos document is unavailable. Keep rollback available for the staged releases. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `FirstRun.tsx`, `settings-groups.ts`, `lazyPanels.tsx`, `Projects.tsx`, `AutomationCalendar.tsx`, `AutomationCalendarDialog.tsx`, `RoutineSchedule.tsx`, `RoutineTemplates.tsx`, `WorkflowDirectory.tsx` |
 
-Workflow step conversations open the existing conversation route. Browser Back
-restores the run and focuses the step link. The embedded step conversation in
-React's workflow panel remains listed under Agent management.
+Conversation details show upcoming agent and section routines. Inbound reports
+link to the full run. The Workflows menu opens the agent's library in the
+workflows bundle. It reuses the shared editor, graph, versions, schedule,
+webhook and run inspector. Back from an inline step restores focus to the step
+button. Global workflow step links open the conversation route.
 
 ## Verify
 
@@ -107,6 +111,8 @@ validator in a separate asset when the run inspector needs it.
 ```sh
 node --experimental-strip-types test-support/ui-smoke/automation-parity-smoke.mjs /tmp/minarbot-automation-parity
 MINARBOT_SMOKE_UI=leptos node --experimental-strip-types test-support/ui-smoke/automation-calendar-smoke.mjs /tmp/minarbot-calendar-leptos
+MINARBOT_CONVERSATION_AUTOMATION_BENCH=20 node --experimental-strip-types test-support/ui-smoke/conversation-automation-parity-smoke.mjs /tmp/minarbot-conversation-automation
+MINARBOT_SMOKE_UI=leptos node --experimental-strip-types test-support/ui-smoke/agent-email-smoke.mjs
 ```
 
 Set `MINARBOT_AUTOMATION_COLD_BENCH=20` to record cold readiness for all three

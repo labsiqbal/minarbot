@@ -129,11 +129,11 @@ async function exercise(client) {
     }
     assert.fail(`Timeout waiting for ${path}`);
   }
-  async function workflowMenu() {
-    await page.locator('.chat__pill').press('Enter');
-    await page.getByRole('navigation', { name: /^Menu / }).getByText('Workflows', { exact: true })
-      .or(page.getByRole('menu', { name: /^Menu / }).getByText('Workflows', { exact: true })).click();
-    await heading('Workflow library').waitFor();
+  async function workflowMenu(tab = page) {
+    await tab.locator('.chat__pill').press('Enter');
+    await tab.getByRole('navigation', { name: /^Menu / }).getByText('Workflows', { exact: true })
+      .or(tab.getByRole('menu', { name: /^Menu / }).getByText('Workflows', { exact: true })).click();
+    await tab.getByRole('heading', { name: 'Workflow library', exact: true }).waitFor();
   }
   const reveal = async () => {
     const trigger = button('Show details');
@@ -297,6 +297,23 @@ async function exercise(client) {
       }
       timings[name] = { cold: stats(cold), warm: stats(warm) };
     }
+    const workflowCold = [], workflowWarm = [];
+    for (let run = 0; run < samples; run++) {
+      const bench = await context();
+      const tab = await bench.newPage();
+      try {
+        await open(pilot(chat), tab);
+        for (const result of [workflowCold, workflowWarm]) {
+          const began = performance.now();
+          await workflowMenu(tab);
+          await tab.getByText(wfName, { exact: true }).waitFor();
+          result.push(performance.now() - began);
+          await linkOrButton('Back', tab).click();
+          await tab.locator('.chat__pill').waitFor();
+        }
+      } finally { await bench.close(); }
+    }
+    timings.workflow = { cold: stats(workflowCold), warm: stats(workflowWarm) };
     return { captureNames, timings, consoleErrors: errors.length, cspErrors: 0 };
   } catch (error) {
     await page.screenshot({ path: join(output, `${client}-failure.png`), animations: 'disabled',
