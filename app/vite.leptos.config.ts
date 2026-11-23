@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Pencil, Plug, Plus, Receipt, RefreshCw, RotateCcw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Trash2, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
-import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, Siren, WrapText } from 'lucide-react';
+import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, Redo2, Siren, Undo2, WrapText } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -85,14 +85,14 @@ const appearanceConfig: Plugin = {
         errorIcon: svg(CircleAlert),
         systemIcons,
         conversationIcons,
-        connectionIcons: iconMap({ ...connectionIcons, workflow: Workflow, calendar: CalendarDays,
+        connectionIcons: iconMap({ ...connectionIcons, workflow: Workflow, calendar: CalendarDays, undo: Undo2, redo: Redo2,
           slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot, schedule: CalendarClock }),
       },
       conversation: {
         ...shell,
         systemIcons,
         connectionIcons: iconMap({ ...connectionIcons, clock: Clock, workflow: Workflow, schedule: CalendarClock,
-          calendar: CalendarDays, slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot }),
+          undo: Undo2, redo: Redo2 }),
         conversationIcons,
       },
     };
@@ -108,6 +108,7 @@ export default defineConfig(mergeConfig(app, {
   resolve: { alias: {
     'minarbot-conversation-adapter': conversation,
     'minarbot-workflow-markdown': fileURLToPath(new URL('./src/workflow-markdown.ts', import.meta.url)),
+    'minarbot-workflows-css': fileURLToPath(new URL('../crates/web/workflow-content.css', import.meta.url)),
   } },
   plugins: [appearanceConfig],
   build: {

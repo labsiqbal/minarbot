@@ -29,10 +29,12 @@ use wasm_bindgen::{closure::Closure, prelude::wasm_bindgen, JsCast};
 use web_sys::{EventSource, MessageEvent, Storage};
 
 pub(crate) use panels::computer_window;
-#[cfg(feature = "workflows")]
 pub(crate) use routes::workflow_step;
 pub use routes::{standalone, Agent, Thread};
 pub(crate) use routes::{Navigation, ProjectConversation};
+
+#[derive(Clone, Copy)]
+struct EmbeddedStep;
 
 fn date_at(milliseconds: i64) -> js_sys::Date {
     js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(milliseconds as f64))
@@ -474,7 +476,11 @@ impl Chat {
             .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
             .filter(|files| files.len() <= MAX_FILES && files.iter().all(|id| protocol::id(id)))
             .unwrap_or_default();
-        let result = results::current().ok().flatten();
+        let result = if use_context::<EmbeddedStep>().is_some() {
+            None
+        } else {
+            results::current().ok().flatten()
+        };
         let stored_tab = window()
             .local_storage()
             .ok()

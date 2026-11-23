@@ -14,6 +14,8 @@ mod email;
 mod engines;
 mod general;
 mod hub_connection;
+#[cfg(any(feature = "conversation", feature = "workflows"))]
+mod lazy_route;
 mod mcp_connections;
 mod memory;
 mod messaging_connections;
@@ -126,7 +128,6 @@ pub fn mount_workflows() -> Result<(), JsValue> {
     struct Config {
         colors: Vec<appearance::ColorTheme>,
         workspace_icons: shell::Icons,
-        conversation_icons: conversation::Icons,
         connection_icons: connection_ui::Icons,
         system_icons: system::kit::Icons,
         error_icon: String,
@@ -141,7 +142,6 @@ pub fn mount_workflows() -> Result<(), JsValue> {
         .ok_or_else(|| JsValue::from_str("Unknown automation route"))?;
     mount_to(root, move || {
         let colors = StoredValue::new(config.colors);
-        provide_context(config.conversation_icons);
         provide_context(config.connection_icons);
         provide_context(config.system_icons);
         if route.is_automation() {
@@ -157,6 +157,73 @@ pub fn mount_workflows() -> Result<(), JsValue> {
     })
     .forget();
     Ok(())
+}
+
+#[cfg(any(feature = "conversation", feature = "workflows"))]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RouteIcons {
+    connection_icons: connection_ui::Icons,
+    system_icons: system::kit::Icons,
+}
+
+#[cfg(any(feature = "conversation", feature = "workflows"))]
+fn route_config<T: serde::de::DeserializeOwned>() -> Result<T, JsValue> {
+    document()
+        .get_element_by_id("appearance-config")
+        .and_then(|element| element.text_content())
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .ok_or_else(|| JsValue::from_str("Route configuration is invalid"))
+}
+
+#[cfg(feature = "workflows")]
+#[wasm_bindgen]
+pub fn mount_scoped_workflows(root: HtmlElement, path: &str) -> Result<JsValue, JsValue> {
+    let (owner, back) = lazy_route::workflow_scope(path)
+        .ok_or_else(|| JsValue::from_str("Unknown workflow owner"))?;
+    let config: RouteIcons = route_config()?;
+    let mount = mount_to(root, move || {
+        provide_context(config.connection_icons);
+        provide_context(config.system_icons);
+        let directory = RwSignal::new(None::<Result<shell::Directory, String>>);
+        provide_context(directory.read_only());
+        leptos::task::spawn_local(async move {
+            directory.try_set(Some(api::read("/api/agents").await));
+        });
+        automation::agent_library(owner, back)
+    });
+    Ok(wasm_bindgen::closure::Closure::once_into_js(move || {
+        drop(mount)
+    }))
+}
+
+#[cfg(feature = "conversation")]
+#[wasm_bindgen]
+pub fn mount_workflow_step(
+    root: HtmlElement,
+    agent: String,
+    thread: String,
+) -> Result<JsValue, JsValue> {
+    if !workspace_route::valid_id(&agent) || !workspace_route::valid_id(&thread) {
+        return Err(JsValue::from_str("Unknown step conversation"));
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Config {
+        conversation_icons: conversation::Icons,
+        #[serde(flatten)]
+        icons: RouteIcons,
+    }
+    let config: Config = route_config()?;
+    let mount = mount_to(root, move || {
+        provide_context(config.conversation_icons);
+        provide_context(config.icons.connection_icons);
+        provide_context(config.icons.system_icons);
+        conversation::workflow_step(agent, thread)
+    });
+    Ok(wasm_bindgen::closure::Closure::once_into_js(move || {
+        drop(mount)
+    }))
 }
 
 #[cfg(all(feature = "conversation", not(feature = "workflows")))]

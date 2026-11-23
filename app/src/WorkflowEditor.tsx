@@ -122,7 +122,7 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
       setError(''); await submit({ name: name.trim(), graph: validated, revision: saved?.revision ?? initial?.revision ?? 0 });
     } catch (error) { setError(error instanceof Error ? error.message : 'Workflow has not been saved.'); }
   }
-  return <div className="k-page bs-root">
+  return <div className="k-page bs-root workflow-page">
     <PageHeader headingRef={heading} title={initial ? 'Edit workflow' : 'New workflow'} description="Arrange steps and their next destinations. Approvals wait for your decision. Saved changes apply only to new runs." actions={<><Button variant="ghost" onClick={async () => { if (!dirty || await confirm({ title: 'Leave editor?', description: 'There are unsaved changes. Leave the editor?', confirm: 'Leave', danger: true })) onBack(); }}>Back</Button><Button type="submit" form="workflow-editor" variant="primary" disabled={locked}>Save workflow</Button></>} />
     {recovery.held && !pendingSave && <Alert tone="warn">The request has completed. Review the local draft before continuing to edit. <Button type="button" disabled={parentLocked} onClick={() => {
       try {

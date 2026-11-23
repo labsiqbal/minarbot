@@ -124,7 +124,8 @@ enum Screen {
 }
 
 pub(crate) fn workflows_page() -> impl IntoView {
-    if let Some((owner, back)) = agent_scope() {
+    let search = window().location().search().unwrap_or_default();
+    if let Some((owner, back)) = crate::lazy_route::workflow_scope(&format!("/workflows{search}")) {
         return agent_library(owner, back).into_any();
     }
     let screen = RwSignal::new(Screen::List);
@@ -287,27 +288,7 @@ pub(crate) fn workflows_page() -> impl IntoView {
     }).into_any()
 }
 
-fn agent_scope() -> Option<(String, String)> {
-    let params =
-        web_sys::UrlSearchParams::new_with_str(&window().location().search().ok()?).ok()?;
-    let owner = params.get("agent")?.to_ascii_lowercase();
-    if !valid_id(&owner) {
-        return None;
-    }
-    let base = format!("/agents/{owner}");
-    let back = params
-        .get("from")
-        .filter(|path| {
-            path == &base
-                || path
-                    .strip_prefix(&format!("{base}/conversations/"))
-                    .is_some_and(valid_id)
-        })
-        .unwrap_or(base);
-    Some((owner, format!("{back}?ui=leptos")))
-}
-
-fn agent_library(owner: String, back: String) -> impl IntoView {
+pub(crate) fn agent_library(owner: String, back: String) -> impl IntoView {
     let recovery = journal(&owner);
     let initial = recovery.pending.with_untracked(|pending| {
         pending
@@ -376,9 +357,9 @@ fn agent_library(owner: String, back: String) -> impl IntoView {
             Screen::Detail(workflow) => view! { <Detail initial=workflow back=library editor=edit confirm inline=true /> }.into_any(),
             _ => {
                 let href = back.clone();
-                view! { <div class="k-page bs-root">
+                view! { <div class="k-page bs-root workflow-page">
                     <PageHead title="Workflows" actions=kit::content(move || view! {
-                        <a class="k-btn k-btn--md k-btn--ghost" href=href>"Back"</a>
+                        <a class="k-btn k-btn--md k-btn--ghost" data-scoped-workflow-back="" href=href>"Back"</a>
                         <button type="button" class="k-icon-btn" aria-label="Reload workflow" on:click=move |_| refresh.run(())>{kit::icon(kit::icons().refresh)}</button>
                         <kit::Button label=kit::text("Create workflow") variant="primary" disabled=Signal::derive(move || recovery.locked())
                             on_click=move || edit.run(Value::Null) />
@@ -847,8 +828,8 @@ fn Editor(
     let loop_nodes = Memo::new(move |_| graph.with(graph::cycles));
     let channels = ui::query::<Value>(|| "/api/channels".into());
     view! {
-        <div class="k-page bs-root">
-            <PageHead title=if new {"New workflow"} else {"Edit workflow"} description="Arrange steps and their next destinations. Approvals wait for your decision."
+        <div class="k-page bs-root workflow-page">
+            <PageHead title=if new {"New workflow"} else {"Edit workflow"} description="Arrange steps and their next destinations. Approvals wait for your decision. Saved changes apply only to new runs."
                 actions=kit::content(move || view! {
                     <kit::Button label=kit::text("Back") variant="ghost" on_click=leave />
                     <button type="submit" class="k-btn k-btn--md k-btn--primary" form="workflow-editor" disabled=action_state>"Save workflow"</button>
@@ -891,21 +872,29 @@ fn Editor(
                             prop:value=move || graph.with(|graph| text(&graph["trigger"]["channel"]).to_owned())
                             on:input=move |event| edit_graph(history,|graph| graph["trigger"]["channel"]=json!(event_target_value(&event))) /></kit::Field>
                     </Show>
-                    <kit::Field id="workflow-entry" label="Starting step"><Select name="workflow-entry"
-                        value=Signal::derive(move || graph.with(|graph| text(&graph["entry"]).to_owned())) options=targets
-                        change=Callback::new(move |value| edit_graph(history,|graph| graph["entry"]=json!(value))) /></kit::Field>
+                    <kit::Field id="workflow-entry" label="Starting step">
+                        <select id="workflow-entry" class="k-input" required
+                            on:change=move |event| edit_graph(history,|graph| graph["entry"]=json!(event_target_value(&event)))>
+                            {move || targets.get().into_iter().map(|(id, name)| {
+                                let entry = id.clone();
+                                view! { <option value=id prop:selected=move || graph.with(|graph| graph["entry"]==entry)>{name}</option> }
+                            }).collect_view()}
+                        </select>
+                    </kit::Field>
                     <kit::Field id="workflow-limit" label="Step limit"><input id="workflow-limit" class="k-input" type="number" min="1" max="1000" required
+                        aria-describedby="workflow-limit-hint"
                         prop:value=move || graph.with(|graph| number(&graph["maxSteps"]).to_string())
-                        on:input=move |event| edit_graph(history,|graph| graph["maxSteps"]=json!(event_target_value(&event).parse::<i64>().unwrap_or_default())) /></kit::Field>
+                        on:input=move |event| edit_graph(history,|graph| graph["maxSteps"]=json!(event_target_value(&event).parse::<i64>().unwrap_or_default())) />
+                        <div id="workflow-limit-hint" class="k-field__hint">"Loops stop with a failed status when this limit is reached."</div>
+                    </kit::Field>
                     <div class="k-inline">
-                        <kit::Button label=kit::text("Undo graph") disabled=Signal::derive(move || history.with(|history| history.past.is_empty())) on_click=move || undo(false) />
-                        <kit::Button label=kit::text("Redo graph") disabled=Signal::derive(move || history.with(|history| history.future.is_empty())) on_click=move || undo(true) />
+                        <button type="button" class="k-btn k-btn--md k-btn--secondary" disabled=move || history.with(|history| history.past.is_empty())
+                            on:click=move |_| undo(false)><ui::Icon name="undo" />"Undo graph"</button>
+                        <button type="button" class="k-btn k-btn--md k-btn--secondary" disabled=move || history.with(|history| history.future.is_empty())
+                            on:click=move |_| undo(true)><ui::Icon name="redo" />"Redo graph"</button>
                         <button type="button" class="k-btn k-btn--md k-btn--secondary" disabled=move || graph.with(|graph| graph.get("positions").is_none()) on:click=rearrange>"Auto-arrange"</button>
-                        <kit::Button label=kit::text("Import graph") on_click=move || import.set(true) />
-                        <kit::Button label=kit::text("Export graph") on_click=move || {
-                            if let Err(message)=save_file("minarbot-workflow.json",&graph.get_untracked()) { error.set(message); }
-                        } />
                     </div>
+                    <p class="k-field__hint">"Choose a step in the graph to open its settings. Undo and redo apply to graph changes, not the workflow name."</p>
                     <Show when=move || !loop_nodes.with(|nodes| nodes.is_empty())>
                         <kit::Alert tone="warn">{move || format!("Unconditional loop: {}. The loop stops at the step limit.",loop_nodes.with(|nodes| nodes.iter().cloned().collect::<Vec<_>>().join(", ")))}</kit::Alert>
                     </Show>
@@ -927,6 +916,10 @@ fn Editor(
                                     nodes.push(json!({"id":format!("step{number}"),"kind":"output"}));
                                 }
                             }) />
+                        <kit::Button label=kit::text("Import graph") on_click=move || import.set(true) />
+                        <kit::Button label=kit::text("Export graph") on_click=move || {
+                            if let Err(message)=save_file("minarbot-workflow.json",&graph.get_untracked()) { error.set(message); }
+                        } />
                     </div>
                 </fieldset>
             </form>
@@ -1405,7 +1398,7 @@ fn Detail(
         provide_context(InlineStep(step));
     }
     view! {
-        <div class="k-page bs-root workflow-library" hidden=move || step.with(Option::is_some)>
+        <div class="k-page bs-root workflow-library workflow-page" hidden=move || step.with(Option::is_some)>
             <header class="k-page-head"><div class="k-page-head__text"><h1 node_ref=heading tabindex="-1">{move || workflow.with(|workflow| text(&workflow["name"]).to_owned())}</h1></div>
                 <div class="k-page-head__actions">
                     <kit::Button label=kit::text("Back") variant="ghost" on_click=move || back.run(()) />
@@ -1466,13 +1459,15 @@ fn Detail(
             back.on_load(|back| { let _ = back.focus(); });
             view! {
                 <div class="workflow-step-conversation">
-                    <div class="k-page bs-root"><PageHead title=current.title description=current.description actions=kit::content(move || view! {
+                    <div class="k-page bs-root workflow-page"><PageHead title=current.title description=current.description actions=kit::content(move || view! {
                         <button type="button" node_ref=back class="k-btn k-btn--md k-btn--ghost" on:click=move |_| {
                             step.set(None);
                             request_animation_frame(move || focus_node("data-workflow-step", &current.sequence.to_string()));
                         }>{back_label}</button>
                     }) /></div>
-                    {crate::conversation::workflow_step(current.agent, current.thread)}
+                    <div class="workflow-step-chat">
+                        {crate::lazy_route::outlet("step", "step conversation", current.agent, current.thread, None)}
+                    </div>
                 </div>
             }
         })}
@@ -1541,7 +1536,7 @@ fn WorkflowSchedule(
         <kit::Section title="Workflow schedule" actions=kit::content(move || view! {
             <button type="button" class="k-icon-btn" aria-label="Reload schedule" disabled=move || journal.locked() on:click=move |_| reload()>{kit::icon(kit::icons().refresh)}</button>
         })>
-            <kit::Alert>"Schedules use this device time. Missed occurrences combine into one run. Active workflows skip the next occurrence."</kit::Alert>
+            <kit::Alert>"Schedules use this device time. Missed occurrences are combined into one run; if the workflow is still active, the occurrence is skipped."</kit::Alert>
             <ReadError query label="Reload schedule" />
             {move || match query.data.get() {
                 Some(state) => {
@@ -1569,7 +1564,10 @@ fn WorkflowSchedule(
                     view! {
                         <form class="k-fieldset" on:submit=save>
                             {field("Workflow start time",view! { <input class="k-input" name="nextAt" type="datetime-local" step="1" required readonly=locked value=initial /> })}
-                            {field("Repeat workflow every (minutes)",view! { <input class="k-input" name="interval" type="number" min="1" max="525600" readonly=locked value=interval /> })}
+                            {field("Repeat workflow every (minutes)",view! {
+                                <input class="k-input" name="interval" type="number" min="1" max="525600" readonly=locked value=interval aria-describedby="workflow-interval-hint" />
+                                <div id="workflow-interval-hint" class="k-field__hint">"Leave empty to run once."</div>
+                            })}
                             {field("Scheduled input",view! { <textarea class="k-input k-textarea" name="input" maxlength="16000" readonly=locked>{input}</textarea> })}
                             <label class="k-check"><input name="enabled" type="checkbox" checked=enabled disabled=locked />"Workflow schedule active"</label>
                             <Show when=move || conflict.get()><kit::Alert tone="warn">"Schedule has changed. Reload before saving again."</kit::Alert></Show>

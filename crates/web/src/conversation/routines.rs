@@ -45,11 +45,13 @@ fn when(at: i64, compact: bool) -> impl IntoView {
         ("hour", "2-digit"),
         ("minute", "2-digit"),
     ];
-    let text = date_format(
-        &date,
-        &js_sys::Array::of1(&"en-US".into()),
-        if compact { &fields } else { &[] },
-    );
+    let text = if compact {
+        date_format(&date, &js_sys::Array::of1(&"en-US".into()), &fields)
+    } else {
+        date.to_locale_string("en-US", &wasm_bindgen::JsValue::UNDEFINED)
+            .as_string()
+            .unwrap_or_default()
+    };
     view! { <time class="panel-row__meta" datetime=date.to_iso_string().as_string()>{text}</time> }
 }
 

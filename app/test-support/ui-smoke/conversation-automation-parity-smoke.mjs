@@ -196,9 +196,23 @@ async function exercise(client) {
     await page.getByRole('region', { name: 'Conversation history' }).getByText('Prepare fixture digest.', { exact: true }).waitFor();
 
     await open(pilot(chat));
+    const documentStart = await page.evaluate(() => performance.timeOrigin);
+    if (leptos) {
+      assert(!(await page.evaluate(() => performance.getEntriesByType('resource')
+        .some(entry => /\/workflows\.[\da-f]+\.wasm$/.test(entry.name)))), 'Workflows WASM loaded with chat');
+    }
     await workflowMenu();
     await page.getByText(wfName, { exact: true }).waitFor();
     assert.equal(await page.getByText('Other agent workflow', { exact: true }).count(), 0);
+    assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
+    if (leptos) {
+      assert.equal(new URL(page.url()).searchParams.get('agent'), ids.agent);
+      await page.goBack();
+      await page.waitForFunction(() => document.activeElement?.classList.contains('chat__pill'));
+      await page.goForward();
+      await page.getByText(wfName, { exact: true }).waitFor();
+      assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
+    }
     await capture('workflow-library');
     await button(wfName + ' actions').press('Enter');
     await page.getByRole('menuitem', { name: 'Edit ' + wfName }).press('Enter');
@@ -216,11 +230,16 @@ async function exercise(client) {
     await page.getByRole('button', { name: /^Run version / }).click();
     const step = linkOrButton('Open step work');
     await step.waitFor();
-    await capture('workflow-inspector');
+    await capture('workflow-inspector', () => step.scrollIntoViewIfNeeded());
     await step.press('Enter');
     await button('Back to run ' + wfName).waitFor();
     await page.getByRole('region', { name: 'Conversation history' }).getByText(/Prepare fixture workflow\./).waitFor();
-    await capture('workflow-step');
+    await capture('workflow-step', async size => {
+      if (size === 'narrow') {
+        assert.equal(await page.locator('dialog:modal').count(), 0, 'Step details covered the narrow transcript');
+        assert(await page.getByRole('region', { name: 'Conversation history' }).isVisible());
+      }
+    });
     await button('Back to run ' + wfName).press('Enter');
     await page.waitForFunction(() => document.activeElement?.textContent === 'Open step work');
 

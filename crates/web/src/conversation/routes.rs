@@ -266,6 +266,17 @@ async fn load(
 #[derive(Clone, Copy)]
 pub(crate) struct Navigation(pub RwSignal<String>);
 
+impl Navigation {
+    pub(crate) fn page_path(self) -> String {
+        self.0.with(|route| {
+            crate::lazy_route::workflow_scope(route).map_or_else(
+                || route.split('?').next().unwrap_or_default().to_owned(),
+                |(_, back)| back,
+            )
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ProjectConversation(pub RwSignal<bool>);
 
@@ -287,6 +298,9 @@ fn conversation_scope(url: &str) -> (&str, Option<String>) {
 }
 
 fn internal(path: &str) -> bool {
+    if crate::lazy_route::workflow_scope(path).is_some() {
+        return true;
+    }
     let (path, query) = path.split_once('?').unwrap_or((path, ""));
     let Some(route) = route(path) else {
         return false;
@@ -343,6 +357,8 @@ pub fn standalone() -> impl IntoView {
     let deleting = move || lifecycle.is_some_and(|lifecycle| lifecycle.deleting_current());
     let error = RwSignal::new(String::new());
     let nav = use_context::<Navigation>().unwrap_or_else(|| Navigation(RwSignal::new(location())));
+    let workflow = Memo::new(move |_| nav.0.with(|path| crate::lazy_route::workflow_scope(path)));
+    let was_workflow = RwSignal::new(false);
     let project_conversation = use_context::<ProjectConversation>();
     let pop = window_event_listener(leptos::ev::popstate, move |_| {
         let location = location();
@@ -386,6 +402,17 @@ pub fn standalone() -> impl IntoView {
         let path = format!("{}{}", anchor.pathname(), anchor.search());
         if internal(&path) {
             event.prevent_default();
+            if anchor.has_attribute("data-scoped-workflow-back")
+                && workflow.with_untracked(Option::is_some)
+            {
+                if window()
+                    .history()
+                    .and_then(|history| history.back())
+                    .is_ok()
+                {
+                    return;
+                }
+            }
             if path != location() {
                 open(Some(nav), &path);
             }
@@ -403,6 +430,13 @@ pub fn standalone() -> impl IntoView {
         let version = generation.get_untracked();
         config.set(None);
         error.set(String::new());
+        if crate::lazy_route::workflow_scope(&path).is_some() {
+            was_workflow.set(true);
+            document().set_title("Workflows · Minarbot");
+            return;
+        }
+        let restore_focus = was_workflow.get_untracked();
+        was_workflow.set(false);
         leptos::task::spawn_local(async move {
             let result = match (
                 results::current(),
@@ -446,14 +480,33 @@ pub fn standalone() -> impl IntoView {
                         );
                     }
                     config.set(Some(value));
+                    if restore_focus {
+                        request_animation_frame(move || {
+                            if generation.try_get_untracked() == Some(version) {
+                                if let Ok(Some(heading)) = document().query_selector(".chat__pill")
+                                {
+                                    if let Ok(heading) = heading.dyn_into::<web_sys::HtmlElement>()
+                                    {
+                                        let _ = heading.focus();
+                                    }
+                                }
+                            }
+                        });
+                    }
                 }
                 Err(reason) => error.set(reason.message),
             }
         });
     });
     view! {
-        {move || if deleting() { view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any() } else { config.get().map(shell).into_any() }}
-        <p class="conversation-startup" role="status" hidden=move || config.with(Option::is_some) || !error.with(String::is_empty)>"Loading conversation…"</p>
+        {move || if deleting() {
+            view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any()
+        } else if let Some((_, back)) = workflow.get() {
+            crate::lazy_route::outlet("workflows", "workflows", nav.0.get_untracked(), String::new(), Some(back)).into_any()
+        } else {
+            config.get().map(shell).into_any()
+        }}
+        <p class="conversation-startup" role="status" hidden=move || workflow.with(Option::is_some) || config.with(Option::is_some) || !error.with(String::is_empty)>"Loading conversation…"</p>
         <div class="conversation-startup" hidden=move || error.with(String::is_empty)>
             <p class="message-error" role="alert">{error}</p>
             <button type="button" class="k-btn k-btn--sm" on:click=move |_| {
@@ -749,13 +802,8 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
     }.into_any()
 }
 
-#[cfg(feature = "workflows")]
 pub(crate) fn workflow_step(agent: String, thread: String) -> impl IntoView {
-    #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(catch, js_name = minarbotLoadWorkflowConversation)]
-        async fn load_adapter() -> Result<(), wasm_bindgen::JsValue>;
-    }
+    provide_context(EmbeddedStep);
     let config = RwSignal::new(None);
     let error = RwSignal::new(String::new());
     let directory_cache = RwSignal::new(None);
@@ -764,10 +812,6 @@ pub(crate) fn workflow_step(agent: String, thread: String) -> impl IntoView {
         let route = Route::Agent(agent.clone(), Some(thread.clone()));
         error.set(String::new());
         leptos::task::spawn_local(async move {
-            if load_adapter().await.is_err() {
-                error.try_set("Step conversation could not load.".into());
-                return;
-            }
             match load(route, directory_cache, thread_cache).await {
                 Ok(value) => {
                     config.try_set(Some(value));
@@ -780,7 +824,7 @@ pub(crate) fn workflow_step(agent: String, thread: String) -> impl IntoView {
     });
     load_step.run(());
     view! {
-        <div class="workflow-step-chat">
+        <>
             {move || config.get().map(shell)}
             <Show when=move || config.with(Option::is_none)>
                 <p class="empty" role="status" hidden=move || !error.with(String::is_empty)>"Loading step conversation..."</p>
@@ -788,6 +832,6 @@ pub(crate) fn workflow_step(agent: String, thread: String) -> impl IntoView {
                     <button type="button" class="secondary" on:click=move |_| load_step.run(())>"Reload step conversation"</button>
                 </p>
             </Show>
-        </div>
+        </>
     }
 }

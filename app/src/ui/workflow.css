@@ -12,3 +12,8 @@
 .bs-root .workflow-graph:focus-visible, .bs-root .workflow-graph-node:focus-visible, .bs-root .workflow-node:focus, .bs-root .workflow-step-detail:focus { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 .bs-root .workflow-graph-node[data-movable] { touch-action: none; user-select: none; }
 .bs-root .workflow-graph-links { margin-block: 12px; font-size: 12px; color: var(--color-text-secondary); }
+
+@media (max-width: 767px) {
+  .workflow-page > .k-page-head { flex-wrap: wrap; gap: 8px; }
+  .workflow-page > .k-page-head > .k-page-head__actions, #workflow-editor .k-inline { flex-wrap: wrap; }
+}

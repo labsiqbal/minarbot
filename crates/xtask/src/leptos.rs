@@ -159,6 +159,7 @@ pub fn build(root: &Path) -> Result<()> {
     let dist = app.join("dist");
     fs::create_dir_all(&dist)?;
     let temp = private_stage("bindgen-", &target)?;
+    fs::copy(web.join("route-chunks.js"), temp.path().join("route-chunks.js"))?;
     let stage = private_stage(".leptos-", &dist)?;
     let assets = stage.path().join("assets");
     fs::create_dir(&assets)?;
@@ -222,9 +223,11 @@ pub fn build(root: &Path) -> Result<()> {
         let glue = temp.path().join(format!("{name}.js"));
         fs::write(&glue, fs::read_to_string(&glue)?.replace(&wasm_name, &wasm))?;
         let adapter = match name {
-            "conversation" => "globalThis.MinarbotConversation = (await import('minarbot-conversation-adapter')).browserAdapter;",
-            "workflows" => "globalThis.minarbotWorkflowMarkdown = (text, scope) => import('minarbot-workflow-markdown').then(({ renderWorkflowMarkdown }) => renderWorkflowMarkdown(text, scope));
-                globalThis.minarbotLoadWorkflowConversation = async () => { globalThis.MinarbotConversation ??= (await import('minarbot-conversation-adapter')).browserAdapter; };",
+            "conversation" => "globalThis.MinarbotConversation = (await import('minarbot-conversation-adapter')).browserAdapter;
+                globalThis.minarbotMountRoute = (...args) => import('./route-chunks.js').then(({ mountRoute }) => mountRoute(...args));",
+            "workflows" => "const chunks = await import('./route-chunks.js');
+                globalThis.minarbotWorkflowMarkdown = chunks.workflowMarkdown;
+                globalThis.minarbotMountRoute = chunks.mountRoute;",
             _ => "",
         };
         let start = temp.path().join(format!("{name}-start.js"));

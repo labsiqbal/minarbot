@@ -1,0 +1,43 @@
+@import "../../app/src/AutomationCalendar.css";
+@import "../../app/src/ui/workflow.css";
+
+.workflow-library[hidden] { display: none; }
+
+.leptos-workspace .system-dialog:not([open]) { display: none; }
+.leptos-workspace .system-dialog {
+  inset: 50% auto auto 50%;
+  margin: 0;
+  padding: 0;
+  color: var(--color-text-primary);
+}
+.leptos-workspace .system-dialog::backdrop { background: var(--color-bg-scrim); }
+.leptos-workspace .system-dialog .k-dialog__foot { flex-wrap: wrap; }
+.leptos-workspace .system-dialog:has(.calendar-run) { max-width: 680px; }
+.leptos-workspace .system-menu { position: fixed; inset: auto; margin: 0; }
+.leptos-workspace .system-menu .k-menu__item { width: 100%; }
+.leptos-workspace .workflow-node {
+  padding: 16px;
+  border: .5px solid var(--color-border-secondary);
+  border-radius: 14px;
+}
+.leptos-workspace .automation-result { white-space: pre-wrap; overflow-wrap: anywhere; }
+.leptos-workspace .automation-markdown { min-width: 0; max-width: 100%; overflow-x: auto; }
+.leptos-workspace__outlet:has(> .automation-calendar-route) { position: relative; }
+.leptos-workspace .automation-calendar-route { position: absolute; inset: 0; }
+.leptos-workspace .automation-calendar-route[hidden] { display: flex; visibility: hidden; }
+.leptos-workspace .run-inspector details[open] > summary > .appearance-icon svg { transform: rotate(90deg); }
+.leptos-workspace .routine-avatar { width: 24px; height: 24px; font-size: 11px; }
+.leptos-workspace .page-view .k-check input[type=checkbox] { accent-color: var(--color-brand); width: 18px; height: 18px; margin: 1px 0 0; flex: none; }
+.leptos-workspace .automation-select { overflow-y: auto; }
+.leptos-workspace .flow-canvas { overflow-x: auto; max-width: 100%; margin-block: 20px; padding: 8px; border: .5px solid var(--color-border-tertiary); border-radius: 14px; background: var(--color-bg-chrome); }
+.leptos-workspace .flow-canvas svg { display: block; min-width: 360px; }
+.leptos-workspace .flow-canvas text { font: 13px var(--font-stack); }
+.leptos-workspace .automation-select .k-menu__item:is(:hover, :focus-visible) {
+  background: var(--color-bg-hover);
+}
+.leptos-workspace .routine-table { min-width: 720px; }
+@media (max-width: 767px) {
+  .leptos-workspace :is(.routines-hub, .routine-detail) .k-page-head { flex-wrap: wrap; gap: 8px; }
+  .leptos-workspace :is(.routines-hub, .routine-detail) .k-page-head__actions { flex-wrap: wrap; max-width: 100%; }
+  .leptos-workspace .routine-table { min-width: 920px; }
+}

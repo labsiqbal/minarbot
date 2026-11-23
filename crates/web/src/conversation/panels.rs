@@ -1209,7 +1209,14 @@ pub fn right_panel(chat: Chat) -> impl IntoView {
     let settings_icon = icons.settings;
     let drawer = NodeRef::<leptos::html::Dialog>::new();
     let narrow = RwSignal::new(details_overlay());
-    let resize = window_event_listener(leptos::ev::resize, move |_| narrow.set(details_overlay()));
+    let embedded = use_context::<EmbeddedStep>().is_some();
+    let resize = window_event_listener(leptos::ev::resize, move |_| {
+        let overlay = details_overlay();
+        if embedded && overlay && !narrow.get_untracked() {
+            chat.details.set(false);
+        }
+        narrow.set(overlay);
+    });
     on_cleanup(move || resize.remove());
     Effect::new(move |previous: Option<bool>| {
         let overlay = narrow.get();

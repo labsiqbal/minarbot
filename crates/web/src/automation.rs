@@ -6,7 +6,7 @@ mod workflows;
 
 pub(crate) use calendar::{calendar_page, Calendar};
 pub(crate) use routines::routines_page;
-pub(super) use workflows::workflows_page;
+pub(super) use workflows::{agent_library, workflows_page};
 
 use crate::{
     api, connection_ui as ui, select::Select, system::kit, workspace, workspace_route::valid_id,

@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 
 [features]
 conversation = ["serde_json/preserve_order"]
-workflows = ["conversation"]
+workflows = []
 
 [dependencies]
 base64 = "0.22"

@@ -135,5 +135,5 @@ body[data-view="conversation"] .automation-select .k-menu__item:is(:hover, :focu
 
 .conversation-panel .activity-section[hidden] { display: none; }
 .conversation-panel .system-disclosure summary { list-style: none; }
-.agent-workflows-host, .agent-workflows-mount { display: flex; flex: 1; min-width: 0; min-height: 0; }
-.agent-workflows-mount:empty { display: none; }
+.leptos-workspace__outlet > .lazy-route-mount { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.lazy-route-mount:empty { display: none; }

@@ -369,9 +369,7 @@ pub(crate) fn WorkspaceShell(
     let route_path = move || {
         #[cfg(feature = "conversation")]
         if let Some(navigation) = conversation {
-            return navigation
-                .0
-                .with(|route| route.split('?').next().unwrap_or_default().to_owned());
+            return navigation.page_path();
         }
         automation
             .map(|nav| nav.0.get())
