@@ -97,7 +97,9 @@ const selected = only ? groups.filter(([group]) => only.includes(group)) : group
 
 const env = { ...process.env, MINARBOT_RUST_BINARY: resolve(process.env.MINARBOT_RUST_BINARY ?? join(cwd, '../target/debug/minarbot-server')) };
 env.MINARBOT_HOSTED_HUB_BINARY ??= env.MINARBOT_RUST_BINARY;
-for (const key of ['MINARBOT_SMOKE_UI', 'MINARBOT_SYSTEM_CLIENT', 'MINARBOT_HUB_SMOKE_CLIENT', 'MINARBOT_PROMPTS_CLIENT']) delete env[key];
+// Group smokes select both clients themselves or receive one of the two
+// explicit selectors below. Ignore client overrides inherited from the shell.
+for (const key of ['MINARBOT_APPEARANCE_CLIENT', 'MINARBOT_SMOKE_UI', 'MINARBOT_SYSTEM_CLIENT', 'MINARBOT_HUB_SMOKE_CLIENT', 'MINARBOT_PROMPTS_CLIENT']) delete env[key];
 for (const key of ['MINARBOT_PROJECT_BENCH', 'MINARBOT_FILES_BENCH', 'MINARBOT_CONVERSATION_NAV_BENCH']) env[key] ??= '0';
 const rows = [], summary = [];
 for (const [group, minimum, script, screenshotEnv, clientEnv] of selected) {

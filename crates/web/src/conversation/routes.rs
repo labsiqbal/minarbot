@@ -392,7 +392,11 @@ pub fn standalone() -> impl IntoView {
     let deleting = move || lifecycle.is_some_and(|lifecycle| lifecycle.deleting_current());
     let error = RwSignal::new(String::new());
     let nav = use_context::<Navigation>().unwrap_or_else(|| Navigation(RwSignal::new(location())));
-    let workflow = Memo::new(move |_| nav.0.with(|path| crate::lazy_route::workflow_scope(path)));
+    let workflow = Memo::new(move |_| {
+        (!deleting())
+            .then(|| nav.0.with(|path| crate::lazy_route::workflow_scope(path)))
+            .flatten()
+    });
     let was_workflow = RwSignal::new(false);
     let restore_conversation_focus = RwSignal::new(false);
     let project_conversation = use_context::<ProjectConversation>();
@@ -464,13 +468,21 @@ pub fn standalone() -> impl IntoView {
         revision.track();
         generation.update(|value| *value += 1);
         let version = generation.get_untracked();
-        config.set(None);
         error.set(String::new());
         if crate::lazy_route::workflow_scope(&path).is_some() {
             was_workflow.set(true);
             document().set_title("Workflows · Minarbot");
+            // Release the hidden chat after the route switch gets a frame.
+            request_animation_frame(move || {
+                request_animation_frame(move || {
+                    if generation.try_get_untracked() == Some(version) {
+                        config.try_set(None);
+                    }
+                });
+            });
             return;
         }
+        config.set(None);
         leptos::task::spawn_local(async {
             let _ = __wasm_split_preload_render_conversation().await;
         });
@@ -526,13 +538,17 @@ pub fn standalone() -> impl IntoView {
         });
     });
     view! {
-        {move || if deleting() {
-            view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any()
-        } else if let Some((owner, back)) = workflow.get() {
-            crate::lazy_route::outlet("workflows", "workflows", nav.0.get_untracked(), owner, Some(back)).into_any()
-        } else {
-            config.get().map(|config| chat_view(config, restore_conversation_focus.get_untracked())).into_any()
-        }}
+        <div style:display=move || if workflow.with(Option::is_some) {"none"} else {"contents"}
+            inert=move || workflow.with(Option::is_some)>
+            {move || if deleting() {
+                view! { <main class="chat chat--empty bs-root"><p class="empty-chat__sub" role="status">"Deleting agent..."</p></main> }.into_any()
+            } else {
+                config.get().map(|config| chat_view(config, restore_conversation_focus.get_untracked())).into_any()
+            }}
+        </div>
+        {move || workflow.get().map(|(owner, back)| {
+            crate::lazy_route::outlet("workflows", "workflows", nav.0.get_untracked(), owner, Some(back))
+        })}
         <p class="conversation-startup" role="status" hidden=move || workflow.with(Option::is_some) || config.with(Option::is_some) || !error.with(String::is_empty)>"Loading conversation…"</p>
         <div class="conversation-startup" hidden=move || error.with(String::is_empty)>
             <p class="message-error" role="alert">{error}</p>

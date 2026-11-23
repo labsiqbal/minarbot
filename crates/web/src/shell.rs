@@ -410,6 +410,9 @@ pub(crate) fn WorkspaceShell(
     #[cfg(feature = "conversation")]
     let conversation = use_context::<crate::conversation::Navigation>();
     #[cfg(feature = "conversation")]
+    let conversation_path =
+        conversation.map(|navigation| Memo::new(move |_| navigation.page_path()));
+    #[cfg(feature = "conversation")]
     let project_conversation = use_context::<crate::conversation::ProjectConversation>();
     #[cfg(feature = "conversation")]
     if let Some(navigation) = conversation {
@@ -430,14 +433,18 @@ pub(crate) fn WorkspaceShell(
     }
     let route_path = move || {
         #[cfg(feature = "conversation")]
-        if let Some(navigation) = conversation {
-            return navigation.page_path();
+        if let Some(path) = conversation_path {
+            return path.get();
         }
         automation
             .map(|nav| nav.0.get())
             .unwrap_or_else(|| base_path.get_value())
     };
     let current_url = move || {
+        #[cfg(feature = "conversation")]
+        if let Some(navigation) = conversation {
+            navigation.0.track();
+        }
         let mut path = route_path();
         let location = window().location();
         if location.pathname().ok().as_deref() == Some(path.as_str()) {
@@ -786,6 +793,7 @@ pub(crate) fn WorkspaceShell(
         projects,
         base_path: Signal::derive(current_url),
         new_conversation: conversation_creation,
+        new_project: project_commands.create,
         online,
         attention,
     };

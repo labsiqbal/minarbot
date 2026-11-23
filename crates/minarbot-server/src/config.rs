@@ -24,8 +24,8 @@ pub struct AuthConfig {
 #[serde(rename_all = "lowercase")]
 pub enum AppearanceClient {
     #[default]
-    React,
     Leptos,
+    React,
 }
 
 #[derive(Clone, Deserialize)]
@@ -224,8 +224,8 @@ impl Config {
             host: default_host(),
             dist: default_dist(),
             appearance_client: match env::var("MINARBOT_APPEARANCE_CLIENT").as_deref() {
-                Ok("leptos") => AppearanceClient::Leptos,
-                Ok("react") | Err(env::VarError::NotPresent) => AppearanceClient::React,
+                Ok("leptos") | Err(env::VarError::NotPresent) => AppearanceClient::Leptos,
+                Ok("react") => AppearanceClient::React,
                 _ => return Err("MINARBOT_APPEARANCE_CLIENT must be react or leptos".into()),
             },
             auth,
@@ -334,6 +334,11 @@ mod tests {
             assert!(config.validate().is_err());
         }
         Ok(())
+    }
+
+    #[test]
+    fn leptos_is_the_default_appearance_client() {
+        assert!(AppearanceClient::default() == AppearanceClient::Leptos);
     }
 
     #[test]

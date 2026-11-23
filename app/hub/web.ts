@@ -36,7 +36,10 @@ export function hubLeptosAssets(distPath: string) {
     files.set(path, readFileSync(file));
     if (existsSync(file + '.gz')) gzip.set(path, readFileSync(file + '.gz'));
   }
-  return { files, gzip, html: readFileSync(resolve(leptos, 'hub.html'), 'utf8') };
+  const html = readFileSync(resolve(leptos, 'hub.html'), 'utf8');
+  const startup = /<script type="module" src="([^"]+)"/.exec(html)?.[1];
+  if (!startup || !files.has(startup)) throw new Error('Leptos hub startup module is missing from the asset manifest.');
+  return { files, gzip, html };
 }
 export function hubDocument(html: string, config: { accountsHost: string; domain: string; developmentIdentity: boolean }) {
   const nonce = randomBytes(24).toString('base64url');

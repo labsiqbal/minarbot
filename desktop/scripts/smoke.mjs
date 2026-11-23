@@ -15,7 +15,7 @@ fs.mkdirSync(screenshotDir, { recursive: true });
 const appImage = path.resolve('dist', fs.readdirSync('dist').find((name) => name.endsWith('.AppImage')));
 const privateOrigin = 'https://desktop-check.invalid:4317';
 console.log('Starting isolated Minarbot server');
-const server = await startApp({ database: path.join(scratch, 'minarbot.sqlite'), port: 0, allowedOrigins: [privateOrigin] });
+const server = await startApp({ database: path.join(scratch, 'minarbot.sqlite'), port: 0, appearanceClient: 'leptos', allowedOrigins: [privateOrigin] });
 let child;
 let socket;
 let closeBrowser = () => {};
@@ -83,12 +83,16 @@ try {
   await evaluate('document.querySelector("input").value="http://example.invalid"; document.querySelector("form").requestSubmit()');
   await waitFor(() => evaluate('document.querySelector("#error")?.textContent.includes("Use HTTPS")'));
   await evaluate(`document.querySelector('input').value=${JSON.stringify(server.origin)}; document.querySelector('form').requestSubmit()`);
-  await waitFor(() => evaluate(`location.origin===${JSON.stringify(server.origin)} && document.querySelector('#root')?.childElementCount > 0`));
-  const result = await evaluate(`(async () => ({ title: document.title, origin: location.origin, bridge: Object.keys(window.minarbotDesktop).sort(), node: typeof require, agentsStatus: (await fetch('/api/agents')).status, cspNonce: !!document.querySelector('meta[name="csp-nonce"]')?.content, visibleText: document.body.innerText.slice(0, 300) }))()`);
-  assert.equal(result.title, 'Minarbot'); assert.equal(result.agentsStatus, 200); assert.equal(result.node, 'undefined'); assert.equal(result.cspNonce, true);
+  await waitFor(() => evaluate(`location.origin===${JSON.stringify(server.origin)} && document.querySelector('#leptos-root')?.childElementCount > 0 && document.querySelector('#appearance-fallback')?.hidden`));
+  const result = await evaluate(`(async () => ({ title: document.title, origin: location.origin, bridge: Object.keys(window.minarbotDesktop).sort(), node: typeof require, agentsStatus: (await fetch('/api/agents')).status, visibleText: document.body.innerText.slice(0, 300) }))()`);
+  assert.match(result.title, /Minarbot$/); assert.equal(result.agentsStatus, 200); assert.equal(result.node, 'undefined');
   const writeStatus = await evaluate(`fetch('/api/agents', {method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(response => response.status)`);
   assert.equal(writeStatus, 400); // same-origin write admission reached payload validation
   await screenshot('app.png');
+  await send('Page.navigate', { url: server.origin + '/?ui=react' });
+  await waitFor(() => evaluate('location.search === "?ui=react" && document.querySelector("#root")?.childElementCount > 0'));
+  assert.equal(await evaluate('document.title'), 'Minarbot');
+  assert.equal(await evaluate('!!document.querySelector(\'meta[name="csp-nonce"]\')?.content'), true);
   const second = spawn(appImage, [], { ...launchOptions, stdio: 'ignore' });
   const secondExit = once(second, 'exit');
   const secondLimit = setTimeout(() => { if (second.exitCode === null && second.signalCode === null) process.kill(-second.pid, 'SIGTERM'); }, 15000);

@@ -35,7 +35,6 @@ const account = authority.provisionAccount(identities.get('alice'), true);
 authority.provisionAccount(identities.get('bob'), true);
 const fixtureProject = authority.createProject(account, 'workspace-fixture', 'Pilot project');
 db.close();
-if (process.env.MINARBOT_HUB_SMOKE_CLIENT !== 'react') process.env.MINARBOT_APPEARANCE_CLIENT = 'leptos';
 const web = { distPath: resolve(import.meta.dirname, '../../dist/hub'), developmentIdentity: true };
 let rust, node, activeDatabase, port;
 let proxy, browser, dropMessageResponse = false;
@@ -95,6 +94,7 @@ try {
   if (screenshots) await mkdir(screenshots, { recursive: true });
   const timings = {};
   for (const client of process.env.MINARBOT_HUB_SMOKE_CLIENT ? [process.env.MINARBOT_HUB_SMOKE_CLIENT] : ['react','leptos']) {
+    process.env.MINARBOT_APPEARANCE_CLIENT = client;
     const dataPath = join(scratch, client + '.sqlite');
     await copyFile(seedPath, dataPath);
     if (rustBinary) {

@@ -25,7 +25,9 @@ await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 const sizes = { desktop: { width: 1440, height: 900 }, narrow: { width: 390, height: 844 } };
 const now = Date.UTC(2026, 10, 20, 12, 0);
 const clients = process.env.MINARBOT_SMOKE_UI ? [process.env.MINARBOT_SMOKE_UI] : ['react', 'leptos'];
-const samples = Number(process.env.MINARBOT_CONVERSATION_AUTOMATION_BENCH ?? 0);
+const benchmark = process.env.MINARBOT_CONVERSATION_AUTOMATION_BENCH;
+const samples = Number(benchmark ?? 20);
+const timedRoutes = benchmark === undefined ? ['workflow'] : ['inbox', 'remote', 'upcoming', 'workflow'];
 assert(Number.isSafeInteger(samples) && samples >= 0);
 const fixture = { id: ids.mail, subject: 'Fixture receipt', from: 'sender@example.test', to: 'owner@example.test', text: 'The fixture arrived. <b>Plain text.</b>', received: now };
 const digest = 'Morning digest';
@@ -33,14 +35,8 @@ const wfName = 'Owner workflow';
 const workflowRunId = randomUUID();
 let browser;
 
-async function exercise(client) {
+async function exercise(client, app) {
   const leptos = client === 'leptos';
-  const app = await startApp({
-    database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: client,
-    fixedClock: fixtureClock,
-    defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
-    stream: false,
-  });
   const { origin } = app;
   const errors = [], captureNames = [];
   const machine = {
@@ -137,7 +133,6 @@ async function exercise(client) {
     await tab.locator('.chat__pill').press('Enter');
     await tab.getByRole('navigation', { name: /^Menu / }).getByText('Workflows', { exact: true })
       .or(tab.getByRole('menu', { name: /^Menu / }).getByText('Workflows', { exact: true })).click();
-    await tab.getByRole('heading', { name: 'Workflow library', exact: true }).waitFor();
   }
   const reveal = async () => {
     const trigger = button('Show details');
@@ -209,16 +204,27 @@ async function exercise(client) {
     await report.getByRole('link', { name: 'Open full run' }).click();
     await page.getByRole('region', { name: 'Conversation history' }).getByText('Prepare fixture digest.', { exact: true }).waitFor();
 
+    let workflowRequests = 0;
+    const recordWorkflowRequest = request => {
+      if (new URL(request.url()).pathname === `/api/agents/${ids.agent}/workflows`) workflowRequests++;
+    };
+    page.on('request', recordWorkflowRequest);
     await open(pilot(chat));
+    await page.locator('.chat__pill').waitFor();
     const documentStart = await page.evaluate(() => performance.timeOrigin);
     if (leptos) {
       assert(!(await page.evaluate(() => performance.getEntriesByType('resource')
         .some(entry => /\/workflows\.[\da-f]+\.wasm$/.test(entry.name)))), 'Workflows WASM loaded with chat');
     }
+    assert.equal(workflowRequests, 0, 'Workflow library requested with chat');
     await workflowMenu();
+    await heading('Workflow library').waitFor();
     await page.getByText(wfName, { exact: true }).waitFor();
+    page.off('request', recordWorkflowRequest);
+    assert.equal(workflowRequests, 1, 'Workflow library should be requested once per open');
     assert.equal(await page.getByText('Other agent workflow', { exact: true }).count(), 0);
     assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
+    await capture('workflow-library');
     if (leptos) {
       assert.equal(new URL(page.url()).searchParams.get('agent'), ids.agent);
       await page.goBack();
@@ -236,7 +242,6 @@ async function exercise(client) {
       await page.locator('button[aria-label="Owner workflow actions"]:enabled').waitFor();
       assert.equal(await page.evaluate(() => performance.timeOrigin), documentStart);
     }
-    await capture('workflow-library');
     await button(wfName + ' actions').press('Enter');
     await page.getByRole('menuitem', { name: 'Edit ' + wfName }).press('Enter');
     await heading('Edit workflow').waitFor();
@@ -328,56 +333,47 @@ async function exercise(client) {
     await open(inbox + '?ui=react', page, false);
     await heading('Inbox').waitFor();
 
-    const timings = {};
     const boundary = {
       inbox: [inbox, '.agent-inbox__list li button'],
       remote: [remote, '#remote-message'],
       upcoming: [pilot(chat), '[aria-label="Upcoming routines"] summary, [aria-label="Upcoming routines"] button'],
     };
-    for (const [name, [path, selector]] of Object.entries(boundary)) {
-      const cold = [], warm = [];
-      for (let run = 0; run < samples; run++) {
-        const bench = await context();
+    async function sample(name) {
+      const bench = await context();
+      try {
         const tab = await bench.newPage();
-        try {
+        if (name !== 'workflow') {
+          const [path, selector] = boundary[name];
           let start = performance.now();
           await open(path, tab);
           await tab.locator(selector).first().waitFor();
-          cold.push(performance.now() - start);
+          const cold = performance.now() - start;
           start = performance.now();
           await tab.reload();
           await tab.locator(selector).first().waitFor();
-          warm.push(performance.now() - start);
-        } finally { await bench.close(); }
-      }
-      timings[name] = { cold: stats(cold), warm: stats(warm) };
-    }
-    const workflowCold = [], workflowWarm = [];
-    for (let run = 0; run < samples; run++) {
-      const bench = await context();
-      const tab = await bench.newPage();
-      try {
+          return { cold, warm: performance.now() - start };
+        }
         await open(pilot(chat), tab);
         await tab.locator('.chat__pill').waitFor();
-        for (const result of [workflowCold, workflowWarm]) {
+        const timing = {};
+        for (const phase of ['cold', 'warm']) {
           const began = performance.now();
           await workflowMenu(tab);
           await tab.getByText(wfName, { exact: true }).waitFor();
-          result.push(performance.now() - began);
+          timing[phase] = performance.now() - began;
           await linkOrButton('Back', tab).click();
           await tab.locator('.chat__pill').waitFor();
         }
+        return timing;
       } finally { await bench.close(); }
     }
-    timings.workflow = { cold: stats(workflowCold), warm: stats(workflowWarm) };
-    return { captureNames, timings, consoleErrors: errors.length, cspErrors: 0 };
+    return { sample, captureNames, timings: {}, consoleErrors: errors.length, cspErrors: 0 };
   } catch (error) {
     await page.screenshot({ path: join(output, `${client}-failure.png`), animations: 'disabled',
       mask: [page.locator('[data-private-token]'), page.locator('input[type=password]')] });
     throw error;
   } finally {
     await primary.close();
-    await app.close();
   }
 }
 
@@ -388,25 +384,55 @@ function stats(values) {
   return { samples: values.length, medianMs: at(0.5), p95Ms: at(0.95) };
 }
 
+const apps = [];
 try {
   browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
   const receipt = {};
+  const benchmarks = [];
   for (const client of clients) {
-    receipt[client] = await exercise(client);
-    await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
+    const app = await startApp({
+      database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, appearanceClient: client,
+      fixedClock: fixtureClock,
+      defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
+      stream: false,
+    });
+    apps.push(app);
+    const { sample, ...result } = await exercise(client, app);
+    receipt[client] = result;
+    benchmarks.push({ client, sample });
     console.log(`${client} conversation automation parity passed (${receipt[client].captureNames.length * 4} captures).`);
   }
+  for (const route of timedRoutes) {
+    const results = Object.fromEntries(clients.map(client => [client, []]));
+    for (let run = 0; run < samples; run++) {
+      // Pair clients under the same host load and alternate who goes first.
+      for (const { client, sample } of run % 2 ? benchmarks.toReversed() : benchmarks) {
+        results[client].push(await sample(route));
+      }
+    }
+    for (const client of clients) {
+      receipt[client].timings[route] = {
+        cold: stats(results[client].map(timing => timing.cold)),
+        warm: stats(results[client].map(timing => timing.warm)),
+      };
+    }
+  }
+  await writeFile(join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
   if (samples && receipt.react && receipt.leptos) {
+    const failures = [];
     for (const [route, timing] of Object.entries(receipt.react.timings)) {
-      for (const [phase, limit] of [['cold', route === 'workflow' ? 1.1 : 1.2], ['warm', 1.1]]) {
+      // docs/full-rust-plan.md: cold start within React p95 + 20%, warm navigation within + 10% (#84).
+      for (const [phase, limit] of [['cold', 1.2], ['warm', 1.1]]) {
         const react = timing[phase].p95Ms;
         const leptos = receipt.leptos.timings[route][phase].p95Ms;
         console.log(`${route} ${phase} p95 ${leptos} ms (Leptos), ${react} ms (React).`);
-        assert(leptos <= react * limit, `${route} exceeded the ${phase} p95 budget`);
+        if (leptos > react * limit) failures.push(`${route} exceeded the ${phase} p95 budget`);
       }
     }
+    assert.deepEqual(failures, []);
   }
 } finally {
+  await Promise.all(apps.map(app => app.close()));
   await browser?.close();
   provider.closeAllConnections();
   await new Promise(resolve => provider.close(resolve));

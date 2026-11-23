@@ -12,6 +12,11 @@ Set `PARITY_GROUPS` to a comma-separated list of group names (for example
 `PARITY_GROUPS=calendar,automation`) to run only those groups. The release
 review runs all groups.
 
+Each smoke selects its client explicitly. Groups that accept one client run
+once per client. The remaining groups select React and Leptos inside the smoke.
+The gate ignores inherited client overrides. The Hub group uses the Rust
+hosted server unless `MINARBOT_HOSTED_HUB_BINARY` names another build.
+
 Pass an empty output directory or omit it to use a fresh temporary directory.
 `MINARBOT_RUST_BINARY` can point at a different build of the server. The gate
 uses disposable servers and captures at least 580 pairs across 16 groups. Its

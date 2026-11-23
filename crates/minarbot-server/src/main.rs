@@ -272,33 +272,27 @@ async fn static_ui(
     }
     let hashed = path.starts_with("/assets/") || leptos_asset;
     let spa = !hashed && !public_ui_asset(path);
-    let document = appearance::document_for_route(path, query);
-    let leptos_document = state.config.dist.join(document);
-    let pilot = spa
+    let leptos_enabled = spa
         && state.config.appearance_client == config::AppearanceClient::Leptos
-        && !appearance::react_override(query)
-        && tokio::fs::try_exists(&leptos_document)
-            .await
-            .unwrap_or(false);
-    let leptos_page = pilot
+        && !appearance::react_override(query);
+    let title = leptos_enabled
         .then(|| appearance::route_title(state, path, query))
         .flatten();
-    let conversation_page = spa
-        && state.config.appearance_client == config::AppearanceClient::Leptos
-        && !appearance::react_override(query)
-        && appearance::conversation_route(path, query)
-        && (path != "/" || appearance::route_title(state, path, query).is_none())
-        && tokio::fs::try_exists(state.config.dist.join(appearance::CONVERSATION_DOCUMENT))
-            .await
-            .unwrap_or(false);
+    let document = if title.is_some() {
+        Some(appearance::document_for_route(path, query))
+    } else if leptos_enabled && appearance::conversation_route(path, query) {
+        Some(appearance::CONVERSATION_DOCUMENT)
+    } else {
+        None
+    };
+    let leptos = if let Some(document) = document {
+        appearance::load_document(&state.config.dist, document).await
+    } else {
+        None
+    };
+    let leptos_page = leptos.is_some();
     let file = state.config.dist.join(if spa {
-        if leptos_page.is_some() {
-            document
-        } else if conversation_page {
-            appearance::CONVERSATION_DOCUMENT
-        } else {
-            "index.html"
-        }
+        document.filter(|_| leptos_page).unwrap_or("index.html")
     } else {
         path.trim_start_matches('/')
     });
@@ -313,9 +307,14 @@ async fn static_ui(
         None
     };
     let encoded = precompressed.is_some();
-    let bytes = match precompressed {
-        Some(bytes) => Ok(bytes),
-        None => tokio::fs::read(&file).await,
+    let bytes = match (leptos, precompressed) {
+        (Some(html), _) => Ok(match title {
+            Some(title) => appearance::document(&html, path, title, query),
+            None => appearance::conversation_document(&html, path, query),
+        }
+        .into_bytes()),
+        (None, Some(bytes)) => Ok(bytes),
+        (None, None) => tokio::fs::read(&file).await,
     };
     let Ok(mut bytes) = bytes else {
         return Ok(if leptos_asset {
@@ -325,13 +324,7 @@ async fn static_ui(
         });
     };
     let mut policy = None;
-    if let Some(title) = leptos_page {
-        bytes =
-            appearance::document(&String::from_utf8_lossy(&bytes), path, title, query).into_bytes();
-        policy = Some(appearance::POLICY.to_owned());
-    } else if conversation_page {
-        bytes = appearance::conversation_document(&String::from_utf8_lossy(&bytes), path, query)
-            .into_bytes();
+    if leptos_page {
         policy = Some(appearance::POLICY.to_owned());
     } else if spa {
         let html = String::from_utf8_lossy(&bytes);
@@ -341,7 +334,12 @@ async fn static_ui(
         let mut random = [0; 16];
         getrandom::getrandom(&mut random).map_err(|_| Failure::storage())?;
         let nonce = STANDARD.encode(random);
-        let selector = if pilot {
+        let selector = if leptos_enabled
+            && document.is_none()
+            && tokio::fs::try_exists(state.config.dist.join(appearance::DOCUMENT))
+                .await
+                .unwrap_or(false)
+        {
             "<meta name=\"minarbot-appearance-client\" content=\"leptos\">"
         } else {
             ""

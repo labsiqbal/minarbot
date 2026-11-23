@@ -23,22 +23,64 @@ function fetchLibrary(owner) {
   return fetch(`/api/agents/${encodeURIComponent(owner)}/workflows`).catch(() => null);
 }
 
+function discardLibrary() {
+  const pending = pendingLibrary;
+  pendingLibrary = undefined;
+  if (pending) {
+    clearTimeout(pending.expiry);
+    pending.staged.then(view => view?.dispose()).catch(() => {});
+  }
+}
+
 export function preloadWorkflows(owner, includeLibrary) {
+  const runtime = loadWorkflows();
   if (includeLibrary) {
-    const now = performance.now();
-    if (pendingLibrary?.owner !== owner || pendingLibrary.expires <= now) {
-      pendingLibrary = { owner, expires: now + 3000, response: fetchLibrary(owner) };
+    const from = window.location.pathname;
+    const path = `/workflows?agent=${encodeURIComponent(owner)}&from=${encodeURIComponent(from)}&ui=leptos`;
+    if (pendingLibrary?.path !== path) {
+      discardLibrary();
+      const response = fetchLibrary(owner);
+      const pending = { path, response, expiry: setTimeout(discardLibrary, 3000) };
+      pendingLibrary = pending;
+      pending.staged = runtime.then(module => {
+        if (pendingLibrary !== pending || window.location.pathname !== from
+          || sessionStorage.getItem(`minarbot:workflow-command:${owner}`) !== null) return null;
+        // Prepare the library while the menu is open. The detached host has no layout or focus.
+        const content = document.createElement('div');
+        content.style.display = 'contents';
+        globalThis.minarbotWorkflowMarkdown = workflowMarkdown;
+        return { content, dispose: module.mount_scoped_workflows(content, path, response) };
+      }).catch(() => null);
     }
   }
-  return loadWorkflows().catch(() => {});
+  return runtime.catch(() => {});
 }
 
 export async function mountRoute(host, kind, first, second) {
   if (kind === 'workflows') {
-    const prefetched = pendingLibrary;
-    pendingLibrary = undefined;
-    const library = prefetched?.owner === second && performance.now() < prefetched.expires
-      ? prefetched.response : fetchLibrary(second);
+    const pending = pendingLibrary?.path === first ? pendingLibrary : undefined;
+    if (pending) {
+      clearTimeout(pending.expiry);
+      pendingLibrary = undefined;
+    } else {
+      discardLibrary();
+    }
+    const library = pending?.response ?? fetchLibrary(second);
+    const staged = await pending?.staged;
+    if (!host.isConnected) {
+      staged?.dispose();
+      throw new Error('Workflow outlet closed');
+    }
+    if (staged) {
+      host.append(staged.content);
+      if (!document.activeElement?.matches('.sidebar-settings, .sidebar-reveal')) {
+        host.querySelector('h1')?.focus();
+      }
+      return () => {
+        staged.dispose();
+        staged.content.remove();
+      };
+    }
     const runtime = await loadWorkflows();
     if (!host.isConnected) throw new Error('Workflow outlet closed');
     globalThis.minarbotWorkflowMarkdown = workflowMarkdown;

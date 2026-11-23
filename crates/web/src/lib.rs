@@ -232,11 +232,6 @@ pub fn mount_scoped_workflows(
     let mount = mount_to(root, move || {
         provide_context(config.connection_icons);
         provide_context(config.system_icons);
-        let directory = RwSignal::new(None::<Result<shell::Directory, String>>);
-        provide_context(directory.read_only());
-        leptos::task::spawn_local(async move {
-            directory.try_set(Some(api::read("/api/agents").await));
-        });
         automation::agent_library(owner, back, Some(library))
     });
     Ok(wasm_bindgen::closure::Closure::once_into_js(move || {

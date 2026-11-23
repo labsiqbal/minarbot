@@ -9,7 +9,7 @@ const policy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src
 
 test('SPA has a fresh matching style nonce while scripts, API and assets keep strict CSP', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-csp-'));
-  const app = await startApp({ database: join(dir, 'state.sqlite') });
+  const app = await startApp({ database: join(dir, 'state.sqlite'), appearanceClient: 'react' });
   try {
     const nonces: string[] = [];
     let asset = '';
