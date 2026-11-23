@@ -1,7 +1,7 @@
 use super::{copy, output, private_stage, run, sha256, Result};
 use serde_json::json;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env,
     fs::{self, File},
     path::{Path, PathBuf},
@@ -14,10 +14,11 @@ const WASM_PROFILE: &str = "wasm-release";
 const BINARYEN_VERSION: &str = "133";
 const NAMESPACE: &str = "/_leptos/";
 // Each route group gets its own document, CSS and Wasm.
-const ROUTE_GROUPS: [(&str, &[&str]); 3] = [
+const ROUTE_GROUPS: [(&str, &[&str]); 4] = [
     ("appearance", &[]),
     ("workflows", &["--features", "workflows"]),
     ("conversation", &["--features", "conversation"]),
+    ("hub", &["--features", "hub"]),
 ];
 
 fn bindgen(target: &Path) -> Result<PathBuf> {
@@ -136,6 +137,49 @@ fn hash_asset(source: &Path, assets: &Path, name: &str, ext: &str) -> Result<Str
     Ok(format!("{NAMESPACE}assets/{filename}"))
 }
 
+fn hub_assets(
+    manifest: &serde_json::Value,
+    entries: [&str; 2],
+    shared: [&str; 3],
+) -> Result<BTreeSet<String>> {
+    let manifest = manifest.as_object().ok_or("Invalid Leptos manifest.")?;
+    let mut files = BTreeSet::new();
+    let mut pending = entries
+        .into_iter()
+        .map(|path| {
+            manifest
+                .iter()
+                .find(|(_, entry)| entry["file"].as_str() == path.strip_prefix(NAMESPACE))
+                .map(|(key, _)| key.as_str())
+                .ok_or("Missing hub asset in Leptos manifest.")
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut visited = BTreeSet::new();
+    while let Some(key) = pending.pop() {
+        if !visited.insert(key) {
+            continue;
+        }
+        let entry = manifest
+            .get(key)
+            .ok_or("Missing hub dependency in Leptos manifest.")?;
+        let file = entry["file"].as_str().ok_or("Missing hub build file.")?;
+        files.insert(format!("{NAMESPACE}{file}"));
+        for name in ["css", "assets"] {
+            for file in entry[name].as_array().into_iter().flatten() {
+                let file = file.as_str().ok_or("Invalid hub build file.")?;
+                files.insert(format!("{NAMESPACE}{file}"));
+            }
+        }
+        for name in ["imports", "dynamicImports"] {
+            for entry in entry[name].as_array().into_iter().flatten() {
+                pending.push(entry.as_str().ok_or("Invalid hub build dependency.")?);
+            }
+        }
+    }
+    files.extend(shared.map(str::to_owned));
+    Ok(files)
+}
+
 pub fn require_build(app: &Path) -> Result<()> {
     for (name, _) in ROUTE_GROUPS {
         if !app.join(format!("dist/_leptos/{name}.html")).is_file() {
@@ -251,6 +295,9 @@ pub fn build(root: &Path) -> Result<()> {
         ])
         .arg(&bundle))?;
     copy(&bundle.join("assets"), &assets)?;
+    let manifest = serde_json::from_slice::<serde_json::Value>(&fs::read(
+        bundle.join(".vite/manifest.json"),
+    )?)?;
     let themes = hash_asset(&bundle.join("themes.css"), &assets, "themes", "css")?;
     let icon = hash_asset(&app.join("src/favicon.svg"), &assets, "minarbot", "svg")?;
     let mut sizes = BTreeMap::new();
@@ -278,11 +325,21 @@ pub fn build(root: &Path) -> Result<()> {
         let config =
             fs::read_to_string(bundle.join(format!("{name}-config.json")))?.replace('<', "\\u003c");
         let document = format!("{name}.html");
+        let styles = asset(name, ".css")?;
+        let start = asset(&format!("{name}-start"), ".js")?;
+        if name == "hub" {
+            let wasm = asset(name, ".wasm")?;
+            let files = hub_assets(&manifest, [&styles, &start], [&themes, &icon, &wasm])?;
+            fs::write(
+                stage.path().join("hub-assets.json"),
+                serde_json::to_vec(&files)?,
+            )?;
+        }
         let html = fs::read_to_string(web.join(&document))?
             .replace("__ICON_URL__", &icon)
-            .replace("__STYLES_URL__", &asset(name, ".css")?)
+            .replace("__STYLES_URL__", &styles)
             .replace("__THEMES_URL__", &themes)
-            .replace("__START_URL__", &asset(&format!("{name}-start"), ".js")?)
+            .replace("__START_URL__", &start)
             .replace("__CONFIG__", &config);
         fs::write(stage.path().join(document), html)?;
     }

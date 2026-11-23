@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { closedObject, id, ProtocolError, sha256 } from '../shared/protocol.ts';
 import { parsePolicy, type HubAuthority, type VerifiedIdentity, type ProjectContext } from './project-authority.ts';
@@ -22,6 +22,19 @@ export function hubAssets(distPath: string) {
   visit('hub.html');
   const html = readFileSync(resolve(distPath, 'hub.html'), 'utf8');
   return { files, html };
+}
+export function hubLeptosAssets(distPath: string) {
+  const leptos = resolve(distPath, '../_leptos');
+  const manifest = resolve(leptos, 'hub-assets.json');
+  if (!existsSync(manifest)) return undefined;
+  const paths: unknown = JSON.parse(readFileSync(manifest, 'utf8'));
+  if (!Array.isArray(paths)) throw new Error('Invalid Leptos hub manifest.');
+  const files = new Map<string, Buffer>();
+  for (const path of paths) {
+    if (typeof path !== 'string' || !/^\/_leptos\/assets\/[a-zA-Z0-9_-]+\.[a-f0-9]{16}\.(?:js|css|svg|woff2|wasm)$/.test(path)) throw new Error('Invalid Leptos hub asset.');
+    files.set(path, readFileSync(resolve(leptos, path.slice('/_leptos/'.length))));
+  }
+  return { files, html: readFileSync(resolve(leptos, 'hub.html'), 'utf8') };
 }
 export function hubDocument(html: string, config: { accountsHost: string; domain: string; developmentIdentity: boolean }) {
   const nonce = randomBytes(24).toString('base64url');

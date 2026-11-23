@@ -1,0 +1,34 @@
+@import "../../app/src/ui/tokens.css";
+@import "../../app/src/ui/base.css";
+@import "../../app/src/ui/kit.css";
+@import "../../app/src/ui/chat.css";
+@import "../../app/src/ui/minarbot.css";
+@import "../../app/src/ui/density.css";
+@import "../../app/src/hub/hub.css";
+@import "../../app/node_modules/@fontsource-variable/inter/index.css";
+
+#leptos-root { height: 100%; }
+#appearance-fallback[hidden], .hub-shell [hidden] { display: none; }
+.hub-center .hub-brand, .hub-link .hub-brand { padding-inline: 0; }
+.hub-dialog { width: min(440px, calc(100% - 32px)); padding: 24px; margin: auto; }
+.hub-dialog h2 { margin: 0 0 20px; font-size: 18px; }
+.hub-dialog form + button, .hub-dialog > label + div { margin-top: 16px; }
+.hub-main > .k-alert { margin: 12px 24px; }
+.hub-menu { position: relative; }
+.hub-menu summary { list-style: none; cursor: pointer; }
+.hub-menu summary::-webkit-details-marker { display: none; }
+.hub-menu-items { position: absolute; right: 0; top: 100%; }
+.hub-menu-items button { width: 100%; }
+.hub-form fieldset { border: 0; padding: 0; margin: 0; }
+@media (max-width: 680px) {
+  .hub-shell { flex-direction: column; }
+  .hub-sidebar { width: 100%; flex: 0 0 auto; gap: 8px; padding: 12px; }
+  .hub-sidebar nav { flex-direction: row; }
+  .hub-nav-item { width: auto; white-space: nowrap; }
+  .hub-nav-heading { display: none; }
+  .hub-sidebar footer { position: absolute; top: 6px; right: 8px; max-width: 50%; }
+  .hub-main > .k-page { padding: 16px; }
+  .hub-header, .hub-agent-strip, .hub-notice { padding-inline: 12px; }
+  .hub-author { flex-wrap: wrap; }
+  .hub-room .composer-wrap { padding: 8px 12px 12px; }
+}
