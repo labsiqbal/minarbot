@@ -202,6 +202,10 @@ pub(crate) fn dialog(path: String, open: RwSignal<bool>) -> impl IntoView {
 pub(crate) fn profile_resources(agent: String) -> impl IntoView {
     let open = RwSignal::new(false);
     let base = format!("/api/agents/{agent}");
+    // Load the Memory chunk while the profile is usable.
+    leptos::task::spawn_local(async {
+        let _ = __wasm_split_preload_memory_panel().await;
+    });
     view! {
         <button type="button" class="panel-row panel-row--link" on:click=move |_| open.set(true)>
             <ui::Icon name="brain" /><span class="panel-row__title">"Agent memory"</span><ui::Icon name="chevron-right" />

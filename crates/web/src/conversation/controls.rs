@@ -362,11 +362,19 @@ pub fn composer(chat: Chat, rows: Memo<Vec<Turn>>) -> impl IntoView {
             .unwrap_or_else(|| chat.draft.get())
     };
     Effect::new(move |_| {
-        let _ = value();
-        if input.get().is_some() {
+        let empty = value().is_empty();
+        if let Some(element) = input.get() {
+            if empty {
+                // CSS already supplies the empty editor's height. Measuring it
+                // on route mount forces a layout before the first frame.
+                let style = element.style();
+                let _ = style.remove_property("height");
+                let _ = style.set_property("overflow-y", "hidden");
+                return;
+            }
             request_animation_frame(move || {
-                if let Some(element) = input.get_untracked() {
-                    let style = element.unchecked_ref::<web_sys::HtmlElement>().style();
+                if let Some(element) = input.try_get_untracked().flatten() {
+                    let style = element.style();
                     let _ = style.set_property("height", "0px");
                     let height = element.scroll_height();
                     let _ = style.set_property("height", &format!("{}px", height.min(200)));
