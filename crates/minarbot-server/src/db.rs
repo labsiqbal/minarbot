@@ -105,6 +105,9 @@ pub fn open(path: &Path, canonical_mode: bool, now: i64) -> Result<Database> {
             .create(parent)?;
     }
     let connection = Connection::open(path)?;
+    if table(&connection, "hub_migrations")? {
+        return Err("Hosted hub database requires --hub mode.".into());
+    }
     connection.set_prepared_statement_cache_capacity(128);
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     let guard = server_guard(path)?;

@@ -569,13 +569,20 @@ fn events(hub: Arc<Hub>, host: String, headers: HeaderMap, query: String) -> Res
         let mut cursor = 0;
         let mut last_history = String::new();
         let mut last_turns = String::new();
+        let authorized = |db: &Connection| -> Result<()> {
+            let actor = session::get(&hub,db,&host,&headers,false)?;
+            if now() >= expires || actor.account != account || actor.project.as_deref() != Some(&project) { return Err(denied()); }
+            let ctx = Context { project: &project, account: &account, host: &host };
+            if let Some(section) = &section { authority::section(db,&ctx,section,&[])?; }
+            else { authority::member(db,&ctx,&[])?; }
+            Ok(())
+        };
+        let still_authorized = || hub.lock().is_ok_and(|db| authorized(&db).is_ok());
         loop {
             let read = || -> Result<(Vec<Value>, Snapshots)> {
                 let db = hub.lock()?;
-                let actor = session::get(&hub,&db,&host,&headers,false)?;
-                if now() >= expires || actor.account != account || actor.project.as_deref() != Some(&project) { return Err(denied()); }
+                authorized(&db)?;
                 let ctx = Context { project: &project, account: &account, host: &host };
-                authority::member(&db,&ctx,&[])?;
                 let events = rows(&db,"SELECT * FROM authority_events WHERE project_id=? AND cursor>? ORDER BY cursor LIMIT 100",params![project,cursor])?;
                 let snapshots = if let Some(section) = &section {
                     Some((routing::history(&db,&ctx,section)?.to_string(),json!(routing::turns(&db,&ctx,section)?).to_string()))
@@ -584,15 +591,18 @@ fn events(hub: Arc<Hub>, host: String, headers: HeaderMap, query: String) -> Res
             };
             let Ok((events,snapshots)) = read() else { break; };
             for value in events {
+                if !still_authorized() { return; }
                 cursor = value["cursor"].as_i64().unwrap_or(cursor);
                 yield Ok::<_, Infallible>(Event::default().id(cursor.to_string()).event("authority").data(value.to_string()));
             }
             if let Some((history,turns)) = snapshots {
                 if history != last_history {
+                    if !still_authorized() { return; }
                     last_history = history;
                     yield Ok(Event::default().event("section.snapshot").data(last_history.clone()));
                 }
                 if turns != last_turns {
+                    if !still_authorized() { return; }
                     last_turns = turns;
                     yield Ok(Event::default().event("turn.snapshot").data(last_turns.clone()));
                 }

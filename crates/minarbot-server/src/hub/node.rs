@@ -431,10 +431,15 @@ async fn upgrade(hub: Arc<Hub>, peer: IpAddr, request: Request) -> Result<Respon
         .await
         .map_err(|_| missing())?;
     let link = connect(&hub, &parts.headers)?;
+    let failed_hub = hub.clone();
+    let failed_principal = link.principal.clone();
     Ok(ws
         .max_message_size(LIMIT)
         .max_frame_size(LIMIT)
         .max_write_buffer_size(1_048_576)
+        .on_failed_upgrade(move |_| {
+            let _ = gone(&failed_hub, &failed_principal);
+        })
         .on_upgrade(move |socket| async move {
             let _permit = permit;
             run_socket(hub, socket, link).await;

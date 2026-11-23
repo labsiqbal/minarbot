@@ -327,6 +327,48 @@ pub(super) fn revoke_node(db: &Connection, principal: &Value) -> Result<()> {
     db.execute("UPDATE nodes SET status='revoked',generation=generation+1,connection_generation=connection_generation+1 WHERE id=?", [node_id])?;
     Ok(())
 }
+pub(super) fn account_status(db: &Connection, account: &str, status: &str) -> Result<()> {
+    generation(db)?;
+    let row = one(
+        db,
+        "SELECT revision,status FROM accounts WHERE id=?",
+        [account],
+    )?
+    .ok_or_else(missing)?;
+    if row["status"] == status {
+        return Ok(());
+    }
+    for p in rows(db, "SELECT p.project_id,p.id FROM participations p JOIN agents a ON a.id=p.agent_id WHERE a.owner_account_id=?", [account])? {
+        invalidate(db, text(&p,"project_id"), text(&p,"id"))?;
+    }
+    let revision = revision(&row["revision"])? + 1;
+    for member in rows(
+        db,
+        "SELECT project_id FROM memberships WHERE account_id=?",
+        [account],
+    )? {
+        let project = text(&member, "project_id");
+        cancel_turns(db, "requester_account_id", project, account)?;
+        change(db, project, "account.changed", account, revision)?;
+    }
+    db.execute("UPDATE nodes SET generation=generation+1,connection_generation=connection_generation+1,status=CASE WHEN status='revoked' THEN status ELSE 'offline' END WHERE owner_account_id=?", [account])?;
+    db.execute(
+        "UPDATE accounts SET status=?,revision=? WHERE id=?",
+        params![status, revision, account],
+    )?;
+    if status == "blocked" {
+        db.execute(
+            "DELETE FROM hub_browser_sessions WHERE account_id=?",
+            [account],
+        )?;
+        db.execute(
+            "DELETE FROM node_link_sessions WHERE account_id=?",
+            [account],
+        )?;
+        db.execute("DELETE FROM node_link_codes WHERE account_id=?", [account])?;
+    }
+    Ok(())
+}
 pub(super) fn withdraw(db: &Connection, ctx: &Context<'_>, input: &Value) -> Result<Value> {
     closed(input, &["participationId"])?;
     let actor = member(db, ctx, &[])?;

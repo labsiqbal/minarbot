@@ -25,6 +25,7 @@ pub(super) fn open(path: &Path) -> crate::db::Result<(Connection, Writer)> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
+    fs::create_dir_all(directory)?;
     let name = path
         .file_name()
         .filter(|n| *n != ":memory:")
@@ -104,6 +105,12 @@ fn initialize(db: &mut Connection) -> crate::db::Result<()> {
     if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
         return Err("Hub foreign key check failed.".into());
     }
+    tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn fence_restart(db: &mut Connection) -> crate::db::Result<()> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     // A process restart cannot prove an admitted turn or lease completed.
     tx.execute_batch(
         "
@@ -114,4 +121,103 @@ fn initialize(db: &mut Connection) -> crate::db::Result<()> {
     )?;
     tx.commit()?;
     Ok(())
+}
+
+pub(super) fn command(path: &Path, args: &[std::ffi::OsString]) -> crate::db::Result<()> {
+    let usage = "Use --hub [backup PATH | fence-restore | activate GENERATION | admit ISSUER SUBJECT | account-status ID active|blocked].";
+    let verb = args.first().and_then(|arg| arg.to_str()).ok_or(usage)?;
+    if !matches!(
+        (verb, args.len()),
+        ("backup" | "activate", 2) | ("fence-restore", 1) | ("admit" | "account-status", 3)
+    ) {
+        return Err(usage.into());
+    }
+    let (_writer, mut db);
+    (db, _writer) = open(path)?;
+    if verb == "backup" {
+        return backup(&db, Path::new(&args[1]));
+    }
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let output = match verb {
+        "fence-restore" => {
+            let generation = new_id();
+            tx.execute("UPDATE hub_state SET authority_generation=?,state='recovery',revision=revision+1 WHERE id=1", [&generation])?;
+            tx.execute_batch("
+                UPDATE invitations SET state='held',revision=revision+1 WHERE state='pending';
+                UPDATE nodes SET status=CASE WHEN status='revoked' THEN status ELSE 'offline' END,generation=generation+1,connection_generation=connection_generation+1;
+                UPDATE turns SET state='unknown' WHERE state IN('pending','admitted');
+                DELETE FROM outbox;
+                DELETE FROM action_leases;
+                DELETE FROM node_link_codes;
+                DELETE FROM node_link_sessions;
+            ")?;
+            json!({"authorityGeneration":generation,"state":"recovery"})
+        }
+        "activate" => {
+            let generation = args[1].to_str().and_then(crate::web::id).ok_or(usage)?;
+            let updated = tx.execute("UPDATE hub_state SET state='active',revision=revision+1 WHERE id=1 AND state='recovery' AND authority_generation=?", [&generation])?;
+            if updated != 1 {
+                return Err("Recovery generation changed.".into());
+            }
+            json!({"authorityGeneration":generation,"state":"active"})
+        }
+        "admit" => {
+            let issuer = args[1]
+                .to_str()
+                .filter(|v| !v.is_empty() && v.len() <= 1024)
+                .ok_or(usage)?;
+            let subject = args[2]
+                .to_str()
+                .filter(|v| !v.trim().is_empty() && v.len() <= 256)
+                .ok_or(usage)?;
+            generation(&tx).map_err(|error| error.message)?;
+            tx.execute("INSERT INTO accounts(id,issuer,subject,status,pilot_admitted) VALUES(?,?,?,'active',1)
+                ON CONFLICT(issuer,subject) DO UPDATE SET pilot_admitted=1 WHERE pilot_admitted=0",
+                params![new_id(), issuer, subject])?;
+            let account: String = tx.query_row(
+                "SELECT id FROM accounts WHERE issuer=? AND subject=?",
+                [issuer, subject],
+                |r| r.get(0),
+            )?;
+            json!({"accountId":account})
+        }
+        "account-status" => {
+            let account = args[1].to_str().and_then(crate::web::id).ok_or(usage)?;
+            let status = args[2]
+                .to_str()
+                .filter(|v| matches!(*v, "active" | "blocked"))
+                .ok_or(usage)?;
+            authority::account_status(&tx, &account, status).map_err(|error| error.message)?;
+            json!({"accountId":account,"status":status})
+        }
+        _ => return Err(usage.into()),
+    };
+    tx.commit()?;
+    println!("{output}");
+    Ok(())
+}
+
+fn backup(db: &Connection, path: &Path) -> crate::db::Result<()> {
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    let result = (|| -> crate::db::Result<()> {
+        let mut copy = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        rusqlite::backup::Backup::new(db, &mut copy)?.run_to_completion(
+            128,
+            Duration::from_millis(10),
+            None,
+        )?;
+        file.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        fs::remove_file(path)?;
+    }
+    result
 }

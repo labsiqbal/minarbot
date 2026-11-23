@@ -61,6 +61,7 @@ struct Hub {
     limits: Mutex<HashMap<String, (i64, u32)>>,
     streams: Arc<tokio::sync::Semaphore>,
     sockets: Arc<tokio::sync::Semaphore>,
+    _writer: storage::Writer,
 }
 
 pub async fn run() -> crate::db::Result<()> {
@@ -73,6 +74,10 @@ pub async fn run() -> crate::db::Result<()> {
     {
         return Err("Central accounts host must be accounts.<domain>.".into());
     }
+    let commands = std::env::args_os().skip(2).collect::<Vec<_>>();
+    if !commands.is_empty() {
+        return storage::command(&config.data_path, &commands);
+    }
     let key = std::fs::read(&config.mailbox_key_path)?;
     if key.len() < 32 {
         return Err("Private mailbox lookup key must contain at least 32 bytes.".into());
@@ -80,7 +85,9 @@ pub async fn run() -> crate::db::Result<()> {
     let identity = session::Verifier::load(&config)?;
     let assets = config.web.as_ref().map(browser::Assets::load).transpose()?;
     let signer = config.node_link.as_ref().map(node::signer).transpose()?;
-    let (db, _writer) = storage::open(&config.data_path)?;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", config.port)).await?;
+    let (mut db, writer) = storage::open(&config.data_path)?;
+    storage::fence_restart(&mut db)?;
     let state = Arc::new(Hub {
         db: Mutex::new(db),
         mailbox_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key),
@@ -91,8 +98,8 @@ pub async fn run() -> crate::db::Result<()> {
         limits: Default::default(),
         streams: Arc::new(tokio::sync::Semaphore::new(100)),
         sockets: Arc::new(tokio::sync::Semaphore::new(100)),
+        _writer: writer,
     });
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", state.config.port)).await?;
     println!("Minarbot hub: http://{}", listener.local_addr()?);
     let router = Router::new().fallback(dispatch).with_state(state.clone());
     let shutdown = async {
@@ -166,7 +173,9 @@ async fn route(hub: Arc<Hub>, peer: IpAddr, request: Request) -> Result<Response
         hub.host(&db, request.headers(), peer)?
     };
     let path = request.uri().path();
-    if !path.starts_with('/')
+    if request.uri().scheme().is_some()
+        || request.uri().authority().is_some()
+        || !path.starts_with('/')
         || path.starts_with("//")
         || path.bytes().any(|c| c <= b' ' || c == b'\\' || c == b'#')
         || path.split('/').any(|s| {
