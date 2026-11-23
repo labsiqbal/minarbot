@@ -455,35 +455,9 @@ pub(crate) fn scoped_panel(project: Option<ProjectApps>) -> impl IntoView {
                     }.into_any() } else { view! { <div class="k-empty__text">"Set up Composio in Settings > Connected apps."</div> }.into_any() }}
                 </Empty>
             </Show>
-            {project.is_some().then(|| view! {
-                <Show when=move || apps.selected.with(String::is_empty)>
-                    {project_messaging()}
-                </Show>
-            })}
             <Show when=move || apps.setup.get()>{move || setup(apps, error, refresh, retry)}</Show>
             <ConfirmDialog state=apps.confirmation />
         </div>
-    }
-}
-
-fn project_messaging() -> impl IntoView {
-    let details = NodeRef::<leptos::html::Details>::new();
-    let open = RwSignal::new(false);
-    view! {
-        <details class="k-collapsible connection-disclosure" node_ref=details on:toggle=move |_| {
-            open.set(details.get_untracked().is_some_and(|details| details.open()));
-        }>
-            <summary class="k-collapsible__trigger">
-                <span class="k-collapsible__title">"Discord and WhatsApp"</span>
-                <span class="k-collapsible__chev"><Icon name="chevron-down" /></span>
-            </summary>
-            <Show when=move || open.get()>
-                <div class="k-collapsible__content k-stack" data-state="open">
-                    {crate::messaging_connections::discord()}
-                    {crate::messaging_connections::whatsapp()}
-                </div>
-            </Show>
-        </details>
     }
 }
 

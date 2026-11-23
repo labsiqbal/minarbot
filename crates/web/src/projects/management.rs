@@ -157,6 +157,7 @@ pub fn change(project: &str, revision: u64, operation: &str, mut body: Value) ->
 
 fn name_dialog(commands: Commands, dialog: NameDialog) -> impl IntoView {
     let value = RwSignal::new(dialog.name);
+    let first_focus = RwSignal::new(true);
     let title = dialog.title;
     let close = UiAction::new(move |()| commands.name.set(None));
     let locked = move || commands.journal.locked();
@@ -174,6 +175,17 @@ fn name_dialog(commands: Commands, dialog: NameDialog) -> impl IntoView {
             }>
                 <Field label=if title == "Rename project" { "Project name" } else { "Section name" } name="project-name">
                     <input class="k-input" id="project-name" required maxlength="80" prop:value=value disabled=locked
+                        on:focus=move |event| {
+                            if first_focus.get_untracked() {
+                                first_focus.set(false);
+                                let input = event_target::<web_sys::HtmlInputElement>(&event);
+                                request_animation_frame(move || {
+                                    if input.matches(":focus").is_ok_and(|focused| focused) {
+                                        input.select();
+                                    }
+                                });
+                            }
+                        }
                         on:input=move |event| value.set(event_target_value(&event)) />
                 </Field>
                 {commands.recovery()}

@@ -661,7 +661,7 @@ pub(super) fn agent_form(
             MenuItem { label: visibility.into(), danger: false, action: Callback::new(move |()| tool.set(Some(Tool::Availability))) },
             MenuItem { label: "Delete agent".into(), danger: true, action: Callback::new(move |()| delete(lifecycle, Some(confirm), id, name, submit_error)) },
         ];
-        content(move || view! { <Menu name="Agent profile actions".to_owned() items><Ellipsis /></Menu> })
+        content(move || view! { <Menu name="Agent profile actions".to_owned() items>{icon(icons().more)}</Menu> })
     });
     let suggestions = Signal::derive(move || {
         models
@@ -713,9 +713,16 @@ pub(super) fn agent_form(
     let profile_fields = view! {
         <div class="agent-profile__avatar">
             {move || {
-                if let Some(look) = look.get() { avatar::mascot(look, 40).into_any() }
-                else if let Some(agent) = lifecycle.live(&id.get_value()) { avatar::picture(&agent, 40).into_any() }
-                else { view! { <span class="avatar bs-avatar agent-profile__initials" aria-hidden="true">{avatar::initial(&name.get())}</span> }.into_any() }
+                if let Some(agent) = lifecycle.live(&id.get_value()) {
+                    avatar::picture(&agent, 40).into_any()
+                } else {
+                    view! { <span class="agent-profile__initials">
+                        {move || match look.get() {
+                            Some(look) => avatar::mascot(look, 40).into_any(),
+                            None => view! { <span class="avatar bs-avatar" aria-hidden="true">{avatar::initial(&name.get())}</span> }.into_any(),
+                        }}
+                    </span> }.into_any()
+                }
             }}
             <span class="agent-profile__name">{avatar_title}</span>
             <Button label="Change" disabled=locked click=Callback::new(move |()| tool.set(Some(Tool::Avatar))) />

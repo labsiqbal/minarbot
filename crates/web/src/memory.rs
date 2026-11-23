@@ -199,14 +199,20 @@ fn memory_panel(
 pub(crate) fn dialog(path: String, open: RwSignal<bool>) -> impl IntoView {
     let path = StoredValue::new(path);
     let mounted = Memo::new(move |was_open| open.get() || was_open.copied().unwrap_or(false));
-    view! {
-        <kit::Dialog id="agent-memory" title=kit::text("Minarbot Memory") open=Signal::from(open)
-            size="lg" hide_header=true on_close=move || open.set(false)>
-            <Show when=move || mounted.get()>
-                {notes_panel(path.get_value(), false, false, Callback::new(move |()| open.set(false)), Some(open))}
-            </Show>
-        </kit::Dialog>
-    }
+    let workspace = document()
+        .query_selector(".leptos-workspace")
+        .ok()
+        .flatten();
+    workspace.map(move |workspace| view! {
+        <leptos::portal::Portal mount=workspace>
+            <kit::Dialog id="agent-memory" title=kit::text("Minarbot Memory") open=Signal::from(open)
+                size="lg" hide_header=true on_close=move || open.set(false)>
+                <Show when=move || mounted.get()>
+                    {notes_panel(path.get_value(), false, false, Callback::new(move |()| open.set(false)), Some(open))}
+                </Show>
+            </kit::Dialog>
+        </leptos::portal::Portal>
+    })
 }
 
 pub(crate) fn profile_resources(agent: String) -> impl IntoView {
@@ -314,14 +320,20 @@ fn summary(path: String) -> impl IntoView {
                     <button type="button" class="k-collapsible__trigger" aria-expanded=move || disclosure.get().to_string()
                         data-state=move || if disclosure.get() { "open" } else { "closed" } on:click=move |_| disclosure.update(|open| *open = !*open)>
                         <span class="k-collapsible__title">"Source messages"</span>
-                        <span class="k-collapsible__chev">{kit::icon(kit::icons().down)}</span>
+                        <span class="k-collapsible__chev"><ui::Icon name="chevron-down" /></span>
                     </button>
                     <div class="k-collapsible__content" data-state=move || if disclosure.get() { "open" } else { "closed" }>
                         <h2 node_ref=heading tabindex="-1" class="k-section__title">"Source list"</h2>
                         <kit::Card>
                             {move || read.data.get().flatten().map(|data| data.sources.into_iter().map(|source| view! {
-                                <kit::Row title=kit::text(format!("Order {} · {}", source.seq, source.status))
-                                    meta=kit::content(move || view! { <code class="memory-text">{source.id}</code> }) />
+                                <div class="k-row">
+                                    <div class="k-row__main">
+                                        <span class="k-row__text">
+                                            <span class="k-row__title">"Order "{source.seq}" · "{source.status}</span>
+                                            <span class="k-row__meta"><code class="memory-text">{source.id}</code></span>
+                                        </span>
+                                    </div>
+                                </div>
                             }).collect_view())}
                         </kit::Card>
                         {pager(cursors, Signal::derive(move || read.data.with(|data| data.as_ref().and_then(|data| data.as_ref()?.next_after))),

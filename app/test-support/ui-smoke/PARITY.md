@@ -31,6 +31,18 @@ The Projects smoke also exercises Leptos-only project messaging and archive
 restoration. Conversation controls exercise Leptos-only search across chats.
 These produce diagnostic captures alongside the paired screens.
 
-Narrow Hub keeps its top navigation so content and composer can use the full
-viewport. The gate includes room, members, invite, invitation, and create project
-in both themes.
+Leptos keeps top navigation on narrow Hub screens so content and composer use
+the full viewport. React's narrow sidebar clips content. The gate captures and
+compares the following pairs, reports them as `intentional`, and still requires
+both captures with matching dimensions. [Owner decision, 2026-11-23](https://github.com/labsiqbal/minarbot/issues/82#issuecomment-7096356509)
+
+- `hub/room-narrow-dark.png`
+- `hub/room-narrow-light.png`
+- `hub/members-narrow-dark.png`
+- `hub/members-narrow-light.png`
+- `hub/invite-narrow-dark.png`
+- `hub/invite-narrow-light.png`
+- `hub/invitation-narrow-dark.png`
+- `hub/invitation-narrow-light.png`
+- `hub/create-project-narrow-dark.png`
+- `hub/create-project-narrow-light.png`
