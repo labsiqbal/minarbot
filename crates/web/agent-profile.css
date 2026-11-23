@@ -66,7 +66,8 @@
 }
 .leptos-workspace:has(.system-dialog:is([aria-labelledby^="agent-"]:not([aria-labelledby="agent-profile-title"]), [aria-labelledby="history-summary-title"]):modal)
   .system-dialog[aria-labelledby="agent-profile-title"]::backdrop {
-  background: linear-gradient(var(--color-bg-scrim), var(--color-bg-scrim)), var(--color-bg-scrim);
+  /* Two scrims leave the product of their transparencies. */
+  background: rgb(from var(--color-bg-scrim) r g b / calc(1 - (1 - alpha) * (1 - alpha)));
 }
 .leptos-workspace:has([aria-labelledby="agent-sites-title"]:modal):has([aria-labelledby="agent-site-editor-title"]:modal)
   .system-dialog[aria-labelledby="agent-profile-title"]::backdrop {

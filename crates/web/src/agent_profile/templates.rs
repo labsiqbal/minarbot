@@ -162,7 +162,6 @@ fn preview_field(
 
 pub(super) fn import(lifecycle: Lifecycle) -> impl IntoView {
     let file = NodeRef::<leptos::html::Input>::new();
-    let choose = NodeRef::<leptos::html::Button>::new();
     let journal = Journal::new(IMPORT_STORAGE.into(), LIMIT, valid_import);
     let draft = RwSignal::new(journal.pending.with_untracked(|pending| {
         pending
@@ -173,7 +172,7 @@ pub(super) fn import(lifecycle: Lifecycle) -> impl IntoView {
     let processing = RwSignal::new(false);
     let locked = Signal::derive(move || journal.locked() || processing.get());
     let read = move || {
-        let Some(file) = file
+        let Some(selected) = file
             .get_untracked()
             .and_then(|input| input.files())
             .and_then(|files| files.get(0))
@@ -182,7 +181,7 @@ pub(super) fn import(lifecycle: Lifecycle) -> impl IntoView {
         };
         journal.error.set(String::new());
         draft.set(None);
-        if file.size() > LIMIT as f64 {
+        if selected.size() > LIMIT as f64 {
             journal
                 .error
                 .set("Template must be no larger than 750 KB.".into());
@@ -191,7 +190,7 @@ pub(super) fn import(lifecycle: Lifecycle) -> impl IntoView {
         processing.set(true);
         spawn_local(async move {
             let result = async {
-                let text = JsFuture::from(file.text())
+                let text = JsFuture::from(selected.text())
                     .await
                     .ok()
                     .and_then(|value| value.as_string())
@@ -206,8 +205,14 @@ pub(super) fn import(lifecycle: Lifecycle) -> impl IntoView {
                 Ok(value) => {
                     draft.set(Some(value));
                     request_animation_frame(move || {
-                        if let Some(button) = choose.get_untracked() {
-                            let _ = button.focus();
+                        if let Some(dialog) = file
+                            .get_untracked()
+                            .and_then(|input| input.closest("dialog").ok().flatten())
+                            .and_then(|element| {
+                                element.dyn_into::<web_sys::HtmlDialogElement>().ok()
+                            })
+                        {
+                            let _ = dialog.focus();
                         }
                     });
                 }
@@ -254,7 +259,7 @@ pub(super) fn import(lifecycle: Lifecycle) -> impl IntoView {
             <div class="k-page bs-root">
                 <Section title="Template file">
                     <input node_ref=file hidden type="file" accept=".json,application/json" disabled=locked on:change=move |_| read() />
-                    <div><button node_ref=choose type="button" class="k-btn k-btn--md k-btn--secondary" autofocus
+                    <div><button type="button" class="k-btn k-btn--md k-btn--secondary" autofocus
                       disabled=locked on:click=move |_| {
                         if !locked.get_untracked() {
                             if let Some(file) = file.get_untracked() { file.click(); }

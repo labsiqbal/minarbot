@@ -151,6 +151,8 @@ try {
       await go(page, client, main);
       // Open from conversation details in both clients so the same layers are visible.
       const parent = await profile(page, client, false);
+      await button(parent, 'History summary Up to date').waitFor();
+      await button(parent, 'Agent memory').scrollIntoViewIfNeeded();
       const memory = await openMemory(page, parent);
       assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
       await capture('agent-notes', memory);
