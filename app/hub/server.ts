@@ -1,5 +1,5 @@
 import { createPrivateKey } from 'node:crypto';
-import { hubAssets, hubDocument, createHubWebApi } from './web.ts';
+import { hubAssets, hubLeptosAssets, hubDocument, createHubWebApi } from './web.ts';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { readFileSync } from 'node:fs';
@@ -34,6 +34,7 @@ export function createHubServer(options: {
   let upgradeHandler: NodeUpgradeHandler | undefined;
   let nodeLink: ReturnType<typeof attachNodeLink> | undefined;
   const web = options.web ? hubAssets(options.web.distPath) : undefined, browser = createHubWebApi(authority);
+  const leptos = options.web && process.env.MINARBOT_APPEARANCE_CLIENT === 'leptos' ? hubLeptosAssets(options.web.distPath) : undefined;
   const rate = new Map<string, { count: number; until: number }>();
   function limit(key: string, ceiling: number) {
     const prior = rate.get(key), row = prior && prior.until > authority.now() ? prior : { count: 0, until: authority.now() + 60000 };
@@ -111,16 +112,37 @@ export function createHubServer(options: {
       const url = new URL(raw, `https://${host}`), path = url.pathname, central = host === gateway.accountsHost;
       if (path !== raw.split('?')[0]) throw notFound();
       const route = `${request.method} ${path}`;
-      if (web && request.method === 'GET' && (['/', '/login', '/invite', '/join', '/nodes/link'].includes(path) || web.files.has(path))) {
+      if (web && request.method === 'GET' && (['/', '/login', '/invite', '/join', '/nodes/link'].includes(path) || web.files.has(path) || leptos?.files.has(path))) {
         if (singleHeader(request, 'origin') !== undefined) requireOrigin(request, host);
-        if (web.files.has(path)) {
+        const asset = web.files.get(path) ?? leptos?.files.get(path);
+        if (asset) {
           const extension = path.split('.').at(-1)!;
-          const types: Record<string, string> = { js: 'text/javascript', css: 'text/css', woff2: 'font/woff2', svg: 'image/svg+xml' };
-          response.setHeader('Content-Type', types[extension] ?? 'application/octet-stream'); response.end(web.files.get(path)); return;
+          const types: Record<string, string> = { js: 'text/javascript', css: 'text/css', woff2: 'font/woff2', svg: 'image/svg+xml', wasm: 'application/wasm' };
+          response.setHeader('Content-Type', types[extension] ?? 'application/octet-stream');
+          if (leptos?.files.has(path)) {
+            response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            const compressed = leptos.gzip.get(path);
+            if (compressed) {
+              response.setHeader('Vary', 'Accept-Encoding');
+              const acceptsGzip = (singleHeader(request, 'accept-encoding') ?? '').split(',').some(item => {
+                const [encoding, ...params] = item.split(';').map(part => part.trim().toLowerCase());
+                return encoding === 'gzip' && !params.some(param => param.startsWith('q=') && !(Number(param.slice(2)) > 0));
+              });
+              if (acceptsGzip) {
+                response.setHeader('Content-Encoding', 'gzip');
+                response.end(compressed); return;
+              }
+            }
+          }
+          response.end(asset); return;
         }
         if (!central && ['/login', '/join', '/nodes/link'].includes(path) || central && path === '/invite') throw notFound();
-        const page = hubDocument(web.html, { accountsHost: gateway.accountsHost, domain: options.domain, developmentIdentity: !!options.web?.developmentIdentity });
-        response.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'nonce-${page.nonce}'; style-src 'self' 'nonce-${page.nonce}'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+        const client = leptos && url.searchParams.get('ui') !== 'react' ? leptos : web;
+        url.searchParams.set('ui', 'react');
+        const fallback = (path + url.search).replaceAll('&', '&amp;');
+        const wasmSource = client === leptos ? " 'wasm-unsafe-eval'" : '';
+        const page = hubDocument(client.html.replace('__REACT_HUB__', fallback), { accountsHost: gateway.accountsHost, domain: options.domain, developmentIdentity: !!options.web?.developmentIdentity });
+        response.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'nonce-${page.nonce}'${wasmSource}; style-src 'self' 'nonce-${page.nonce}'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
         response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(page.html); return;
       }
       // Explicit browser allowlist. No local-owner API or proxy is mounted.

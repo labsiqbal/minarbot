@@ -6,10 +6,11 @@ import { createServer, request as httpRequest } from 'node:http';
 import { createHubServer } from './hub/server.ts';
 import { createStubVerifier, type SessionIdentity } from './hub/sessions.ts';
 import { generateKeyPairSync, randomUUID, createPublicKey } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { testDatabase } from './test-support/database.ts';
+import { startRustHub } from './test-support/hosted-hub.ts';
 import WebSocket from 'ws';
 import { startApp } from './test-bridge.ts';
 import { signedNodeMessage, verifiedNodeMessage } from './hub/node-link.ts';
@@ -35,7 +36,9 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     const dir = mkdtempSync(join(tmpdir(), 'minarbot-hub-link-')), hubDb = testDatabase(join(dir, 'hub.sqlite'));
     initializeHubSchema(hubDb);
     let clock = Date.now();
-    const a = createHubAuthority(hubDb, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now: () => clock });
+    const rustBinary = process.env.MINARBOT_HOSTED_HUB_BINARY;
+    const now = rustBinary ? () => Math.max(Date.now(), clock) : () => clock;
+    const a = createHubAuthority(hubDb, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now });
     const r = createHubRouting(a), signer = generateKeyPairSync('ed25519').privateKey, hubKey = createPublicKey(signer).export({ type: 'spki', format: 'der' }).toString('base64url');
     const alice = a.provisionAccount(who('alice'), true), bob = a.provisionAccount(who('bob'), true), eve = a.provisionAccount(who('eve'), true), project = a.createProject(alice, 'alpha', 'Alpha');
     const ctx = (account: string) => a.resolveProject(project.host, account, project.projectId);
@@ -43,12 +46,25 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     a.acceptInvite(ctx(bob), invitation.invitationId, invitation.token, who('bob'));
     const accountsHost = 'accounts.minarbot.test', origin = `https://${accountsHost}`;
     const identities = new Map(['alice', 'bob', 'eve'].map(subject => [subject, { ...who(subject), sessionId: `${subject}-session`, expiresAt: clock + 3600000 } satisfies SessionIdentity]));
-    const hub = createHubServer({ authority: a, verifier: createStubVerifier(identities), accountsHost, domain: 'minarbot.test', nodeLink: { origin, signingKey: signer, now: () => clock } });
-    const server = hub.server, transport = hub.nodeLink!;
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    assert(address && typeof address !== 'string');
-    const localOrigin = `http://127.0.0.1:${address.port}`;
+    async function startFixtureHub() {
+        if (rustBinary) {
+            const mailboxKeyPath = join(dir, 'mailbox.key'), tokensPath = join(dir, 'tokens.json'), signingKeyPath = join(dir, 'signer.pem');
+            writeFileSync(mailboxKeyPath, Buffer.alloc(32, 8), { mode: 0o600 });
+            writeFileSync(tokensPath, JSON.stringify(Object.fromEntries(identities)), { mode: 0o600 });
+            writeFileSync(signingKeyPath, signer.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+            const rust = await startRustHub(rustBinary, dir, { domain: 'minarbot.test', accountsHost, dataPath: join(dir, 'hub.sqlite'),
+                mailboxKeyPath, identity: { mode: 'stub', tokensPath }, nodeLink: { signingKeyPath } });
+            return { ...rust, transport: { flush() { /* Hosted Rust polls its own outbox. */ } } };
+        }
+        const node = createHubServer({ authority: a, verifier: createStubVerifier(identities), accountsHost, domain: 'minarbot.test', nodeLink: { origin, signingKey: signer, now } });
+        await new Promise<void>(resolve => node.server.listen(0, '127.0.0.1', resolve));
+        const address = node.server.address();
+        assert(address && typeof address !== 'string');
+        return { port: address.port, close: node.close, transport: node.nodeLink! };
+    }
+    const hub = await startFixtureHub();
+    const { transport } = hub;
+    const localOrigin = `http://127.0.0.1:${hub.port}`;
     // Test transport dials disposable loopback; production URL/Host and signed origin stay exact.
     const localFetch: typeof fetch = (input, init) => new Promise((resolve, reject) => {
         const url = new URL(String(input));
@@ -65,7 +81,12 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         if (loseEnrollmentResponse && String(input).endsWith('/enrollment/poll')) { loseEnrollmentResponse = false; throw new Error('Injected response loss'); }
         return response;
     };
-    const webSocket = (url: string, settings: import('ws').ClientOptions) => new WebSocket(url.replace(origin.replace('https', 'wss'), localOrigin.replace('http', 'ws')), { ...settings, headers: { ...settings.headers, Host: accountsHost } });
+    const frames = new EventEmitter();
+    const webSocket = (url: string, settings: import('ws').ClientOptions) => {
+        const socket = new WebSocket(url.replace(origin.replace('https', 'wss'), localOrigin.replace('http', 'ws')), { ...settings, headers: { ...settings.headers, Host: accountsHost } });
+        socket.on('message', data => frames.emit('frame', String(data)));
+        return socket;
+    };
     async function browser(host: string, path: string, body?: unknown, session?: { cookies: string; csrf: string }, bearer?: string, expected = 200) {
         const response = await localFetch(localOrigin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Host: host, Origin: `https://${host}`, 'Content-Type': 'application/json', ...(session ? { Cookie: session.cookies, 'X-CSRF-Token': session.csrf } : {}), ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
         const data = await response.json();
@@ -101,7 +122,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     const providerPort = p.port;
     const keys = new Map<string, string>(), entry = (service: string, name: string) => ({ getPassword: () => keys.get(`${service}/${name}`) ?? null, setPassword: (value: string) => { keys.set(`${service}/${name}`, value); } }), apps: App[] = [];
     async function node(name: string, account: string, extra: Partial<Parameters<typeof startApp>[0]> = {}) {
-        const database = join(dir, `${name}.sqlite`), options = { ...extra, database, stream, baseURL: `http://127.0.0.1:${providerPort}/v1`, hubLink: { origin, hubSigningPublicKey: hubKey, fetch: hubFetch, webSocket, entry, reconnectMs: 10, now: () => clock } };
+        const database = join(dir, `${name}.sqlite`), options = { ...extra, database, stream, baseURL: `http://127.0.0.1:${providerPort}/v1`, hubLink: { origin, hubSigningPublicKey: hubKey, fetch: hubFetch, webSocket, entry, reconnectMs: 10, now } };
         let app = await startApp(options);
         apps.push(app);
         const agent = await api(app, '/api/agents', { runtime: 'api', id: randomUUID(), name, model: name, instructions: 'Answer section requests.' }, 201);
@@ -118,16 +139,24 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         await browser(accountsHost, '/api/nodes/enrollment/approve', { humanCode: started.humanCode, fingerprint: inspected.fingerprint }, session);
         await api(app, '/api/hub-link/enrollment/poll', {});
         await until(() => app.hubLink!.status().connected, 'node online');
-        const agentId = a.registerAgent(account, String(started.nodeId), randomUUID(), name);
-        return { get app() { return app; }, agent, agentId, nodeId: String(started.nodeId), database, account, options, async restart() { await app.close().catch(() => {}); app = await startApp(options); apps.push(app); await until(() => app.hubLink!.status().connected, 'reconnected'); }, async participate(invocation: InvocationPolicy = { mode: 'owner' }) { const policy: ParticipationPolicy = { sectionIds: [project.sectionId], invocation, scopes: ['read', 'invoke'], localPolicyDigest: (await api(app, `/api/hub-link/agents/${agent.id}/policy`)).localPolicyDigest, payerBindingRef: 'local_provider', maxCostMicros: 10000 }; const proposal = a.propose(ctx(account), agentId, policy); a.consent(ctx(alice), proposal.participationId, proposal.revision, proposal.policyDigest, 'project'); await api(app, '/api/hub-link/grants/approve', { projectId: project.projectId, participationId: proposal.participationId, agentId, localAgentId: agent.id, revision: proposal.revision, policy, providerMaxCostMicros: 100 }); await until(() => r.grants({ nodeId: String(started.nodeId), accountId: account, nodeGeneration: 1, connectionGeneration: Number(a.one('SELECT connection_generation FROM nodes WHERE id=?', String(started.nodeId))!.connection_generation) }).some(g => g.participationId === proposal.participationId)); return proposal; } };
+        const agentId = randomUUID();
+        if (rustBinary) await browser(accountsHost, '/api/agents', { agentId, nodeId: started.nodeId, name }, session);
+        else a.registerAgent(account, String(started.nodeId), agentId, name);
+        return { get app() { return app; }, agent, agentId, nodeId: String(started.nodeId), database, account, options, async restart() { await app.close().catch(() => {}); app = await startApp(options); apps.push(app); await until(() => app.hubLink!.status().connected, 'reconnected'); }, async participate(invocation: InvocationPolicy = { mode: 'owner' }) { const policy: ParticipationPolicy = { sectionIds: [project.sectionId], invocation, scopes: ['read', 'invoke'], localPolicyDigest: (await api(app, `/api/hub-link/agents/${agent.id}/policy`)).localPolicyDigest, payerBindingRef: 'local_provider', maxCostMicros: 10000 }; const proposal = rustBinary
+            ? (await browser(accountsHost, '/api/participations', { projectHost: project.host, agentId, policy, providerMaxCostMicros: 100 }, session)).data
+            : a.propose(ctx(account), agentId, policy);
+        if (rustBinary) {
+            await browser(project.host, '/api/participants/consent', proposal, await projectSession(alice));
+        } else {
+            a.consent(ctx(alice), proposal.participationId, proposal.revision, proposal.policyDigest, 'project');
+        } await api(app, '/api/hub-link/grants/approve', { projectId: project.projectId, participationId: proposal.participationId, agentId, localAgentId: agent.id, revision: proposal.revision, policy, providerMaxCostMicros: 100 }); await until(() => r.grants({ nodeId: String(started.nodeId), accountId: account, nodeGeneration: 1, connectionGeneration: Number(a.one('SELECT connection_generation FROM nodes WHERE id=?', String(started.nodeId))!.connection_generation) }).some(g => g.participationId === proposal.participationId)); return proposal; } };
     }
     t.after(async () => {
         for (const app of apps)
             await app.close().catch(() => { });
         await hub.close();
-        server.closeAllConnections();
         provider.closeAllConnections();
-        await Promise.all([new Promise<void>(resolve => server.close(() => resolve())), new Promise<void>(resolve => provider.close(() => resolve()))]);
+        await new Promise<void>(resolve => provider.close(() => resolve()));
         hubDb.close();
         rmSync(dir, { recursive: true, force: true });
     });
@@ -142,7 +171,7 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         return (await browser(project.host, '/api/messages', { requestId: randomUUID(), sectionId: project.sectionId, text: 'Mention from authenticated project browser', mentions }, session)).data;
     }
     const post = (account: string, mentions: string[]) => r.post(ctx(account), { requestId: randomUUID(), sectionId: project.sectionId, text: 'Explain transport', mentions });
-    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, now: () => clock, advance(ms: number) { clock += ms; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
+    return { dir, a, r, ctx, alice, bob, eve, project, node, post, browserPost, projectSession, request: localFetch, transport, keys, origin, localOrigin, hubFetch, browser, login, accountsHost, signer, hubKey, frames, loseEnrollmentResponse() { loseEnrollmentResponse = true; }, get calls() { return providerCalls; }, now: () => clock, advance(ms: number) { clock += ms; }, async done(turnId: string, account = alice) { await until(() => { const state = r.turn(ctx(account), turnId).state; assert(!['failed', 'unknown', 'revoked'].includes(String(state)), `Unexpected hub turn state: ${state}`); return state === 'done'; }, 'hub final'); return r.history(ctx(account), project.sectionId).results.filter(f => f.turnId === turnId); } };
 }
 test('signed envelopes reject forged payloads, keys and directions', () => {
     const pair = generateKeyPairSync('ed25519'), key = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'), body = { kind: 'heartbeat' };
@@ -739,13 +768,14 @@ test('signed pending requests stay node-scoped; approval, stale revision, offlin
     await until(() => bob.app.hubLink!.status().pendingWithdrawals === 0, 'offline decline reconciled');
     assert.equal(f.a.one('SELECT state FROM participations WHERE id=?', declined.participationId)!.state, 'revoked');
     assert.equal(bob.app.hubLink!.requests().length, 0); assert.equal(f.calls, 0);
-    const original = WebSocket.prototype.send; let chunked = false;
-    WebSocket.prototype.send = function(data: any, ...args: any[]) {
-        const body = JSON.parse(String(data)).body;
-        if (body?.kind === 'participation.requests') { assert(Buffer.byteLength(String(data)) <= 65536); if (!body.complete) chunked = true; }
-        return Reflect.apply(original, this, [data, ...args]);
-    };
-    t.after(() => { WebSocket.prototype.send = original; });
+    let chunked = false;
+    f.frames.on('frame', (frame: string) => {
+        const body = JSON.parse(frame).body;
+        if (body?.kind === 'participation.requests') {
+            assert(Buffer.byteLength(frame) <= 65536);
+            if (!body.complete) chunked = true;
+        }
+    });
     for (let index = 0; index < 90; index++) {
         const agentId = randomUUID(); web.registerAgent(f.bob, { agentId, nodeId: bob.nodeId, name: `Pending ${index}` });
         web.propose(f.ctx(f.bob), { agentId, policy, providerMaxCostMicros: 100 });

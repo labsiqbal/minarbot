@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { AlertTriangle, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Pencil, Plug, Plus, Receipt, RefreshCw, RotateCcw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Trash2, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
-import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, Redo2, Siren, Undo2, WrapText } from 'lucide-react';
+import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, LogOut, Redo2, Siren, Undo2, WrapText } from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { defineConfig, mergeConfig, type Plugin } from 'vite';
@@ -95,6 +95,11 @@ const appearanceConfig: Plugin = {
           undo: Undo2, redo: Redo2 }),
         conversationIcons,
       },
+      hub: {
+        colors: colorThemes,
+        icons: { ...iconMap({ bot: Bot, folder: FolderOpen, monitor: Monitor, logout: LogOut, users: Users,
+          hash: Hash, plus: Plus, refresh: RefreshCw, ellipsis: Ellipsis, send: ArrowUp, 'external-link': ExternalLink }), brand: svg(Bot, 24) },
+      },
     };
     for (const [group, config] of Object.entries(configs)) {
       this.emitFile({ type: 'asset', fileName: `${group}-config.json`, source: JSON.stringify(config) });
@@ -113,6 +118,7 @@ export default defineConfig(mergeConfig(app, {
   plugins: [appearanceConfig],
   build: {
     reportCompressedSize: false,
+    manifest: true,
     rollupOptions: {
       input,
       output: {

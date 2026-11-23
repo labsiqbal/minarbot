@@ -2,6 +2,8 @@ import init, { __MOUNT__ as mount } from './__APP__.js';
 
 const status = document.getElementById('appearance-startup');
 const fallback = document.getElementById('appearance-fallback');
+const rollback = fallback.querySelector('a[data-preserve-fragment]');
+if (rollback && location.hash) rollback.hash = location.hash;
 const title = fallback.querySelector('h1')?.textContent ?? 'Conversation';
 let ready = false;
 

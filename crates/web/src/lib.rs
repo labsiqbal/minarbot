@@ -13,6 +13,8 @@ mod craft_anything;
 mod email;
 mod engines;
 mod general;
+#[cfg(feature = "hub")]
+mod hub;
 mod hub_connection;
 #[cfg(any(feature = "conversation", feature = "workflows"))]
 mod lazy_route;
@@ -50,7 +52,7 @@ use web_sys::HtmlDialogElement;
 use web_sys::HtmlElement;
 
 #[cfg(not(any(feature = "conversation", feature = "workflows")))]
-#[wasm_bindgen]
+#[cfg_attr(not(feature = "hub"), wasm_bindgen)]
 pub fn mount_appearance() -> Result<(), JsValue> {
     let document = document();
     let element = |id| {
@@ -156,6 +158,30 @@ pub fn mount_workflows() -> Result<(), JsValue> {
         }
     })
     .forget();
+    Ok(())
+}
+
+#[cfg(feature = "hub")]
+#[wasm_bindgen]
+pub fn mount_hub() -> Result<(), JsValue> {
+    let root = document()
+        .get_element_by_id("leptos-root")
+        .ok_or_else(|| JsValue::from_str("Hub document is incomplete"))?
+        .dyn_into::<HtmlElement>()?;
+    let read = |id| {
+        document()
+            .get_element_by_id(id)
+            .and_then(|node| node.text_content())
+            .and_then(|raw| {
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok()
+            })
+            .ok_or_else(|| JsValue::from_str("Hub configuration is invalid"))
+    };
+    let mut config = read("hub-presentation")?;
+    config.extend(read("hub-config")?);
+    let config = serde_json::from_value(serde_json::Value::Object(config))
+        .map_err(|_| JsValue::from_str("Hub configuration is invalid"))?;
+    mount_to(root, move || hub::page(config)).forget();
     Ok(())
 }
 
