@@ -1,5 +1,25 @@
 # Test migration ledger
 
+## #67 route ownership ledger
+
+Leptos owns route groups by default. React remains available through
+MINARBOT_APPEARANCE_CLIENT=react or ?ui=react during the two-release fallback window.
+
+| Group | Public paths and surfaces | Leptos document | React rollback |
+| --- | --- | --- | --- |
+| Shell and setup | /, first run, sidebar, Quick switcher | appearance.html or active route document | React recovery page |
+| Settings | /settings/:section, system and connection panels | appearance.html | index.html?ui=react |
+| Pairing | /pair on secure origin | pairing form with Leptos bootstrap | native pairing form |
+| Conversation | agents, rooms, project conversations, Guide, Files, Changes, Computer | conversation.html | index.html?ui=react |
+| Agent and Memory | profiles, templates, inbox, remote agent detail, Memory and History | active conversation or appearance document | React profile/conversation views |
+| Projects | /projects/:id, Overview, Connected apps, Environment, MCP | appearance.html | index.html?ui=react |
+| Automation | /routines, /workflows, /calendar, project Calendar, scoped Workflows | workflows.html | index.html?ui=react |
+| Hosted Hub | accounts, sign-in, join, members, invitations, rooms | Hub Leptos document | Hub React document |
+
+Public paths, API routes, settings keys, browser drafts, and recovery journal
+formats stay stable across client selection. Missing Leptos documents or startup
+assets use the React recovery document.
+
 ## #67 UI coverage ledger
 
 The route ownership ledger lists each public surface and its default document.
