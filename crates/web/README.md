@@ -101,7 +101,7 @@ browser draft storage.
 ## Rollback rehearsal
 
 Use the versioned directory produced by the release dry run, such as
-\`<releases>/0.17.1-<commit>\`. The rehearsal uses a private data directory and a
+`<releases>/0.17.1-<commit>`. The rehearsal uses a private data directory and a
 loopback port.
 
 ```sh
@@ -114,6 +114,28 @@ The rehearsal seeds agents, a project, a named conversation, drafts, a running
 and finished goal, a loop, a routine, a workflow, and Memory. It restarts through
 Leptos, React, and Leptos, checks draft and uncertain-command journals, confirms
 the running goal becomes interrupted, and asserts no mutation replay.
+
+The November 23 Stage A run used the optimized native server and both web
+builds in staged runtime `0.17.1-62725ce2`. On one loopback origin and one
+browser tab, the unset selector opened Leptos, `?ui=react` opened React,
+a restart with `react` kept React, and a restart with the selector removed
+returned to Leptos.
+
+- Nine API readbacks matched across switches, including both agents, project,
+  named conversation and history, completed goal, scheduled loop, routine,
+  workflow and Memory note.
+- The named conversation draft and the uncertain send's original journal bytes
+  survived both restarts. The browser made one send attempt, intentionally
+  interrupted by the fixture. It attempted zero replays and the server added
+  zero copies. Synthetic provider calls stayed at four throughout the switch.
+- The running goal became interrupted on restart. The completed goal stayed met
+  and the loop stayed scheduled.
+- The signed installer fixture verified artifact acceptance, Leptos default,
+  React query override and a synthetic turn. Linux Electron and Tauri AppImages
+  passed local packaging and application smoke checks at `0.17.1-1cfb2d0c`.
+  The exact `--issues 67` dry run stopped at the ancestry gate because #67's
+  claim is embedded in a bullet. Artifact verification used a separate local
+  dry run without that flag.
 
 ## React inventory for #67
 

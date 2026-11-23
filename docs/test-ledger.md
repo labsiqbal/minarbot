@@ -1,25 +1,5 @@
 # Test migration ledger
 
-## #67 route ownership ledger
-
-Leptos owns route groups by default. React remains available through
-MINARBOT_APPEARANCE_CLIENT=react or ?ui=react during the two-release fallback window.
-
-| Group | Public paths and surfaces | Leptos document | React rollback |
-| --- | --- | --- | --- |
-| Shell and setup | /, first run, sidebar, Quick switcher | appearance.html or active route document | React recovery page |
-| Settings | /settings/:section, system and connection panels | appearance.html | index.html?ui=react |
-| Pairing | /pair on secure origin | pairing form with Leptos bootstrap | native pairing form |
-| Conversation | agents, rooms, project conversations, Guide, Files, Changes, Computer | conversation.html | index.html?ui=react |
-| Agent and Memory | profiles, templates, inbox, remote agent detail, Memory and History | active conversation or appearance document | React profile/conversation views |
-| Projects | /projects/:id, Overview, Connected apps, Environment, MCP | appearance.html | index.html?ui=react |
-| Automation | /routines, /workflows, /calendar, project Calendar, scoped Workflows | workflows.html | index.html?ui=react |
-| Hosted Hub | accounts, sign-in, join, members, invitations, rooms | Hub Leptos document | Hub React document |
-
-Public paths, API routes, settings keys, browser drafts, and recovery journal
-formats stay stable across client selection. Missing Leptos documents or startup
-assets use the React recovery document.
-
 ## #67 UI coverage ledger
 
 The route ownership ledger lists each public surface and its default document.
@@ -46,6 +26,9 @@ installer and rollback checks exercise the unset production selector.
 | scoped | 52 | Upcoming routines, inbox deep links, agent Workflows, and inline run steps |
 | shell | 36 | Workspace navigation, Quick switcher, prompts, command recovery, sidebar controls |
 | system | 32 | Usage, updates, devices, shared data, backup and external access, mutation recovery |
+
+The Stage A run passed all 16 groups and 580 pairs. All 570 non-exempt pairs
+passed the pixel thresholds. Ten narrow Hub pairs retain their intentional layout.
 
 See the screenshot parity guide for the gate command and failure thresholds.
 Retained Node and Rust API cases below still cover the shared contracts.
