@@ -87,6 +87,7 @@ pub(super) fn settings(room: Channel, dialog: NodeRef<leptos::html::Dialog>) -> 
     let locked = move || busy.get() || pending.with(Option::is_some) || blocked.get();
     let archive = NodeRef::<leptos::html::Dialog>::new();
     let discard = NodeRef::<leptos::html::Dialog>::new();
+    let icons = use_context::<Icons>().unwrap_or_default();
     let loaded = RwSignal::new(false);
     let load = move || {
         if loaded.get_untracked() {
@@ -166,10 +167,15 @@ pub(super) fn settings(room: Channel, dialog: NodeRef<leptos::html::Dialog>) -> 
         });
     };
     view! {
-        <dialog class="k-dialog k-dialog--lg workspace-dialog" node_ref=dialog aria-label="Section settings"
+        <dialog class="k-dialog k-dialog--md workspace-dialog bs-root section-settings" node_ref=dialog aria-labelledby="section-settings-title"
             on:cancel=move |event: web_sys::Event| { if busy.get_untracked() { event.prevent_default(); } }>
-            <div class="k-dialog__head"><h2 class="k-dialog__title">"Section settings"</h2></div>
-            <div class="k-dialog__body k-stack">
+            <div class="k-dialog__head">
+                <h2 class="k-dialog__title" id="section-settings-title">"Section settings"</h2>
+                <form method="dialog"><button type="submit" class="k-icon-btn" aria-label="Close" disabled=busy>
+                    <span class="appearance-icon" inner_html=icons.close></span>
+                </button></form>
+            </div>
+            <div class="k-dialog__body">
                 <p role="alert" class="k-field__error" hidden=move || !blocked.get()>"Section recovery data could not be read. Check section settings before discarding it."</p>
                 <p role="status" class="k-field__hint" hidden=move || pending.with(Option::is_none)>"Request result is not confirmed yet. Retry the same request to check the result."</p>
                 <form id="channel-form" class="k-fieldset" on:submit=move |event| { event.prevent_default(); submit(); }>
@@ -177,21 +183,29 @@ pub(super) fn settings(room: Channel, dialog: NodeRef<leptos::html::Dialog>) -> 
                         <input class="k-input" autofocus maxlength="80" required readonly=locked prop:value=name on:input=move |event| name.set(event_target_value(&event)) />
                     </label>
                     <label class="k-field"><span class="k-field__label">"Purpose"</span>
-                        <textarea class="k-input" maxlength="8000" rows="3" required readonly=locked prop:value=instructions on:input=move |event| instructions.set(event_target_value(&event))></textarea>
+                        <textarea class="k-input k-textarea" maxlength="8000" rows="3" required readonly=locked prop:value=instructions on:input=move |event| instructions.set(event_target_value(&event))></textarea>
                     </label>
                     <fieldset class="k-fieldset" disabled=locked>
                         <legend class="k-field__label">"Members"</legend>
                         <p role="status" hidden=move || loaded.get() || !error.with(String::is_empty)>"Loading members…"</p>
                         {move || directory.get().into_iter().map(|agent| {
-                            let id = agent.id.clone();
-                            view! { <label class="k-check"><input type="checkbox" prop:checked=move || members.with(|members| members.contains(&id))
-                                on:change=move |event| {
-                                    if event_target_checked(&event) { members.update(|members| members.push(agent.id.clone())); }
-                                    else {
-                                        members.update(|members| members.retain(|id| id != &agent.id));
-                                        if lead.get_untracked() == agent.id { lead.set(String::new()); }
-                                    }
-                                } />{agent.name}</label> }
+                            let control = format!("section-member-{}", agent.id);
+                            let id = StoredValue::new(agent.id);
+                            let selected = move || id.with_value(|id| members.with(|members| members.contains(id)));
+                            view! { <div class="k-check">
+                                <button id=control.clone() type="button" role="checkbox" class="k-check__box" disabled=locked
+                                    aria-checked=move || selected().to_string() data-state=move || if selected() { "checked" } else { "unchecked" }
+                                    on:click=move |_| {
+                                        let id = id.get_value();
+                                        if selected() {
+                                            members.update(|members| members.retain(|member| member != &id));
+                                            if lead.get_untracked() == id { lead.set(String::new()); }
+                                        } else { members.update(|members| members.push(id)); }
+                                    }>
+                                    <span class="appearance-icon" hidden=move || !selected()><crate::connection_ui::Icon name="check" /></span>
+                                </button>
+                                <label class="k-check__text" for=control><span class="k-check__label">{agent.name.clone()}</span></label>
+                            </div> }
                         }).collect_view()}
                     </fieldset>
                     <div class="k-field"><label class="k-field__label" for="section-lead">"Lead"</label>
@@ -209,14 +223,14 @@ pub(super) fn settings(room: Channel, dialog: NodeRef<leptos::html::Dialog>) -> 
                     <p role="alert" class="k-field__error" hidden=move || error.with(String::is_empty)>{error}</p>
                 </form>
             </div>
-            <div class="k-dialog__foot k-row-actions">
-                <button type="button" class="k-btn k-btn--ghost k-dialog__foot-start" disabled=locked on:click=move |_| dialog_open(archive)>
+            <div class="k-dialog__foot">
+                <button type="button" class="k-btn k-btn--md k-btn--ghost k-dialog__foot-start" disabled=locked on:click=move |_| dialog_open(archive)>
                     {move || if archived.get() { "Restore section" } else { "Archive section" }}
                 </button>
-                <button type="button" class="k-btn k-btn--ghost" hidden=move || !blocked.get() && pending.with(Option::is_none) disabled=busy on:click=move |_| dialog_open(discard)>"Discard section recovery"</button>
-                <button type="button" class="k-btn k-btn--ghost" hidden=move || error.with(String::is_empty) || locked() on:click=move |_| { let _ = window().location().reload(); }>"Discard changes and reload"</button>
-                <form method="dialog"><button type="submit" class="k-btn k-btn--secondary" disabled=busy>"Cancel"</button></form>
-                <button type="submit" form="channel-form" class="k-btn k-btn--primary" disabled=move || busy.get() || blocked.get() || members.with(Vec::is_empty)>
+                <button type="button" class="k-btn k-btn--md k-btn--ghost" hidden=move || !blocked.get() && pending.with(Option::is_none) disabled=busy on:click=move |_| dialog_open(discard)>"Discard section recovery"</button>
+                <button type="button" class="k-btn k-btn--md k-btn--ghost" hidden=move || error.with(String::is_empty) || locked() on:click=move |_| { let _ = window().location().reload(); }>"Discard changes and reload"</button>
+                <form method="dialog"><button type="submit" class="k-btn k-btn--md k-btn--secondary" disabled=busy>"Cancel"</button></form>
+                <button type="submit" form="channel-form" class="k-btn k-btn--md k-btn--primary" disabled=move || busy.get() || blocked.get() || members.with(Vec::is_empty)>
                     {move || if busy.get() { "Saving..." } else if pending.with(Option::is_some) { "Retry saving section" } else { "Save section" }}
                 </button>
             </div>
