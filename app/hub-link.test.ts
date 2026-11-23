@@ -9,13 +9,12 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { testDatabase } from './test-support/database.ts';
-import { startRustHub } from './test-support/hosted-hub.ts';
+import { hubCommand, startRustHub } from './test-support/hosted-hub.ts';
 import { rustBinary } from './rust-binary.ts';
 import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import WebSocket from 'ws';
 import { startApp } from './test-bridge.ts';
 import { signedNodeMessage, verifiedNodeMessage } from './hub/node-link.ts';
-import { initializeHubSchema } from './hub/schema.ts';
 import { createHubAuthority, type ParticipationPolicy, type InvocationPolicy } from './hub/project-authority.ts';
 import { createHubWebApi } from './hub/web.ts';
 import { createHubRouting, type RoutingFrame } from './hub/routing.ts';
@@ -34,35 +33,30 @@ async function until(check: () => unknown | Promise<unknown>, label = 'condition
 async function api(app: App, path: string, body?: unknown, status = 200): Promise<any> { const response = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json', Connection: 'close' }, body: body === undefined ? undefined : JSON.stringify(body) }); const result = await response.json(); assert.equal(response.status, status, JSON.stringify(result)); return result; }
 const who = (subject: string) => ({ issuer: 'https://identity.test', subject, verifiedMailboxes: [`${subject}@example.test`] });
 async function fixture(t: test.TestContext, providerScript?: (body: any) => unknown | Promise<unknown>, stream = false) {
-    const dir = mkdtempSync(join(tmpdir(), 'minarbot-hub-link-')), hubDb = testDatabase(join(dir, 'hub.sqlite'));
-    initializeHubSchema(hubDb);
+    const dir = mkdtempSync(join(tmpdir(), 'minarbot-hub-link-'));
+    const dataPath = join(dir, 'hub.sqlite');
     let clock = Date.now();
     const binary = rustBinary('minarbot-server', process.env.MINARBOT_HOSTED_HUB_BINARY ?? process.env.MINARBOT_RUST_BINARY);
     const now = () => clock;
-    const a = createHubAuthority(hubDb, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now });
-    const r = createHubRouting(a), signer = generateKeyPairSync('ed25519').privateKey, hubKey = createPublicKey(signer).export({ type: 'spki', format: 'der' }).toString('base64url');
-    const alice = a.provisionAccount(who('alice'), true), bob = a.provisionAccount(who('bob'), true), eve = a.provisionAccount(who('eve'), true), project = a.createProject(alice, 'alpha', 'Alpha');
-    const ctx = (account: string) => a.resolveProject(project.host, account, project.projectId);
-    const invitation = a.invite(ctx(alice), { mailbox: 'bob@example.test', role: 'member', expiresAt: clock + 60000 });
-    a.acceptInvite(ctx(bob), invitation.invitationId, invitation.token, who('bob'));
+    const signer = generateKeyPairSync('ed25519').privateKey;
+    const hubKey = createPublicKey(signer).export({ type: 'spki', format: 'der' }).toString('base64url');
     const accountsHost = 'accounts.minarbot.test', origin = `https://${accountsHost}`;
-    const identities = new Map(['alice', 'bob', 'eve'].map(subject => [subject, { ...who(subject), sessionId: `${subject}-session`, expiresAt: clock + 3600000 } satisfies SessionIdentity]));
-    async function startFixtureHub() {
-        const mailboxKeyPath = join(dir, 'mailbox.key'), tokensPath = join(dir, 'tokens.json'), signingKeyPath = join(dir, 'signer.pem');
-        writeFileSync(mailboxKeyPath, Buffer.alloc(32, 8), { mode: 0o600 });
-        writeFileSync(tokensPath, JSON.stringify(Object.fromEntries(identities)), { mode: 0o600 });
-        writeFileSync(signingKeyPath, signer.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
-        const rust = await startRustHub(binary, dir, { domain: 'minarbot.test', accountsHost, dataPath: join(dir, 'hub.sqlite'),
-            mailboxKeyPath, identity: { mode: 'stub', tokensPath }, nodeLink: { signingKeyPath } }, 0, true);
-        try {
-            await rust.control({ now: clock });
-        } catch (error) {
-            await rust.close();
-            throw error;
-        }
-        return rust;
-    }
-    const hub = await startFixtureHub();
+    const subjects = ['alice', 'bob', 'eve'] as const;
+    const identities = Object.fromEntries(subjects.map(subject => [subject, { ...who(subject), sessionId: `${subject}-session`, expiresAt: clock + 3600000 } satisfies SessionIdentity]));
+    const mailboxKeyPath = join(dir, 'mailbox.key'), tokensPath = join(dir, 'tokens.json'), signingKeyPath = join(dir, 'signer.pem');
+    const config = { domain: 'minarbot.test', accountsHost, dataPath, mailboxKeyPath, identity: { mode: 'stub' as const, tokensPath }, nodeLink: { signingKeyPath } };
+    writeFileSync(mailboxKeyPath, Buffer.alloc(32, 8), { mode: 0o600 });
+    writeFileSync(tokensPath, JSON.stringify(identities), { mode: 0o600 });
+    writeFileSync(signingKeyPath, signer.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+    const ids = Object.fromEntries(subjects.map(subject => [subject,
+        String(JSON.parse(hubCommand(binary, dir, config, 'admit', identities[subject].issuer, subject)).accountId)]));
+    const { alice, bob, eve } = ids;
+    const hub = await startRustHub(binary, dir, config, 0, true);
+    t.after(() => hub.close());
+    await hub.control({ now: clock });
+    const hubDb = testDatabase(dataPath);
+    const a = createHubAuthority(hubDb, { domain: config.domain, mailboxKey: Buffer.alloc(32, 8), now });
+    const r = createHubRouting(a);
     const localOrigin = `http://127.0.0.1:${hub.port}`;
     // Test transport dials disposable loopback; production URL/Host and signed origin stay exact.
     const localFetch: typeof fetch = (input, init) => new Promise((resolve, reject) => {
@@ -98,6 +92,11 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
         const boot = await browser(accountsHost, '/auth/bootstrap');
         return browser(accountsHost, '/auth/session', {}, boot, subject);
     }
+    const project = (await browser(accountsHost, '/api/projects', { slug: 'alpha', name: 'Alpha' }, await login(alice))).data as { projectId: string; host: string; sectionId: string };
+    const ctx = (account: string) => a.resolveProject(project.host, account, project.projectId);
+    const { data: invitation } = await browser(project.host, '/api/invitations', { mailbox: 'bob@example.test', role: 'member' }, await projectSession(alice));
+    const proof = Object.fromEntries(new URLSearchParams(new URL(invitation.url).hash.slice(1)));
+    await browser(project.host, '/api/invitations/accept', proof, await projectSession(bob));
     let providerCalls = 0;
     const provider = createServer(async (req, res) => {
         let raw = '';
@@ -147,7 +146,6 @@ async function fixture(t: test.TestContext, providerScript?: (body: any) => unkn
     t.after(async () => {
         for (const app of apps)
             await app.close().catch(() => { });
-        await hub.close();
         provider.closeAllConnections();
         await new Promise<void>(resolve => provider.close(() => resolve()));
         hubDb.close();
