@@ -56,6 +56,16 @@ Agent memory and History summary inside the selected route group. Both clients
 share the note recovery journal format.
 React remains the default for the staged rollout in #67.
 
+## Hosted hub
+
+The hosted listener serves React by default. Build the hub document with
+`cargo xtask leptos` and set `MINARBOT_APPEARANCE_CLIENT=leptos` on that
+listener to select Leptos for accounts, sign-in, machine linking, joining an
+agent, project sections, members, invitations and room chat. The hub reads its
+own asset allowlist from `app/dist/_leptos/hub-assets.json`. Open the same route
+with `?ui=react` for rollback. Both clients use the same sessions, API and
+browser draft storage.
+
 ## React inventory for #67
 
 Inventory against main `865acc8` plus #64, with the server's Leptos selector
@@ -71,7 +81,7 @@ issue.
 | Conversation files, results and Computer | Local agent, named conversation and room file panels, workspace browser, Changes, artifact and result previews, run inspector, secure requests and standalone Computer use the Leptos conversation bundle. Remote agent detail follows its own route group. | `RightPanel.tsx`, `RightPanelFiles.tsx`, `RightPanelDiff.tsx`, `WorkspacePanel.tsx`, `HtmlPreview.tsx`, `ResultURLPreview.tsx`, `ComputerViewer.tsx`, `SecureComputerRequest.tsx`, `RunInspector.tsx` |
 | Automation embedded in conversations | Agent/section Upcoming routines, inbound routine reports and deep links, and the agent-scoped workflow library, editor, versions, webhook/schedule forms and run inspector with inline step conversations. | `App.tsx`, `WorkflowPanel.tsx`, `WorkflowEditor.tsx`, `WorkflowGraph.tsx`, `WorkflowSchedule.tsx`, `WorkflowWebhook.tsx`, `WorkflowInbox.tsx` |
 | Project management and integrations | New project, project-scoped Connected apps, Environment and MCP tabs, project source control, sidebar rename/archive/restore and section settings. Overview, its member/folder forms, section creation and Calendar have Leptos entry points. | `App.tsx`, `Projects.tsx`, `ConnectedAppsPanel.tsx`, `DiscordSettings.tsx`, `WhatsAppSettings.tsx`, `ProjectEnvironmentPanel.tsx`, `McpPanel.tsx`, `SourceControl.tsx` |
-| Canonical hub | Clerk sign-in/session handoff, project directory and creation, invitation acceptance, account/machine enrollment, join agent, project members/roles/invitations, participating agents/policies/consent, sections and room chat. | `hub/main.tsx`, `hub/HubApp.tsx`, `hub/client.ts` |
+| Canonical hub fallback | Project hosts and central accounts support staged Leptos. Sign-in uses the hosted identity contract and the existing development token fixture. React remains the rollback client. | `hub/main.tsx`, `hub/HubApp.tsx`, `hub/client.ts` |
 | Fallback and retirement | Workspace loading/error/404, then the full React workspace, setup, Settings, Project and Automation when explicitly selected or when a Leptos document is unavailable. Keep rollback available for the staged releases. | `App.tsx`, `navigation.ts`, `hooks/useAppRoute.ts`, `FirstRun.tsx`, `settings-groups.ts`, `lazyPanels.tsx`, `Projects.tsx`, `AutomationCalendar.tsx`, `AutomationCalendarDialog.tsx`, `RoutineSchedule.tsx`, `RoutineTemplates.tsx`, `WorkflowDirectory.tsx` |
 
 Workflow step conversations open the existing conversation route. Browser Back

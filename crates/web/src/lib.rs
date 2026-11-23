@@ -39,12 +39,12 @@ mod workspace_route;
 
 use leptos::{mount::mount_to, prelude::*};
 use wasm_bindgen::{prelude::*, JsCast};
-#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[cfg(not(any(feature = "conversation", feature = "workflows")))]
 use web_sys::HtmlDialogElement;
 use web_sys::HtmlElement;
 
-#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
-#[wasm_bindgen]
+#[cfg(not(any(feature = "conversation", feature = "workflows")))]
+#[cfg_attr(not(feature = "hub"), wasm_bindgen)]
 pub fn mount_appearance() -> Result<(), JsValue> {
     let document = document();
     let element = |id| {
@@ -164,7 +164,9 @@ pub fn mount_hub() -> Result<(), JsValue> {
         document()
             .get_element_by_id(id)
             .and_then(|node| node.text_content())
-            .and_then(|raw| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok())
+            .and_then(|raw| {
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok()
+            })
             .ok_or_else(|| JsValue::from_str("Hub configuration is invalid"))
     };
     let mut config = read("hub-presentation")?;
