@@ -1,3 +1,4 @@
+use crate::api::command_id;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -14,15 +15,6 @@ pub fn id(value: &str) -> bool {
                 byte.is_ascii_hexdigit()
             }
         })
-}
-
-fn command_id(value: &str) -> bool {
-    id(value)
-        && value.as_bytes()[14] == b'4'
-        && matches!(
-            value.as_bytes()[19].to_ascii_lowercase(),
-            b'8' | b'9' | b'a' | b'b'
-        )
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

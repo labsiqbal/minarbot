@@ -44,14 +44,14 @@ the Rust-rendered `/pair` form, `/routines`, `/workflows`, `/calendar`, and the
 project Calendar tab also use Leptos. The three automation routes share a mounted
 workspace shell and load the `workflows` bundle. The project Calendar link loads
 the same bundle. Setup and Settings use `appearance`. After setup, `/`, agent
-Main chat, named and project conversations, and rooms use `conversation`.
+Main chat, named and project conversations, rooms, and Guide use `conversation`.
 Files, Changes, workspace browsing, result previews, and standalone Computer
-also use the conversation bundle.
-Conversation links reuse the shell and browser history. Settings return links
-retain the selected route. Add `?ui=react` to open the React client.
-The workspace shell mounts agent creation, profile editing and template dialogs
-inside the selected route group. The Advanced profile panel exposes
-`#agent-memory-mount` for the Memory port in #77.
+also use the conversation bundle. Conversation links reuse the shell and browser
+history. Settings return links retain the selected route. Add `?ui=react` to open
+the React client. The workspace shell mounts agent creation, profile editing, and
+template dialogs inside the selected route group. Conversation controls and the
+Advanced profile panel provide Memory and History summary. Both clients share the
+note recovery journal format.
 React remains the default for the staged rollout in #67.
 
 ## React inventory for #67
@@ -62,9 +62,10 @@ issue.
 
 | Issue group | React screens and dialogs | React sources |
 | --- | --- | --- |
-| Memory and history summary | Agent and section Memory, including Notes, Learned and Standing questions, search, source links, edit, pin, forget and undo. History summary and compaction controls from chat and profile. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
+| Memory and history summary | Agent and section Memory and History summary use Leptos in the selected conversation routes and Advanced profile. React provides the same Notes, Learned, Standing questions, and compaction views on rollback. | `App.tsx`, `AgentProfileDialog.tsx`, `MemoryPanel.tsx`, `MemoryKnowledge.tsx`, `CompactionPanel.tsx` |
 | Workspace search and Needs you | Leptos shell owns Quick switcher, hidden-agent restore, Help and Needs you. New project hands off to its staged creation form pending #81. Remote agent detail remains React. | `App.tsx`, `ui/QuickSwitcher.tsx`, `hooks/useNeedsYouNotifications.ts`, `NeedsYou.tsx` |
 | Agent inbox and remote agent detail | Agent email inbox and message content at `/agents/:id/inbox`, and paired-machine agent detail at `/machines/:id/agents/:id`. | `App.tsx`, `AgentEmail.tsx`, `MachinesPanel.tsx`, `AgentActions.tsx` |
+| Conversation files, results and Computer | Local agent, named conversation and room file panels, workspace browser, Changes, artifact and result previews, run inspector, secure requests and standalone Computer use the Leptos conversation bundle. Remote agent detail follows its own route group. | `RightPanel.tsx`, `RightPanelFiles.tsx`, `RightPanelDiff.tsx`, `WorkspacePanel.tsx`, `HtmlPreview.tsx`, `ResultURLPreview.tsx`, `ComputerViewer.tsx`, `SecureComputerRequest.tsx`, `RunInspector.tsx` |
 | Automation embedded in conversations | Agent/section Upcoming routines, inbound routine reports and deep links, and the agent-scoped workflow library, editor, versions, webhook/schedule forms and run inspector with inline step conversations. | `App.tsx`, `WorkflowPanel.tsx`, `WorkflowEditor.tsx`, `WorkflowGraph.tsx`, `WorkflowSchedule.tsx`, `WorkflowWebhook.tsx`, `WorkflowInbox.tsx` |
 | Project management and integrations | New project, project-scoped Connected apps, Environment and MCP tabs, project source control, sidebar rename/archive/restore and section settings. Overview, its member/folder forms, section creation and Calendar have Leptos entry points. | `App.tsx`, `Projects.tsx`, `ConnectedAppsPanel.tsx`, `DiscordSettings.tsx`, `WhatsAppSettings.tsx`, `ProjectEnvironmentPanel.tsx`, `McpPanel.tsx`, `SourceControl.tsx` |
 | Canonical hub | Clerk sign-in/session handoff, project directory and creation, invitation acceptance, account/machine enrollment, join agent, project members/roles/invitations, participating agents/policies/consent, sections and room chat. | `hub/main.tsx`, `hub/HubApp.tsx`, `hub/client.ts` |
@@ -132,6 +133,14 @@ then writes dark/light desktop/narrow comparison images and a timing receipt.
 ```sh
 node --experimental-strip-types test-support/ui-smoke/workspace-prompts-smoke.mjs /tmp/minarbot-workspace-prompts
 MINARBOT_SMOKE_UI=leptos node --experimental-strip-types test-support/ui-smoke/guide-smoke.mjs
+```
+
+Run Memory and History summary parity after packaging. The smoke seeds private
+and section banks on a disposable server, checks note recovery and source
+paging, and compares desktop and narrow screenshots in both themes.
+
+```sh
+MINARBOT_MEMORY_BENCH=20 node --experimental-strip-types test-support/ui-smoke/memory-smoke.mjs /tmp/minarbot-memory-parity
 ```
 
 ## Warm navigation in #62

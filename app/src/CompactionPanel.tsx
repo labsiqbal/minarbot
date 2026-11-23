@@ -2,6 +2,7 @@ import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, History } from 'lucide-react';
 import { Alert, Badge, Button, Card, CodeBlock, Collapsible, Dialog, IconButton, Row } from './ui/kit';
+import './MemoryPanel.css';
 type Summary = { version: string; through: number; summary: string; source_count: number; sources: { id: string; seq: number; status: string }[]; next_after: number | null };
 export function CompactionPanel({ path, request }: { path: string; request: <T>(path: string) => Promise<T> }) {
   const [open, setOpen] = useState(false), [data, setData] = useState<Summary | null>(null), [loaded, setLoaded] = useState(false), [error, setError] = useState('');
