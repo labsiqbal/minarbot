@@ -31,28 +31,12 @@ fn params(query: &str, after: &str, kind: Option<&str>) -> String {
     params.to_string().as_string().unwrap_or_default()
 }
 
-fn visible_poll(root: NodeRef<html::Div>, reload: impl Fn() + Copy + 'static) {
-    let refresh = move || {
-        if root.get_untracked().is_some_and(|root| {
-            let rect = root.get_bounding_client_rect();
-            let height = window()
-                .inner_height()
-                .ok()
-                .and_then(|h| h.as_f64())
-                .unwrap_or_default();
-            rect.height() > 0.0 && rect.bottom() > 0.0 && rect.top() < height
-        }) && !document().hidden()
-        {
-            reload();
-        }
-    };
-    ui::poll(5, refresh);
-    let focus = window_event_listener(leptos::ev::focus, move |_| refresh());
-    let visibility = window_event_listener(leptos::ev::visibilitychange, move |_| refresh());
-    on_cleanup(move || {
-        focus.remove();
-        visibility.remove();
-    });
+fn visible_poll<T: Send + Sync + 'static>(root: NodeRef<html::Div>, query: ui::Query<T>, enabled: impl Fn() -> bool + 'static) {
+    query.poll(5000, move || enabled() && root.get_untracked().is_some_and(|root| {
+        let rect = root.get_bounding_client_rect();
+        let height = window().inner_height().ok().and_then(|h| h.as_f64()).unwrap_or_default();
+        rect.height() > 0.0 && rect.bottom() > 0.0 && rect.top() < height
+    }));
 }
 
 fn retry(error: RwSignal<String>, reload: Callback<()>) -> impl IntoView {
@@ -277,11 +261,7 @@ fn summary(path: String) -> impl IntoView {
         let after = cursors.with_untracked(|pages| pages.last().copied().unwrap_or(0));
         format!("{path}?after={after}")
     });
-    visible_poll(root, move || {
-        if !read.busy.get_untracked() {
-            read.reload.run(());
-        }
-    });
+    visible_poll(root, read, || true);
     let refresh_page = Callback::new(move |()| {
         paging.set(true);
         read.reload.run(());

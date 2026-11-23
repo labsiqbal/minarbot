@@ -122,6 +122,7 @@ fn install_command(install: Install, token: String, target: Value) -> impl IntoV
     let error = RwSignal::new(String::new());
     let origin = StoredValue::new(origin);
     let busy = RwSignal::new(false);
+    let failed = RwSignal::new(false);
     let refresh = move || {
         expired.set(js_sys::Date::now() >= install.expires_at);
         if expired.get_untracked()
@@ -133,7 +134,9 @@ fn install_command(install: Install, token: String, target: Value) -> impl IntoV
         }
         busy.set(true);
         leptos::task::spawn_local(async move {
-            if let Ok(result) = api::read::<Machines>("/api/machines").await {
+            let result = api::read::<Machines>("/api/machines").await;
+            failed.try_set(result.is_err());
+            if let Ok(result) = result {
                 online.try_set(
                     origin
                         .try_with_value(|origin| {
@@ -150,11 +153,7 @@ fn install_command(install: Install, token: String, target: Value) -> impl IntoV
         });
     };
     refresh();
-    if let Ok(timer) = set_interval_with_handle(move || {
-        if !document().hidden() {
-            refresh();
-        }
-    }, Duration::from_secs(5)) {
+    crate::connection_ui::poll_with_backoff(5000, move || (!busy.get_untracked()).then(|| failed.get_untracked()), refresh);, Duration::from_secs(5)) {
         on_cleanup(move || timer.clear());
     }
     let command = StoredValue::new(command);

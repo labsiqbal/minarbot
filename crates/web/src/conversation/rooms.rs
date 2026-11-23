@@ -269,6 +269,7 @@ pub(super) fn read(chat: Chat, follow: RwSignal<bool>) {
     let position = RwSignal::new(room.read_position);
     let id = StoredValue::new(room.id);
     let busy = RwSignal::new(false);
+    let failed = RwSignal::new(false);
     let read = move || {
         if busy.try_get_untracked() != Some(false)
             || !follow.get_untracked()
@@ -291,6 +292,7 @@ pub(super) fn read(chat: Chat, follow: RwSignal<bool>) {
             if busy.is_disposed() {
                 return;
             }
+            failed.set(result.is_err());
             if let Ok(rows) = result {
                 if let Some(room) = rows
                     .into_iter()
@@ -307,6 +309,7 @@ pub(super) fn read(chat: Chat, follow: RwSignal<bool>) {
                                 position.try_set(updated.read_position);
                             }
                             Err(reason) => {
+                                failed.try_set(true);
                                 chat.error.try_set(reason.message);
                             }
                         }
@@ -316,16 +319,7 @@ pub(super) fn read(chat: Chat, follow: RwSignal<bool>) {
             busy.try_set(false);
         });
     };
-    let interval = set_interval_with_handle(move || {
-        if !document().hidden() {
-            read();
-        }
-    }, Duration::from_millis(1200)).ok();
-    on_cleanup(move || {
-        if let Some(interval) = interval {
-            interval.clear();
-        }
-    });
+    crate::connection_ui::poll_with_backoff(1200, move || (!busy.get_untracked()).then(|| failed.get_untracked()), read);
 }
 
 pub(super) fn stop(chat: Chat, rows: Memo<Vec<Turn>>, icon: String) -> impl IntoView {

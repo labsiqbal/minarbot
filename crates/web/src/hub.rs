@@ -219,7 +219,11 @@ pub(crate) fn page(config: Config) -> impl IntoView {
         session.set(Some(read(endpoint).await));
     });
     let checking = RwSignal::new(false);
-    crate::connection_ui::poll(3, move || {
+    let failed = RwSignal::new(false);
+    crate::connection_ui::poll_with_backoff(
+        3000,
+        move || (!checking.get_untracked()).then(|| failed.get_untracked()),
+        move || {
         let Some(Ok(actor)) = session.get_untracked() else {
             return;
         };
@@ -232,6 +236,7 @@ pub(crate) fn page(config: Config) -> impl IntoView {
             if checking.try_set(false).is_some() {
                 return;
             }
+            failed.set(result.is_err());
             let changed = match result {
                 Ok(current) => actor != current,
                 Err(failure) => failure.access_ended(),

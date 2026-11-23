@@ -327,7 +327,11 @@ pub(crate) fn scoped_panel(
             }
         }
     });
-    poll(5, move || {
+    poll_with_backoff(5000, move || {
+        let states = [(state.page.busy, state.page.error), (state.detail.busy, state.detail.error)];
+        (!states.iter().any(|(busy, _)| busy.get_untracked()))
+            .then(|| states.iter().any(|(_, error)| !error.with_untracked(String::is_empty)))
+    }, move || {
         if !state.locked()
             && !state.open.get_untracked()
             && state.detail.data.with_untracked(|detail| {

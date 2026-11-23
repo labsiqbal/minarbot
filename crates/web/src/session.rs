@@ -17,6 +17,7 @@ pub(crate) fn watch_device() {
 
     let previous = StoredValue::new(None::<Option<String>>);
     let busy = RwSignal::new(false);
+    let failed = RwSignal::new(false);
     let refresh = move || {
         if busy.get_untracked() {
             return;
@@ -27,6 +28,7 @@ pub(crate) fn watch_device() {
             if busy.try_set(false).is_some() {
                 return;
             }
+            failed.set(result.is_err());
             match result {
                 Ok(device) => {
                     if previous.with_value(|id| id.as_ref().is_some_and(|id| *id != device.current)) {
@@ -41,5 +43,5 @@ pub(crate) fn watch_device() {
         });
     };
     refresh();
-    crate::connection_ui::poll(5, refresh);
+    crate::connection_ui::poll_with_backoff(5000, move || (!busy.get_untracked()).then(|| failed.get_untracked()), refresh);
 }
