@@ -33,7 +33,7 @@ pub fn panel() -> impl IntoView {
     view! {
         <div class="k-page bs-root">
             <Header title="Vault".to_owned() actions=Box::new(move || view! {
-                <Button label="Add entry" variant="primary" icon="plus" disabled=move || disabled() || entries.data.with(Option::is_none)
+                <Button label="Add entry" variant="primary" icon="plus-md" disabled=move || disabled() || entries.data.with(Option::is_none)
                     click=UiAction::new(move |()| editing.set(Some(None))) />
             }.into_any()) />
             <ErrorNotice error=Signal::derive(move || if error.with(String::is_empty) { entries.error.get() } else { error.get() }) retry=reload label="Reload" />

@@ -248,21 +248,21 @@ fn ProviderForm(
     };
     view! {
         <form class="k-stack" on:submit=apply>
-            <label class="k-field"><span class="k-field__label">"Type"</span><select class="k-input" disabled=busy on:change=move |event| {
+            <label class="k-field"><span class="k-field__label">"Type"</span><span class="connection-select"><select class="k-input" disabled=busy on:change=move |event| {
                 if let Some(index) = TYPES.iter().position(|entry| entry.0 == event_target_value(&event)) {
                     kind.set(index); url.set(TYPES[index].2.into()); models.set(None); error.set(String::new());
                 }
-            }>{TYPES.iter().map(|(id, label, _)| view! { <option value=*id>{*label}</option> }).collect_view()}</select></label>
+            }>{TYPES.iter().map(|(id, label, _)| view! { <option value=*id>{*label}</option> }).collect_view()}</select><span class="k-select__chev"><crate::connection_ui::Icon name="chevron-down" /></span></span></label>
             <label class="k-field"><span class="k-field__label">"Name"</span><input class="k-input" required maxlength="80" readonly=busy on:input=move |event| name.set(event_target_value(&event)) /></label>
             <label class="k-field"><span class="k-field__label">"Base URL"</span><input class="k-input" type="url" required maxlength="2048" prop:value=url readonly=busy
                 on:input=move |event| { url.set(event_target_value(&event)); models.set(None); error.set(String::new()); } /></label>
             <label class="k-field"><span class="k-field__label">"API key"</span><input class="k-input" type="password" required maxlength="8192" autocomplete="new-password" readonly=busy
                 prop:value=move || key.get() on:input=move |event| { key.set(event_target_value(&event)); models.set(None); error.set(String::new()); } /></label>
-            <label class="k-field"><span class="k-field__label">"Default model"</span><select class="k-input" prop:value=model disabled=move || busy.get() || models.with(|models| models.as_ref().is_none_or(Vec::is_empty))
+            <label class="k-field"><span class="k-field__label">"Default model"</span><span class="connection-select"><select class="k-input" prop:value=model disabled=move || busy.get() || models.with(|models| models.as_ref().is_none_or(Vec::is_empty))
                 on:change=move |event| model.set(event_target_value(&event))>
                 <option value="" disabled>"Test to load models"</option>
                 {move || models.get().unwrap_or_default().into_iter().map(|value| view! { <option value=value.clone()>{value.clone()}</option> }).collect_view()}
-            </select></label>
+            </select><span class="k-select__chev"><crate::connection_ui::Icon name="chevron-down" /></span></span></label>
             <span role="status" class="k-field__hint" hidden=move || models.with(Option::is_none)>{move || models.with(|value| value.as_ref().map(|models| format!("{} models found", models.len())))}</span>
             <ErrorAlert message=error icon=error_icon />
             <div class="k-row-actions">
@@ -528,9 +528,9 @@ pub fn page(error_icon: String) -> impl IntoView {
                         <form class="k-stack" on:submit=submit>
                             <label class="k-field"><span class="k-field__label">"Name"</span><input class="k-input" required maxlength="80" placeholder="Iris" prop:value=name readonly=locked on:input=move |event| name.set(event_target_value(&event)) /></label>
                             <label class="k-field" hidden=move || available.with(|entries| entries.len() < 2)><span class="k-field__label">"Run with"</span>
-                                <select class="k-input" prop:value=choice disabled=locked on:change=move |event| choice.set(event_target_value(&event))>
+                                <span class="connection-select"><select class="k-input" prop:value=choice disabled=locked on:change=move |event| choice.set(event_target_value(&event))>
                                     {move || available.get().into_iter().map(|entry| view! { <option value=entry.value>{entry.label}</option> }).collect_view()}
-                                </select>
+                                </select><span class="k-select__chev"><crate::connection_ui::Icon name="chevron-down" /></span></span>
                             </label>
                             <label class="k-field"><span class="k-field__label">"Model"</span><input class="k-input" required maxlength="160" placeholder="Enter model ID" list="onboarding-models" readonly=locked
                                 prop:value=move || pending.with(|value| value.as_ref().ok().and_then(Option::as_ref).and_then(|value| value["model"].as_str()).map(str::to_owned)).unwrap_or_else(|| model.get())

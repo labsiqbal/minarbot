@@ -137,6 +137,7 @@ async function exercise(page, origin, client) {
         await page.setViewportSize(viewport);
         for (const mode of ['Dark', 'Light']) {
           await radio(page, mode).click();
+          await page.mouse.move(0, 0);
           await page.evaluate(() => document.fonts.ready.then(() => document.activeElement?.blur()));
           await parityShot(page, join(screenshots, [client, label, mode.toLowerCase()].join('-') + '.png'));
           assert.equal(await page.locator('.app-settings__main').evaluate(element => element.scrollWidth === element.clientWidth), true);

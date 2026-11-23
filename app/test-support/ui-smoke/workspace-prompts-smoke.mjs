@@ -129,13 +129,14 @@ async function exercise(browser, client) {
     const guidePath = `/agents/${guide.id}`;
     const action = label => page.getByRole('button', { name: label, exact: true });
     const dialog = label => page.getByRole('dialog', { name: label, exact: true });
-    const capture = async (name, region, needsSidebar = false) => {
+    const capture = async (name, region, { needsSidebar = false, center = false } = {}) => {
       for (const [layout, viewport] of Object.entries(shapes)) {
         await page.setViewportSize(viewport);
         if (needsSidebar && layout === 'narrow') await action('Expand sidebar').click();
         for (const theme of themes) {
           await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
           assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+          if (center) await region.evaluate(node => node.scrollIntoView({ block: 'center', behavior: 'instant' }));
           await parityShot(page, join(output, `${client}-${name}-${layout}-${theme}.png`), region);
         }
         if (needsSidebar && layout === 'narrow') await page.keyboard.press('Escape');
@@ -200,7 +201,7 @@ async function exercise(browser, client) {
     await help.waitFor({ state: 'hidden' });
     const capsule = page.locator('.sidebar-update__capsule');
     await capsule.waitFor();
-    await capture('update-capsule', capsule, true);
+    await capture('update-capsule', capsule, { needsSidebar: true });
     await capsule.click();
     const update = dialog('Update 1 machine?');
     await update.getByRole('button', { name: 'Release notes', exact: true }).click();
@@ -240,11 +241,14 @@ async function exercise(browser, client) {
     assert.equal(command.text, 'Final');
     const history = () => api(`/api/threads/${ids.thread}/turns`);
     assert.equal((await history()).find(turn => turn.id === ids.turn).questions[0].answer, 'Final');
+    await card.getByRole('radio', { name: 'Final', exact: true }).waitFor({ state: 'hidden' });
+    await page.reload();
     for (const [kind, turn, approval] of [
       ['app', ids.approvalTurn, ids.approval], ['harness', ids.harnessTurn, ids.harness],
     ]) {
       const region = page.locator(`[id="${kind}:${turn}:${approval}"]`);
-      await capture(`${kind}-approval`, region);
+      await page.mouse.move(0, 0);
+      await capture(`${kind}-approval`, region, { center: true });
       const endpoint = `/api/threads/${ids.thread}/turns/${turn}/${kind}-approvals/${approval}`;
       const key = `minarbot:${kind}-approval:/api/threads/${ids.thread}/turns/${turn}:${approval}`;
       const command = { id: randomUUID(), revision: 1, decision: 'deny' };

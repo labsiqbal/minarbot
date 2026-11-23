@@ -223,7 +223,6 @@ const TABS: &[(&str, &str)] = &[
 fn overview(project: Project) -> impl IntoView {
     let agents = directory();
     let icons = use_context::<shell::Icons>().unwrap_or_default();
-    let plus = StoredValue::new(icons.plus);
     let hash = StoredValue::new(icons.hash);
     let chevron = StoredValue::new(icons.chevron);
     let folder_icon = StoredValue::new(icons.folder);
@@ -561,7 +560,7 @@ fn overview(project: Project) -> impl IntoView {
             <section class="k-section" hidden=editing>
                 <div class="k-section__head"><h2 class="k-section__title">"Folders"</h2>
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked on:click=move |_| edit(true)>
-                        <span class="appearance-icon" inner_html=plus.get_value()></span>"Add folder"</button></div>
+                        <crate::connection_ui::Icon name="plus" />"Add folder"</button></div>
                 {project.with_value(|project| if project.folders.is_empty() {
                     view! { <p class="k-field__hint">"No folders"</p> }.into_any()
                 } else {
@@ -585,7 +584,7 @@ fn overview(project: Project) -> impl IntoView {
             <section class="k-section">
                 <div class="k-section__head"><h2 class="k-section__title">"Sections"</h2>
                     <button type="button" class="k-btn k-btn--sm k-btn--secondary" disabled=locked on:click=move |_| show("sections")>
-                        <span class="appearance-icon" inner_html=plus.get_value()></span>"New section"</button></div>
+                        <crate::connection_ui::Icon name="plus" />"New section"</button></div>
                 <div class="k-card">{project.with_value(|project| project.sections.iter().map(|section| view! {
                     <div class="k-row is-clickable"><a class="k-row__main" href=format!("/rooms/{}", section.id)>
                         <span class="k-row__leading" inner_html=hash.get_value()></span><span class="k-row__text">
@@ -602,7 +601,7 @@ fn overview(project: Project) -> impl IntoView {
                         if project.with_value(|project| project.members.is_empty()) {
                             edit(false);
                         } else { show("thread"); }
-                    }><span class="appearance-icon" inner_html=plus.get_value()></span>"New conversation"</button></div>
+                    }><crate::connection_ui::Icon name="plus" />"New conversation"</button></div>
                 {project.with_value(|row| (!row.folders.is_empty()).then(|| view! {
                     <Select name="project-conversation-folder" label="Conversation folder" value=folder.into()
                         options=Signal::stored(row.folders.iter().map(|path| (path.clone(), path.clone())).collect())

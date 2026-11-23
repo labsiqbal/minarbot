@@ -493,7 +493,7 @@ pub fn Menu(
             }>{item.label}</button>
     }).collect_view();
     view! {
-        <button type="button" class=if text { "k-btn k-btn--secondary k-btn--md" } else { "k-icon-btn" } node_ref=trigger aria-label=label.clone() aria-haspopup="menu"
+        <button type="button" class=if text { "k-btn k-btn--secondary k-btn--md connection-menu-trigger" } else { "k-icon-btn" } node_ref=trigger aria-label=label.clone() aria-haspopup="menu"
             aria-controls=id.clone() aria-expanded=move || open.get().to_string()
             popovertarget=id.clone() disabled=disabled
             on:click=move |event| { event.prevent_default(); if open.get_untracked() {
