@@ -67,6 +67,9 @@ pub(super) fn open(path: &Path) -> crate::db::Result<(Connection, Writer)> {
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )?;
+    if !data_format::adopt(&db)? {
+        return Err(data_format::UNMARKED.into());
+    }
     db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL")?;
     initialize(&mut db)?;
     db.pragma_update(None, "journal_mode", "WAL")?;
@@ -75,9 +78,6 @@ pub(super) fn open(path: &Path) -> crate::db::Result<(Connection, Writer)> {
 
 fn initialize(db: &mut Connection) -> crate::db::Result<()> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if !data_format::adopt(&tx)? {
-        return Err(data_format::UNMARKED.into());
-    }
     let fresh = crate::db::empty_schema(&tx)?;
     let checksum = digest(MIGRATION);
     if fresh {
