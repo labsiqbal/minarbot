@@ -118,7 +118,23 @@ export function createHubServer(options: {
         if (asset) {
           const extension = path.split('.').at(-1)!;
           const types: Record<string, string> = { js: 'text/javascript', css: 'text/css', woff2: 'font/woff2', svg: 'image/svg+xml', wasm: 'application/wasm' };
-          response.setHeader('Content-Type', types[extension] ?? 'application/octet-stream'); response.end(asset); return;
+          response.setHeader('Content-Type', types[extension] ?? 'application/octet-stream');
+          if (leptos?.files.has(path)) {
+            response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            const compressed = leptos.gzip.get(path);
+            if (compressed) {
+              response.setHeader('Vary', 'Accept-Encoding');
+              const acceptsGzip = (singleHeader(request, 'accept-encoding') ?? '').split(',').some(item => {
+                const [encoding, ...params] = item.split(';').map(part => part.trim().toLowerCase());
+                return encoding === 'gzip' && !params.some(param => param.startsWith('q=') && !(Number(param.slice(2)) > 0));
+              });
+              if (acceptsGzip) {
+                response.setHeader('Content-Encoding', 'gzip');
+                response.end(compressed); return;
+              }
+            }
+          }
+          response.end(asset); return;
         }
         if (!central && ['/login', '/join', '/nodes/link'].includes(path) || central && path === '/invite') throw notFound();
         const client = leptos && url.searchParams.get('ui') !== 'react' ? leptos : web;

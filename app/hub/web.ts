@@ -29,12 +29,14 @@ export function hubLeptosAssets(distPath: string) {
   if (!existsSync(manifest)) return undefined;
   const paths: unknown = JSON.parse(readFileSync(manifest, 'utf8'));
   if (!Array.isArray(paths)) throw new Error('Invalid Leptos hub manifest.');
-  const files = new Map<string, Buffer>();
+  const files = new Map<string, Buffer>(), gzip = new Map<string, Buffer>();
   for (const path of paths) {
     if (typeof path !== 'string' || !/^\/_leptos\/assets\/[a-zA-Z0-9_-]+\.[a-f0-9]{16}\.(?:js|css|svg|woff2|wasm)$/.test(path)) throw new Error('Invalid Leptos hub asset.');
-    files.set(path, readFileSync(resolve(leptos, path.slice('/_leptos/'.length))));
+    const file = resolve(leptos, path.slice('/_leptos/'.length));
+    files.set(path, readFileSync(file));
+    if (existsSync(file + '.gz')) gzip.set(path, readFileSync(file + '.gz'));
   }
-  return { files, html: readFileSync(resolve(leptos, 'hub.html'), 'utf8') };
+  return { files, gzip, html: readFileSync(resolve(leptos, 'hub.html'), 'utf8') };
 }
 export function hubDocument(html: string, config: { accountsHost: string; domain: string; developmentIdentity: boolean }) {
   const nonce = randomBytes(24).toString('base64url');

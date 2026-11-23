@@ -80,6 +80,12 @@ try {
     }
     const page = await context.newPage();
     const errors = [];
+    const wasm = [];
+    page.on('response', response => {
+      const path = new URL(response.url()).pathname;
+      if (path.endsWith('.wasm')) wasm.push(response.headers());
+      if (path.startsWith('/_leptos/assets/') && response.status() >= 400) errors.push('Unavailable Leptos asset ' + path);
+    });
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => {
       if (/violates.*content security policy|panicked at|unreachable/i.test(message.text())) errors.push(message.text());
@@ -99,6 +105,10 @@ try {
       const message = page.getByRole('textbox', { name: 'Message general' });
       await message.waitFor();
       assert.equal(await page.locator('#leptos-root').count(), client === 'leptos' ? 1 : 0);
+      if (client === 'leptos') {
+        assert(wasm.length > 0);
+        assert(wasm.every(headers => headers['content-type'] === 'application/wasm' && headers['content-encoding'] === 'gzip'));
+      } else assert.equal(wasm.length, 0);
       await page.getByText('Live', { exact: true }).waitFor();
       const text = 'Hub message from ' + client;
       await message.fill(text);
