@@ -44,7 +44,7 @@ npm run build
 npm test
 ```
 
-`npm test` drives the Rust server end to end, so build the workspace first. It runs the whole suite and takes a while. Suites that need a real desktop are named `*.integration.test.ts` and run only when you pass them to `node --test` directly.
+`npm test` drives the Rust server end to end. Build the workspace and Leptos first. Suites that need a real desktop are named `*.integration.test.ts` and run only when you pass them to `node --test` directly.
 
 ## Code rules
 

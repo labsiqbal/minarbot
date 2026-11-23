@@ -297,7 +297,7 @@ Rust integration file `crates/minarbot-launcher/tests/launcher.rs` covers eight 
 | `rust-harness.test.ts` | 3 | Gemini mise trust on execution, ACP/Pi model and approval messages, MCP stdio and warm p95. |
 | `rust-connectors.test.ts` | 13 | Composio approval/revocation and uncertain writes. Slack/Telegram journal recovery, WebSocket/polling, uploads, workflow delivery and receipts. |
 | `rust-core.test.ts` | 2 | Bytes from the built app and validation of the still-used Node test bridge. |
-| `csp.test.ts` | 1 | Actual built asset compression and matching style nonce in the shipped SPA. |
+| `web-recovery.test.ts` | 1 | Leptos build availability, recovery responses and routing with old query links. The appearance smoke checks CSP and compressed assets. |
 | `http.test.ts` | 4 | TypeScript browser HTTP parsing and presentation errors. |
 | `rust-hermes-probe.test.ts` | 1 | Fake Hermes inspection of a private install tree. The test needs a fixture that can prove host files stay unchanged. |
 | `hub-link.test.ts` and `hub/*.test.ts` | 90 | Historical phase 6 inventory before the hosted Hub cutover. See the #67 migration above for the current Rust coverage. |
@@ -314,14 +314,10 @@ Paths below are relative to `app/`. Playwright remains in `test-support/ui-smoke
 - **Opt-in external**. Real engines and desktop need opt-in fixtures and remain outside the default gate.
   `acp-harness.integration.test.ts`, `rust-desktop.integration.test.ts`.
 
-- **Client and reducer**. React rendering, browser state, parsing or client models move with their Leptos call sites.
-  `attachments.test.ts`, `audio-recording.test.ts`, `clipboard.test.ts`,
-  `conversation-command.test.ts`, `diff-lines.test.ts`, `goal-command.test.ts`, `guide.test.ts`,
-  `markdown-stream-blocks.test.ts`, `markdown.test.ts`, `message-find.test.ts`,
-  `navigation.test.ts`, `needs-you-notifications.test.ts`, `next-frame.test.ts`,
-  `optimistic-turns.test.ts`, `polling.test.ts`, `presentation.test.ts`, `query-cache.test.ts`,
-  `right-panel-state.test.ts`, `run-inspector.test.ts`, `timeline-minimap.test.ts`,
-  `updateEverything.logic.test.ts`, `workflows.test.ts`.
+- **Browser adapter and asset checks**. Exercise helpers used by Leptos and its build.
+  `attachments.test.ts`, `audio-recording.test.ts`, `clipboard.test.ts`, `download-blob.test.ts`,
+  `markdown-stream-blocks.test.ts`, `message-find.test.ts`, `navigation.test.ts`,
+  `next-frame.test.ts`, `presentation.test.ts`, `run-inspector.test.ts`, `timeline-minimap.test.ts`.
 
 - **Build, schema and release**. Keep packaging, frozen schema, route inventory, environment and download checks with their fixture and tooling consumers.
   `check-served.test.ts`, `fanout-older-peer.test.ts`, `github-updates.test.ts`,
@@ -350,7 +346,7 @@ Paths below are relative to `app/`. Playwright remains in `test-support/ui-smoke
   `rust-desktop-http.test.ts`, `rust-latency.test.ts`, `rust-rehearsal.test.ts`,
   `workspace-shell.test.ts`.
 
-- **Local API, CLI and automation**. Keep these feature contracts while their Rust replacements lack assertion-by-assertion parity. Mixed React and server cases also cover the current client.
+- **Local API, CLI and automation**. Keep these feature contracts while their Rust replacements lack assertion-by-assertion parity.
   `agent-delegation.test.ts`, `agent-delete.test.ts`, `agent-messages.test.ts`,
   `agent-result-files.test.ts`, `agent-template.test.ts`, `agent-visibility.test.ts`,
   `artifacts.test.ts`, `attachment-only.test.ts`, `automation-calendar.test.ts`,

@@ -11,7 +11,7 @@ node --test bench/bench.test.mjs
 
 # Build from the checkout you want to benchmark. On NUC, use the shared Cargo slot.
 npm --prefix app ci
-npm --prefix app run build
+~/.cache/minarbot-cargo-slot.sh cargo xtask leptos
 ~/.cache/minarbot-cargo-slot.sh cargo build --workspace --release --locked
 
 # Select tasks, runtimes, repeats. Omit filters for the full suite.
