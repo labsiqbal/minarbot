@@ -551,16 +551,7 @@ fn order_dialog(
         queued.track();
         load();
     });
-    let interval = set_interval_with_handle(move || {
-        if !document().hidden() {
-            load();
-        }
-    }, Duration::from_millis(1500)).ok();
-    on_cleanup(move || {
-        if let Some(interval) = interval {
-            interval.clear();
-        }
-    });
+    crate::connection_ui::poll_with_backoff(1500, move || (!loading.get_untracked()).then(|| !error.with_untracked(String::is_empty)), load);
     let icons = use_context::<Icons>().unwrap_or_default();
     let up = StoredValue::new(icons.up);
     let down = StoredValue::new(icons.next);

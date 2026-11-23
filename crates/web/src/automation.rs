@@ -99,19 +99,6 @@ fn conversation(agent: &str, thread: &str) -> String {
     format!("/agents/{agent}/conversations/{thread}")
 }
 
-fn poll(action: Callback<()>, milliseconds: u64) {
-    if let Ok(handle) = set_interval_with_handle(
-        move || {
-            if document().visibility_state() == web_sys::VisibilityState::Visible {
-                action.run(());
-            }
-        },
-        Duration::from_millis(milliseconds),
-    ) {
-        on_cleanup(move || handle.clear());
-    }
-}
-
 fn route_page(children: impl IntoView) -> impl IntoView {
     view! { <main class="chat page-view bs-root"><div class="page-scroll"><div class="page legacy is-wide">{children}</div></div></main> }
 }

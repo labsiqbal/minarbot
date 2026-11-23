@@ -58,11 +58,7 @@ pub(super) fn folder(agent: String) -> impl IntoView {
             }
         });
     };
-    ui::poll(15, move || {
-        if !journal.busy.get_untracked() {
-            folder.reload.run(());
-        }
-    });
+    folder.poll(15000, move || !journal.busy.get_untracked());
     view! {
         <div class="k-stack">
             {move || folder.data.with(|data| data.as_ref().map(|value| {
@@ -138,11 +134,7 @@ pub(super) fn computer(agent: String) -> impl IntoView {
             },
         );
     };
-    ui::poll(15, move || {
-        if !journal.busy.get_untracked() {
-            status.reload.run(());
-        }
-    });
+    status.poll(15000, move || !journal.busy.get_untracked());
     let location = window().location();
     let setup_link = crate::settings::section_url(
         "/settings/computer",
@@ -320,11 +312,7 @@ pub(super) fn sites(
         reset();
         page.reload.run(());
     });
-    ui::poll(15, move || {
-        if !journal.busy.get_untracked() {
-            page.reload.run(());
-        }
-    });
+    page.poll(15000, move || !journal.busy.get_untracked());
     view! {
         <Dialog id="agent-sites" title=text("Agent sites") open=Signal::stored(true) on_close=close size="lg" locked=journal.busy>
             <div class="bs-root k-stack">

@@ -224,16 +224,8 @@ impl Library {
             state.binding.data.set(None);
             state.binding.reload.run(());
         });
-        poll(15, move || {
-            if !state.locked() {
-                if !state.page.busy.get_untracked() {
-                    state.page.reload.run(());
-                }
-                if !state.installed.busy.get_untracked() {
-                    state.installed.reload.run(());
-                }
-            }
-        });
+        state.page.poll(15000, move || !state.locked());
+        state.installed.poll(15000, move || !state.locked());
         state
     }
     fn locked(self) -> bool {

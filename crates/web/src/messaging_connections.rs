@@ -229,7 +229,7 @@ pub fn discord() -> impl IntoView {
             })
         })
     };
-    poll(2, move || connection.poll());
+    connection.status.poll(2000, move || !connection.busy.get_untracked());
     view! {
         <Section title="Discord">
             <ErrorNotice error=connection.error() />
@@ -379,16 +379,8 @@ pub fn whatsapp() -> impl IntoView {
             }),
         )
     });
-    poll(15, move || {
-        if !open.get_untracked() {
-            connection.poll();
-        }
-    });
-    poll(2, move || {
-        if open.get_untracked() {
-            connection.poll();
-        }
-    });
+    connection.status.poll(15000, move || !open.get_untracked() && !connection.busy.get_untracked());
+    connection.status.poll(2000, move || open.get_untracked() && !connection.busy.get_untracked());
     let targets = Signal::derive(move || {
         let mut result = agent_options(true)
             .into_iter()

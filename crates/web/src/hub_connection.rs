@@ -255,7 +255,7 @@ pub fn panel() -> impl IntoView {
         confirmation: Confirm::new(None),
     };
     hub.reload();
-    poll(3, move || {
+    poll_with_backoff(3000, move || (!hub.loading.get_untracked()).then(|| !hub.error.with_untracked(String::is_empty)), move || {
         if !hub.unavailable.get_untracked() {
             hub.reload();
         }

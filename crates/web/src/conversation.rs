@@ -61,19 +61,6 @@ fn date_format(date: &js_sys::Date, locales: &js_sys::Array, fields: &[(&str, &s
         .unwrap_or_default()
 }
 
-fn poll_visible(callback: Callback<()>, milliseconds: u64) {
-    if let Ok(handle) = set_interval_with_handle(
-        move || {
-            if document().visibility_state() == web_sys::VisibilityState::Visible {
-                callback.run(());
-            }
-        },
-        Duration::from_millis(milliseconds),
-    ) {
-        on_cleanup(move || handle.clear());
-    }
-}
-
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct Icons {
     pub attach: String,
