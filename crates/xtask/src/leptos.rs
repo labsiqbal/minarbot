@@ -405,7 +405,7 @@ pub fn build(root: &Path) -> Result<()> {
         bundle.join(".vite/manifest.json"),
     )?)?;
     let themes = hash_asset(&bundle.join("themes.css"), &assets, "themes", "css")?;
-    let icon = hash_asset(&app.join("src/favicon.svg"), &assets, "minarbot", "svg")?;
+    let icon = hash_asset(&web.join("assets/favicon.svg"), &assets, "minarbot", "svg")?;
     let mut sizes = BTreeMap::new();
     let entries = fs::read_dir(&assets)?.collect::<std::io::Result<Vec<_>>>()?;
     for entry in entries {
@@ -459,19 +459,13 @@ pub fn build(root: &Path) -> Result<()> {
     }
     for name in ["NOTICE", "NOTICE.hermes", "NOTICE.t3", "provenance.json"] {
         copy(
-            &app.join("src/ui").join(name),
+            &web.join("assets/ui").join(name),
             &stage.path().join(format!("ui.{name}")),
         )?;
     }
     for (source, name) in [
-        (
-            app.join("node_modules/lucide-react/LICENSE"),
-            "lucide.LICENSE",
-        ),
-        (
-            app.join("node_modules/@fontsource-variable/inter/LICENSE"),
-            "inter.LICENSE",
-        ),
+        (web.join("assets/lucide.LICENSE"), "lucide.LICENSE"),
+        (web.join("assets/inter/LICENSE"), "inter.LICENSE"),
         (web.join("NOTICE"), "NOTICE"),
         (web.join("leptos.LICENSE"), "leptos.LICENSE"),
     ] {
@@ -484,6 +478,7 @@ pub fn build(root: &Path) -> Result<()> {
             &stage.path().join(format!("wasm-bindgen.{name}")),
         )?;
     }
+    copy(&web.join("public"), &dist)?;
     let destination = dist.join("_leptos");
     if destination.exists() {
         fs::remove_dir_all(&destination)?;

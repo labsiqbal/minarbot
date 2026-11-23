@@ -20,7 +20,7 @@ const creation = (id, runtime, providerAccount, model) => ({ id, providerAccount
   instructions: 'Help the user complete their tasks.', threadLimit: 2, toolBudget: 90, runtime });
 let app, browser;
 try {
-  app = await startRustServer({ appearanceClient: 'leptos', database: join(data, 'state.sqlite'),
+  app = await startRustServer({ database: join(data, 'state.sqlite'),
     dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
   browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
   const page = await browser.newPage();

@@ -38,7 +38,7 @@ fn from() -> String {
 
 fn screen(id: &str, origin: Option<&str>) -> Option<AnyView> {
     let catalog: HashMap<String, Screen> =
-        serde_json::from_str(include_str!("../../../../app/src/guide-screens.json")).ok()?;
+        serde_json::from_str(include_str!("../../assets/guide-screens.json")).ok()?;
     let Screen { title, path } = catalog.get(id)?;
     let mut href = if path.starts_with("/settings/") {
         settings::section_url(path, &from())

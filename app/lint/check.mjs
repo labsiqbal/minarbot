@@ -25,10 +25,10 @@ for (const [file, prefix] of [['src/lint-probe.ts', '../'], ['src/hub/lint-probe
   for (const specifier of [`${prefix}server.ts`, `${prefix}hub/server`, `${prefix}./server.ts`, `${prefix}server.ts?raw`, '/server.ts'])
     for (const code of [`import '${specifier}';`, `export * from '${specifier}';`, `import('${specifier}');`])
       await check(code, file, boundary);
-  for (const code of ["import type { Stats } from 'node:fs';", "import { type Stats } from 'fs';", `import type { App } from '${prefix}server.ts';`, `export type * from '${prefix}server.ts';`, `import { type App } from '${prefix}server.ts';`, `import { diffLines, type DiffLine } from '${prefix}src/diff-lines';`, "import './local';", "import type { App } from 'node:sqlite';"])
+  for (const code of ["import type { Stats } from 'node:fs';", "import { type Stats } from 'fs';", `import type { App } from '${prefix}server.ts';`, `export type * from '${prefix}server.ts';`, `import { type App } from '${prefix}server.ts';`, `import { readJson, type HttpError } from '${prefix}src/http';`, "import './local';", "import type { App } from 'node:sqlite';"])
     await check(code, file);
 }
-await check("import { Button } from '../ui/kit';", 'src/hub/probe.ts');
+await check("import { readJson } from '../http';", 'src/ui/probe.ts');
 const safeJson = 'no-restricted-syntax';
 await check('response.json();', 'src/lint-probe.ts', safeJson);
 await check("response['json']();", 'src/hub/lint-probe.ts', safeJson);
@@ -84,28 +84,18 @@ await check('// Separate opt-in check; ' + 'x'.repeat(121), 'server.ts', comment
 console.log(`Comment rules: ${checks - commentStart} assertions passed.`);
 
 // #38: exercise the ratchets without applying the existing bulk suppressions.
-const timerRule = 'no-restricted-globals', effectRule = 'minarbot-lifecycle/no-component-effects', anyRule = '@typescript-eslint/no-explicit-any';
+const timerRule = 'no-restricted-globals', anyRule = '@typescript-eslint/no-explicit-any';
 for (const timer of ['setTimeout', 'setInterval', 'requestAnimationFrame', 'requestIdleCallback']) {
   for (const code of [`${timer}(() => {});`, `const later = ${timer};`, `window.${timer}(() => {});`, `self['${timer}'](() => {});`, `globalThis.${timer}(() => {});`])
     await check(code, 'src/lifecycle-probe.tsx', timerRule);
   await check(`${timer}(() => {});`, 'src/hooks/lifecycle-probe.ts');
 }
-for (const code of [
-  "import { useEffect } from 'react'; useEffect(() => {}, []);",
-  "import { useEffect as effect } from 'react'; effect(() => {}, []);",
-  "import React from 'react'; React.useEffect(() => {}, []);",
-  "import * as R from 'react'; R['useEffect'](() => {}, []);",
-  "import React from 'react'; const { useEffect: effect } = React; effect(() => {}, []);",
-]) await check(code, 'src/lifecycle-probe.tsx', effectRule);
-for (const file of ['src/hooks/probe.ts', 'src/ui/kit.tsx', 'src/ui/Menu.tsx', 'src/ui/Modal.tsx', 'src/ui/ChatPrimitives.tsx', 'src/ui/resizable.tsx', 'src/ui/primitives/probe.tsx'])
-  await check("import { useEffect } from 'react'; useEffect(() => {}, []);", file);
 await check('const setTimeout = (callback: () => void) => callback(); setTimeout(() => {});', 'src/lifecycle-probe.tsx');
-await check('function useEffect() {} useEffect();', 'src/lifecycle-probe.tsx');
 for (const file of ['src/lifecycle-probe.tsx', 'server.ts', 'hub/probe.ts', 'src/hooks/probe.ts'])
   await check('let value: any;', file, anyRule);
 await check('let value: unknown;', 'src/lifecycle-probe.tsx');
 await check('let value: any;', 'lifecycle-probe.test.ts');
-await check('setTimeout(() => {});', 'src/ui/kit.tsx', timerRule);
+await check('setTimeout(() => {});', 'src/leptos-conversation.ts', timerRule);
 
 // Re-audit the only package reachable from shared root modules using its browser entry.
 const packageFiles = new Set();

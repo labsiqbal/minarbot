@@ -76,7 +76,7 @@ const provider = createServer((request, response) => {
 let app, browser;
 try {
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startApp({ appearanceClient: 'leptos', database, dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic' });
+  app = await startApp({ database, dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'synthetic' });
   async function api(path, data) {
     const response = await fetch(app.origin + path, data ? { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {});
     assert(response.ok, `${path}: ${response.status} ${await response.clone().text()}`);

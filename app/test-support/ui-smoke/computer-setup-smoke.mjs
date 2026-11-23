@@ -13,7 +13,7 @@ await mkdir(output, { recursive: true });
 const agentQuery = '';
 let app, browser;
 try {
-  app = await startApp({ appearanceClient: 'leptos', database: join(scratch, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
+  app = await startApp({ database: join(scratch, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
   const agent = randomUUID();
   let status;

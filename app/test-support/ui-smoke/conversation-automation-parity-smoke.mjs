@@ -391,7 +391,7 @@ try {
   const receipt = {};
   const benchmarks = [];
   for (const client of clients) {
-    const app = await startApp({ appearanceClient: 'leptos',
+    const app = await startApp({
       database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, fixedClock: fixtureClock,
       defaultModel: 'fixture', baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
       stream: false,

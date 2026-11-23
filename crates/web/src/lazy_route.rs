@@ -4,13 +4,6 @@ use wasm_bindgen::prelude::*;
 pub(crate) fn workflow_scope(path: &str) -> Option<(String, String)> {
     let query = path.strip_prefix("/workflows?")?;
     let params = web_sys::UrlSearchParams::new_with_str(query).ok()?;
-    if params
-        .get_all("ui")
-        .iter()
-        .any(|value| value.as_string().as_deref() == Some("react"))
-    {
-        return None;
-    }
     let owner = params.get("agent")?.to_ascii_lowercase();
     if !crate::workspace_route::valid_id(&owner) {
         return None;

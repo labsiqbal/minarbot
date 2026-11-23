@@ -31,7 +31,7 @@ struct Color {
 fn looks() -> &'static Looks {
     static LOOKS: std::sync::OnceLock<Looks> = std::sync::OnceLock::new();
     LOOKS.get_or_init(|| {
-        serde_json::from_str(include_str!("../../../../app/src/ui/avatar-looks.json"))
+        serde_json::from_str(include_str!("../../assets/ui/avatar-looks.json"))
             .unwrap_or_default()
     })
 }

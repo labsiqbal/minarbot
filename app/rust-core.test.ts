@@ -11,7 +11,7 @@ test('core serves exact static bytes, strict asset CSP, HTML 404 and local bound
   try {
     const page = await fetch(app.origin); const html = await page.text();
     assert.equal(page.status, 200); assert.equal(page.headers.get('referrer-policy'), 'no-referrer');
-    const asset = html.match(/(?:src|href)="(\/assets\/[^" ]+)"/)?.[1]; assert(asset);
+    const asset = html.match(/(?:src|href)="(\/_leptos\/assets\/[^" ]+)"/)?.[1]; assert(asset);
     const response = await fetch(app.origin + asset);
     const expected = await import('node:fs/promises').then(fs => fs.readFile(new URL('./dist' + asset, import.meta.url)));
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected);

@@ -1,9 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { marked } from 'marked';
-import { StreamingMarkdown } from './src/Markdown.ts';
 import { splitMarkdownBlocks } from './src/ui/markdownStreamBlocks.ts';
 
 test('stream blocks preserve full-document Markdown semantics at every prefix', () => {
@@ -29,6 +26,4 @@ test('cross-block syntax keeps one renderer; completed block prefixes stay stabl
   for (const text of ['[link][id]\n\n[id]: https://example.com', 'a\r\n\r\nb', '<div>\na\n\nb\n</div>', 'a[^1]\n\n[^1]: note', '$$\nx\n\n$$', ':::note\nx']) assert.equal(splitMarkdownBlocks(text), null);
   const complete = 'First block.\n\n';
   for (const suffix of ['Second', 'Second grows', 'Second grows.\n\nThird']) assert.equal(splitMarkdownBlocks(complete + suffix)?.[0], complete);
-  const html = renderToStaticMarkup(createElement(StreamingMarkdown, { text: '[reference][id]\n\n[id]: https://example.com', scope: '/api/agents/fixture', origin: 'http://localhost' }));
-  assert.match(html, /title="https:\/\/example.com\/"/);
 });

@@ -89,7 +89,7 @@ pub async fn run() -> crate::db::Result<()> {
         return Err("Private mailbox lookup key must contain at least 32 bytes.".into());
     }
     let identity = session::Verifier::load(&config)?;
-    let assets = config.web.as_ref().map(browser::Assets::load).transpose()?;
+    let assets = config.web.as_ref().map(browser::Assets::load);
     let signer = config.node_link.as_ref().map(node::signer).transpose()?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", config.port)).await?;
     let (mut db, writer) = storage::open(&config.data_path)?;

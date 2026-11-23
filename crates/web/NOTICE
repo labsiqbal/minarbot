@@ -12,7 +12,9 @@ Binaryen 133 - Apache-2.0 - https://github.com/WebAssembly/binaryen/releases/tag
 wasm_split_helpers and wasm_split_cli_support (build-time splitter) - MIT OR Apache-2.0 - https://github.com/WorldSEnder/wasm-split-prototype
 
 Cargo.lock records exact package versions and registry checksums.
-Shared CSS, palettes, icons and Inter use the same sources as the React build.
+Shared CSS, palettes, icons and Inter live in assets/. The Lucide SVG catalog
+preserves the icons from lucide-react 1.61.0 (ISC). Inter files and CSS come
+from @fontsource-variable/inter 5.3.0 (SIL Open Font License 1.1).
 Base64 0.22 - MIT OR Apache-2.0 - https://github.com/marshallpierce/rust-base64
 crc32fast 1 - MIT OR Apache-2.0 - https://github.com/srijs/rust-crc32fast
 Serde YAML 0.9 - MIT OR Apache-2.0 - https://github.com/dtolnay/serde-yaml

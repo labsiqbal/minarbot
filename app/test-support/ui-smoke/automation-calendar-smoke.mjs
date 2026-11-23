@@ -36,7 +36,7 @@ const provider = createServer(async (request, response) => {
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 try {
-  app = await startApp({ appearanceClient: 'leptos', database, port: 0, dist: resolve('dist'), fixedClock: fixtureClock + 1000, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
+  app = await startApp({ database, port: 0, dist: resolve('dist'), fixedClock: fixtureClock + 1000, baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', defaultModel: 'fixture', stream: false });
   const { origin } = app;
   async function api(path, body) {
     const response = await fetch(origin + path, body === undefined ? {} : { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

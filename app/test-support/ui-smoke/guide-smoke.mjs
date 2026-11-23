@@ -52,7 +52,7 @@ try {
   const releasesDir = join(work, 'releases');
   await mkdir(join(releasesDir, '0.17.0-8523c26b'), { recursive: true });
   await symlink('0.17.0-8523c26b', join(releasesDir, 'current'));
-  app = await startRustServer({ appearanceClient: 'leptos',
+  app = await startRustServer({
     database: join(work, 'state.sqlite'),
     allowedOrigins: ['https://minarbot.example.test'],
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),

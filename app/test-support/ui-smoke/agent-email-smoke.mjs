@@ -48,7 +48,7 @@ const provider = createServer((req, res) => {
 let app, browser;
 try {
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startApp({ appearanceClient: 'leptos', database, baseURL: `http://127.0.0.1:${provider.address().port}/v1`, defaultModel: 'email-fixture', stream: false });
+  app = await startApp({ database, baseURL: `http://127.0.0.1:${provider.address().port}/v1`, defaultModel: 'email-fixture', stream: false });
   browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const { origin } = app;

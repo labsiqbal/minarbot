@@ -36,7 +36,7 @@ try {
   git('add', '--', 'folder/notes.txt');
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-q', '-m', 'Fixture baseline');
   await writeFile(join(workspace, 'folder', 'notes.txt'), 'New line\nContext\n');
-  app = await startRustServer({ appearanceClient: 'leptos',
+  app = await startRustServer({
     database: join(work, 'minarbot.sqlite'), dist, baseURL: 'http://127.0.0.1:1/v1', apiKey: 'fixture-only', defaultModel: 'fixture',
     workspaces: [{ agent, directory: workspace, write: true }],
   });

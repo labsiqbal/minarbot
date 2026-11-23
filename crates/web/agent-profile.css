@@ -1,5 +1,5 @@
-@import "../../app/src/agent-profile.css";
-@import "../../app/src/ui/avatar.css";
+@import "./assets/agent-profile.css";
+@import "./assets/ui/avatar.css";
 
 .leptos-workspace .system-dialog:not([open]) { display: none; }
 .leptos-workspace .system-dialog { inset: 50% auto auto 50%; margin: 0; padding: 0; color: var(--color-text-primary); }

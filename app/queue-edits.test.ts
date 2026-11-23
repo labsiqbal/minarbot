@@ -7,26 +7,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-import { readQueueEdit } from './src/hooks/useQueueEditLease.ts';
-
-test('saved queued edit recovers exact command and rejects corrupt browser data', () => {
-  const original = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
-  let raw: string | null = null;
-  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: () => raw } });
-  try {
-    assert.equal(readQueueEdit('draft'), null);
-    const command = { id: randomUUID(), editor: randomUUID(), revision: 2, action: 'save', text: 'Edited\nmessage', files: [randomUUID()] };
-    raw = JSON.stringify(command); assert.deepEqual(readQueueEdit('draft'), command);
-    for (const value of [null, {}, { ...command, id: [command.id] }, { ...command, action: 'hold' },
-      { ...command, revision: 0 }, { ...command, text: 'x'.repeat(16001) }, { ...command, files: ['foreign'] }]) {
-      raw = JSON.stringify(value); assert.throws(() => readQueueEdit('draft'));
-    }
-    raw = '{'; assert.throws(() => readQueueEdit('draft'));
-  } finally {
-    if (original) Object.defineProperty(globalThis, 'sessionStorage', original);
-    else Reflect.deleteProperty(globalThis, 'sessionStorage');
-  }
-});
 
 test('queue edit holds survive restart, preserve order and original receipt, reject competing editors and completed cancellations', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-queue-edit-'));

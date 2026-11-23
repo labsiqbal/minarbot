@@ -109,22 +109,14 @@ export async function typographySmoke({ page, check, origin, agentChat, sidebarT
       await page.evaluate(() => document.getElementById('ty1-mono').remove());
     });
     await check(`TY1 ${phase} hub font and text-size matrix`, async () => {
-      const hub = join(root, 'app/dist/hub');
-      const manifest = JSON.parse(await readFile(join(hub, '.vite/manifest.json'), 'utf8'));
-      const files = new Set(Object.values(manifest).flatMap(entry => [entry.file, ...entry.css ?? [], ...entry.assets ?? []]));
-      const assetRoute = async route => {
-        const path = new URL(route.request().url()).pathname.slice(1);
-        if (!files.has(path)) return route.fallback();
-        const type = path.endsWith('.css') ? 'text/css' : path.endsWith('.js') ? 'application/javascript' : 'font/woff2';
-        await route.fulfill({ contentType: type, body: await readFile(join(hub, path)) });
-      };
+      const hub = join(root, 'app/dist/_leptos');
       const documentRoute = async route => {
         const html = await readFile(join(hub, 'hub.html'), 'utf8');
         await route.fulfill({ contentType: 'text/html', body: html.replace('<head>', '<head><meta name="csp-nonce" content="ty1"><script id="hub-config" type="application/json">{"accountsHost":"127.0.0.1","domain":"example.test","developmentIdentity":false}</script>') });
       };
       const sessionRoute = route => route.fulfill({ json: { accountId: randomUUID(), name: 'Typography fixture', csrf: 'ty1', expiresAt: Date.now() + 60000 } });
       const projectsRoute = route => route.fulfill({ json: [] });
-      await page.route('**/assets/*', assetRoute); await page.route('**/ty1-hub', documentRoute); await page.route('**/api/session', sessionRoute); await page.route('**/api/projects', projectsRoute);
+      await page.route('**/ty1-hub', documentRoute); await page.route('**/api/session', sessionRoute); await page.route('**/api/projects', projectsRoute);
       try {
         await page.goto(origin + '/ty1-hub');
         await page.getByRole('heading', { name: 'Projects', exact: true }).waitFor();
@@ -141,7 +133,7 @@ export async function typographySmoke({ page, check, origin, agentChat, sidebarT
           evidence.hub.push({ size, actual }); if (!baseline) assert.equal(actual, expected);
         }
       } finally {
-        await page.unroute('**/assets/*', assetRoute); await page.unroute('**/ty1-hub', documentRoute); await page.unroute('**/api/session', sessionRoute); await page.unroute('**/api/projects', projectsRoute);
+        await page.unroute('**/ty1-hub', documentRoute); await page.unroute('**/api/session', sessionRoute); await page.unroute('**/api/projects', projectsRoute);
         await page.goto(origin);
       }
     });

@@ -306,13 +306,7 @@ fn internal(path: &str) -> bool {
         return false;
     };
     !matches!(route, Route::Default)
-        && web_sys::UrlSearchParams::new_with_str(query).is_ok_and(|params| {
-            !params.has("computer")
-                && !params
-                    .get_all("ui")
-                    .iter()
-                    .any(|value| value.as_string().as_deref() == Some("react"))
-        })
+        && web_sys::UrlSearchParams::new_with_str(query).is_ok_and(|params| !params.has("computer"))
 }
 
 pub(super) fn open(nav: Option<Navigation>, path: &str) {

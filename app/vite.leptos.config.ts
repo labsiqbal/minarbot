@@ -1,20 +1,26 @@
 import { fileURLToPath } from 'node:url';
-import { AlertTriangle, ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, Copy, Database, Download, Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link, MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Pencil, Plug, Plus, Receipt, RefreshCw, RotateCcw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Trash2, Users, Volume2, Workflow, Wrench, X, type LucideIcon } from 'lucide-react';
-import { Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox, ListRestart, ListTodo, LogOut, Pause, Play, Redo2, Siren, Undo2, WrapText } from 'lucide-react';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { defineConfig, mergeConfig, type Plugin } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { mcpScopeCatalog } from './shared/mcp-scopes';
-import { settingsGroups } from './src/settings-groups';
-import { colorThemes, themeStyles } from './src/ui/themes';
-import app from './vite.config';
+import { settingsGroups } from '../crates/web/assets/settings-groups';
+import { colorThemes, themeStyles } from '../crates/web/assets/ui/themes';
+import icons from '../crates/web/assets/lucide.json';
+
+const {
+  AlertTriangle, ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, Blocks, BookOpen, Bot, CalendarClock,
+  CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, Copy, Database, Download,
+  Ellipsis, ExternalLink, FileText, Files, Filter, Folder, FolderOpen, GitFork, Hash, Info, KeyRound, Link,
+  MessageCircle, MessageSquare, Mic, Monitor, Package, PanelLeft, PanelRight, Pencil, Plug, Plus, Receipt,
+  RefreshCw, RotateCcw, Search, Send, Server, Settings, ShieldCheck, Smartphone, Square, Trash2, Users, Volume2,
+  Workflow, Wrench, X, Brain, CircleDot, Clock, Eye, EyeOff, FileDiff, GitBranch, Globe, History, Inbox,
+  ListRestart, ListTodo, LogOut, Pause, Play, Redo2, Siren, Undo2, WrapText,
+} = icons;
 
 const entrypoints = process.env.MINARBOT_LEPTOS_INPUTS;
 if (!entrypoints) throw new Error('Run cargo xtask leptos to build the Leptos clients.');
 const input: Record<string, string> = JSON.parse(entrypoints);
 const conversation = fileURLToPath(new URL('./src/leptos-conversation.ts', import.meta.url));
 
-const svg = (icon: LucideIcon, size = 16) => renderToStaticMarkup(createElement(icon, { size, 'aria-hidden': true }));
+const svg = (icon: string, size = 16) => icon.replace('width="16" height="16"', `width="${size}" height="${size}"`);
 
 const appearanceConfig: Plugin = {
   name: 'minarbot-appearance-config',
@@ -28,7 +34,7 @@ const appearanceConfig: Plugin = {
         search: svg(Search, 15), quickSearch: svg(Search, 16), book: svg(BookOpen, 16), info: svg(Info, 14), voice: svg(Volume2),
         monitor: svg(Monitor), plug: svg(Plug, 15), plus: svg(Plus, 15), send: svg(Send, 15), check: svg(Check, 15),
         message: svg(MessageSquare), close: svg(X),
-        settingsChoices: settingsGroups.flatMap(({ items }) => items.map(({ id, label, icon }) => ({ id, label, svg: svg(icon) }))),
+        settingsChoices: settingsGroups.flatMap(({ items }) => items.map(({ id, label, icon }) => ({ id, label, svg: svg(icons[icon]) }))),
         folder: svg(Folder), folderOpen: svg(FolderOpen), hash: svg(Hash), chevron: svg(ChevronRight),
       },
     };
@@ -50,7 +56,7 @@ const appearanceConfig: Plugin = {
           folder: Folder, 'git-branch': GitBranch, refresh: RefreshCw,
           search: Search, server: Server, shield: ShieldCheck, warn: AlertTriangle,
     };
-    const iconMap = (icons: Record<string, LucideIcon>) => Object.fromEntries(Object.entries(icons)
+    const iconMap = (icons: Record<string, string>) => Object.fromEntries(Object.entries(icons)
       .map(([name, icon]) => [name, svg(icon, ['arrow-left', 'external-link', 'plus', 'search'].includes(name) ? 14 : name === 'plus-md' ? 15 : ['server', 'blocks'].includes(name) ? 20 : 16)]));
     const conversationIcons = {
       attach: svg(Plus), send: svg(ArrowUp), mic: svg(Mic, 14), stop: svg(Square, 14),
@@ -71,7 +77,7 @@ const appearanceConfig: Plugin = {
       appearance: {
         ...shell,
         groups: settingsGroups.map(({ label, items }) => ({
-          label, items: items.map(({ id, label, icon }) => ({ id, label, svg: svg(icon) })),
+          label, items: items.map(({ id, label, icon }) => ({ id, label, svg: svg(icons[icon]) })),
         })),
         searchIcon: svg(Search, 14),
         closeIcon: svg(X),
@@ -108,7 +114,17 @@ const appearanceConfig: Plugin = {
   },
 };
 
-export default defineConfig(mergeConfig(app, {
+export default defineConfig({
+  css: {
+    postcss: { plugins: [{
+      postcssPlugin: 'minarbot-relative-type',
+      Declaration(declaration) {
+        // SVG diagram coordinates and physical panel widths stay in pixels.
+        if (['font', 'font-size', 'line-height'].includes(declaration.prop) || declaration.prop.startsWith('--text-'))
+          declaration.value = declaration.value.replace(/(\d*\.?\d+)px\b/g, (_, pixels) => `${Number(pixels) / 16}rem`);
+      },
+    }] },
+  },
   base: '/_leptos/',
   publicDir: false,
   resolve: { alias: {
@@ -123,6 +139,10 @@ export default defineConfig(mergeConfig(app, {
     rollupOptions: {
       input,
       output: {
+        manualChunks(id) {
+          const path = id.replaceAll('\\', '/');
+          if (path.includes('/node_modules/marked/') || path.includes('/node_modules/entities/')) return 'markdown-vendor';
+        },
         hashCharacters: 'hex',
         entryFileNames: 'assets/[name].[hash:16].js',
         chunkFileNames: 'assets/[name].[hash:16].js',
@@ -130,4 +150,4 @@ export default defineConfig(mergeConfig(app, {
       },
     },
   },
-}));
+});

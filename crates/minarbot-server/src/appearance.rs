@@ -1,3 +1,7 @@
+use axum::{
+    http::StatusCode,
+    response::{Html, IntoResponse, Response},
+};
 use url::form_urlencoded;
 
 #[path = "../../web/src/routes.rs"]
@@ -5,7 +9,6 @@ mod routes;
 pub use routes::SettingsRoute;
 #[path = "../../web/src/workspace_route.rs"]
 mod workspace_route;
-use workspace_route::valid_id;
 pub use workspace_route::WorkspaceRoute;
 
 pub const NAMESPACE: &str = "/_leptos/";
@@ -13,32 +16,18 @@ pub const DOCUMENT: &str = "_leptos/appearance.html";
 pub const WORKFLOWS_DOCUMENT: &str = "_leptos/workflows.html";
 pub const CONVERSATION_DOCUMENT: &str = "_leptos/conversation.html";
 
-pub fn conversation_route(path: &str, query: &str) -> bool {
-    let computer = form_urlencoded::parse(query.as_bytes()).any(|(key, _)| key == "computer");
-    if computer {
-        return path == "/";
+pub fn log_retired_selector() {
+    if std::env::var_os("MINARBOT_APPEARANCE_CLIENT").is_some() {
+        eprintln!("Ignoring deprecated MINARBOT_APPEARANCE_CLIENT. Minarbot uses Leptos.");
     }
-    if crate::navigation(path)
-        && (path.starts_with("/machines/")
-            || path.starts_with("/agents/") && path.ends_with("/inbox"))
-    {
-        return !form_urlencoded::parse(query.as_bytes())
-            .any(|(key, _)| matches!(key.as_ref(), "computer" | "result"));
-    }
-    crate::navigation(path)
-        && (path == "/"
-            || path.starts_with("/rooms/")
-            || path.starts_with("/agents/") && !path.ends_with("/inbox"))
 }
 
-pub fn conversation_document(html: &str, path: &str, query: &str) -> String {
-    let mut params = form_urlencoded::Serializer::new(String::new());
-    params.append_pair("ui", "react");
-    params.extend_pairs(form_urlencoded::parse(query.as_bytes()).filter(|(key, _)| key != "ui"));
-    html.replace(
-        "__REACT_CONVERSATION__",
-        &format!("{path}?{}", params.finish()).replace('&', "&amp;"),
+pub fn recovery_page() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Html(include_str!("../../web/recovery.html")),
     )
+        .into_response()
 }
 
 /// Pairing may load only the hashed startup module from the packaged document.
@@ -81,10 +70,6 @@ pub fn asset(path: &str) -> bool {
         && matches!(extension, "css" | "js" | "wasm" | "woff2" | "svg")
 }
 
-pub fn react_override(query: &str) -> bool {
-    form_urlencoded::parse(query.as_bytes()).any(|(key, value)| key == "ui" && value == "react")
-}
-
 pub fn route_title(state: &crate::AppState, path: &str, query: &str) -> Option<&'static str> {
     if let Some(section) = SettingsRoute::from_path(path) {
         return Some(section.title());
@@ -121,7 +106,7 @@ pub fn document_for_route(path: &str, query: &str) -> &'static str {
     }
 }
 
-pub fn document(html: &str, route: &str, title: &str, query: &str) -> String {
+pub fn document(html: &str, title: &str, query: &str) -> String {
     let from = form_urlencoded::parse(query.as_bytes())
         .find_map(|(key, value)| (key == "from").then_some(value))
         .filter(|value| {
@@ -132,22 +117,6 @@ pub fn document(html: &str, route: &str, title: &str, query: &str) -> String {
                 && crate::navigation(path)
         });
     let return_to = from.as_deref().unwrap_or("/");
-    let mut params = form_urlencoded::Serializer::new(String::new());
-    params.append_pair("ui", "react");
-    if let Some(from) = &from {
-        params.append_pair("from", from);
-    }
-    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
-        if (route.starts_with("/projects/")
-            && key == "projectTab"
-            && matches!(value.as_ref(), "calendar" | "apps" | "environment" | "mcp"))
-            || (route == "/routines" && key == "agent" && valid_id(&value))
-        {
-            params.append_pair(&key, &value);
-            break;
-        }
-    }
-    let react = format!("{route}?{}", params.finish());
     let escape = |value: &str| {
         value
             .replace('&', "&amp;")
@@ -155,10 +124,6 @@ pub fn document(html: &str, route: &str, title: &str, query: &str) -> String {
             .replace('<', "&lt;")
             .replace('>', "&gt;")
     };
-    let react = escape(&react);
     html.replace("__SETTINGS_TITLE__", title)
-        .split("__RETURN_TO__")
-        .map(|part| part.replace("__REACT_APPEARANCE__", &react))
-        .collect::<Vec<_>>()
-        .join(&escape(return_to))
+        .replace("__RETURN_TO__", &escape(return_to))
 }

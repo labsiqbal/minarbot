@@ -38,7 +38,7 @@ const routes = [
 const fixtureIds = { agent: randomUUID(), other: randomUUID(), workflow: randomUUID(), routine: randomUUID(), webhookRoutine: 'a3e4eaab-0929-4305-9b99-67c0155f199d' };
 
 async function exercise(client) {
-  const app = await startApp({ appearanceClient: 'leptos', database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, fixedClock: fixtureClock,
+  const app = await startApp({ database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, fixedClock: fixtureClock,
     defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', stream: false });
   const context = await browser.newContext({ viewport: sizes.desktop, timezoneId: 'UTC' });
   const errors = [], failedExpected = [];

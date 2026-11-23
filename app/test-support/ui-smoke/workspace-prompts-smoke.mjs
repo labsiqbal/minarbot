@@ -81,7 +81,7 @@ async function* exercise(browser, client) {
   let app, context;
   try {
     const database = join(ctl.root, 'state.sqlite');
-    app = await startRustServer({ appearanceClient: 'leptos', database, dist, fixedClock: fixtureClock, defaultModel: 'fixture',
+    app = await startRustServer({ database, dist, fixedClock: fixtureClock, defaultModel: 'fixture',
       baseURL: 'http://127.0.0.1:9/v1', apiKey: 'fixture',
       updates: ctl.updates, harness: { executables: Object.fromEntries(
         ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro'].map(runtime => [runtime, join(ctl.root, runtime)]),

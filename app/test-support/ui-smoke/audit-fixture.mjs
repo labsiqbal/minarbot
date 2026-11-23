@@ -107,8 +107,8 @@ const provider = createServer(async (req, res) => {
 await new Promise(r => provider.listen(0, '127.0.0.1', r));
 const baseURL = `http://127.0.0.1:${provider.address().port}/v1`;
 const portsFile = join(data, 'ports.json'); const ports = existsSync(portsFile) ? JSON.parse(readFileSync(portsFile, 'utf8')) : {};
-const app = await startApp({ appearanceClient: 'leptos', ...(ports.app ? { port: ports.app } : {}), database: join(data, 'minarbot.sqlite'), baseURL, apiKey: 'audit-synthetic', defaultModel: 'audit-model', stream: true, updates: { releasesDir: releases }, projectRoot: join(data, 'projects'), workspaces: [{ agent: coderId, directory: gitDir, write: true }], machines: { healthIntervalMs: 1000 }, ...(process.env.AUDIT_DESKTOP === '1' ? { desktop: { dataDir: data, enabled: true, leaseDir: join(data, 'leases') } } : {}) });
-const peer = await startApp({ appearanceClient: 'leptos', ...(ports.peer ? { port: ports.peer } : {}), database: join(data, 'peer.sqlite'), baseURL, apiKey: 'audit-synthetic', defaultModel: 'audit-model' });
+const app = await startApp({ ...(ports.app ? { port: ports.app } : {}), database: join(data, 'minarbot.sqlite'), baseURL, apiKey: 'audit-synthetic', defaultModel: 'audit-model', stream: true, updates: { releasesDir: releases }, projectRoot: join(data, 'projects'), workspaces: [{ agent: coderId, directory: gitDir, write: true }], machines: { healthIntervalMs: 1000 }, ...(process.env.AUDIT_DESKTOP === '1' ? { desktop: { dataDir: data, enabled: true, leaseDir: join(data, 'leases') } } : {}) });
+const peer = await startApp({ ...(ports.peer ? { port: ports.peer } : {}), database: join(data, 'peer.sqlite'), baseURL, apiKey: 'audit-synthetic', defaultModel: 'audit-model' });
 const post = async (target, path, body) => {
   const r = await fetch(target.origin + path, { method: 'POST', headers: { Origin: target.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(`${path} ${r.status} ${await r.text()}`); return r.json();

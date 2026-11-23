@@ -15,7 +15,7 @@ const disconnected = { generation: 'fixture', bot: null, status: 'disconnected',
 const discordPath = '/api/connected-apps/discord';
 let app, browser;
 try {
-  app = await startRustServer({ appearanceClient: 'leptos', database: join(data, 'state.sqlite'),
+  app = await startRustServer({ database: join(data, 'state.sqlite'),
     dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
   const { origin } = app;
   browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});

@@ -88,7 +88,7 @@ const provider = createServer(async (req, res) => {
 let app, browser, stdio;
 try {
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startRustServer({ appearanceClient: 'leptos', database: join(work, 'state.sqlite'), apiKey: 'fixture-key', defaultModel: model, stream: false,
+  app = await startRustServer({ database: join(work, 'state.sqlite'), apiKey: 'fixture-key', defaultModel: model, stream: false,
     dist: fileURLToPath(new URL('../../dist', import.meta.url)), baseURL: `http://127.0.0.1:${provider.address().port}/v1` });
   async function api(path, data, status = 200) {
     const response = await fetch(app.origin + path, { method: data ? 'POST' : 'GET', headers: {

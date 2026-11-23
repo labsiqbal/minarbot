@@ -94,7 +94,7 @@ const base = `http://127.0.0.1:${fixture.address().port}`;
 
 let browser;
 try {
-  app = await startRustServer({ appearanceClient: 'leptos',
+  app = await startRustServer({
     database: join(work, 'state.sqlite'),
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),
     baseURL: base + '/v1', apiKey: 'fixture-key', defaultModel: model,

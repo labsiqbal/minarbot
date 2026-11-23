@@ -11,7 +11,7 @@ const agent = '7e270641-2a83-4602-bde2-7dd162ee025d';
 const turn = '3b869c34-a857-4447-a59c-69cb9eb78f7e';
 let app, browser;
 try {
-  app = await startApp({ appearanceClient: 'leptos', database: join(scratch, 'state.sqlite'),
+  app = await startApp({ database: join(scratch, 'state.sqlite'),
     dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
   browser = await chromium.launch();
   const page = await browser.newPage();

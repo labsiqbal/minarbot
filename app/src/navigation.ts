@@ -25,20 +25,6 @@ function parseBaseRoute(location: string): AppRoute {
   return { notFound: true };
 }
 
-function baseRoutePath(route: AppRoute): string {
-  if (route.settings) {
-    const from = routePath({ ...route, settings: undefined });
-    return `/settings/${route.settings}${from === '/' ? '' : `?${new URLSearchParams({ from })}`}`;
-  }
-  if (route.view === 'routines' && route.routineAgent) return `/routines?${new URLSearchParams({ agent: route.routineAgent })}`;
-  if (route.view) return `/${route.view}`;
-  if (route.machine && route.remoteAgent) return `/machines/${route.machine}/agents/${route.remoteAgent}`;
-  if (route.project) return `/projects/${route.project}`;
-  if (route.room) return `/rooms/${route.room}`;
-  if (route.agent) return `/agents/${route.agent}${route.inbox ? '/inbox' : route.thread ? `/conversations/${route.thread}` : ''}`;
-  return '/';
-}
-
 export function resultTarget(value: unknown): ResultTarget | null {
   if (!value || typeof value !== 'object') return null;
   const { view, path, name, agent } = value as Record<string, unknown>;
@@ -55,9 +41,4 @@ export function parseRoute(location: string): AppRoute {
   if (params.getAll('result').length !== 1) return { ...route, notFound: true };
   try { const result = resultTarget(JSON.parse(params.get('result')!)); return result ? { ...route, result } : { ...route, notFound: true }; }
   catch { return { ...route, notFound: true }; }
-}
-export function routePath(route: AppRoute): string {
-  const path = baseRoutePath(route);
-  if (!route.result || route.settings) return path;
-  return `${path}${path.includes('?') ? '&' : '?'}${new URLSearchParams({ result: JSON.stringify(route.result) })}`;
 }

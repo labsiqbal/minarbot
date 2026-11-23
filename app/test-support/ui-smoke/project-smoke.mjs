@@ -46,7 +46,7 @@ function timing(samples) {
 }
 
 async function run(client) {
-  const app = await startApp({ appearanceClient: 'leptos', database: join(directory, client + '.sqlite'), dist: resolve('dist'), port: 0,
+  const app = await startApp({ database: join(directory, client + '.sqlite'), dist: resolve('dist'), port: 0,
     projectRoot: join(workspaces, 'projects'), fixedClock: now, defaultModel: 'fixture', baseURL: 'http://127.0.0.1:1/v1' });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' });
   const page = await context.newPage();

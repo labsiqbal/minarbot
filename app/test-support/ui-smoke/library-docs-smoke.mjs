@@ -13,7 +13,7 @@ const agent = randomUUID();
 const agentQuery = '';
 let app, browser;
 try {
-  app = await startApp({ appearanceClient: 'leptos', database: join(directory, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
+  app = await startApp({ database: join(directory, 'fixture.sqlite'), dist: fileURLToPath(new URL('../../dist', import.meta.url)), defaultModel: 'fixture' });
   const create = await fetch(app.origin + '/api/agents', {
     method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: agent, name: 'Docs agent', instructions: 'Help with library APIs.', model: 'fixture', runtime: 'api' }),

@@ -47,7 +47,7 @@ const provider = createServer(async (request, response) => {
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 let app, browser;
 try {
-  app = await startApp({ appearanceClient: 'leptos',
+  app = await startApp({
     database: join(scratch, 'test.sqlite'), dist: resolve('dist'), baseURL: `http://127.0.0.1:${provider.address().port}/v1`,
     defaultModel: 'fixture', stream: false,
   });

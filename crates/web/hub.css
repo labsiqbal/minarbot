@@ -1,11 +1,11 @@
-@import "../../app/src/ui/tokens.css";
-@import "../../app/src/ui/base.css";
-@import "../../app/src/ui/kit.css";
-@import "../../app/src/ui/chat.css";
-@import "../../app/src/ui/minarbot.css";
-@import "../../app/src/ui/density.css";
-@import "../../app/src/hub/hub.css";
-@import "../../app/node_modules/@fontsource-variable/inter/index.css";
+@import "./assets/ui/tokens.css";
+@import "./assets/ui/base.css";
+@import "./assets/ui/kit.css";
+@import "./assets/ui/chat.css";
+@import "./assets/ui/minarbot.css";
+@import "./assets/ui/density.css";
+@import "./assets/hub/hub.css";
+@import "./assets/inter/index.css";
 
 #leptos-root { height: 100%; }
 #appearance-fallback[hidden], #leptos-root [hidden], #leptos-root dialog:not([open]) { display: none; }

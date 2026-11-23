@@ -339,7 +339,7 @@ const receipt = {};
 try {
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, args: parityChromiumArgs });
   for (const client of clients) {
-    const app = await startApp({ appearanceClient: 'leptos',
+    const app = await startApp({
       database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', stream: false, projectRoot: scratch, fixedClock: fixtureClock,
     });
     try {

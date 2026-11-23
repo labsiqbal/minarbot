@@ -13,139 +13,73 @@ pub(super) struct WebConfig {
     development_identity: bool,
 }
 pub(super) struct Assets {
-    react: String,
-    leptos: Option<String>,
+    document: Option<String>,
     files: HashMap<String, Asset>,
     development_identity: bool,
 }
 struct Asset {
     bytes: Vec<u8>,
     gzip: Option<Vec<u8>>,
-    leptos: bool,
 }
 
 impl Assets {
-    pub(super) fn load(config: &WebConfig) -> crate::db::Result<Self> {
+    pub(super) fn load(config: &WebConfig) -> Self {
         let dist = &config.dist_path;
-        let manifest: Value = serde_json::from_slice(&fs::read(dist.join(".vite/manifest.json"))?)?;
-        let mut files = HashMap::new();
-        let mut queue = vec!["hub.html"];
-        let mut visited = std::collections::HashSet::new();
-        while let Some(key) = queue.pop() {
-            if !visited.insert(key) {
-                continue;
-            }
-            let entry = manifest
-                .get(key)
-                .ok_or("Hub entry missing from build manifest.")?;
-            let mut paths = vec![text(entry, "file")];
-            for field in ["css", "assets"] {
-                if let Some(items) = entry[field].as_array() {
-                    for item in items {
-                        paths.push(item.as_str().ok_or("Invalid hub asset.")?);
-                    }
-                }
-            }
-            for path in paths {
-                let Some(name) = path.strip_prefix("assets/") else {
-                    return Err("Invalid hub asset.".into());
-                };
-                if !filename(name) {
-                    return Err("Invalid hub asset.".into());
-                }
-                files.insert(
-                    format!("/{path}"),
-                    Asset {
-                        bytes: fs::read(dist.join(path))?,
-                        gzip: None,
-                        leptos: false,
-                    },
-                );
-            }
-            for field in ["imports", "dynamicImports"] {
-                if let Some(items) = entry[field].as_array() {
-                    for item in items {
-                        queue.push(item.as_str().ok_or("Invalid hub asset import.")?);
-                    }
+        // Existing installations can still point at the retired dist/hub directory.
+        let root = if dist.ends_with("hub") {
+            dist.with_file_name("_leptos")
+        } else {
+            dist.clone()
+        };
+        match Self::read(&root) {
+            Ok((document, files)) => Self {
+                document: Some(document),
+                files,
+                development_identity: config.development_identity,
+            },
+            Err(error) => {
+                eprintln!("Minarbot Hub web client unavailable: {error}");
+                Self {
+                    document: None,
+                    files: HashMap::new(),
+                    development_identity: config.development_identity,
                 }
             }
         }
-        let react = fs::read_to_string(dist.join("hub.html"))?;
-        let leptos_root = dist.join("../_leptos");
-        let selected = matches!(
-            std::env::var("MINARBOT_APPEARANCE_CLIENT").as_deref(),
-            Ok("leptos") | Err(std::env::VarError::NotPresent)
-        );
-        let load_leptos = || -> crate::db::Result<_> {
-            let mut assets = HashMap::new();
-            let manifest: Vec<String> =
-                serde_json::from_slice(&fs::read(leptos_root.join("hub-assets.json"))?)?;
-            for path in manifest {
-                let name = path
-                    .strip_prefix("/_leptos/assets/")
-                    .ok_or("Invalid Leptos hub asset.")?;
-                if !filename(name)
-                    || !name
-                        .rsplit_once('.')
-                        .and_then(|(v, ext)| {
-                            v.rsplit_once('.').map(|(_, hash)| {
-                                hex(hash, 16)
-                                    && matches!(ext, "js" | "css" | "svg" | "woff2" | "wasm")
-                            })
-                        })
-                        .unwrap_or(false)
-                {
-                    return Err("Invalid Leptos hub asset.".into());
-                }
-                let file = leptos_root.join("assets").join(name);
-                let gzip_file = leptos_root.join("assets").join(format!("{name}.gz"));
-                let gzip = if gzip_file.try_exists()? {
-                    Some(fs::read(gzip_file)?)
-                } else {
-                    None
-                };
-                assets.insert(
-                    path,
-                    Asset {
-                        bytes: fs::read(file)?,
-                        gzip,
-                        leptos: true,
-                    },
-                );
+    }
+    fn read(root: &Path) -> crate::db::Result<(String, HashMap<String, Asset>)> {
+        let mut files = HashMap::new();
+        let manifest: Vec<String> =
+            serde_json::from_slice(&fs::read(root.join("hub-assets.json"))?)?;
+        for path in manifest {
+            if !crate::appearance::asset(&path) {
+                return Err("Invalid Leptos hub asset.".into());
             }
-            let html = fs::read_to_string(leptos_root.join("hub.html"))?;
-            if !crate::appearance::startup_asset(&html).is_some_and(|src| assets.contains_key(src))
-            {
-                return Err("Leptos hub startup module is missing from the asset manifest.".into());
-            }
-            Ok((html, assets))
-        };
-        let leptos = if selected && leptos_root.join("hub-assets.json").is_file() {
-            match load_leptos() {
-                Ok((html, assets)) => {
-                    files.extend(assets);
-                    Some(html)
-                }
-                Err(error) => {
-                    eprintln!("Leptos hub build unavailable, serving React: {error}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        Ok(Self {
-            react,
-            leptos,
-            files,
-            development_identity: config.development_identity,
-        })
+            let name = path.trim_start_matches(crate::appearance::NAMESPACE);
+            let gzip_file = root.join(format!("{name}.gz"));
+            let gzip = if gzip_file.try_exists()? {
+                Some(fs::read(gzip_file)?)
+            } else {
+                None
+            };
+            files.insert(
+                path.clone(),
+                Asset {
+                    bytes: fs::read(root.join(name))?,
+                    gzip,
+                },
+            );
+        }
+        let html = fs::read_to_string(root.join("hub.html"))?;
+        if !crate::appearance::startup_asset(&html).is_some_and(|src| files.contains_key(src)) {
+            return Err("Leptos hub startup module is missing from the asset manifest.".into());
+        }
+        Ok((html, files))
     }
     fn response(
         &self,
         hub: &Hub,
         path: &str,
-        query: &str,
         headers: &HeaderMap,
         central: bool,
     ) -> Result<Option<Response>> {
@@ -168,12 +102,10 @@ impl Assets {
             )
                 .into_response();
             let out = response.headers_mut();
-            if asset.leptos {
-                out.insert(
-                    header::CACHE_CONTROL,
-                    HeaderValue::from_static("public, max-age=31536000, immutable"),
-                );
-            }
+            out.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=31536000, immutable"),
+            );
             if asset.gzip.is_some() {
                 out.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
             }
@@ -190,33 +122,16 @@ impl Assets {
         {
             return Err(missing());
         }
-        let react_override = query_value(query, "ui").as_deref() == Some("react");
-        let leptos = self.leptos.as_ref().filter(|_| !react_override);
-        let html = leptos.unwrap_or(&self.react);
+        let Some(html) = &self.document else {
+            return Ok(Some(crate::appearance::recovery_page()));
+        };
         let nonce = opaque()?;
         let safe = json!({"accountsHost":hub.config.accounts_host,"domain":hub.config.domain,"developmentIdentity":self.development_identity})
             .to_string().replace('<', "\\u003c").replace('>', "\\u003e").replace('&', "\\u0026");
-        let mut fallback = url::form_urlencoded::Serializer::new(String::new());
-        fallback
-            .extend_pairs(url::form_urlencoded::parse(query.as_bytes()).filter(|(k, _)| k != "ui"));
-        fallback.append_pair("ui", "react");
-        let fallback = format!("{path}?{}", fallback.finish().replace('&', "&amp;"));
-        let page = html.replace("__REACT_HUB__", &fallback).replacen("<head>",
+        let page = html.replacen("<head>",
             &format!("<head><meta name=\"csp-nonce\" content=\"{nonce}\"><script nonce=\"{nonce}\" type=\"application/json\" id=\"hub-config\">{safe}</script>"), 1);
-        let wasm = if leptos.is_some() {
-            " 'wasm-unsafe-eval'"
-        } else {
-            ""
-        };
-        html_response(page, &format!("default-src 'none'; script-src 'self' 'nonce-{nonce}'{wasm}; style-src 'self' 'nonce-{nonce}'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")).map(Some)
+        html_response(page, &format!("default-src 'none'; script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'; style-src 'self' 'nonce-{nonce}'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")).map(Some)
     }
-}
-fn filename(s: &str) -> bool {
-    !s.is_empty()
-        && s != "."
-        && s != ".."
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
 }
 fn html_response(html: String, csp: &str) -> Result<Response> {
     let mut response = ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response();
@@ -305,7 +220,7 @@ pub(super) async fn route(
     }
     if !post {
         if let Some(assets) = &hub.assets {
-            if let Some(response) = assets.response(&hub, &path, &query, &headers, central)? {
+            if let Some(response) = assets.response(&hub, &path, &headers, central)? {
                 session::origin(&headers, &host, false)?;
                 return Ok(response);
             }

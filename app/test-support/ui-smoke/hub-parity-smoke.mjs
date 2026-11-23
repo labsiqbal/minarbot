@@ -26,7 +26,7 @@ const identities = Object.fromEntries(['Alice', 'Bob'].map(subject => [subject.t
   sessionId: subject + '-fixture', expiresAt: Date.now() + 600000,
 }]));
 const project = { host: 'workspace-fixture.' + domain };
-const web = { distPath: resolve(import.meta.dirname, '../../dist/hub'), developmentIdentity: true };
+const web = { distPath: resolve(import.meta.dirname, '../../dist/_leptos'), developmentIdentity: true };
 let rust;
 let proxy, browser, dropMessageResponse = false;
 const inviteFixture = { invitationId: '10000000-0000-4000-8000-000000000082', token: 'synthetic-invitation-fixture' };

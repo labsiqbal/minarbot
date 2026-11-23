@@ -221,7 +221,7 @@ async function exercise(page, client, route, panel, state, commands) {
       assert.deepEqual(attempts[0], attempts[1]);
       assert.equal(attempts[0].version, release.version);
       uuid(attempts[0].id);
-      // React's update modal sits above workspace.
+      // The update modal sits above workspace.
       // Reloading with both Radix portals open hides both from assistive technology.
 
       await page.reload();
@@ -315,7 +315,7 @@ const routes = process.env.MINARBOT_SYSTEM_ROUTE ? [process.env.MINARBOT_SYSTEM_
 const failures = [];
 let app, browser;
 try {
-  app = await startRustServer({ appearanceClient: 'leptos', database: join(data, 'state.sqlite'), defaultModel: 'fixture-model', dist, port: 0, });
+  app = await startRustServer({ database: join(data, 'state.sqlite'), defaultModel: 'fixture-model', dist, port: 0, });
   origin = app.origin;
   assert.match(origin, /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.notEqual(new URL(origin).port, '4317');

@@ -114,39 +114,9 @@ const foundation = [
   },
 ];
 
-// #38: timer, effect and explicit-any ratchets. Existing debt lives in bulk suppressions.
+// #38: timer and explicit-any ratchets.
 export const timerAllowlist = [];
-export const effectPrimitives = [
-  'src/ui/kit.tsx', 'src/ui/Menu.tsx', 'src/ui/Modal.tsx', 'src/ui/ChatPrimitives.tsx',
-  'src/ui/resizable.tsx', 'src/ui/primitives/**/*.{ts,tsx}',
-];
-const effectMessage = 'Move lifecycle work to src/hooks/: use usePolling for refresh loops; use a focused hook for subscriptions, focus or browser resources. UI primitives belong in the kit.';
-export const noComponentEffects = {
-  meta: { type: 'problem', schema: [], messages: { effect: effectMessage } },
-  create(context) {
-    return {
-      'Program:exit'() {
-        for (const scope of context.sourceCode.scopeManager.scopes) for (const variable of scope.variables) {
-          const binding = variable.defs.find(def => def.type === 'ImportBinding' && def.parent.source?.value === 'react');
-          if (!binding) continue;
-          const specifier = binding.node;
-          if (specifier.type === 'ImportSpecifier' && (specifier.imported.name ?? specifier.imported.value) === 'useEffect') {
-            for (const reference of variable.references) context.report({ node: reference.identifier, messageId: 'effect' });
-          } else if (['ImportNamespaceSpecifier', 'ImportDefaultSpecifier'].includes(specifier.type)) {
-            for (const reference of variable.references) {
-              const member = reference.identifier.parent;
-              if (member.type === 'MemberExpression' && ((!member.computed && member.property.name === 'useEffect') || (member.computed && member.property.value === 'useEffect')))
-                context.report({ node: member, messageId: 'effect' });
-              if (member.type === 'VariableDeclarator' && member.id.type === 'ObjectPattern')
-                for (const property of member.id.properties) if (property.key?.name === 'useEffect' || property.key?.value === 'useEffect') context.report({ node: property, messageId: 'effect' });
-            }
-          }
-        }
-      },
-    };
-  },
-};
-const timerMessage = 'Use usePolling from src/hooks/usePolling for refresh loops or downloadBlob from src/hooks/downloadBlob for downloads. Put other timer lifecycles in a focused hook; do not add component timers.';
+const timerMessage = 'Use usePolling from src/hooks/usePolling for refresh loops or use a focused browser timer helper.';
 export const lifecycleRatchets = [
   {
     files: ['**/*.{ts,tsx,mjs,js}'], ignores: ['**/*.test.ts', '**/test.ts', '**/*-it.ts'],
@@ -159,11 +129,6 @@ export const lifecycleRatchets = [
     rules: {
       'no-restricted-globals': ['error', { globals: ['setTimeout', 'setInterval', 'requestAnimationFrame', 'requestIdleCallback'].map(name => ({ name, message: timerMessage })), checkGlobalObject: true }],
     },
-  },
-  {
-    files: ['src/**/*.{ts,tsx,mjs,js}'], ignores: ['src/hooks/**', ...effectPrimitives],
-    plugins: { 'minarbot-lifecycle': { rules: { 'no-component-effects': noComponentEffects } } },
-    rules: { 'minarbot-lifecycle/no-component-effects': 'error' },
   },
 ];
 

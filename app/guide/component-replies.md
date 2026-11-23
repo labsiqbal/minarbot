@@ -6,6 +6,6 @@ Charts render as SVG with a **View data** table. Tables use captions, column hea
 
 Forms accept text, numbers, checkboxes and selections. A form holds the tool call until the user submits, skips, stops the turn or reaches the 15-minute limit. The result contains `status`, `action`, `context` and typed `values`. Never request credentials or secrets in a form.
 
-The component tree and data model are schema-validated in Rust before storage. The React renderer is the shipped client. The same payload is exposed through Minarbot MCP, where `render_component` holds the tool call open while the form is pending.
+The component tree and data model are schema-validated in Rust before storage. The Leptos client renders the components. The same payload is exposed through Minarbot MCP, where `render_component` holds the tool call open while the form is pending.
 
 Ideas for explicit component trees, typed actions and tool-backed generative UI were informed by [CopilotKit](https://github.com/CopilotKit/CopilotKit), MIT licensed. Minarbot implements its own renderers and contracts.

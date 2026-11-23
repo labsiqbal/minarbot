@@ -14,8 +14,8 @@ import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import WebSocket from 'ws';
 import { startApp } from './test-bridge.ts';
 import { signedNodeMessage, verifiedNodeMessage } from './test-support/hub-node-signature.ts';
-import type { Policy as ParticipationPolicy } from './src/hub/client.ts';
 import { canonicalJson, ProtocolError, sha256 } from './shared/protocol.ts';
+type ParticipationPolicy = { sectionIds: string[]; invocation: { mode: 'owner' | 'all-members' } | { mode: 'members'; accountIds: string[] }; scopes: ('read' | 'invoke')[]; localPolicyDigest: string; payerBindingRef: string; maxCostMicros: number };
 type InvocationPolicy = ParticipationPolicy['invocation'];
 type RoutingFrame = {
     kind: string; turnId: string; nodeId: string; sequence: number;

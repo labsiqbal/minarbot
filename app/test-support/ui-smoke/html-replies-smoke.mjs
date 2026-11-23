@@ -105,7 +105,7 @@ probe.src = '${base}/private-check';
 
 let app, browser;
 try {
-  app = await startRustServer({ appearanceClient: 'leptos',
+  app = await startRustServer({
     database: join(work, 'state.sqlite'),
     dist: fileURLToPath(new URL('../../dist', import.meta.url)),
     baseURL: base + '/v1', apiKey: 'fixture-key', defaultModel: model, concurrency: 2,

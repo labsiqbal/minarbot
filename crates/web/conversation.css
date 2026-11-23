@@ -1,18 +1,18 @@
-@import "../../app/src/ui/source-control.css";
-@import "../../app/src/SpeechPlayback.css";
-@import "../../app/src/guide.css";
+@import "./assets/ui/source-control.css";
+@import "./assets/SpeechPlayback.css";
+@import "./assets/guide.css";
 @import "./appearance.css";
-@import "../../app/src/ui/details.css";
-@import "../../app/src/right-panel.css";
-@import "../../app/src/Conversations.css";
-@import "../../app/src/html-reply.css";
-@import "../../app/src/component-reply.css";
-@import "../../app/src/computer-viewer.css";
-@import "../../app/src/goal-mode.css";
-@import "../../app/src/attachments.css";
-@import "../../app/src/ui/source-control.css";
-@import "../../app/src/Routines.css";
-@import "../../app/src/ui/machines.css";
+@import "./assets/ui/details.css";
+@import "./assets/right-panel.css";
+@import "./assets/Conversations.css";
+@import "./assets/html-reply.css";
+@import "./assets/component-reply.css";
+@import "./assets/computer-viewer.css";
+@import "./assets/goal-mode.css";
+@import "./assets/attachments.css";
+@import "./assets/ui/source-control.css";
+@import "./assets/Routines.css";
+@import "./assets/ui/machines.css";
 
 .conversation-startup { padding: 24px; }
 .agent-inbox .k-icon-btn svg { width: 16px; height: 16px; }

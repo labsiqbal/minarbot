@@ -31,7 +31,7 @@ const stats = times => {
 try {
   await mkdir(output, { recursive: true });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  app = await startRustServer({ appearanceClient: 'leptos',
+  app = await startRustServer({
     database: join(work, 'state.sqlite'), dist, fixedClock: Date.UTC(2026, 10, 23, 16, 20), stream: false,
     baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', defaultModel: 'fixture',
   });

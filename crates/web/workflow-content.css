@@ -1,4 +1,4 @@
-@import "../../app/src/ui/workflow.css";
+@import "./assets/ui/workflow.css";
 
 .workflow-library[hidden] { display: none; }
 

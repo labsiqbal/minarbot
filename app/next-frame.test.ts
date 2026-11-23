@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createFrameQueue } from './src/hooks/useNextFrame.ts';
+import { createFrameQueue } from './src/hooks/frame-queue.ts';
 
 test('next-frame work runs once and cleanup cancels every pending callback', t => {
   const pending = new Map<number, FrameRequestCallback>();

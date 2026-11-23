@@ -34,7 +34,6 @@ use axum::{
     routing::any,
     Router,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use config::Config;
 use serde_json::{json, Value};
 use std::{
@@ -266,95 +265,55 @@ async fn static_ui(
     query: &str,
     gzip_ok: bool,
 ) -> Result<Response, Failure> {
-    let leptos_asset = path.starts_with(appearance::NAMESPACE);
-    if leptos_asset && !appearance::asset(path) {
-        return Ok(local_error(404, "Page not found."));
-    }
-    let hashed = path.starts_with("/assets/") || leptos_asset;
-    let spa = !hashed && !public_ui_asset(path);
-    let leptos_enabled = spa
-        && state.config.appearance_client == config::AppearanceClient::Leptos
-        && !appearance::react_override(query);
-    let title = leptos_enabled
-        .then(|| appearance::route_title(state, path, query))
-        .flatten();
-    let document = if title.is_some() {
-        Some(appearance::document_for_route(path, query))
-    } else if leptos_enabled && appearance::conversation_route(path, query) {
-        Some(appearance::CONVERSATION_DOCUMENT)
-    } else {
-        None
-    };
-    let leptos = if let Some(document) = document {
-        appearance::load_document(&state.config.dist, document).await
-    } else {
-        None
-    };
-    let leptos_page = leptos.is_some();
-    let file = state.config.dist.join(if spa {
-        document.filter(|_| leptos_page).unwrap_or("index.html")
-    } else {
-        path.trim_start_matches('/')
-    });
-    if !spa && path.split('/').any(|part| part == "..") {
-        return Ok(local_error(404, "Page not found."));
-    }
-    let precompressed = if leptos_asset && gzip_ok {
-        let mut gzip_file = file.as_os_str().to_owned();
-        gzip_file.push(".gz");
-        tokio::fs::read(gzip_file).await.ok()
-    } else {
-        None
-    };
-    let encoded = precompressed.is_some();
-    let bytes = match (leptos, precompressed) {
-        (Some(html), _) => Ok(match title {
-            Some(title) => appearance::document(&html, path, title, query),
-            None => appearance::conversation_document(&html, path, query),
-        }
-        .into_bytes()),
-        (None, Some(bytes)) => Ok(bytes),
-        (None, None) => tokio::fs::read(&file).await,
-    };
-    let Ok(mut bytes) = bytes else {
-        return Ok(if leptos_asset {
-            local_error(404, "Page not found.")
+    let leptos_asset = appearance::asset(path);
+    let (file, mut bytes, encoded, page) = if leptos_asset || public_ui_asset(path) {
+        let file = state.config.dist.join(path.trim_start_matches('/'));
+        let precompressed = if leptos_asset && gzip_ok {
+            let mut gzip_file = file.as_os_str().to_owned();
+            gzip_file.push(".gz");
+            tokio::fs::read(gzip_file).await.ok()
         } else {
-            local_error(404, "App has not been built yet. Run npm run build.")
-        });
-    };
-    let mut policy = None;
-    if leptos_page {
-        policy = Some(appearance::POLICY.to_owned());
-    } else if spa {
-        let html = String::from_utf8_lossy(&bytes);
-        let Some(end) = html.find("</head>") else {
-            return Ok(local_error(500, "Built app is missing </head>."));
+            None
         };
-        let mut random = [0; 16];
-        getrandom::getrandom(&mut random).map_err(|_| Failure::storage())?;
-        let nonce = STANDARD.encode(random);
-        let selector = if leptos_enabled
-            && document.is_none()
-            && tokio::fs::try_exists(state.config.dist.join(appearance::DOCUMENT))
-                .await
-                .unwrap_or(false)
-        {
-            "<meta name=\"minarbot-appearance-client\" content=\"leptos\">"
+        let encoded = precompressed.is_some();
+        let bytes = match precompressed {
+            Some(bytes) => bytes,
+            None => match tokio::fs::read(&file).await {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(local_error(404, "Page not found.")),
+            },
+        };
+        (file, bytes, encoded, false)
+    } else if navigation(path) {
+        let title = appearance::route_title(state, path, query);
+        let document = if title.is_some() {
+            appearance::document_for_route(path, query)
         } else {
-            ""
+            appearance::CONVERSATION_DOCUMENT
         };
-        bytes = format!(
-            "{}<meta name=\"csp-nonce\" content=\"{nonce}\">{selector}{}",
-            &html[..end],
-            &html[end..]
+        let Some(html) = appearance::load_document(&state.config.dist, document).await else {
+            return Ok(appearance::recovery_page());
+        };
+        let html = match title {
+            Some(title) => appearance::document(&html, title, query),
+            None => html,
+        };
+        (
+            state.config.dist.join(document),
+            html.into_bytes(),
+            false,
+            true,
         )
-        .into_bytes();
-        policy = Some(POLICY.replace(
-            "style-src 'self'",
-            &format!("style-src 'self' 'nonce-{nonce}'"),
-        ));
-    }
+    } else {
+        if path.starts_with(appearance::NAMESPACE) || path.starts_with("/assets/") {
+            return Ok(local_error(404, "Page not found."));
+        }
+        return Ok((
+            StatusCode::NOT_FOUND,
+            axum::response::Html(include_str!("../../web/not-found.html")),
+        )
+            .into_response());
+    };
     let mime = match file.extension().and_then(|value| value.to_str()) {
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
@@ -365,11 +324,6 @@ async fn static_ui(
         Some("woff2") => "font/woff2",
         Some("wasm") => "application/wasm",
         _ => "application/octet-stream",
-    };
-    let status = if spa && !navigation(path) {
-        StatusCode::NOT_FOUND
-    } else {
-        StatusCode::OK
     };
     let compressible = matches!(
         mime,
@@ -382,7 +336,7 @@ async fn static_ui(
             .map_err(|_| Failure::storage())?
             .map_err(|_| Failure::storage())?;
     }
-    let mut response = (status, [(header::CONTENT_TYPE, mime)], bytes).into_response();
+    let mut response = ([(header::CONTENT_TYPE, mime)], bytes).into_response();
     if compressible {
         response
             .headers_mut()
@@ -393,17 +347,16 @@ async fn static_ui(
             .headers_mut()
             .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
     }
-    if hashed {
-        // Both client builds name immutable assets by content hash.
+    if leptos_asset {
         response.headers_mut().insert(
             header::CACHE_CONTROL,
             HeaderValue::from_static("public, max-age=31536000, immutable"),
         );
     }
-    if let Some(policy) = policy {
+    if page {
         response.headers_mut().insert(
             header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_str(&policy).map_err(|_| Failure::storage())?,
+            HeaderValue::from_static(appearance::POLICY),
         );
     }
     Ok(response)
@@ -731,6 +684,7 @@ async fn main() -> db::Result<()> {
         return mcp::stdio().await;
     }
     if std::env::args().nth(1).as_deref() == Some("--hub") {
+        appearance::log_retired_selector();
         return hub::run().await;
     }
     if let Some(command @ ("script" | "restore")) = std::env::args().nth(1).as_deref() {
@@ -762,6 +716,7 @@ async fn main() -> db::Result<()> {
         println!("{}", restore::read_only(source.as_ref(), target.as_ref())?);
         return Ok(());
     }
+    appearance::log_retired_selector();
     let mut config = Config::read()?;
     harness::hydrate(&mut config.harness).await;
     let _script_discovery = automation::scripts::open(&config)?;

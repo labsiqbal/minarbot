@@ -24,7 +24,7 @@ const PAGES: &str = concat!(
     "\n",
     include_str!("../../../../app/guide/settings.md"),
 );
-const SCREENS: &str = include_str!("../../../../app/src/guide-screens.json");
+const SCREENS: &str = include_str!("../../../web/assets/guide-screens.json");
 const WRITES: &[&str] = &[
     "create_agent",
     "update_agent",

@@ -154,18 +154,9 @@ impl BrowserAccess {
     }
 }
 
-async fn page(
-    state: &AppState,
-    status: StatusCode,
-    error: &str,
-    secure: bool,
-    query: &str,
-) -> Response {
+async fn page(state: &AppState, status: StatusCode, error: &str, secure: bool) -> Response {
     let mut script = String::new();
-    if secure
-        && state.config.appearance_client == crate::config::AppearanceClient::Leptos
-        && !crate::appearance::react_override(query)
-    {
+    if secure {
         if let Some(document) =
             crate::appearance::load_document(&state.config.dist, crate::appearance::DOCUMENT).await
         {
@@ -180,13 +171,8 @@ async fn page(
     } else {
         ""
     };
-    let action = if crate::appearance::react_override(query) {
-        "/pair?ui=react"
-    } else {
-        "/pair"
-    };
     let form = format!(
-        r#"<form method="post" action="{action}">
+        r#"<form method="post" action="/pair">
 <label for="code">Pairing code</label>
 <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{{6}}" maxlength="6" required>
 <label for="name">Device name</label>
@@ -278,9 +264,8 @@ fn form_field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
 
 async fn pair(state: &AppState, request: Request, origin: &str) -> Result<Response> {
     let secure = secure(&state.config, origin);
-    let query = request.uri().query().unwrap_or_default().to_owned();
     match *request.method() {
-        Method::GET | Method::HEAD => Ok(page(state, StatusCode::OK, "", secure, &query).await),
+        Method::GET | Method::HEAD => Ok(page(state, StatusCode::OK, "", secure).await),
         Method::POST
             if secure
                 && exact_origin(&request, origin)
@@ -312,7 +297,6 @@ async fn pair(state: &AppState, request: Request, origin: &str) -> Result<Respon
                     StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                     &error.message,
                     true,
-                    &query,
                 )
                 .await),
             }
@@ -530,7 +514,6 @@ async fn check(state: &AppState, mut request: Request, next: Next) -> Result<Res
         )
     };
     let asset = crate::public_ui_asset(path)
-        || path.starts_with("/assets/")
         || (origin.is_some()
             && matches!(*request.method(), Method::GET | Method::HEAD)
             && crate::appearance::asset(path));
@@ -545,7 +528,6 @@ async fn check(state: &AppState, mut request: Request, next: Next) -> Result<Res
                 StatusCode::UNAUTHORIZED,
                 "",
                 secure(&state.config, origin.unwrap_or_default()),
-                request.uri().query().unwrap_or_default(),
             )
             .await);
         }
