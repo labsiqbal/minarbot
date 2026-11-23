@@ -44,7 +44,14 @@ Display-sensitive fixtures pin timestamps and UUIDs from the frozen images.
 The smoke displays the original synthetic loopback URL or workspace path where
 the live test uses an ephemeral port or temporary root. Assertions still use
 the real disposable fixture. Capture-only text substitutions restore the
-original values before the smoke continues. No baseline PNGs were replaced.
+original values before the smoke continues, so future captures stay stable.
+
+No frozen PNG was replaced for #67. A replacement is allowed only when the
+original UUID, port, or timestamp cannot be recovered cheaply. Review the
+side-by-side and diff image for that named pair, verify every changed pixel is
+inside the fixture text bounding box, and record pair, region, and reason in
+this file or a baselines manifest. Any pixel outside that box requires fixing
+the smoke or rejecting the replacement.
 
 ## Frozen timing budgets
 

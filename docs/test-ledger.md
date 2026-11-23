@@ -26,8 +26,8 @@ The larger Node suite retains the React tests during stage B part 1.
 | shell | 36 | Workspace navigation, Quick switcher, prompts, command recovery, sidebar controls |
 | system | 32 | Usage, updates, devices, shared data, backup and external access, mutation recovery |
 
-The Stage A run passed all 16 groups and 580 pairs. All 570 non-exempt pairs
-passed the pixel thresholds. Ten narrow Hub pairs retain their intentional layout.
+The golden baseline run passed all 16 groups and 580 pairs. All pairs use the
+same pixel thresholds, including the ten narrow Hub Leptos baselines.
 
 See the screenshot parity guide for the gate command and failure thresholds.
 Retained Node and Rust API cases below still cover the shared contracts.
