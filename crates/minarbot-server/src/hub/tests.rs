@@ -380,8 +380,8 @@ fn invocation_scope_idempotency_and_tenant_isolation() -> Check {
     ok(authority::consent(&db,&b,&first,Some(&p.peer.principal)))?;
     let input = named(p.section(),&first);
     ok(post(&mut db,&b,&input))?;
-    for ctx in [a, context(&p.alpha,&carol)] {
-        rejects(post(&mut db,&ctx,&input),"authority_denied");
+    for ctx in [&a, &context(&p.alpha,&carol)] {
+        rejects(post(&mut db,ctx,&input),"authority_denied");
     }
     let specific = p.peer_grant(&db,json!({"mode":"members","accountIds":[carol]}))?;
     ok(post(&mut db,&context(&p.alpha,&carol),&named(p.section(),&specific)))?;
@@ -517,5 +517,162 @@ fn action_lease_and_result_receipts_recheck_authority() -> Check {
     ok(authority::withdraw(&db,&a,&json!({"participationId":proposal["participationId"]})))?;
     changed["actionId"] = json!(new_id());
     rejects(routing::lease(&db,&p.owner.principal,&changed),"authority_denied");
+    Ok(())
+}
+
+#[test]
+fn revocation_fences_queued_delivery_and_late_results_but_preserves_beta() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f, &mut db)?;
+    let a = p.alice();
+    let shared = p.peer_grant(&db, json!({"mode":"all-members"}))?;
+    let beta = grant(&db, &p.beta, &p.bob, &p.bob, &p.peer, json!({"mode":"owner"}))?;
+    ok(post(&mut db, &a, &named(p.section(), &shared)))?;
+    let req = request(&db, &p.peer)?;
+    ok(accept(&db, &p.peer, &result(&req, "turn.admitted", 1, json!({}))))?;
+    ok(authority::edit_member(&db, &a, &json!({"accountId":p.bob,"revision":1,"role":"revoked"})))?;
+    assert_eq!(ok(routing::turn(&db, &a, text(&req, "turnId")))?["state"], "unknown");
+    rejects(accept(&db, &p.peer, &result(&req, "turn.final", 2, json!({"text":"Late"}))), "resource_not_found");
+    rejects(post(&mut db, &a, &named(p.section(), &shared)), "resource_not_found");
+    let pending = ok(routing::pending(&db, &p.peer.principal))?;
+    for kind in ["grant.revoked", "turn.cancel"] {
+        assert!(pending.iter().any(|frame| frame["kind"] == kind));
+    }
+    assert!(pending.iter().all(|frame| frame["kind"] != "turn.request" && frame["kind"] != "section.event"));
+    let beta_ctx = context(&p.beta, &p.bob);
+    assert_eq!(ok(post(&mut db, &beta_ctx, &named(text(&p.beta, "sectionId"), &beta)))?["turnIds"].as_array().ok_or("missing turns")?.len(), 1);
+    db.execute("UPDATE memberships SET status='active' WHERE project_id=? AND account_id=?", params![a.project,p.bob])?;
+    rejects(post(&mut db, &p.bob(), &named(p.section(), &shared)), "authority_denied");
+    Ok(())
+}
+
+#[test]
+fn requester_removal_does_not_revoke_owner_consent() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f,&mut db)?;
+    let carol = account(&db,"carol")?;
+    join(&db,&p.alpha,&carol,"member")?;
+    let grant = p.peer_grant(&db,json!({"mode":"all-members"}))?;
+    let requested = ok(post(&mut db,&context(&p.alpha,&carol),&named(p.section(),&grant)))?;
+    ok(authority::edit_member(&db,&p.alice(),&json!({"accountId":carol,"revision":1,"role":"revoked"})))?;
+    let id = requested["turnIds"][0].as_str().ok_or("missing turn")?;
+    assert_eq!(ok(routing::turn(&db,&p.alice(),id))?["state"],"revoked");
+    assert_eq!(ok(post(&mut db,&p.bob(),&named(p.section(),&grant)))?["turnIds"].as_array().ok_or("missing turns")?.len(),1);
+    Ok(())
+}
+
+#[test]
+fn demotion_archived_section_revoked_node_and_blocked_account_fail_closed() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f,&mut db)?;
+    let shared = p.peer_grant(&db,json!({"mode":"owner"}))?;
+    ok(authority::edit_member(&db,&p.alice(),&json!({"accountId":p.bob,"revision":1,"role":"viewer"})))?;
+    rejects(post(&mut db,&p.bob(),&named(p.section(),&shared)),"authority_denied");
+    rejects(authority::propose(&db,&p.bob(),&proposal(p.section(),&p.peer,json!({"mode":"owner"}))),"authority_denied");
+    ok(authority::withdraw(&db,&p.bob(),&json!({"participationId":shared["participationId"]})))?;
+    let owned = p.own_grant(&db)?;
+    ok(post(&mut db,&p.alice(),&named(p.section(),&owned)))?;
+    db.execute("UPDATE sections SET archived=1 WHERE id=?", [p.section()])?;
+    assert!(!ok(routing::pending(&db,&p.owner.principal))?.iter().any(|frame|frame["kind"]=="turn.request"));
+    ok(authority::revoke_node(&db,&p.owner.principal))?;
+    rejects(routing::pending(&db,&p.owner.principal),"resource_not_found");
+    ok(authority::account_status(&db,&p.bob,"blocked"))?;
+    let beta = context(&p.beta,&p.bob);
+    rejects(authority::member(&db,&beta,&[]),"account_unavailable");
+    ok(authority::account_status(&db,&p.bob,"active"))?;
+    assert_eq!(ok(authority::member(&db,&beta,&[]))?["role"],"owner");
+    rejects(routing::pending(&db,&p.peer.principal),"stale_revision");
+    Ok(())
+}
+
+fn messages(db: &Connection) -> Check<i64> {
+    Ok(db.query_row("SELECT count(*) FROM messages", [], |row|row.get(0))?)
+}
+
+#[test]
+fn offline_admission_is_atomic_and_reconnect_fences_old_node_generation() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f,&mut db)?;
+    let grant = p.own_grant(&db)?;
+    ok(post(&mut db,&p.alice(),&named(p.section(),&grant)))?;
+    let req = request(&db,&p.owner)?;
+    ok(accept(&db,&p.owner,&result(&req,"turn.admitted",1,json!({}))))?;
+    storage::fence_restart(&mut db)?;
+    let before = messages(&db)?;
+    rejects(post(&mut db,&p.alice(),&named(p.section(),&grant)),"node_offline");
+    assert_eq!(messages(&db)?,before);
+    assert_eq!(ok(routing::turn(&db,&p.alice(),text(&req,"turnId")))?["state"],"unknown");
+    db.execute("UPDATE nodes SET status='ready',connection_generation=2 WHERE id=?", [&p.owner.id])?;
+    rejects(routing::pending(&db,&p.owner.principal),"stale_revision");
+    let mut fresh = p.owner.principal.clone();
+    fresh["connectionGeneration"] = json!(2);
+    assert!(ok(routing::pending(&db,&fresh))?.is_empty());
+    rejects(routing::accept(&db,&fresh,&result(&req,"turn.final",2,json!({"text":"Old connection"}))),"stale_revision");
+    assert_eq!(ok(routing::grants(&db,&fresh))?.len(),1);
+    Ok(())
+}
+
+#[test]
+fn outbox_ack_binds_event_digest_and_current_consent() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f,&mut db)?;
+    let grant = p.own_grant(&db)?;
+    let input = named(p.section(),&grant);
+    ok(post(&mut db,&p.alice(),&input))?;
+    let req = request(&db,&p.owner)?;
+    let event = text(&req,"eventId");
+    let mut ack = json!({"eventId":event,"frameDigest":digest("wrong")});
+    rejects(routing::ack(&db,&p.owner.principal,&ack),"idempotency_conflict");
+    ack["frameDigest"] = json!(digest(&canonical(&req)));
+    ok(routing::ack(&db,&p.owner.principal,&ack))?;
+    assert!(!ok(routing::pending(&db,&p.owner.principal))?.iter().any(|frame|frame["eventId"]==event));
+    ok(authority::withdraw(&db,&p.alice(),&json!({"participationId":grant["participationId"]})))?;
+    rejects(post(&mut db,&p.alice(),&input),"authority_denied");
+    rejects(routing::ack(&db,&p.owner.principal,&ack),"resource_not_found");
+    Ok(())
+}
+
+#[test]
+fn malformed_policy_frames_and_oversized_outbound_roll_back() -> Check {
+    let f = HubFixture::new()?;
+    let mut db = ok(f.hub.lock())?;
+    let p = Pair::new(&f,&mut db)?;
+    let a = p.alice();
+    let grant = p.own_grant(&db)?;
+    let policy = proposal(p.section(),&p.owner,json!({"mode":"owner"}));
+    let mut invalid = policy.clone();
+    invalid["policy"]["sectionIds"] = json!([p.beta["sectionId"]]);
+    rejects(authority::propose(&db,&a,&invalid),"resource_not_found");
+    invalid = policy.clone();
+    invalid["policy"]["invocation"] = json!({"mode":"members","accountIds":[p.eve]});
+    rejects(authority::propose(&db,&a,&invalid),"resource_not_found");
+    invalid = policy.clone();
+    invalid["policy"]["payerBindingRef"] = json!("/home/secret");
+    rejects(authority::propose(&db,&a,&invalid),"invalid_policy");
+    let mut oversized = named(p.section(),&grant);
+    oversized["text"] = json!("\u{0001}".repeat(16000));
+    rejects(post(&mut db,&a,&oversized),"payload_too_large");
+    assert_eq!(messages(&db)?,0);
+    assert_eq!(db.query_row("SELECT count(*) FROM turns",[],|r|r.get::<_,i64>(0))?,0);
+    ok(post(&mut db,&a,&named(p.section(),&grant)))?;
+    let req = request(&db,&p.owner)?;
+    let admitted = result(&req,"turn.admitted",1,json!({}));
+    let mut unknown = admitted.clone();
+    unknown["providerKey"] = json!("unexpected");
+    rejects(accept(&db,&p.owner,&unknown),"unknown_field");
+    for field in req["fence"].as_object().ok_or("missing fence")?.keys() {
+        let mut forged = admitted.clone();
+        forged["fence"][field] = if field == "authorityGeneration" { json!(new_id()) } else { json!(99) };
+        rejects(accept(&db,&p.owner,&forged),"authority_denied");
+    }
+    ok(accept(&db,&p.owner,&admitted))?;
+    rejects(accept(&db,&p.owner,&result(&req,"turn.partial",2,json!({"text":"x".repeat(8001)}))),"invalid_text");
+    let approval = json!({"actionId":new_id(),"actionDigest":digest("effect"),"requiredApproverAccountId":p.bob,"expiresAt":now()+1000});
+    rejects(accept(&db,&p.owner,&result(&req,"turn.approval.request",2,approval)),"authority_denied");
     Ok(())
 }
