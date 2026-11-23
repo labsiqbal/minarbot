@@ -29,9 +29,11 @@ jobs:
       - run: cargo build --locked --workspace
       - working-directory: app
         run: npm ci
-      - working-directory: app
+      - name: Lint and type-check Node tests and browser adapters
+        working-directory: app
         run: npm run lint && npm run build
-      - run: cargo xtask leptos
+      - name: Build Leptos web client
+        run: cargo xtask leptos
       - working-directory: app/test-support/ui-smoke
         run: |
           npm ci

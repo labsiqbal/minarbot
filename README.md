@@ -122,14 +122,11 @@ cargo xtask leptos
 cargo run --release -p minarbot-server
 ```
 
-Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_DIR` to keep data somewhere other than `~/.local/share/minarbot/new-app`. Rebuild with `npm run build` in `app/`, then `cargo xtask leptos` from the repository root. The npm build clears `app/dist`.
+Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_DIR` to keep data somewhere other than `~/.local/share/minarbot/new-app`. Rebuild the web client with `cargo xtask leptos` from the repository root. `npm run build` in `app/` type-checks the test and browser adapter code and leaves `app/dist` intact.
 
-Leptos serves the web UI by default across app, settings, conversation,
-automation, projects, Memory, Guide, setup, and hosted Hub route groups. The
-launcher passes `MINARBOT_APPEARANCE_CLIENT` from `launcher.env`. Set it to
-`react` and restart for a release rollback. Add `?ui=react` for one visit.
-React stays packaged during the two-release fallback window. If Leptos cannot
-start in the browser, use **Open standard** on the recovery page.
+Leptos serves the workspace and hosted Hub. Missing or invalid web builds show
+a recovery page. Rebuild from source with `cargo xtask leptos` or reinstall the
+current release, then reload the page. Restart the hosted Hub after rebuilding.
 
 ## How it fits together
 
@@ -137,7 +134,7 @@ start in the browser, use **Open standard** on the recovery page.
 |---|---|
 | `crates/minarbot-server` | Rust server (Tokio, Axum, SQLite): agents, turns, engines, tools, automation, machines |
 | `crates/minarbot-launcher` | Rust launcher that starts the server, installs updates and rolls back |
-| `app/src` | React and TypeScript rollback UI, built with Vite |
+| `app/src` | TypeScript browser adapters and test helpers |
 | `crates/web` | Leptos route groups, WASM bootstrap, and hosted Hub assets |
 | `app/*.test.ts` | Node test suite that drives the Rust server end to end |
 | `desktop` | Electron desktop app (AppImage, DMG, NSIS) |
@@ -153,11 +150,11 @@ cargo xtask release --releases ~/.local/share/minarbot-build/releases \
   --issues 58 --desktop --no-image --notes "User-facing release notes"
 ```
 
-Release runs app lint, the React and Leptos builds, and app tests. It runs Cargo format, Clippy, tests and the locked release build before the resource and production environment gates. Use `--no-github` for the local feed. Omit `--no-image` and set `MINARBOT_GHCR_USER` and `MINARBOT_GHCR_TOKEN` to publish the Computer image with the release.
+Release runs app lint, TypeScript checks, the Leptos build, and app tests. It runs Cargo format, Clippy, tests and the locked release build before the resource and production environment gates. Use `--no-github` for the local feed. Omit `--no-image` and set `MINARBOT_GHCR_USER` and `MINARBOT_GHCR_TOKEN` to publish the Computer image with the release.
 
 Retry a completed local build with `cargo xtask release --github-only <release-id> --releases <directory>`. CI packages runtimes with `--pack-ci <binary-directory> --output <directory> --notes <notes>` and uploads a draft with `--draft-ci <directory> --notes <notes>`. Finalize that draft using `cargo xtask release --sign-ci <version>`. Signing uses `--signing-key`, `MINARBOT_RELEASE_SIGNING_KEY`, or the default `~/.config/minarbot-release/signing-ed25519.pem`.
 
-For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after building `app/dist`, running `cargo xtask leptos`, and building `target/release`. This stages the release and unsigned manifest locally. Pass `--desktop` for Electron and Tauri AppImages and their updater metadata. See the [Tauri pilot](desktop/tauri/README.md) for build prerequisites, signing and the packaged acceptance matrix. `--issues` reads issue comments and checks their branch tips.
+For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after running `cargo xtask leptos` and building `target/release`. This stages the Leptos runtime and unsigned manifest locally. Pass `--desktop` for the Electron AppImage and updater metadata. See the [Tauri pilot](desktop/tauri/README.md) to include Tauri. `--issues` reads issue comments and checks their branch tips.
 
 Use `cargo xtask install-smoke target/debug` to exercise the installer against a local fixture. Check a served build with `cargo xtask check-served <origin> --present <text> --expect-version <version>`.
 

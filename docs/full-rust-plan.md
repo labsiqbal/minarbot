@@ -4,6 +4,16 @@ Issue [#57](https://github.com/labsiqbal/minarbot/issues/57) · Baseline `c5de09
 
 **Use Leptos CSR for the web app, Tauri 2 for the desktop shell after packaged parity, and Tokio/reqwest for HTTP integration tests. Keep Playwright as the external browser test harness.** Ship one route group at a time behind a server-side selector. Keep Electron and its update feed available until packaged Tauri upgrades pass on each supported OS. Use [#58](https://github.com/labsiqbal/minarbot/issues/58) for the release tooling port.
 
+## Status
+
+[#67](https://github.com/labsiqbal/minarbot/issues/67) retired the React app,
+hosted React bundle, client selector, and Node Hub after Leptos became default
+and screenshot and Hub contract coverage moved forward. The owner approved a
+direct Leptos-only cutover on 2026-11-23. The phase plan below records the
+original rollout. Current [build and recovery](../crates/web/README.md) and
+[coverage](test-ledger.md#67-ui-coverage-ledger) live with Leptos. Electron
+remains packaged pending the #66 Tauri matrix.
+
 ## Scope and history
 
 | Surface | Baseline inventory | Port boundary |
@@ -14,7 +24,7 @@ Issue [#57](https://github.com/labsiqbal/minarbot/issues/57) · Baseline `c5de09
 | Electron | 15 files, 611 lines in `desktop/src/`, plus builder and desktop smoke | Native behavior, connection trust, OS installers and upgrade compatibility. |
 | Release | 7 scripts, 1,086 lines in `scripts/*.mjs` | Cargo xtask and CI. Keep `scripts/install.sh` and `scripts/install.ps1`. |
 
-The baseline included a separate Node service under `app/hub/` and a hosted React bundle from `app/vite.hub.config.ts`. Stage B retires the Node service after the Rust runtime and coverage cutover. The hosted React build remains part of the retained client selector until its separate removal. Treat the canonical session and hub boundary as a real workstream if still supported. Require an explicit owner decision and consumer evidence for any retirement. Define completion as Rust-owned shipped services, UI logic, desktop and release tooling. Browser WASM glue, untrusted HTML documents, browser APIs and narrowly scoped browser libraries such as noVNC can still contain JavaScript. Playwright stays a dev/CI dependency.
+The baseline included a separate Node service under `app/hub/` and a hosted React bundle from `app/vite.hub.config.ts`. Stage B retired the service and the hosted React build after the Rust runtime and coverage cutover. Treat the canonical session and hub boundary as a real workstream if still supported. Require an explicit owner decision and consumer evidence for any retirement. Define completion as Rust-owned shipped services, UI logic, desktop and release tooling. Browser WASM glue, untrusted HTML documents, browser APIs and narrowly scoped browser libraries such as noVNC can still contain JavaScript. Playwright stays a dev/CI dependency.
 
 AW-068 produced a Leptos conversation send/history slice and a 33-route preview. The archived backlog still listed open fidelity, ordinary agent routing and integration acceptance. Some preview surfaces used sample data and session-only edits. The backlog records uncompressed WASM and a blank-start failure on interrupted fetch. On November 10 the owner explicitly moved to a new foundation, then retired the old effort on November 14. History establishes that Leptos could render the workflow. It also shows the cost of an expanding preview without a release cutover. It gives no head-to-head evidence that Leptos caused the stall. Use today's React behavior as the reference and require released parity per slice. Sources are local notes `backlog.md` AW-068 and AW-097, `context.md` November 10 restart, `handoff.md` 0.16.4 release and rollback.
 
@@ -74,7 +84,7 @@ Engineering weeks include work on parity tests and integration. Phases overlap w
 
 **Total 31–50 engineer-weeks** for the stated scope, including the hub allowance. Phase 1 gates can run in one release train before committing to the remaining estimate. Largest uncertainties are rich conversation behavior, webview permissions and any supported Node hub surface beyond the inventory.
 
-### Release rules and active work
+### Original release rules and ownership
 
 - Use one release build with separate client asset namespaces and an explicit route owner. Route transfers use normal same-origin navigation. Keep public paths, deep links, API and settings keys stable. Keep React as default while Leptos is selectable in test and pilot. Avoid embedding two SPAs or loading two clients on a route. If a route group shares draft, stream or tab state, switch the group together. Transfer a route only after the compatible state and fallback check.
 - Keep SQLite and versioning independent of the frontend change. Deploy both clients against one compatible API. If an in-flight feature changes an API additively, land the contract and React smoke first or coordinate transfer directly with its single route owner. For rollback, switch the route selector to the previous asset set with current data. Verify draft and uncertain-command journals across versions, including clearing/cancel behavior under valid user control. Avoid a retry that replays a mutation on UI rollback.

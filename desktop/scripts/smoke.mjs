@@ -15,7 +15,7 @@ fs.mkdirSync(screenshotDir, { recursive: true });
 const appImage = path.resolve('dist', fs.readdirSync('dist').find((name) => name.endsWith('.AppImage')));
 const privateOrigin = 'https://desktop-check.invalid:4317';
 console.log('Starting isolated Minarbot server');
-const server = await startApp({ database: path.join(scratch, 'minarbot.sqlite'), port: 0, appearanceClient: 'leptos', allowedOrigins: [privateOrigin] });
+const server = await startApp({ database: path.join(scratch, 'minarbot.sqlite'), port: 0, allowedOrigins: [privateOrigin] });
 let child;
 let socket;
 let closeBrowser = () => {};
@@ -89,10 +89,6 @@ try {
   const writeStatus = await evaluate(`fetch('/api/agents', {method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(response => response.status)`);
   assert.equal(writeStatus, 400); // same-origin write admission reached payload validation
   await screenshot('app.png');
-  await send('Page.navigate', { url: server.origin + '/?ui=react' });
-  await waitFor(() => evaluate('location.search === "?ui=react" && document.querySelector("#root")?.childElementCount > 0'));
-  assert.equal(await evaluate('document.title'), 'Minarbot');
-  assert.equal(await evaluate('!!document.querySelector(\'meta[name="csp-nonce"]\')?.content'), true);
   const second = spawn(appImage, [], { ...launchOptions, stdio: 'ignore' });
   const secondExit = once(second, 'exit');
   const secondLimit = setTimeout(() => { if (second.exitCode === null && second.signalCode === null) process.kill(-second.pid, 'SIGTERM'); }, 15000);

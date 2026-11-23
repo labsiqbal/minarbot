@@ -11,13 +11,15 @@ import { chromium } from 'playwright-core';
 import { freePort, stop } from '../test-process.ts';
 import { parityShot } from './parity-shot.mjs';
 
-assert(process.argv.length === 4, 'Pass a staged release directory and a screenshot directory.');
+assert(process.argv.length === 4, 'Pass an extracted runtime and a screenshot directory.');
 const release = resolve(process.argv[2]);
 const output = resolve(process.argv[3]);
 const { id: releaseId } = JSON.parse(await readFile(join(release, 'release.json'), 'utf8'));
 assert.match(releaseId, /^\d+\.\d+\.\d+-[a-f0-9]{8}$/);
-const scratch = await mkdtemp(join(tmpdir(), 'minarbot-67-rollback-'));
+const scratch = await mkdtemp(join(tmpdir(), 'minarbot-release-browser-'));
 const releasesDir = join(scratch, 'releases');
+const seed = join(scratch, 'seed');
+const restored = join(scratch, 'restored');
 const envFile = join(scratch, 'launcher.env');
 const config = join(scratch, 'launcher.json');
 const port = freePort();
@@ -46,9 +48,10 @@ async function until(check, label) {
   assert.fail(label);
 }
 
-async function start() {
+async function start(dataDir, retiredSelector = '') {
   const providerEnv = `OPENAI_BASE_URL=http://127.0.0.1:${provider.address().port}/v1\nOPENAI_API_KEY=synthetic\nOPENAI_MODEL=fixture\nMINARBOT_AGENT_DESKTOP=0\n`;
-  await writeFile(envFile, providerEnv, { mode: 0o600 });
+  await writeFile(envFile, providerEnv + retiredSelector, { mode: 0o600 });
+  await writeFile(config, JSON.stringify({ releasesDir, dataDir, envFile, port }), { mode: 0o600 });
   child = spawn(join(releasesDir, releaseId, 'bin/minarbot-launcher'), ['--config', config], {
     env: { PATH: '/usr/bin:/bin', HOME: scratch, TMPDIR: scratch }, stdio: ['ignore', 'ignore', 'pipe'],
   });
@@ -59,6 +62,7 @@ async function start() {
     assert.equal(child.exitCode, null, stderr);
     return (await fetch(origin + '/api/environment').catch(() => null))?.ok;
   }, 'Launcher did not start the staged release.');
+  assert.equal(stderr.match(/Ignoring deprecated MINARBOT_APPEARANCE_CLIENT/g)?.length ?? 0, retiredSelector ? 1 : 0);
 }
 
 async function api(path, payload) {
@@ -74,10 +78,22 @@ try {
   await mkdir(releasesDir, { mode: 0o700 });
   await cp(release, join(releasesDir, releaseId), { recursive: true });
   await symlink(releaseId, join(releasesDir, 'current'));
-  await writeFile(config, JSON.stringify({ releasesDir, dataDir: join(scratch, 'data'), envFile, port }), { mode: 0o600 });
   provider.listen(0, '127.0.0.1');
   await once(provider, 'listening');
-  await start();
+  await start(seed);
+  browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  const ready = async (path, screenshot) => {
+    const response = await page.goto(origin + path);
+    assert(response?.ok(), `${path} returned ${response?.status()}`);
+    await page.locator('#leptos-root > *').first().waitFor({ state: 'attached' });
+    await page.locator('#appearance-fallback').waitFor({ state: 'hidden' });
+    if (screenshot) await parityShot(page, join(output, screenshot));
+  };
+  await ready('/', 'empty-setup.png');
+  await page.getByRole('heading', { name: 'Set up Minarbot', exact: true }).waitFor();
+  assert.equal((await api('/api/agents')).agents.length, 0);
+  await ready('/settings/general', 'empty-settings.png');
 
   const workspace = join(scratch, 'work');
   await mkdir(workspace);
@@ -112,8 +128,6 @@ try {
   assert.equal(snapshot[3].find(row => row.id === turn)?.status, 'done');
   assert.equal(snapshot[4].id, finished.id);
   const previousCalls = calls;
-  browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
   const postAttempts = [];
   page.on('request', request => {
     if (request.method() === 'POST' && request.url().startsWith(origin + '/api/')) postAttempts.push(request.url());
@@ -126,10 +140,7 @@ try {
   const uncertain = 'Check the north cabinet before ordering labels.';
   const storage = key => page.evaluate(key => sessionStorage.getItem(key), key);
   async function open(path) {
-    const response = await page.goto(origin + path);
-    assert(response.ok());
-    const html = await response.text();
-    assert.equal(html.includes('id="leptos-root"'), true, path);
+    await ready(path);
     await composer.waitFor();
   }
 
@@ -145,10 +156,11 @@ try {
   assert.equal(JSON.parse(journal).text, uncertain);
   assert.equal(postAttempts.length, 1);
 
-  for (const [label, restart] of [['before-restart', false], ['restart-leptos', true]]) {
+  for (const [label, restart] of [['before-restart', false], ['copied-data', true]]) {
     if (restart) {
       await stop(child, closed);
-      await start();
+      await cp(seed, restored, { recursive: true });
+      await start(restored, 'MINARBOT_APPEARANCE_CLIENT=react\n');
       assert.equal((await api(second + '/goal')).status, 'interrupted');
       await projectReady();
     }
@@ -163,6 +175,13 @@ try {
     assert.equal((await api(agent + '/turns')).some(row => row.id === JSON.parse(journal).id), false);
     assert.equal(postAttempts.length, 1);
     assert.equal(calls, previousCalls);
+  }
+  await page.evaluate(() => localStorage.setItem('minarbot-presentation-v1', JSON.stringify({ version: 1, theme: 'light', textSize: 'standard' })));
+  for (const [path, name] of [
+    ['/?ui=react', 'workspace'], [named, 'named-conversation'], [`/projects/${project.id}`, 'project'],
+    ['/settings/appearance', 'settings'], ['/routines', 'routines'], ['/workflows', 'workflows'], ['/calendar', 'calendar'],
+  ]) {
+    await ready(path, `${name}-light.png`);
   }
   console.log(JSON.stringify({ releaseId, restarts: 1, persistedEndpoints: persisted.length, draftRetained: true, journalRetained: true, providerCalls: calls, automaticReplay: 0, runningGoalAfterRestart: 'interrupted' }));
 } finally {

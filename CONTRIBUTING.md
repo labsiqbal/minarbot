@@ -16,9 +16,9 @@ You need Linux x86_64, Node.js 22.23.4 or later, npm, Git, and a Rust toolchain 
 git clone https://github.com/labsiqbal/minarbot.git
 cd minarbot
 cargo build --workspace
-cd app
-npm ci
-npm run build
+npm ci --prefix app
+npm run build --prefix app
+cargo xtask leptos
 ```
 
 To run your build, start `cargo run --release -p minarbot-server` from the repository root and open <http://127.0.0.1:4317>. Use `PORT` and `MINARBOT_DATA_DIR` to keep a development instance apart from one you use day to day.

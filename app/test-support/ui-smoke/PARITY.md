@@ -1,14 +1,13 @@
 # Leptos golden screenshot gate
 
-Build the workspace server and app, then build the Leptos bundles. App build
-replaces `app/dist`, so run it before the Leptos build. Install Chromium with
+Build the workspace server and Leptos bundles. The app TypeScript check leaves
+`app/dist` intact. Install Chromium with
 `npx playwright-core install chromium` from `app/test-support/ui-smoke`.
 
 ```sh
 ~/.cache/minarbot-cargo-slot.sh cargo build --workspace
 npm ci --prefix app
 npm ci --prefix app/test-support/ui-smoke
-npm run build --prefix app
 ~/.cache/minarbot-cargo-slot.sh cargo xtask leptos
 cd app
 ~/.cache/minarbot-node-slot.sh npm run parity:gate -- /tmp/minarbot-parity

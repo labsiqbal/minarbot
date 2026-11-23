@@ -2,16 +2,16 @@
 
 ## App
 
-From the repository root, install dependencies, lint, and build.
+From the repository root, install dependencies, lint, type-check, and build the web client.
 
 ```sh
-cd app
-npm ci
-npm run lint
-npm run build
+npm ci --prefix app
+npm run lint --prefix app
+npm run build --prefix app
+cargo xtask leptos
 ```
 
-Run app tests with `npm test` from `app/`.
+Run app tests with `npm test` from `app/` after building the workspace and Leptos. The TypeScript check leaves `app/dist` intact.
 
 ## Rust
 
@@ -25,7 +25,7 @@ On shared hosts, run Cargo and heavy test commands through `~/.cache/minarbot-ca
 
 Run `cargo xtask release` from the repository root. Use `npm ci` in `app/` and, for `--desktop`, in `desktop/` before running the release gate. Pass `--issues <numbers>` and keep all locally claimed branches until release verification finishes.
 
-For artifact verification, build the app and release binaries first. Run `cargo xtask release --dry-run --releases <temporary-directory> --notes <notes>`. Pass `--desktop` to include the AppImage. See the README for retry, CI and smoke commands.
+For artifact verification, run `cargo xtask leptos` and build the release binaries first. Run `cargo xtask release --dry-run --releases <temporary-directory> --notes <notes>`. Pass `--desktop` to include the AppImage. See the README for retry, CI and smoke commands.
 
 ## Issues
 

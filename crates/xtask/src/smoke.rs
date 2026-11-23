@@ -128,8 +128,8 @@ pub fn command(root: &Path, args: &[String]) -> Result<()> {
     }
     let app = root.join("app");
     let version = release::version(&app)?;
-    copy(&app.join("package.json"), &stage.join("package.json"))?;
-    copy(&app.join("dist"), &stage.join("dist"))?;
+    crate::leptos::require_build(&app)?;
+    release::stage_runtime(&app, &stage)?;
     let commit = "1234567890abcdef1234567890abcdef12345678";
     let id = format!("{version}-{}", &commit[..8]);
     fs::write(
@@ -331,13 +331,13 @@ echo "$!" > "$HOME/launcher.pid"
     if !html.contains("id=\"leptos-root\"") {
         return Err("Installed UI did not select Leptos by default".into());
     }
-    let react = client
+    let legacy_query = client
         .get(format!("{origin}/?ui=react"))
         .send()?
         .error_for_status()?
         .text()?;
-    if !react.contains("<title>Minarbot</title>") || react.contains("id=\"leptos-root\"") {
-        return Err("Installed UI did not select React for ?ui=react".into());
+    if !legacy_query.contains("id=\"leptos-root\"") {
+        return Err("Installed UI did not ignore the retired query override".into());
     }
     let pattern: Regex = release::pattern(r#"<script[^>]+src="([^"\s]+)""#);
     let bundle = pattern

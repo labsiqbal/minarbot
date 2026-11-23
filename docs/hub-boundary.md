@@ -14,7 +14,7 @@ Use these configuration fields.
 | `dataPath`, `mailboxKeyPath` | Dedicated SQLite path and a file with at least 32 bytes of private key material for mailbox lookup |
 | `identity` | `mode: "clerk"`, exact HTTPS `issuer`, pinned public `jwksPath`, and optional `audience` |
 | `nodeLink.signingKeyPath` | Ed25519 PKCS#8 private key used for signed Hub frames |
-| `web.distPath` | Packaged `dist/hub` directory, with the Leptos `dist/_leptos` sibling built by `cargo xtask leptos` |
+| `web.distPath` | Packaged `dist/_leptos` directory built by `cargo xtask leptos`. Existing paths ending in `dist/hub` resolve to the Leptos sibling. |
 | `port`, `trustedGatewayAddresses` | Optional listener port and exact proxy source IPs allowed to forward the browser host |
 
 Terminate TLS at the operator proxy. Preserve exact accounts and project Host
@@ -49,8 +49,8 @@ and recover stale writer locks with the listener stopped.
   replay. `crates/minarbot-server/src/computer/hub.rs` owns the member client
   and its local execution and effect fences.
 - `crates/web/src/hub.rs` and `crates/web/src/hub/` own the hosted Leptos UI.
-  The hosted process serves the packaged browser assets. The current React
-  selector and its assets are covered by the separate UI retirement work.
+  The hosted process serves the packaged browser assets from its Leptos
+  allowlist. A missing or invalid web bundle returns the recovery page.
 - `app/hub-link.test.ts`, the hosted gateway suites, and native Hub tests cover
   authentication, tenant scope, grants, replay, session and database recovery.
   See the [test ledger](test-ledger.md#67-hosted-hub-test-migration).

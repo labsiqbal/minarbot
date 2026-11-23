@@ -23,7 +23,7 @@ const delay = (ms: number) => new Promise(r=>setTimeout(r,ms));
 const temp = () => mkdtempSync(join(tmpdir(),'updates-'));
 async function until<T>(read:()=>Promise<T|undefined|false>, timeout=15000):Promise<T> { const deadline=Date.now()+timeout; while(Date.now()<deadline){const result=await read();if(result)return result;await delay(80);}throw new Error('Update test timed out.'); }
 function fixture(source:string, version:string, mode='healthy') {
-  mkdirSync(join(source,'dist'),{recursive:true}); writeFileSync(join(source,'dist/index.html'),'<title>Minarbot fixture</title>');
+  mkdirSync(join(source,'dist/_leptos'),{recursive:true}); writeFileSync(join(source,'dist/_leptos/conversation.html'),'<title>Minarbot fixture</title>');
   writeFileSync(join(source,'package.json'),JSON.stringify({name:'fixture',version,type:'module'}));
   nativeReleaseFixture(source,version,mode);
 }
@@ -74,7 +74,7 @@ test('desktop build follows dirty guard and packages release version without cha
  const desktopPackage=JSON.parse(readFileSync(join(root,'desktop/package.json'),'utf8'));
  const app={name:'release-fixture',version:'1.0.1',type:'module',scripts:{lint:'node -e "0"',test:'node -e "0"',build:'node -e "0"'}};
  writeFileSync(join(dir,'app/package.json'),JSON.stringify(app));writeFileSync(join(dir,'app/package-lock.json'),JSON.stringify({name:app.name,version:app.version,lockfileVersion:3,packages:{'':app}}));
- nativeReleaseFixture(join(dir,'app'),'1.0.1');mkdirSync(join(dir,'app/dist'));writeFileSync(join(dir,'app/dist/index.html'),'fixture');
+ nativeReleaseFixture(join(dir,'app'),'1.0.1');mkdirSync(join(dir,'app/dist/_leptos'),{recursive:true});writeFileSync(join(dir,'app/dist/_leptos/conversation.html'),'fixture');
  writeFileSync(join(dir,'desktop/package.json'),JSON.stringify({...desktopPackage,version:'1.0.0'}));writeFileSync(join(dir,'desktop/package-lock.json'),JSON.stringify({version:'1.0.0',packages:{'':{version:'1.0.0'}}}));
  writeFileSync(join(dir,'desktop/scripts/build.mjs'),`import {writeFileSync} from 'node:fs';import {join} from 'node:path';const [version, out] = process.argv.slice(2);const name = 'Minarbot-' + version + '-x86_64.AppImage';writeFileSync(join(out,name),version);writeFileSync(join(out,'latest-linux.yml'),'version: ' + version + '\\npath: ' + name + '\\n');`);
  const git=(args:string[])=>execFileSync('git',args,{cwd:dir,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Fixture']);

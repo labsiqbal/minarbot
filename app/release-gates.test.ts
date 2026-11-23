@@ -18,7 +18,9 @@ function fixture() {
   writeFileSync(join(dir, '.gitignore'), 'releases/\n');
   mkdirSync(join(dir, 'app'));
   writeFileSync(join(dir, 'app/package.json'), JSON.stringify({ version: '1.0.0', type: 'module' }));
-  mkdirSync(join(dir, 'app/dist')); writeFileSync(join(dir, 'app/dist/index.html'), 'Fixture UI\n');
+  mkdirSync(join(dir, 'app/dist/_leptos'), { recursive: true });
+  writeFileSync(join(dir, 'app/dist/_leptos/conversation.html'), 'Fixture UI\n');
+  writeFileSync(join(dir, 'app/dist/index.html'), 'Retired build\n');
   git('add', '.');
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'Fixture');
   git('branch', 't3/shipped');
@@ -131,7 +133,8 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     assert.equal(dependencies.length, 4);
     assert(dependencies.at(-2)!.endsWith('/bin/minarbot-server'));
     assert(dependencies.at(-1)!.endsWith('/bin/minarbot-launcher'));
-    assert.equal(readFileSync(join(stage, 'dist/index.html'), 'utf8'), 'Fixture UI\n');
+    assert.equal(readFileSync(join(stage, 'dist/_leptos/conversation.html'), 'utf8'), 'Fixture UI\n');
+    assert(!existsSync(join(stage, 'dist/index.html')));
     assert.equal(readFileSync(join(stage, 'bin/minarbot-server'), 'utf8'), 'fixture binary');
     for (const name of ['LICENSE', 'agent-delegation.LICENSE']) assert.equal(readFileSync(join(stage, 'bin', name), 'utf8'), 'Fixture notice');
     assert.equal(readFileSync(join(stage, 'bin/provenance.json'), 'utf8'), '{}');
@@ -337,7 +340,7 @@ test('release CLI uploads exact signed ustar assets and the version-matched desk
   ].sort());
   const tar = gunzipSync(uploaded(archive));
   assert.equal(tar.subarray(257, 265).toString(), 'ustar\0' + '00');
-  assert.equal(execFileSync('tar', ['-xOzf', join(f.output, archive), './dist/index.html'], { encoding: 'utf8' }), 'Fixture UI\n');
+  assert.equal(execFileSync('tar', ['-xOzf', join(f.output, archive), './dist/_leptos/conversation.html'], { encoding: 'utf8' }), 'Fixture UI\n');
   const manifest = uploaded('latest.json');
   const signature = uploaded('latest.json.sig').toString();
   assert.match(signature, /^[A-Za-z0-9+/]{86}==$/);
@@ -406,7 +409,7 @@ test('release CLI keeps a failed upload local and resumes the draft idempotently
   const feed = join(f.options.releases, 'feed/latest.json');
   const local = readFileSync(feed, 'utf8');
   assert.equal(JSON.parse(local).id, f.id);
-  utimesSync(join(f.options.releases, f.id, 'dist/index.html'), 1, 1);
+  utimesSync(join(f.options.releases, f.id, 'dist/_leptos/conversation.html'), 1, 1);
   const retry = () => f.run(['--github-only', f.id], { FIXTURE_GATE_FAIL: '1' });
   for (const _ of [1, 2]) {
     const result = retry();

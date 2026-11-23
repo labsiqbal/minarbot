@@ -121,7 +121,12 @@ pub fn verify(releases: &Path, id: &str) -> Result<Info> {
 pub fn stage_runtime(source: &Path, stage: &Path) -> Result<()> {
     for name in [
         "bin",
-        "dist",
+        "dist/_leptos",
+        "dist/icons/icon-192.png",
+        "dist/icons/icon-512.png",
+        "dist/icons/icon-maskable-512.png",
+        "dist/manifest.webmanifest",
+        "dist/pair.css",
         "package.json",
         "LICENSE",
         "novnc.LICENSE",
@@ -453,9 +458,6 @@ pub fn pack_ci(root: &Path, binaries: &Path, directory: &Path, notes: String) ->
         git(root, &["rev-parse", "HEAD"])?,
         notes,
     )?;
-    if !source.join("dist/index.html").is_file() {
-        return Err("Build app before CI packaging.".into());
-    }
     leptos::require_build(&source)?;
     let stage = scratch("minarbot-package-")?;
     stage_runtime(&source, stage.path())?;
@@ -708,7 +710,6 @@ pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
         }
         // ponytail: dry runs compare prebuilt inputs. Run the full gate independently before publication.
         for file in [
-            "app/dist/index.html",
             "target/release/minarbot-server",
             "target/release/minarbot-launcher",
         ] {
