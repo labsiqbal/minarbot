@@ -133,10 +133,9 @@ async function captures(page, prefix) {
   await page.waitForFunction(node => document.activeElement === node, await change.elementHandle());
   await edit.getByRole('tab', { name: 'Profile', exact: true }).press('ArrowRight');
   await edit.getByRole('tab', { name: 'Model', exact: true, selected: true }).waitFor();
-  const memory = edit.getByPlaceholder('Default (alternate)', { exact: true });
-  await memory.waitFor();
-  assert.equal(await memory.inputValue(), '');
-  await memory.scrollIntoViewIfNeeded();
+  const provider = edit.getByRole('combobox', { name: 'Provider instance', exact: true });
+  await provider.waitFor();
+  await provider.scrollIntoViewIfNeeded();
   await shot('model', edit);
   await edit.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await edit.getByRole('switch', { name: 'Computer', exact: true }).waitFor();

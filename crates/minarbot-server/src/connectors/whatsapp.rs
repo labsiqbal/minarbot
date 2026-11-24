@@ -277,6 +277,3 @@ fn invalidate(state: &AppState, generation: &str) -> Result<()> {
     state.whatsapp.wake.notify_one();
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

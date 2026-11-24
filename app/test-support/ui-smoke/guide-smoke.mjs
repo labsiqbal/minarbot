@@ -61,7 +61,7 @@ try {
     defaultModel: model,
     updates: { releasesDir },
     harness: { executables: Object.fromEntries(
-      ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro'].map(runtime => [runtime, join(work, runtime)]),
+      ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro'].map(runtime => [runtime, '/bin/sh']),
     ) },
   });
   async function api(path, body, status = 200, headers = {}) {

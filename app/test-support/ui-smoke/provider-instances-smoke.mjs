@@ -166,9 +166,9 @@ try {
   const profileDialog = page.getByRole('dialog', { name: 'New agent', exact: true });
   await profileDialog.getByRole('combobox', { name: 'Provider instance', exact: true }).selectOption('codex-smoke');
   await profileDialog.getByRole('combobox', { name: 'Model', exact: true }).fill('gpt-smoke');
-  await profileDialog.getByRole('combobox', { name: 'reasoningEffort', exact: true }).selectOption('high');
-  await profileDialog.getByRole('combobox', { name: 'serviceTier', exact: true }).selectOption('fast');
-  await profileDialog.getByRole('combobox', { name: 'reasoningEffort', exact: true }).scrollIntoViewIfNeeded();
+  await profileDialog.getByRole('combobox', { name: 'Reasoning effort', exact: true }).selectOption('high');
+  await profileDialog.getByRole('combobox', { name: 'Service tier', exact: true }).selectOption('fast');
+  await profileDialog.getByRole('combobox', { name: 'Reasoning effort', exact: true }).scrollIntoViewIfNeeded();
   await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await profileDialog.screenshot({ path: join(output, 'agent-profile-picker-dark.png'), animations: 'disabled' });
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
@@ -186,9 +186,9 @@ try {
   const reloadedProfile = page.getByRole('dialog', { name: 'Agent profile', exact: true });
   await reloadedProfile.getByRole('tab', { name: 'Model', exact: true }).click();
   await reloadedProfile.getByRole('combobox', { name: 'Model', exact: true }).waitFor();
-  await reloadedProfile.getByRole('combobox', { name: 'reasoningEffort', exact: true }).waitFor();
-  assert.equal(await reloadedProfile.getByRole('combobox', { name: 'reasoningEffort', exact: true }).inputValue(), 'high');
-  assert.equal(await reloadedProfile.getByRole('combobox', { name: 'serviceTier', exact: true }).inputValue(), 'fast');
+  await reloadedProfile.getByRole('combobox', { name: 'Reasoning effort', exact: true }).waitFor();
+  assert.equal(await reloadedProfile.getByRole('combobox', { name: 'Reasoning effort', exact: true }).inputValue(), 'high');
+  assert.equal(await reloadedProfile.getByRole('combobox', { name: 'Service tier', exact: true }).inputValue(), 'fast');
   await reloadedProfile.getByRole('button', { name: 'Cancel', exact: true }).click();
 
   onboardingMode = true;
@@ -196,14 +196,14 @@ try {
   await page.getByRole('heading', { name: 'Set up Minarbot', exact: true }).waitFor();
   await page.getByLabel('Create agent provider', { exact: true }).selectOption('instance:codex-smoke');
   await page.getByLabel('Model', { exact: true }).fill('gpt-smoke');
-  await page.getByRole('combobox', { name: 'reasoningEffort', exact: true }).selectOption('high');
-  await page.getByRole('combobox', { name: 'serviceTier', exact: true }).selectOption('fast');
+  await page.getByRole('combobox', { name: 'Reasoning effort', exact: true }).selectOption('high');
+  await page.getByRole('combobox', { name: 'Service tier', exact: true }).selectOption('fast');
   await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await page.screenshot({ path: join(output, 'onboarding-picker-dark.png'), animations: 'disabled', fullPage: true });
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   await page.screenshot({ path: join(output, 'onboarding-picker-light.png'), animations: 'disabled', fullPage: true });
-  assert.equal(await page.getByRole('combobox', { name: 'reasoningEffort', exact: true }).inputValue(), 'high');
-  assert.equal(await page.getByRole('combobox', { name: 'serviceTier', exact: true }).inputValue(), 'fast');
+  assert.equal(await page.getByRole('combobox', { name: 'Reasoning effort', exact: true }).inputValue(), 'high');
+  assert.equal(await page.getByRole('combobox', { name: 'Service tier', exact: true }).inputValue(), 'fast');
 } finally {
   await browser.close();
   server.kill();

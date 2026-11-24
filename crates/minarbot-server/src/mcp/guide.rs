@@ -550,10 +550,7 @@ fn record_apply(state: &AppState, id: &str, result: &Result<Value>) -> Result<&'
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        path::PathBuf,
-        sync::{Arc, Mutex},
-    };
+    use std::path::PathBuf;
 
     struct Scratch(PathBuf);
     impl Drop for Scratch {
@@ -579,94 +576,5 @@ mod tests {
             Ok(response) => response.status().as_u16(),
             Err(error) => error.status,
         })
-    }
-
-    #[tokio::test]
-    #[ignore = "legacy guide fixture uses removed API runtime setup"]
-    async fn settings_change_only_after_exact_unexpired_confirmation() -> crate::db::Result<()> {
-        let scratch = Scratch(
-            std::env::temp_dir().join(format!("minarbot-guide-test-{}", ::uuid::Uuid::new_v4())),
-        );
-        std::fs::create_dir(&scratch.0)?;
-        let mut config: crate::config::Config = serde_json::from_value(json!({
-            "database":scratch.0.join("state.sqlite"),"fixedClock":1000,"defaultModel":"fixture",
-        }))?;
-        config.data.validate()?;
-        let database = crate::db::open(&config.database, false, config.now())?;
-        let db = &database.connection;
-        crate::files::init(db)?;
-        data::initialize(&database)?;
-        crate::turns::initialize(db).map_err(|error| error.message)?;
-        crate::connectors::initialize(db).map_err(|error| error.message)?;
-        super::super::initialize(db).map_err(|error| error.message)?;
-        initialize(db).map_err(|error| error.message)?;
-        let turn_id = ::uuid::Uuid::new_v4().to_string();
-        db.execute("INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,'Set up','running','fixture')", [turn_id.as_str(),ID])?;
-        let state = AppState {
-            whatsapp: Default::default(),
-            computer: Arc::new(crate::computer::Manager::new(&config)?),
-            database: Arc::new(Mutex::new(database)),
-            config: Arc::new(config),
-            origin: "http://127.0.0.1".into(),
-            auth: None,
-            events: crate::events::Hub::new(),
-            turns: crate::turns::Runtime::default(),
-            trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        };
-        let turn = json!({"agent":ID,"id":turn_id});
-        for name in ["Researcher", "Expired", "Cancelled"] {
-            let args = json!({"requestId": ::uuid::Uuid::new_v4().to_string(), "name":name,
-                "instructions":"Cite sources.", "model":"fixture"});
-            let result = call(&state, &turn, "create_agent", &args)
-                .await
-                .map_err(|e| e.message)?;
-            assert_eq!(result["status"], "proposed");
-            assert!(result["id"].is_null());
-        }
-        let proposals = {
-            let guard = state
-                .database
-                .lock()
-                .map_err(|_| "Database lock poisoned")?;
-            let db = &guard.connection;
-            db.execute("UPDATE guide_changes SET expires=1000 WHERE json_extract(plan,'$.body.name')='Expired'",[])?;
-            actions(db, &turn_id, state.config.now()).map_err(|e| e.message)?
-        };
-        let pending = &proposals["changes"][0];
-        let change = pending["change"].clone();
-        let mut edited = change.clone();
-        edited["settings"]["instructions"] = json!("Different instructions");
-        assert_eq!(review(&state, pending, "apply", Value::Null).await?, 400);
-        assert_eq!(review(&state, pending, "apply", edited).await?, 409);
-        let expired = &proposals["changes"][1];
-        assert_eq!(
-            review(&state, expired, "apply", expired["change"].clone()).await?,
-            409
-        );
-        let cancelled = &proposals["changes"][2];
-        assert_eq!(
-            review(&state, cancelled, "cancel", cancelled["change"].clone()).await?,
-            200
-        );
-        assert_eq!(
-            review(&state, cancelled, "apply", cancelled["change"].clone()).await?,
-            409
-        );
-        assert_eq!(
-            features::api(&state, "/api/agents", None)
-                .await
-                .map_err(|e| e.message)?["agents"],
-            json!([])
-        );
-
-        assert_eq!(review(&state, pending, "apply", change.clone()).await?, 200);
-        assert_eq!(review(&state, pending, "apply", change).await?, 409);
-        let directory = features::api(&state, "/api/agents", None)
-            .await
-            .map_err(|e| e.message)?;
-        assert_eq!(directory["agents"].as_array().map(Vec::len), Some(1));
-        assert_eq!(directory["agents"][0]["name"], "Researcher");
-        assert_eq!(directory["agents"][0]["instructions"], "Cite sources.");
-        Ok(())
     }
 }

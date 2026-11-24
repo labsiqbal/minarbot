@@ -200,11 +200,9 @@ pub fn route(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::turns::tools;
     use std::{
         path::Path,
         sync::{Arc, Mutex},
-        time::Duration,
     };
 
     struct Scratch(PathBuf);
@@ -408,97 +406,6 @@ mod tests {
                 .is_err_and(|err| err.status == 403)
         );
         assert_eq!(checked(stored(db, &agent))?["revision"], 0);
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[ignore = "legacy direct provider HTTP path removed"]
-    async fn agent_folder_api_tools_can_read_generated_file_with_shell() -> crate::db::Result<()> {
-        let (scratch, state, agent) = fixture()?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let turn = {
-            let guard = state
-                .database
-                .lock()
-                .map_err(|_| "Database lock poisoned")?;
-            let db = &guard.connection;
-            db.execute(
-                "INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,'','running','')",
-                [&id, &agent],
-            )?;
-            let turn =
-                checked(one(db, "SELECT * FROM turns WHERE id=?", [&id]))?.ok_or("Missing turn")?;
-            let specs = checked(tools::offered(&state, db, &turn))?;
-            for name in [
-                "create_text_file",
-                "run_shell",
-                "list_workspace",
-                "read_workspace_file",
-                "git_status",
-            ] {
-                assert!(
-                    specs.iter().any(|spec| spec["function"]["name"] == name),
-                    "{name}"
-                );
-            }
-            turn
-        };
-        let call = |id: &str, name: &str, args: Value| json!({"id":id,"function":{"name":name,"arguments":args.to_string()}});
-        let generated = checked(
-            tools::run(
-                &state,
-                &turn,
-                &call(
-                    "create",
-                    "create_text_file",
-                    json!({"name":"hello.txt","text":"halo dari minarbot"}),
-                ),
-            )
-            .await,
-        )?;
-        assert_eq!(generated["path"], "hello.txt");
-        assert_eq!(
-            std::fs::read_to_string(
-                scratch
-                    .0
-                    .join("data/agent-workspaces")
-                    .join(&agent)
-                    .join("hello.txt")
-            )?,
-            "halo dari minarbot"
-        );
-        let read = checked(
-            tools::run(
-                &state,
-                &turn,
-                &call("read", "read_workspace_file", json!({"path":"hello.txt"})),
-            )
-            .await,
-        )?;
-        assert_eq!(read["text"], "halo dari minarbot");
-
-        let command = call("shell", "run_shell", json!({"command":"cat hello.txt"}));
-        let allow = async {
-            loop {
-                {
-                    let guard = state.database.lock().map_err(|_| Failure::storage())?;
-                    if guard.connection.execute(
-                        "UPDATE harness_approvals SET decision='allow',state='decided' WHERE turn=? AND state='approval'",
-                        [&id],
-                    )? > 0 { return Ok::<_, Failure>(()); }
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        };
-        let (shell, approval) = tokio::time::timeout(Duration::from_secs(30), async {
-            tokio::join!(tools::run(&state, &turn, &command), allow)
-        })
-        .await?;
-        checked(approval)?;
-        let shell = checked(shell)?;
-        assert_eq!(shell["exitCode"], 0, "{shell}");
-        assert_eq!(shell["output"], "halo dari minarbot");
-        assert_eq!(shell["verification"]["recorded"], true);
         Ok(())
     }
 }

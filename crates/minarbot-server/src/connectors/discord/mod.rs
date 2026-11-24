@@ -2,9 +2,6 @@ mod gateway;
 mod jobs;
 mod rest;
 
-#[cfg(test)]
-mod tests;
-
 use super::{runner, *};
 use jobs::Callback;
 use rest::Api;

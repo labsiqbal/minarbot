@@ -36,7 +36,7 @@ const entry = { name: 'fixture-login', kind: 'login', origin: 'https://example.t
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const proof = 'synthetic-value-only';
 const routes = [
-  ['providers', 'Providers', 'Example provider'],
+  ['providers', 'Providers', 'Fixture Codex'],
   ['skills', 'Skills', 'No skills'],
   ['connected-apps', 'Connected apps', 'Connect apps'],
   ['hub', 'minarbot.com', 'Not linked'],

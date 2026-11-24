@@ -16,10 +16,6 @@ impl Loopback {
             task: tokio::spawn(async move { axum::serve(listener, routes).await }),
         })
     }
-
-    pub fn base_url(&self) -> String {
-        format!("http://{}/v1", self.address)
-    }
 }
 
 impl Drop for Loopback {
