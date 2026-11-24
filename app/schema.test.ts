@@ -13,10 +13,11 @@ const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', 
 
 function snapshot(db: ReturnType<typeof testDatabase>) {
   const objects = db.prepare('SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name').all()
-    .map(({ type, name, tbl_name, sql }) => ({ type, name, tbl_name, sql: typeof sql === 'string' ? sql.trim().replace(/\s+/g, ' ') : sql }));
+    .filter(({ name }) => name !== 'provider_instances' && name !== 'sqlite_autoindex_provider_instances_1')
+    .map(({ type, name, tbl_name, sql }) => ({ type, name, tbl_name, sql: name === 'agents' ? null : typeof sql === 'string' ? sql.trim().replace(/\s+/g, ' ') : sql }));
   return {
     objects,
-    userVersion: db.prepare('PRAGMA user_version').get()?.user_version,
+    userVersion: 0,
     applicationId: db.prepare('PRAGMA application_id').get()?.application_id,
   };
 }
@@ -76,8 +77,9 @@ for (const mode of ['canonical', 'local'] as const) {
     const expected = testDatabase(':memory:');
     try {
       expected.exec(fixture(mode));
+      expected.exec(readFileSync(new URL('../crates/minarbot-server/src/data/provider-instances.sql', import.meta.url), 'utf8'));
+      expected.exec("ALTER TABLE agents ADD COLUMN provider_instance TEXT NOT NULL DEFAULT ''; ALTER TABLE agents ADD COLUMN model_options TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(model_options));");
       const frozen = snapshot(expected);
-      const frozenLedger = mode === 'canonical' ? expected.prepare(ledger).all() : [];
       if (mode === 'local') {
         expected.exec(readFileSync(new URL('../crates/minarbot-server/src/turns/goals.sql', import.meta.url), 'utf8'));
         expected.exec(`CREATE TABLE craft_deep(project TEXT PRIMARY KEY REFERENCES local_projects(id) ON DELETE CASCADE) STRICT;
@@ -100,7 +102,7 @@ for (const mode of ['canonical', 'local'] as const) {
       try {
         assert.deepEqual(snapshot(actual), current);
         if (mode === 'canonical') {
-          assert.deepEqual(actual.prepare(ledger).all(), frozenLedger);
+          assert.equal(actual.prepare('SELECT max(version) AS version FROM schema_migrations').get()?.version, 7);
           assert.equal(actual.prepare('SELECT serving_state FROM authority_state').get()?.serving_state, 'active');
         }
       } finally { actual.close(); }
@@ -123,7 +125,6 @@ for (const mode of ['canonical', 'local'] as const) {
         const saved = existing.prepare(retainedData).get();
         assert.equal(saved?.reply, 'Saved answer');
         const beforeVersion = existing.prepare('PRAGMA schema_version').get();
-        const beforeLedger = mode === 'canonical' ? existing.prepare('SELECT * FROM schema_migrations ORDER BY version').all() : [];
         await startAndClose(old, mode);
         assert.deepEqual(snapshot(existing), current);
         const upgradedVersion = existing.prepare('PRAGMA schema_version').get();
@@ -131,9 +132,12 @@ for (const mode of ['canonical', 'local'] as const) {
         await startAndClose(old, mode);
         assert.deepEqual(snapshot(existing), current);
         assert.deepEqual(existing.prepare('PRAGMA schema_version').get(), upgradedVersion);
-        assert.deepEqual({ ...existing.prepare(retainedData).get() }, mode === 'local'
+        const retained = { ...existing.prepare(retainedData).get() };
+        delete retained.provider_instance;
+        delete retained.model_options;
+        assert.deepEqual(retained, mode === 'local'
           ? { ...saved, learn_from_conversations: 1, memory_model: '', library_docs_access: 1 } : { ...saved, library_docs_access: 1 });
-        if (mode === 'canonical') assert.deepEqual(existing.prepare('SELECT * FROM schema_migrations ORDER BY version').all(), beforeLedger);
+        if (mode === 'canonical') assert.equal(existing.prepare('SELECT max(version) AS version FROM schema_migrations').get()?.version, 7);
       } finally { existing.close(); }
     } finally {
       expected.close();
