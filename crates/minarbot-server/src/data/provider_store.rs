@@ -79,6 +79,33 @@ fn decrypt(key: &LessSafeKey, row: &Value) -> Option<String> {
     String::from_utf8(plain.to_vec()).ok()
 }
 
+pub(crate) fn encrypt_secret(state: &AppState, id: &str, value: &str) -> Result<String> {
+    let key = wrapping_key(&state.config.database, true)?;
+    let nonce = random::<12>()?;
+    let mut bytes = value.as_bytes().to_vec();
+    key.seal_in_place_append_tag(
+        Nonce::assume_unique_for_key(nonce),
+        Aad::from(id.as_bytes()),
+        &mut bytes,
+    )
+    .map_err(|_| Failure::storage())?;
+    Ok(B64.encode([nonce.as_slice(), &bytes].concat()))
+}
+
+pub(crate) fn decrypt_secret(state: &AppState, id: &str, value: &str) -> Option<String> {
+    let key = wrapping_key(&state.config.database, false).ok()?;
+    let mut bytes = B64.decode(value).ok()?;
+    let nonce = bytes.get(..12)?.try_into().ok()?;
+    let plain = key
+        .open_in_place(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(id.as_bytes()),
+            &mut bytes[12..],
+        )
+        .ok()?;
+    String::from_utf8(plain.to_vec()).ok()
+}
+
 fn read_connection(database: &Path) -> Result<Connection> {
     // Callers include active transactions on the main connection.
     Ok(Connection::open_with_flags(

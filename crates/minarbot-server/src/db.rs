@@ -40,17 +40,48 @@ const BASELINE_LEDGER: &[(&str, &str)] = &[
     ),
 ];
 pub(crate) const BASELINE_VERSION: i64 = BASELINE_LEDGER.len() as i64;
-const CANONICAL_MIGRATIONS: &[(&str, &str)] = &[
-    // Append named SQL steps in version order starting at v7.
-    // Include affected tables in the baseline if their setup normally runs after this slot.
-];
+const PROVIDER_INSTANCE_MIGRATION: &str = r#"
+CREATE TABLE IF NOT EXISTS provider_instances(
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN(0,1)),
+    binary_path TEXT NOT NULL DEFAULT '',
+    home_path TEXT NOT NULL DEFAULT '',
+    shadow_home_path TEXT NOT NULL DEFAULT '',
+    launch_args TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(launch_args)),
+    environment TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(environment)),
+    accent_color TEXT NOT NULL DEFAULT '',
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
+    created TEXT NOT NULL DEFAULT '',
+    updated TEXT NOT NULL DEFAULT ''
+) STRICT;
+ALTER TABLE agents ADD COLUMN provider_instance TEXT NOT NULL DEFAULT '';
+ALTER TABLE agents ADD COLUMN model_options TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(model_options));
+INSERT OR IGNORE INTO provider_instances(id,kind,display_name,created,updated)
+SELECT kind,kind,kind,'','' FROM (SELECT 'codex' AS kind UNION ALL SELECT 'claude' UNION ALL SELECT 'hermes' UNION ALL SELECT 'antigravity' UNION ALL SELECT 'grok' UNION ALL SELECT 'pi' UNION ALL SELECT 'opencode' UNION ALL SELECT 'gemini' UNION ALL SELECT 'kiro');
+INSERT OR IGNORE INTO provider_instances(id,kind,display_name,created,updated,environment)
+SELECT CASE WHEN family='anthropic' THEN 'claude-api-' ELSE 'codex-api-' END||id,
+       CASE WHEN family='anthropic' THEN 'claude' ELSE 'codex' END,
+       name,'','',json_array(json_object('name',CASE WHEN family='anthropic' THEN 'ANTHROPIC_API_KEY' ELSE 'MINARBOT_PROVIDER_KEY' END,'value',key_ciphertext,'secret',1,'legacyAccountId',id))
+FROM provider_accounts;
+"#;
+const LOCAL_AGENT_PROVIDER_MIGRATION: &str = r#"
+UPDATE agents SET provider_instance=CASE
+    WHEN provider_account='device' AND runtime IN('codex','claude') THEN runtime
+    WHEN provider_account LIKE 'login:%' THEN runtime||'-'||substr(provider_account,7)
+    WHEN provider_account<>'' AND runtime='codex' THEN 'codex-api-'||provider_account
+    WHEN provider_account<>'' AND runtime='claude' THEN 'claude-api-'||provider_account
+    ELSE provider_instance END
+WHERE provider_instance='';
+"#;
+const CANONICAL_MIGRATIONS: &[(&str, &str)] =
+    &[("v7_provider_instances", PROVIDER_INSTANCE_MIGRATION)];
 pub const SCHEMA_VERSION: i64 = BASELINE_VERSION + CANONICAL_MIGRATIONS.len() as i64;
-const LOCAL_MIGRATIONS: &[&str] = &[
-    // Append SQL steps in user_version order starting at v1.
-    // Include affected tables in the baseline if their setup normally runs after this slot.
-];
+const LOCAL_MIGRATIONS: &[&str] = &[PROVIDER_INSTANCE_MIGRATION, LOCAL_AGENT_PROVIDER_MIGRATION];
 
 const PROVIDER_ACCOUNTS: &str = include_str!("data/provider-accounts.sql");
+const PROVIDER_INSTANCES: &str = include_str!("data/provider-instances.sql");
 const CANONICAL_SCHEMA: &str = concat!(
     include_str!("data/canonical-current.sql"),
     include_str!("data/protected-waits.sql"),
@@ -235,6 +266,7 @@ fn create_canonical(db: &Connection, now: i64) -> Result<()> {
     db.execute_batch(CANONICAL_SCHEMA)?;
     provider_tables(db)?;
     db.execute_batch(PROVIDER_ACCOUNTS)?;
+    db.execute_batch(PROVIDER_INSTANCES)?;
     crate::turns::initialize_canonical(db).map_err(|error| error.message)?;
     crate::files::init_canonical_schema(db)?;
     crate::automation::project::initialize(db).map_err(|error| error.message)?;
@@ -339,6 +371,7 @@ fn local(db: &Connection) -> Result<()> {
     tx.execute_batch(include_str!("data/local-current.sql"))?;
     provider_tables(&tx)?;
     tx.execute_batch(PROVIDER_ACCOUNTS)?;
+    tx.execute_batch(PROVIDER_INSTANCES)?;
     tx.execute_batch(include_str!("provider-indexes.sql"))?;
     migrate_user_version(
         &tx,

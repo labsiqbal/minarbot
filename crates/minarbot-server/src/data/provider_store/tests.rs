@@ -528,3 +528,36 @@ async fn settings_routes_verify_and_apply_accounts_live() -> crate::db::Result<(
     assert_eq!(accounts.as_array().map(Vec::len), Some(2));
     Ok(())
 }
+
+#[tokio::test]
+async fn provider_instances_store_secret_environment_and_redact_it() -> crate::db::Result<()> {
+    let fixture = Fixture::with_environment_accounts(false).await?;
+    let request = id();
+    let create = json!({
+        "id":request,
+        "instanceId":"codex-secondary",
+        "kind":"codex",
+        "displayName":"Secondary Codex",
+        "enabled":true,
+        "environment":[{"name":"ROUTER_KEY","value":"instance-secret","secret":true}],
+        "launchArgs":["app-server"]
+    });
+    let (status, created) = fixture
+        .request("/api/provider-instances", Some(create), ORIGIN)
+        .await?;
+    assert_eq!(status, 201);
+    assert_eq!(created["id"], "codex-secondary");
+    assert_eq!(created["environment"][0]["value"], "");
+    assert_eq!(created["environment"][0]["valueRedacted"], true);
+    assert!(!created.to_string().contains("instance-secret"));
+
+    let (_, listed) = fixture
+        .request("/api/provider-instances", None, ORIGIN)
+        .await?;
+    assert!(listed["providers"]
+        .as_array()
+        .is_some_and(|providers| providers
+            .iter()
+            .any(|provider| provider["id"] == "codex-secondary")));
+    Ok(())
+}

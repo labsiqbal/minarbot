@@ -1,0 +1,22 @@
+{
+  "adapted": "Provider instance settings, model selections, and Codex/Claude instance concepts translated from T3 Code into Minarbot's Rust and SQLite server.",
+  "t3": {
+    "repository": "https://github.com/pingdotgg/t3code",
+    "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+    "license": "MIT",
+    "sources": [
+      "packages/contracts/src/settings.ts",
+      "packages/contracts/src/server.ts",
+      "packages/contracts/src/providerInstance.ts",
+      "packages/contracts/src/modelSelection.ts",
+      "apps/server/src/provider/Drivers/CodexDriver.ts",
+      "apps/server/src/provider/Drivers/ClaudeDriver.ts",
+      "apps/web/src/providerInstances.ts",
+      "apps/web/src/modelSelection.ts"
+    ]
+  },
+  "localPaths": [
+    "crates/minarbot-server/src/data/provider_instances.rs",
+    "crates/minarbot-server/src/data/provider-instances.sql"
+  ]
+}

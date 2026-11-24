@@ -16,6 +16,7 @@ pub(crate) mod memory;
 pub mod options;
 mod panel;
 pub(crate) mod projects;
+pub(crate) mod provider_instances;
 mod provider_store;
 pub(crate) mod providers;
 mod schema;
@@ -271,11 +272,18 @@ pub fn handles(path: &str) -> bool {
                 | "sidebar"
                 | "usage"
                 | "provider-accounts"
+                | "provider-instances"
                 | "models"
         ] | ["api", "provider-accounts", "test"]
             | ["api", "engine-logins"]
             | ["api", "engine-logins", _, "check" | "remove"]
             | ["api", "provider-accounts", _, "test" | "edit" | "delete"]
+            | [
+                "api",
+                "provider-instances",
+                _,
+                "edit" | "update" | "delete" | "refresh" | "sign-in" | "signin" | "models"
+            ]
             | ["api", "sidebar", "summary"]
             | ["api", "conversations", "settings"]
             | ["api", "settings", "library-docs"]
@@ -441,6 +449,17 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
             ));
         }
         return provider_store::route(state, &parts, &method, &q, &body).await;
+    }
+    if parts.get(1) == Some(&"provider-instances") {
+        if headers.contains_key("authorization")
+            || headers.contains_key("origin") && !origin(state, &headers)
+        {
+            return Err(error(
+                403,
+                "Provider instances require the local owner in Minarbot.",
+            ));
+        }
+        return provider_instances::route(state, &parts, &method, &q, &body).await;
     }
     if path == "/api/settings/library-docs" {
         if headers.contains_key("authorization")
@@ -798,6 +817,13 @@ pub fn routes() -> Router<AppState> {
         .route("/api/provider-accounts/{id}/test", any(crate::dispatch))
         .route("/api/provider-accounts/{id}/edit", any(crate::dispatch))
         .route("/api/provider-accounts/{id}/delete", any(crate::dispatch))
+        .route("/api/provider-instances", any(crate::dispatch))
+        .route("/api/provider-instances/{id}/edit", any(crate::dispatch))
+        .route("/api/provider-instances/{id}/update", any(crate::dispatch))
+        .route("/api/provider-instances/{id}/delete", any(crate::dispatch))
+        .route("/api/provider-instances/{id}/refresh", any(crate::dispatch))
+        .route("/api/provider-instances/{id}/sign-in", any(crate::dispatch))
+        .route("/api/provider-instances/{id}/models", any(crate::dispatch))
         .route("/api/conversations/settings", any(crate::dispatch))
         .route("/api/settings/library-docs", any(crate::dispatch))
         .route("/api/settings/web-search", any(crate::dispatch))
