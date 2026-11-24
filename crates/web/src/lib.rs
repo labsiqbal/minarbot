@@ -10,7 +10,6 @@ mod connection_ui;
 #[cfg(feature = "conversation")]
 pub mod conversation;
 mod email;
-mod engines;
 mod general;
 #[cfg(feature = "hub")]
 mod hub;
@@ -27,7 +26,6 @@ mod onboarding;
 mod pairing;
 mod project_integrations;
 mod projects;
-mod providers;
 mod provider_instances;
 mod routes;
 #[cfg(any(feature = "conversation", feature = "workflows"))]

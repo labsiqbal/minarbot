@@ -1,25 +1,78 @@
 use crate::{api, connection_ui::*};
 use leptos::{prelude::*, task::spawn_local};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const PATH: &str = "/api/provider-instances";
 
+#[derive(Clone, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+struct ModelOption {
+    id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    values: Vec<String>,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+struct Model {
+    id: String,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    options: Vec<ModelOption>,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+struct Environment {
+    name: String,
+    #[serde(default)]
+    value: String,
+    #[serde(default)]
+    secret: bool,
+    #[serde(default)]
+    value_redacted: bool,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct Auth {
+    status: String,
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+impl Default for Auth {
+    fn default() -> Self {
+        Self { status: "unknown".into(), method: None, reason: None }
+    }
+}
+
+#[derive(Clone, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 struct Instance {
     id: String,
+    #[serde(default)]
     kind: String,
+    #[serde(default)]
     display_name: String,
     #[serde(default)]
     enabled: bool,
     #[serde(default)]
     installed: bool,
+    #[serde(default)]
     version: Option<String>,
+    #[serde(default)]
     status: String,
+    #[serde(default)]
     auth: Auth,
     #[serde(default)]
-    models: Vec<Value>,
+    models: Vec<Model>,
     #[serde(default)]
     binary_path: String,
     #[serde(default)]
@@ -30,26 +83,8 @@ struct Instance {
     launch_args: Vec<String>,
     #[serde(default)]
     environment: Vec<Environment>,
+    #[serde(default)]
     revision: u64,
-}
-
-#[derive(Clone, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
-struct Environment {
-    name: String,
-    #[serde(default)]
-    secret: bool,
-    #[serde(default)]
-    value_redacted: bool,
-}
-
-#[derive(Clone, Deserialize, PartialEq, Default)]
-struct Auth {
-    status: String,
-    #[serde(default)]
-    method: Option<String>,
-    #[serde(default)]
-    reason: Option<String>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
@@ -57,33 +92,87 @@ struct Envelope {
     providers: Vec<Instance>,
 }
 
+fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "codex" => "Codex",
+        "claude" => "Claude",
+        "hermes" => "Hermes",
+        "antigravity" => "Antigravity",
+        "grok" => "Grok",
+        "pi" => "Pi",
+        "opencode" => "OpenCode",
+        "gemini" => "Gemini",
+        "kiro" => "Kiro",
+        _ => "Provider",
+    }
+}
+
+fn kind_icon(kind: &str) -> &'static str {
+    match kind {
+        "codex" | "claude" => "brain",
+        "gemini" | "antigravity" => "wand-brain",
+        "pi" | "opencode" => "package",
+        "grok" => "globe",
+        _ => "server",
+    }
+}
+
+fn status_line(provider: &Instance) -> String {
+    if !provider.enabled {
+        return "Disabled".into();
+    }
+    if provider.auth.status == "authenticated" {
+        return format!("Authenticated · {}", provider.auth.method.clone().unwrap_or_else(|| kind_label(&provider.kind).into()));
+    }
+    if provider.installed {
+        return format!("Not authenticated · {}", provider.auth.reason.clone().unwrap_or_else(|| "Sign in required".into()));
+    }
+    "Not installed".into()
+}
+
+fn slug(value: &str) -> String {
+    let mut result = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            result.push(ch.to_ascii_lowercase());
+        } else if !result.ends_with('-') {
+            result.push('-');
+        }
+    }
+    let result = result.trim_matches('-');
+    if result.is_empty() { "provider-instance".into() } else { result.chars().take(64).collect() }
+}
+
 pub fn panel() -> impl IntoView {
     let providers = query::<Envelope>(|| PATH.into());
     let selected = RwSignal::new(None::<String>);
     let adding = RwSignal::new(false);
     let error = RwSignal::new(String::new());
-    let open_add = UiAction::new(move |()| {
-        error.set(String::new());
-        adding.set(true);
+    let checked = RwSignal::new("Checked just now".to_owned());
+
+    Effect::new(move |_| {
+        if selected.get_untracked().is_none() {
+            if let Some(id) = providers.data.with_untracked(|data| data.as_ref().and_then(|data| data.providers.first().map(|provider| provider.id.clone()))) {
+                selected.set(Some(id));
+            }
+        }
     });
+    let refresh = UiAction::new(move |()| {
+        checked.set("Checking now…".into());
+        providers.reload.run(());
+        checked.set("Checked just now".into());
+    });
+    let current = move || providers.data.with(|data| data.as_ref().and_then(|data| {
+        selected.get().as_deref().and_then(|id| data.providers.iter().find(|provider| provider.id == id)).cloned()
+            .or_else(|| data.providers.first().cloned())
+    }));
     let close_add = UiAction::new(move |()| adding.set(false));
-    let current = move || {
-        let selected_id = selected.get();
-        providers.data.with(|data| {
-            data.as_ref().and_then(|data| {
-                selected_id
-                    .as_deref()
-                    .and_then(|id| data.providers.iter().find(|provider| provider.id == id))
-                    .cloned()
-                    .or_else(|| data.providers.first().cloned())
-            })
-        })
-    };
     view! {
         <div class="k-page bs-root provider-instances-page">
-            <Header title="Providers".to_owned() actions=Box::new(move || view! {
-                <Button label="Add provider" variant="primary" icon="plus" click=open_add.clone()
-                    disabled=move || providers.busy.get() />
+            <Header title="Providers" actions=Box::new(move || view! {
+                <span class="provider-check-status" role="status"><Icon name="refresh" />{checked}</span>
+                <Button label="Add provider" variant="primary" icon="plus" click=UiAction::new(move |()| { error.set(String::new()); adding.set(true); }) />
+                <Button label="Refresh providers" aria="Refresh providers" icon="refresh" click=refresh.clone() busy=providers.busy />
             }.into_any()) />
             <ErrorNotice error=error.into() />
             <ErrorNotice error=providers.error.into() retry=providers.reload />
@@ -99,22 +188,34 @@ pub fn panel() -> impl IntoView {
                                 let id = provider.id.clone();
                                 let active_id = id.clone();
                                 let active = move || selected.with(|value| value.as_deref() == Some(active_id.as_str()));
+                                let active_for_button = active.clone();
+                                let toggle_id = id.clone();
+                                let toggle_provider = provider.clone();
                                 view! {
-                                    <button class="provider-instance-row" class:is-active=active
-                                        on:click=move |_| selected.set(Some(id.clone()))>
-                                        <span class="provider-instance-row__icon"><Icon name="server" /></span>
-                                        <span class="provider-instance-row__main">
-                                            <strong>{provider.display_name.clone()}</strong>
-                                            <small>{provider.version.clone().unwrap_or_else(|| provider.kind.clone())}</small>
-                                            <small>{if provider.auth.status == "authenticated" { format!("Authenticated · {}", provider.auth.method.clone().unwrap_or_default()) } else if provider.installed { provider.auth.reason.clone().unwrap_or_else(|| "Not authenticated".into()) } else { "Not installed".into() }}</small>
-                                        </span>
-                                        <span class="provider-instance-row__toggle" aria-hidden="true">{if provider.enabled { "On" } else { "Off" }}</span>
-                                    </button>
+                                    <div class="provider-instance-row" class:is-active=active>
+                                        <button type="button" class="provider-instance-row__select" aria-current=move || active_for_button().then_some("true")
+                                            on:click=move |_| selected.set(Some(id.clone()))>
+                                            <span class="provider-instance-row__icon"><Icon name=kind_icon(&provider.kind) /></span>
+                                            <span class="provider-instance-row__main">
+                                                <strong>{provider.display_name.clone()}</strong>
+                                                <small>{provider.version.clone().unwrap_or_else(|| kind_label(&provider.kind).into())}</small>
+                                                <small>{status_line(&provider)}</small>
+                                            </span>
+                                        </button>
+                                        <Switch label=format!("Enable {}", provider.display_name) checked=Signal::stored(provider.enabled)
+                                            disabled=providers.busy change=Callback::new(move |enabled| {
+                                                let body = json!({"instanceId":toggle_id,"revision":toggle_provider.revision,"enabled":enabled});
+                                                let reload = providers.reload;
+                                                let error = error;
+                                                let id = toggle_provider.id.clone();
+                                                spawn_local(async move { if let Err(message) = api::post::<Value>(&format!("{PATH}/{id}/update"), &body).await { error.set(message); } reload.run(()); });
+                                            }) />
+                                    </div>
                                 }
                             } />
                     </nav>
                     <Show when=move || current().is_some() fallback=|| view! { <Empty title="Choose a provider" icon="server" /> }>
-                        {move || current().map(detail)}
+                        {move || current().map(|provider| detail(provider, providers.reload, error))}
                     </Show>
                 </div>
             </Show>
@@ -125,91 +226,200 @@ pub fn panel() -> impl IntoView {
     }
 }
 
-fn detail(provider: Instance) -> AnyView {
-    let status = if provider.installed { provider.status.clone() } else { "Not installed".into() };
+fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyView {
+    let name = RwSignal::new(provider.display_name.clone());
+    let binary = RwSignal::new(provider.binary_path.clone());
+    let home = RwSignal::new(provider.home_path.clone());
+    let shadow = RwSignal::new(provider.shadow_home_path.clone());
+    let args = RwSignal::new(provider.launch_args.join("\n"));
+    let environment = RwSignal::new(provider.environment.clone());
+    let busy = RwSignal::new(false);
+    let saved = RwSignal::new(String::new());
+    let confirm_open = RwSignal::new(false);
+    let save_id = provider.id.clone();
+    let provider_id = provider.id.clone();
+    let provider_kind = provider.kind.clone();
+    let provider_kind_view = provider.kind.clone();
+    let provider_revision = provider.revision;
+    let provider_enabled = provider.enabled;
+    let display_name = provider.display_name.clone();
+    let version = provider.version.clone();
+    let shadow_path = provider.shadow_home_path.clone();
+    let auth_status = provider.auth.status.clone();
+    let save = UiAction::new(move |()| {
+        if busy.get_untracked() { return; }
+        busy.set(true);
+        let body = json!({
+            "instanceId": save_id.clone(),
+            "revision": provider_revision,
+            "kind": provider_kind.clone(),
+            "displayName": name.get_untracked().trim(),
+            "enabled": provider_enabled,
+            "binaryPath": binary.get_untracked().trim(),
+            "homePath": home.get_untracked().trim(),
+            "shadowHomePath": shadow.get_untracked().trim(),
+            "launchArgs": args.get_untracked().lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>(),
+            "environment": environment.get_untracked(),
+        });
+        let reload = reload;
+        let error = error;
+        let request_id = save_id.clone();
+        spawn_local(async move {
+            match api::post::<Instance>(&format!("{PATH}/{request_id}/update"), &body).await {
+                Ok(_) => { saved.set("Saved".into()); reload.run(()); }
+                Err(message) => error.set(message),
+            }
+            busy.set(false);
+        });
+    });
+    let sign_in_id = provider_id.clone();
+    let sign_in = UiAction::new(move |()| {
+        busy.set(true);
+        let id = sign_in_id.clone();
+        let reload = reload;
+        let error = error;
+        spawn_local(async move {
+            match api::post::<Value>(&format!("{PATH}/{id}/sign-in"), &json!({"instanceId":id})).await {
+                Ok(_) => { saved.set("Sign-in started".into()); reload.run(()); }
+                Err(message) => error.set(message),
+            }
+            busy.set(false);
+        });
+    });
+    let refresh_id = provider_id.clone();
+    let refresh = UiAction::new(move |()| {
+        busy.set(true);
+        let id = refresh_id.clone();
+        let reload = reload;
+        let error = error;
+        spawn_local(async move {
+            let result = api::post::<Value>(&format!("{PATH}/{id}/refresh"), &json!({"instanceId":id})).await;
+            if let Err(message) = result { error.set(message); } else { saved.set("Checked just now".into()); reload.run(()); }
+            busy.set(false);
+        });
+    });
+    let delete_id = provider_id.clone();
+    let delete_request = UiAction::new(move |()| {
+        let id = delete_id.clone();
+        let reload = reload;
+        let error = error;
+        confirm_open.set(false);
+        spawn_local(async move {
+            let request_id = id;
+            match api::post::<Value>(&format!("{PATH}/{request_id}/delete"), &json!({"instanceId":request_id,"revision":provider_revision})).await {
+                Ok(_) => reload.run(()),
+                Err(message) => error.set(message),
+            }
+        });
+    });
+    let delete = UiAction::new(move |()| confirm_open.set(true));
+    let status = status_line(&provider);
+    let auth_reason = provider.auth.reason.clone().unwrap_or_default();
+    let kind_for_button = provider_kind_view.clone();
     view! {
         <main class="k-card provider-instance-detail">
             <div class="provider-instance-detail__head">
-                <div><h2>{provider.display_name.clone()}</h2><p>{provider.kind.clone()}</p></div>
-                <Badge success=provider.enabled>{if provider.enabled { "Enabled" } else { "Disabled" }}</Badge>
+                <div class="provider-instance-title"><span class="provider-instance-detail__icon"><Icon name=kind_icon(&provider_kind_view) /></span><div><h2>{display_name.clone()}</h2><p>{kind_label(&provider_kind_view)}{version.clone().map(|version| format!(" · v{version}"))}</p></div></div>
+                <Badge success=provider_enabled>{if provider_enabled { "Enabled" } else { "Disabled" }}</Badge>
             </div>
-            <Section title="Status" actions=Box::new(|| ().into_any())>
-                <Row title="Status" trailing=Box::new(move || view! { <span>{status.clone()}</span> }.into_any()) />
-                <Row title="Authentication" trailing=Box::new(move || view! { <span>{if provider.auth.status == "authenticated" { format!("Authenticated · {}", provider.auth.method.clone().unwrap_or_default()) } else { provider.auth.reason.clone().unwrap_or_else(|| "Not authenticated".into()) }}</span> }.into_any()) />
-                <Row title="Models" trailing=Box::new(move || view! { <span>{provider.models.len()}</span> }.into_any()) />
+            <Section title="Status" actions=Box::new(move || view! { <div class="provider-detail-actions"><Button label="Re-check" icon="refresh" busy=busy click=refresh.clone() /><Button label="Sign in" icon="key" busy=busy disabled=move || kind_for_button != "codex" && kind_for_button != "claude" click=sign_in.clone() /></div> }.into_any())>
+                <div class="provider-status-card"><span class="provider-status-dot" class:is-ready=auth_status == "authenticated" && provider_enabled></span><div><strong>{status}</strong>{(!auth_reason.is_empty()).then(|| view! { <p>{auth_reason.clone()}</p> })}</div></div>
             </Section>
-            <Section title="Configuration" actions=Box::new(|| ().into_any())>
-                <Row title="Display name" trailing=Box::new(move || view! { <span>{provider.display_name.clone()}</span> }.into_any()) />
-            </Section>
-            <Section title="Runtime" actions=Box::new(|| ().into_any())>
-                <Row title="Binary path" trailing=Box::new(move || view! { <code>{provider.binary_path.clone()}</code> }.into_any()) />
-                <Row title=if provider.kind == "codex" { "CODEX_HOME" } else { "Config directory" } trailing=Box::new(move || view! { <code>{provider.home_path.clone()}</code> }.into_any()) />
-                {(!provider.shadow_home_path.is_empty()).then(|| view! { <Row title="Shadow home path" trailing=Box::new(move || view! { <code>{provider.shadow_home_path.clone()}</code> }.into_any()) /> })}
-                <Row title="Launch arguments" trailing=Box::new(move || view! { <code>{provider.launch_args.join(" ")}</code> }.into_any()) />
-            </Section>
-            <Section title="Environment" actions=Box::new(|| view! { <Button label="Add variable" /> }.into_any())>
-                {provider.environment.into_iter().map(|variable| view! {
-                    <Row title=variable.name.clone() trailing=Box::new(move || view! { <code>{if variable.secret || variable.value_redacted { "••••••" } else { "" }}</code> }.into_any()) />
-                }).collect_view()}
-            </Section>
+            <form class="provider-detail-form" on:submit=move |event| { event.prevent_default(); save.run(()); }>
+                <Section title="Configuration">
+                    <label class="provider-field"><span>Display name</span><input class="k-input" name="displayName" prop:value=name on:input=move |event| name.set(event_target_value(&event)) /></label>
+                </Section>
+                <Section title="Runtime">
+                    <label class="provider-field"><span>Binary path</span><input class="k-input" name="binaryPath" prop:value=binary on:input=move |event| binary.set(event_target_value(&event)) /></label>
+                    <label class="provider-field"><span>{if provider_kind_view == "codex" { "CODEX_HOME path" } else { "Config directory" }}</span><input class="k-input" name="homePath" prop:value=home on:input=move |event| home.set(event_target_value(&event)) /></label>
+                    {(shadow_path != "" || provider_kind_view == "codex").then(|| view! { <label class="provider-field"><span>Shadow home path</span><input class="k-input" name="shadowHomePath" prop:value=shadow on:input=move |event| shadow.set(event_target_value(&event)) /></label> })}
+                    <label class="provider-field"><span>Launch arguments</span><textarea class="k-input k-textarea provider-args" name="launchArgs" prop:value=args on:input=move |event| args.set(event_target_value(&event)) placeholder="One argument per line"></textarea></label>
+                </Section>
+                <Section title="Environment" actions=Box::new(move || view! { <Button label="Add variable" icon="plus" click=UiAction::new(move |()| environment.update(|rows| rows.push(Environment { name: format!("VARIABLE_{}", rows.len() + 1), ..Environment::default() }))) /> }.into_any())>
+                    <div class="provider-environment-list">
+                        <For each=move || { environment.get().into_iter().enumerate().collect::<Vec<_>>() } key=|(index, row)| format!("{index}-{}", row.name) children=move |(index, row)| {
+                            let secret = row.secret || row.value_redacted;
+                            view! { <div class="provider-env-row">
+                                <input class="k-input provider-env-name" aria-label="Variable name" prop:value=row.name.clone() on:input=move |event| environment.update(|rows| if let Some(item) = rows.get_mut(index) { item.name = event_target_value(&event); }) />
+                                <input class="k-input provider-env-value" aria-label=format!("Value for {}", row.name) type=if secret { "password" } else { "text" } prop:value=if secret { String::new() } else { row.value.clone() } placeholder=secret.then_some("Secret value saved") on:input=move |event| environment.update(|rows| if let Some(item) = rows.get_mut(index) { item.value = event_target_value(&event); item.value_redacted = false; }) />
+                                <label class="provider-env-secret"><input type="checkbox" prop:checked=secret on:change=move |event| environment.update(|rows| if let Some(item) = rows.get_mut(index) { item.secret = event_target_checked(&event); item.value_redacted = item.secret; }) />"Secret"</label>
+                                <Button label="Remove" aria="Remove variable" icon="trash" click=UiAction::new(move |()| environment.update(|rows| { if index < rows.len() { rows.remove(index); } })) />
+                            </div> }
+                        } />
+                    </div>
+                    <Show when=move || environment.with(|rows| rows.is_empty())><p class="k-field__hint">No environment variables configured.</p></Show>
+                </Section>
+                <div class="provider-detail-footer"><span role="status">{saved}</span><Button label="Save changes" variant="primary" submit=true busy=busy /><Button label="Delete instance" variant="danger" click=delete disabled=busy /></div>
+            </form>
+            <Show when=move || confirm_open.get()>
+                <Modal title="Delete provider instance?".to_owned() description="Agents using this instance will need another provider before they can run.".to_owned() confirm=true close=UiAction::new(move |()| confirm_open.set(false))
+                    footer=Box::new(move || view! { <Button label="Cancel" click=UiAction::new(move |()| confirm_open.set(false)) /><Button label="Delete instance" variant="danger" click=delete_request.clone() /> }.into_any()) />
+            </Show>
         </main>
     }.into_any()
 }
 
 #[component]
-fn AddProvider(
-    close: UiAction,
-    saved: impl Fn() + Copy + Send + 'static,
-    error: RwSignal<String>,
-) -> impl IntoView {
+fn AddProvider(close: UiAction, saved: impl Fn() + Copy + Send + 'static, error: RwSignal<String>) -> impl IntoView {
     let step = RwSignal::new(0u8);
     let kind = RwSignal::new("codex".to_owned());
-    let busy = RwSignal::new(false);
     let name = RwSignal::new(String::new());
+    let instance_id = RwSignal::new(String::new());
+    let binary = RwSignal::new(String::new());
+    let home = RwSignal::new(String::new());
+    let shadow = RwSignal::new(String::new());
+    let args = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
     let submit = move |event: web_sys::SubmitEvent| {
-        let Some(fields) = form(&event) else { return };
+        event.prevent_default();
         if busy.get_untracked() { return; }
-        name.set(field(&fields, "displayName"));
-        let instance = field(&fields, "instanceId");
+        let display = name.get_untracked().trim().to_owned();
+        let requested_id = instance_id.get_untracked();
+        let id = slug(if requested_id.trim().is_empty() { &display } else { requested_id.trim() });
+        if display.is_empty() { error.set("Display name is required.".into()); return; }
+        let sign_in = event.submitter().and_then(|button| button.get_attribute("value")) == Some("signin".into());
         let kind_value = kind.get_untracked();
-        if instance.trim().is_empty() { error.set("Instance ID is required.".into()); return; }
+        let body = json!({"id":uuid(),"instanceId":id,"kind":kind_value,"displayName":display,"binaryPath":binary.get_untracked().trim(),"homePath":home.get_untracked().trim(),"shadowHomePath":shadow.get_untracked().trim(),"launchArgs":args.get_untracked().lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>(),"environment":[]});
         busy.set(true);
         spawn_local(async move {
-            let result = api::post::<Value>(PATH, &json!({"id":uuid(),"instanceId":instance,"kind":kind_value,"displayName":name.get_untracked()})).await;
+            let result = match api::post::<Instance>(PATH, &body).await {
+                Ok(_) if sign_in => api::post::<Value>(&format!("{PATH}/{id}/sign-in"), &json!({"instanceId":id})).await.map(|_| ()),
+                Ok(_) => Ok(()),
+                Err(message) => Err(message),
+            };
             busy.set(false);
             match result { Ok(_) => saved(), Err(message) => error.set(message) }
         });
     };
+    let kinds = [("codex", "Codex"), ("claude", "Claude"), ("cursor", "Cursor"), ("grok", "Grok"), ("opencode", "OpenCode"), ("antigravity", "Antigravity"), ("pi", "Pi"), ("gemini", "Gemini"), ("kiro", "Kiro")];
     view! {
-        <Modal title="Add provider".to_owned() description="Add an account or configure a provider on this machine".to_owned() busy=busy close=close.clone()
+        <Modal title="Add provider".to_owned() description="Add an account or configure a provider on this machine".to_owned() size="lg" busy=busy close=close.clone()
             footer=Box::new(move || view! {
-                <Button label="Cancel" disabled=move || busy.get() click=close.clone() />
-                <Show when=move || step.get() < 2>
-                    <Button label="Continue" variant="primary" click=UiAction::new(move |()| step.update(|step| *step += 1)) />
-                </Show>
+                <Button label="Cancel" disabled=busy click=close.clone() />
+                <Show when=move || step.get() < 2><Button label="Continue" variant="primary" click=UiAction::new(move |()| step.update(|value| *value = (*value + 1).min(2))) /></Show>
                 <Show when=move || step.get() == 2>
-                    <Button label="Configure manually" submit=true form="provider-instance-form" busy=busy />
-                    <Button label="Sign in" variant="primary" submit=true form="provider-instance-form" busy=busy />
+                    <Button label="Configure manually" submit=true form="provider-wizard-form" value="manual" busy=busy />
+                    <button type="submit" class="k-btn k-btn--md k-btn--primary" form="provider-wizard-form" value="signin" disabled=move || busy.get()>{move || if kind.get() == "codex" { "Continue with ChatGPT" } else if kind.get() == "claude" { "Sign in with Claude" } else { "Configure provider" }}</button>
                 </Show>
             }.into_any())>
-            <form id="provider-instance-form" class="k-stack" on:submit=submit>
+            <form id="provider-wizard-form" class="k-stack provider-wizard" on:submit=submit>
                 <ol class="provider-wizard-stepper" aria-label="Provider setup steps">
-                    <li class:active=move || step.get() == 0>"1 Provider"</li>
-                    <li class:active=move || step.get() == 1>"2 Identity"</li>
-                    <li class:active=move || step.get() == 2>"3 Config"</li>
+                    <li class:active=move || step.get() == 0><span>1</span>Provider</li><li class:active=move || step.get() == 1><span>2</span>Identity</li><li class:active=move || step.get() == 2><span>3</span>Config</li>
                 </ol>
                 <Show when=move || step.get() == 0>
-                    <Field label="Provider" name="kind"><Select name="kind" value=Signal::derive(move || kind.get())
-                        options=Signal::derive(|| ["codex","claude","hermes","antigravity","grok","pi","opencode","gemini","kiro"].into_iter().map(|kind| (kind.into(), kind.into())).collect())
-                        change=Callback::new(move |value| kind.set(value)) /></Field>
+                    <fieldset class="provider-kind-grid"><legend>Provider</legend>{kinds.into_iter().map(|(id, label)| view! {
+                        <button type="button" class="provider-kind-tile" class:is-active=move || kind.get() == id on:click=move |_| kind.set(id.into())><Icon name=kind_icon(id) /><span>{label}</span><Show when=move || kind.get() == id><Icon name="check" /></Show></button>
+                    }).collect_view()}</fieldset>
                 </Show>
                 <Show when=move || step.get() == 1>
-                    <Field label="Display name" name="displayName"><input class="k-input" name="displayName" required placeholder="My Codex" /></Field>
-                    <Field label="Instance ID" name="instanceId"><input class="k-input" name="instanceId" required placeholder="codex-personal" /></Field>
-                    <p class="k-field__hint">"Sign-in runs inside this provider instance home."</p>
+                    <label class="k-field"><span class="k-field__label">Display name</span><input class="k-input" name="displayName" required placeholder=move || format!("My {}", kind_label(&kind.get())) prop:value=name on:input=move |event| name.set(event_target_value(&event)) /></label>
+                    <label class="k-field"><span class="k-field__label">Instance ID <span class="k-field__optional">Optional</span></span><input class="k-input" name="instanceId" placeholder="Generated from display name" prop:value=instance_id on:input=move |event| instance_id.set(event_target_value(&event)) /></label>
+                    <p class="k-field__hint">Sign-in runs inside this provider instance home.</p>
                 </Show>
                 <Show when=move || step.get() == 2>
-                    <p>Configure manually, then refresh status from provider details.</p>
+                    <div class="k-grid-2"><label class="k-field"><span class="k-field__label">Binary path</span><input class="k-input" name="binaryPath" prop:value=binary on:input=move |event| binary.set(event_target_value(&event)) /></label><label class="k-field"><span class="k-field__label">{if kind.get() == "codex" { "CODEX_HOME path" } else { "Config directory" }}</span><input class="k-input" name="homePath" prop:value=home on:input=move |event| home.set(event_target_value(&event)) /></label></div>
+                    <label class="k-field"><span class="k-field__label">Shadow home path <span class="k-field__optional">Optional</span></span><input class="k-input" name="shadowHomePath" prop:value=shadow on:input=move |event| shadow.set(event_target_value(&event)) /></label>
+                    <label class="k-field"><span class="k-field__label">Launch arguments <span class="k-field__optional">Optional</span></span><textarea class="k-input k-textarea provider-args" name="launchArgs" prop:value=args on:input=move |event| args.set(event_target_value(&event)) placeholder="One argument per line"></textarea></label>
                 </Show>
             </form>
         </Modal>
