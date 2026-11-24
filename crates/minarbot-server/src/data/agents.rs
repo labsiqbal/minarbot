@@ -5,7 +5,14 @@ use rusqlite::OptionalExtension;
 use std::path::PathBuf;
 
 pub fn read(db: &Connection, id: &str) -> Result<Value> {
-    one(db, "SELECT * FROM agents WHERE id=?", [id])?.ok_or_else(|| error(404, "Agent not found."))
+    let mut agent = one(db, "SELECT * FROM agents WHERE id=?", [id])?
+        .ok_or_else(|| error(404, "Agent not found."))?;
+    if agent.get("provider_instance").is_some() {
+        agent["providerInstance"] = agent["provider_instance"].clone();
+        agent["modelOptions"] =
+            serde_json::from_str(string(&agent, "model_options")).unwrap_or_else(|_| json!({}));
+    }
+    Ok(agent)
 }
 pub fn hidden(db: &Connection, id: &str) -> Result<bool> {
     Ok(one(
@@ -278,6 +285,35 @@ fn account(v: &Value) -> Result<Option<&str>> {
         })
         .transpose()
 }
+fn provider_instance(v: &Value) -> Result<Option<&str>> {
+    v.get("providerInstance")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| {
+                    (1..=64).contains(&value.len())
+                        && value
+                            .bytes()
+                            .next()
+                            .is_some_and(|byte| byte.is_ascii_alphabetic())
+                        && value
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+                })
+                .ok_or_else(|| error(400, "Invalid provider instance."))
+        })
+        .transpose()
+}
+fn model_options(v: &Value) -> Result<Option<String>> {
+    v.get("modelOptions")
+        .map(|value| {
+            if !value.is_object() || value.to_string().len() > 64 * 1024 {
+                return Err(error(400, "Model options must be a JSON object."));
+            }
+            Ok(value.to_string())
+        })
+        .transpose()
+}
 fn validate_account(state: &AppState, db: &Connection, runtime: &str, binding: &str) -> Result<()> {
     if binding == super::logins::DEVICE {
         if !super::logins::device_runtime(runtime) {
@@ -360,6 +396,8 @@ pub fn create(
     let previous = one(db, "SELECT request FROM agent_creations WHERE id=?", [id])?;
     let backup = backup(v, &model)?;
     let account = account(v)?;
+    let provider_instance = provider_instance(v)?;
+    let model_options = model_options(v)?;
     let old_runtime = previous
         .as_ref()
         .map(|r| json(&r["request"]))
@@ -403,6 +441,12 @@ pub fn create(
     if let Some(a) = account {
         request["providerAccount"] = json!(a);
     }
+    if let Some(instance) = provider_instance {
+        request["providerInstance"] = json!(instance);
+    }
+    if let Some(options) = &model_options {
+        request["modelOptions"] = serde_json::from_str(options).map_err(|_| Failure::storage())?;
+    }
     if runtime != "api" {
         request["runtime"] = json!(runtime);
     }
@@ -427,6 +471,18 @@ pub fn create(
     let image = avatar.get(input)?;
     super::agent_folders::ensure_managed(state, id)?;
     db.execute("INSERT INTO agents(id,name,role,model,instructions,thread_limit,tool_budget,backup_model,provider_account,runtime) VALUES(?,?,?,?,?,?,?,?,?,?)",rusqlite::params![id,name,role,model,instructions,v["threadLimit"].as_i64().unwrap_or(2),v["toolBudget"].as_i64().unwrap_or(90),backup.as_deref().unwrap_or(""),account.unwrap_or(""),runtime])?;
+    if let Some(instance) = provider_instance {
+        db.execute(
+            "UPDATE agents SET provider_instance=? WHERE id=?",
+            [instance, id],
+        )?;
+    }
+    if let Some(options) = model_options {
+        db.execute(
+            "UPDATE agents SET model_options=? WHERE id=?",
+            rusqlite::params![options, id],
+        )?;
+    }
     crate::connectors::mailbox::register(db, id, &name)?;
     if setup {
         let a = providers::accounts(state)?
@@ -490,6 +546,8 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     let role = v.get("role").map(|v| role(Some(v))).transpose()?;
     let backup = backup(v, &model)?;
     let account = account(v)?;
+    let provider_instance = provider_instance(v)?;
+    let model_options = model_options(v)?;
     let runtime = runtime(v)?;
     bounds(v)?;
     if v.get("webAccess").is_some_and(|value| !value.is_boolean()) {
@@ -540,6 +598,8 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         "toolBudget",
         "backupModel",
         "providerAccount",
+        "providerInstance",
+        "modelOptions",
         "webAccess",
         "goalJudgeModel",
         "learnFromConversations",
@@ -639,6 +699,18 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         || selected_runtime != string(&current, "runtime");
     let memory_model = memory_model.or(binding_changed.then_some(""));
     db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),web_access=coalesce(?,web_access),learn_from_conversations=coalesce(?,learn_from_conversations),memory_model=coalesce(?,memory_model),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,v["webAccess"].as_bool(),learn,memory_model,id])?;
+    if let Some(instance) = provider_instance {
+        db.execute(
+            "UPDATE agents SET provider_instance=? WHERE id=?",
+            [instance, id],
+        )?;
+    }
+    if let Some(options) = model_options {
+        db.execute(
+            "UPDATE agents SET model_options=? WHERE id=?",
+            rusqlite::params![options, id],
+        )?;
+    }
     if account.is_some_and(|a| a != string(&current, "provider_account"))
         && table(db, "model_fallbacks")?
     {
