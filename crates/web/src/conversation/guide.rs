@@ -416,15 +416,11 @@ pub(super) fn connection(
         error.set(String::new());
         leptos::task::spawn_local(async move {
             match onboarding::connections().await {
-                Ok((items, automatic, _)) => {
+                Ok((items, automatic)) => {
                     let current = agent.get_untracked();
                     let choice = items
                         .iter()
-                        .find(|choice| {
-                            current.runtime.as_deref() == Some(&choice.runtime)
-                                && current.provider_account.as_deref().unwrap_or_default()
-                                    == choice.account
-                        })
+                        .find(|choice| choice.value.strip_prefix("instance:") == current.provider_instance.as_deref())
                         .map(|choice| choice.value.clone())
                         .or(automatic)
                         .unwrap_or_default();
@@ -461,8 +457,9 @@ pub(super) fn connection(
         let current = agent.get_untracked();
         leptos::task::spawn_local(async move {
             match api::command::<Agent>(&format!("/api/agents/{}/edit", current.id), json!({
-                "revision": current.revision, "runtime": choice.runtime,
-                "providerAccount": choice.account, "model": choice.model, "confirmRuntime": true,
+                "revision": current.revision,
+                "providerInstance": choice.value.strip_prefix("instance:").unwrap_or(""),
+                "model": choice.model,
             })).await {
                 Ok(next) => {
                     agent.try_set(next.clone());
@@ -501,7 +498,6 @@ pub(super) fn connection(
                 <Show when=move || !saving.with(String::is_empty)><kit::Alert tone="error">{saving}</kit::Alert></Show>
                 <div class="k-row-actions">
                     <a class="k-btn k-btn--md k-btn--secondary" href=settings::section_url("/settings/providers", &from())>"Providers"</a>
-                    <a class="k-btn k-btn--md k-btn--secondary" href=settings::section_url("/settings/engines", &from())>"Engines"</a>
                 </div>
             </form>
         </kit::Dialog>

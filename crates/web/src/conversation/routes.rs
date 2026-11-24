@@ -13,9 +13,8 @@ pub struct Agent {
     #[serde(default)]
     pub avatar_revision: u64,
     pub model: Option<String>,
-    pub runtime: Option<String>,
-    #[serde(rename = "providerAccount", alias = "provider_account")]
-    pub provider_account: Option<String>,
+    #[serde(rename = "providerInstance", alias = "provider_instance")]
+    pub provider_instance: Option<String>,
     #[serde(default)]
     pub instructions: String,
     #[serde(default)]
@@ -744,12 +743,7 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
         .filter(|role| !role.is_empty())
         .unwrap_or("Agent")
         .to_owned();
-    let model = agent
-        .runtime
-        .as_deref()
-        .filter(|runtime| *runtime != "api")
-        .map(|runtime| format!("{runtime} runtime"))
-        .or_else(|| agent.model.clone());
+    let model = agent.model.clone();
     let name = agent.name.clone();
     let more = StoredValue::new(icons.more.clone());
     let chat_icon = StoredValue::new(icons.chats.clone());

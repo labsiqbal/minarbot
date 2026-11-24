@@ -1,29 +1,7 @@
 use super::*;
-use crate::connection_ui::{self as ui, query, ErrorNotice, Select, Switch};
+use crate::connection_ui::{self as ui, query, ErrorNotice, Switch};
 use journal::bounded;
 use wasm_bindgen::JsCast;
-
-#[derive(Clone, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct Runtimes {
-    choices: Vec<Runtime>,
-    default_runtime: Option<String>,
-}
-
-#[derive(Clone, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct Runtime {
-    runtime: String,
-    label: String,
-    available: bool,
-    enabled: bool,
-    reason: Option<String>,
-    signed_in: Option<bool>,
-    #[serde(default)]
-    model: String,
-    #[serde(default)]
-    models: Vec<Model>,
-}
 
 #[derive(Clone, Deserialize, PartialEq)]
 struct Model {
@@ -31,6 +9,18 @@ struct Model {
     label: String,
     #[serde(default)]
     default: bool,
+    #[serde(default)]
+    options: Vec<ModelOption>,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct ModelOption {
+    id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    values: Vec<String>,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -49,15 +39,6 @@ struct MemoryDefault {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
-struct Account {
-    id: String,
-    name: String,
-    configured: bool,
-    #[serde(default, rename = "defaultModel")]
-    default_model: String,
-}
-
-#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct ProviderInstance {
     id: String,
@@ -69,20 +50,25 @@ struct ProviderInstance {
     model_ids: Vec<String>,
     #[serde(default)]
     enabled: bool,
+    #[serde(default)]
+    installed: bool,
+    #[serde(default)]
+    auth: Option<AuthStatus>,
+    #[serde(default)]
+    status: String,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct AuthStatus {
+    status: String,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
 struct ProviderInstances {
     providers: Vec<ProviderInstance>,
-}
-
-#[derive(Clone, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct Login {
-    id: String,
-    name: String,
-    runtime: String,
-    signed_in: bool,
 }
 
 const CREATION_FIELDS: &[&str] = &[
@@ -91,18 +77,14 @@ const CREATION_FIELDS: &[&str] = &[
     "role",
     "model",
     "instructions",
-    "backupModel",
     "threadLimit",
     "toolBudget",
-    "runtime",
-    "providerAccount",
     "providerInstance",
     "modelOptions",
     "setup",
 ];
 
 fn valid_base(value: &Value) -> bool {
-    let primary = value["model"].as_str().map(str::trim);
     bounded(&value["name"], 80, true)
         && bounded(&value["model"], 160, true)
         && bounded(&value["instructions"], 8000, true)
@@ -114,11 +96,6 @@ fn valid_base(value: &Value) -> bool {
                         .any(|ch| ch.is_control() || matches!(ch, '\u{2028}' | '\u{2029}'))
                 })
         })
-        && bounded(&value["backupModel"], 160, false)
-        && value["backupModel"]
-            .as_str()
-            .is_some_and(|text| Some(text.trim()) != primary && !text.chars().any(char::is_control))
-        && bounded(&value["providerAccount"], 64, false)
         && value
             .get("providerInstance")
             .is_none_or(|instance| bounded(instance, 64, false))
@@ -132,23 +109,6 @@ fn valid_base(value: &Value) -> bool {
             value
                 .as_u64()
                 .is_some_and(|value| (10..=200).contains(&value))
-        })
-        && value.get("runtime").is_none_or(|value| {
-            value.as_str().is_some_and(|runtime| {
-                matches!(
-                    runtime,
-                    "api"
-                        | "codex"
-                        | "claude"
-                        | "hermes"
-                        | "antigravity"
-                        | "grok"
-                        | "pi"
-                        | "opencode"
-                        | "gemini"
-                        | "kiro"
-                )
-            })
         })
 }
 
@@ -167,8 +127,6 @@ fn valid_edit(value: &Value) -> bool {
         "learnFromConversations",
         "memoryModel",
         "goalJudgeModel",
-        "confirmRuntime",
-        "harnessModel",
     ]);
     let pilot_change = fields(
         value,
@@ -185,16 +143,13 @@ fn valid_edit(value: &Value) -> bool {
                 && ["webAccess", "learnFromConversations"]
                     .iter()
                     .all(|key| value[*key].is_boolean())
-                && ["memoryModel", "goalJudgeModel", "harnessModel"]
+                && ["memoryModel", "goalJudgeModel"]
                     .iter()
                     .all(|key| {
                         value
                             .get(*key)
                             .is_none_or(|value| bounded(value, 160, false))
                     })
-                && value
-                    .get("runtime")
-                    .is_none_or(|_| value["confirmRuntime"] == true)
                 && value.get("setup").is_none()))
 }
 
@@ -264,10 +219,6 @@ fn switch_row(
     view! { <Row title=text(label) trailing=content(move || view! { <Switch label=label checked disabled change /> }) /> }
 }
 
-fn discovers(runtime: &str) -> bool {
-    matches!(runtime, "api" | "codex" | "claude")
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
     Avatar,
@@ -329,11 +280,6 @@ pub(super) fn agent_form(
             default_model
         },
     ));
-    let runtime = RwSignal::new(initial(
-        "runtime",
-        profile.runtime.unwrap_or_else(|| "api".into()),
-    ));
-    let account = RwSignal::new(initial("providerAccount", profile.provider_account));
     let provider_instance = RwSignal::new(initial(
         "providerInstance",
         profile.provider_instance,
@@ -346,7 +292,6 @@ pub(super) fn agent_form(
             .map(Value::Object)
             .unwrap_or_else(|| json!({})),
     );
-    let backup = RwSignal::new(initial("backupModel", profile.backup_model));
     let goal = RwSignal::new(initial(
         "goalJudgeModel",
         profile.goal_judge_model.unwrap_or_default(),
@@ -376,53 +321,23 @@ pub(super) fn agent_form(
             .as_bool()
             .unwrap_or(profile.learn_from_conversations != Some(0)),
     );
-    let harness_model = RwSignal::new(saved["harnessModel"].as_str().map(str::to_owned));
-    let runtime_chosen = RwSignal::new(editing || !saved.is_null());
     let model_edited = RwSignal::new(editing || !saved.is_null());
-    let runtimes = query::<Runtimes>(move || {
-        if editing {
-            format!("/api/agents/{}/runtimes", id.get_value())
-        } else {
-            "/api/runtimes".into()
-        }
-    });
-    let accounts = query::<Vec<Account>>(|| "/api/provider-accounts".into());
-    let logins = query::<Vec<Login>>(|| "/api/engine-logins".into());
     let instances = query::<ProviderInstances>(|| "/api/provider-instances".into());
     let models = query::<Models>(move || {
-        let runtime = runtime.get_untracked();
-        if !discovers(&runtime) {
+        let instance = provider_instance.get_untracked();
+        if instance.is_empty() {
             return String::new();
         }
-        format!(
-            "/api/models?runtime={}&account={}",
-            ui::encode(&runtime),
-            ui::encode(&account.get_untracked())
-        )
+        format!("/api/provider-instances/{}/models", ui::encode(&instance))
     });
     Effect::watch(
-        move || (runtime.get(), account.get()),
+        move || provider_instance.get(),
         move |_, _, _| {
             models.data.set(None);
             models.reload.run(());
         },
         false,
     );
-    Effect::new(move |_| {
-        if !runtime_chosen.get_untracked() {
-            runtimes.data.with(|data| {
-                if let Some(default) = data.as_ref().and_then(|data| {
-                    data.default_runtime.as_ref().filter(|default| {
-                        data.choices.iter().any(|choice| {
-                            &choice.runtime == *default && choice.available && choice.enabled
-                        })
-                    })
-                }) {
-                    runtime.set(default.clone());
-                }
-            });
-        }
-    });
     Effect::new(move |_| {
         if !model_edited.get_untracked() {
             let recommended = models.data.with(|data| {
@@ -439,94 +354,6 @@ pub(super) fn agent_form(
             }
         }
     });
-    let change_runtime = move |next: String| {
-        runtime_chosen.set(true);
-        if runtime.get_untracked() != next {
-            harness_model.set(None);
-            goal.set(String::new());
-            memory.set(String::new());
-            if account.with_untracked(|account| {
-                account.starts_with("login:")
-                    || account == "device" && !matches!(next.as_str(), "codex" | "claude")
-            }) {
-                account.set(String::new());
-            }
-            runtime.set(next);
-        }
-    };
-    let binding_options = Signal::derive(move || {
-        let current = account.get();
-        let engine = runtime.get();
-        let mut options = Vec::new();
-        if !accounts
-            .data
-            .with(|data| data.iter().flatten().any(|account| account.id.is_empty()))
-        {
-            options.push(("".to_owned(), "Default".to_owned()));
-        }
-        if matches!(engine.as_str(), "codex" | "claude") {
-            let signed_out = runtimes.data.with(|data| {
-                data.as_ref().is_some_and(|data| {
-                    data.choices
-                        .iter()
-                        .any(|choice| choice.runtime == engine && choice.signed_in == Some(false))
-                })
-            });
-            options.push((
-                "device".into(),
-                format!(
-                    "{} on this machine{}",
-                    if engine == "codex" {
-                        "Codex"
-                    } else {
-                        "Claude Code"
-                    },
-                    if signed_out { " · Signed out" } else { "" }
-                ),
-            ));
-        }
-        accounts.data.with(|data| {
-            for account in data.iter().flatten() {
-                let name: String = account.name.chars().take(40).collect();
-                options.push((
-                    account.id.clone(),
-                    format!(
-                        "{name}{}",
-                        if account.configured {
-                            ""
-                        } else {
-                            " · Not connected"
-                        }
-                    ),
-                ));
-            }
-        });
-        logins.data.with(|data| {
-            for login in data
-                .iter()
-                .flatten()
-                .filter(|login| login.runtime == engine)
-            {
-                options.push((
-                    format!("login:{}", login.id),
-                    format!(
-                        "{} login: {}{}",
-                        if engine == "codex" { "Codex" } else { "Claude" },
-                        login.name,
-                        if login.signed_in {
-                            ""
-                        } else {
-                            " · Signed out"
-                        }
-                    ),
-                ));
-            }
-        });
-        if !options.iter().any(|(id, _)| id == &current) {
-            options.insert(1, (current, "Unavailable account".into()));
-        }
-        options
-    });
     let tool = RwSignal::new(None::<Tool>);
     let look = RwSignal::new(None::<avatar::Look>);
     let tab = RwSignal::new("profile");
@@ -537,20 +364,6 @@ pub(super) fn agent_form(
     let locked = Signal::derive(move || journal.locked());
     let close = move || lifecycle.close();
     let revision = agent.as_ref().map(|agent| agent.revision);
-    let harness = Signal::derive(move || {
-        harness_model.get().unwrap_or_else(|| {
-            runtimes.data.with(|data| {
-                data.as_ref()
-                    .and_then(|data| {
-                        data.choices
-                            .iter()
-                            .find(|choice| choice.runtime == runtime.get())
-                            .map(|choice| choice.model.clone())
-                    })
-                    .unwrap_or_default()
-            })
-        })
-    });
     let finish = move |updated: Value| {
         if editing {
             lifecycle.close();
@@ -641,11 +454,9 @@ pub(super) fn agent_form(
             });
             return;
         }
-        let runtime = runtime.get_untracked();
         let mut body = json!({
             "name": name_value, "role": role.get_untracked().trim(), "model":model_value,
             "instructions":brief, "threadLimit":thread_limit, "toolBudget":tool_budget,
-            "backupModel":backup.get_untracked().trim(), "providerAccount":account.get_untracked(),
             "providerInstance":provider_instance.get_untracked(), "modelOptions":model_options.get_untracked(),
         });
         if let Some(revision) = revision {
@@ -663,21 +474,7 @@ pub(super) fn agent_form(
             }) {
                 body["goalJudgeModel"] = json!(changed_goal.trim());
             }
-            if original.with_value(|agent| {
-                agent
-                    .as_ref()
-                    .and_then(|agent| agent.profile.runtime.as_deref())
-                    .unwrap_or("api")
-                    != runtime
-            }) {
-                body["runtime"] = json!(runtime);
-                body["confirmRuntime"] = json!(true);
-            }
-            if !discovers(&runtime) {
-                body["harnessModel"] = json!(harness.get_untracked());
-            }
         } else {
-            body["runtime"] = json!(runtime);
             if drafting {
                 body["setup"] = json!(true);
             }
@@ -704,165 +501,79 @@ pub(super) fn agent_form(
             .data
             .with(|data| data.as_ref().is_some_and(|data| !data.models.is_empty()))
     });
-    let instance_options = Signal::derive(move || {
-        instances
-            .data
-            .with(|data| {
-                data.as_ref()
-                    .map(|data| {
-                        data.providers
-                            .iter()
-                            .filter(|provider| provider.enabled)
-                            .map(|provider| {
-                                (provider.id.clone(), provider.display_name.clone())
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            })
-    });
-    let memory_placeholder = Signal::derive(move || {
-        let main = model.get();
-        let main = main.trim();
-        let fallback = if main.is_empty() || main == "default" {
-            accounts.data.with(|data| {
-                data.iter()
-                    .flatten()
-                    .find(|item| item.id == account.get() && !item.default_model.is_empty())
-                    .map_or_else(|| main.to_owned(), |item| item.default_model.clone())
-            })
-        } else {
-            main.to_owned()
-        };
-        let default = models
-            .data
-            .with(|data| {
-                data.as_ref()
-                    .and_then(|data| data.memory_default.as_ref())
-                    .filter(|choice| {
-                        choice
-                            .replaces
-                            .as_ref()
-                            .is_none_or(|ids| ids.contains(&fallback))
-                    })
-                    .map(|choice| choice.model.clone())
-            })
-            .unwrap_or(fallback);
-        if default.is_empty() {
-            "Default".into()
-        } else {
-            format!("Default ({default})")
-        }
-    });
-    let backup_open = backup.with_untracked(|value| !value.is_empty());
-    let judge_open = goal.with_untracked(|value| !value.is_empty());
-    let name_label = Signal::derive(move || {
-        if !editing && setup.get() {
-            "Temporary name".to_owned()
-        } else {
-            "Name".to_owned()
-        }
-    });
+    let name_label = Signal::derive(move || if !editing && setup.get() { "Temporary name".to_owned() } else { "Name".to_owned() });
     let profile_fields = view! {
         <div class="agent-profile__avatar">
             {move || {
                 if let Some(agent) = lifecycle.live(&id.get_value()) {
                     avatar::picture(&agent, 40).into_any()
                 } else {
-                    view! { <span class="agent-profile__initials">
-                        {move || match look.get() {
-                            Some(look) => avatar::mascot(look, 40).into_any(),
-                            None => view! { <span class="avatar bs-avatar" aria-hidden="true">{avatar::initial(&name.get())}</span> }.into_any(),
-                        }}
-                    </span> }.into_any()
+                    view! { <span class="agent-profile__initials"><span class="avatar bs-avatar" aria-hidden="true">{avatar::initial(&name.get())}</span></span> }.into_any()
                 }
             }}
-            <span class="agent-profile__name">{avatar_title}</span>
+            <span class="agent-profile__name">{avatar_title.clone()}</span>
             <Button label="Change" disabled=locked click=Callback::new(move |()| tool.set(Some(Tool::Avatar))) />
         </div>
         <Text id="name" label=name_label value=name locked max=80 placeholder=text("Iris") optional=move || !editing && setup.get() />
         <Text id="role" label=text("Role") value=role locked max=60 optional=true />
-        <label class="k-field" for="instructions"><span class="k-field__label">
-            {move || if !editing && setup.get() { "Brief" } else { "Instructions" }}
-            <span class="k-field__optional" hidden=move || editing || setup.get()>"Optional"</span>
-        </span><textarea id="instructions" name="instructions" class="k-input k-textarea" rows="6" maxlength="8000"
-            placeholder=move || if !editing && setup.get() { "Describe the work this agent should help with." } else { "" }
-            prop:value=instructions readonly=locked on:input=move |event| instructions.set(event_target_value(&event))></textarea>
+        <label class="k-field" for="instructions"><span class="k-field__label">{move || if !editing && setup.get() { "Brief" } else { "Instructions" }}<span class="k-field__optional" hidden=move || editing || setup.get()>"Optional"</span></span>
+            <textarea id="instructions" name="instructions" class="k-input k-textarea" rows="6" maxlength="8000" placeholder=move || if !editing && setup.get() { "Describe the work this agent should help with." } else { "" } prop:value=instructions readonly=locked on:input=move |event| instructions.set(event_target_value(&event))></textarea>
             {editing.then(|| view! { <span class="agent-profile__count" aria-hidden="true">{move || format!("{}/8000", instructions.with(|text| text.encode_utf16().count()))}</span> })}
         </label>
     };
+    let goal_open = goal.with_untracked(|value| !value.is_empty());
+    let instance_options = Signal::derive(move || instances.data.with(|data| data.as_ref().map(|data| data.providers.iter().map(|provider| {
+        let ready = provider.enabled && provider.installed && (provider.kind != "codex" && provider.kind != "claude" || provider.auth.as_ref().is_some_and(|auth| auth.status == "authenticated"));
+        let reason = if !provider.enabled { "Disabled".into() } else if !provider.installed { "Not installed".into() } else if !ready { provider.auth.as_ref().and_then(|auth| auth.reason.clone()).unwrap_or_else(|| "Not authenticated".into()) } else { String::new() };
+        (provider.id.clone(), provider.display_name.clone(), ready, reason)
+    }).collect::<Vec<_>>()).unwrap_or_default()));
+    let model_options_for_selection = Signal::derive(move || models.data.with(|data| data.as_ref().and_then(|data| data.catalog.iter().find(|entry| entry.id == model.get()).map(|entry| entry.options.clone())).unwrap_or_default()));
     let model_fields = view! {
         <ui::Field label="Provider" name="provider-instance">
-            <Select name="providerInstance" value=provider_instance.into() options=instance_options
-                disabled=move || locked.get() change=Callback::new(move |value| {
-                    provider_instance.set(value);
-                    account.set(String::new());
-                }) />
+            <span class="connection-select"><select class="k-input k-select" name="providerInstance" aria-label="Provider instance" prop:value=provider_instance disabled=locked
+                on:change=move |event| { provider_instance.set(event_target_value(&event)); model.set(String::new()); model_options.set(json!({})); }>
+                <option value="">"Choose a provider"</option>
+                {move || instance_options.get().into_iter().map(|(id, label, available, reason)| view! { <option value=id disabled=!available>{if available { label } else { format!("{label} · {reason}") }}</option> }).collect_view()}
+            </select><span class="k-select__chev"><ui::Icon name="chevron-down" /></span></span>
             <ErrorNotice error=instances.error.into() retry=instances.reload />
         </ui::Field>
-        {agent.as_ref().filter(|agent| agent.profile.runtime.as_deref() == Some("api")).map(|_| view! {
-            <Button label="Use Codex" disabled=move || locked.get() || !runtimes.data.with(|data| data.as_ref().is_some_and(|data| data.choices.iter().any(|choice| choice.runtime == "codex" && choice.available && choice.enabled)))
-              click=Callback::new(move |()| { change_runtime("codex".into()); if let Some(form) = form.get_untracked() { let _ = form.request_submit(); } }) />
-        })}
-        <label class="k-field" for="agent-runtime"><span class="k-field__label">"Run with"</span>
-            <span class="connection-select agent-profile__runtime-select"><span class="agent-profile__runtime-icon"><ui::Icon name="globe" /></span><select id="agent-runtime" name="runtime" class="k-input k-select" disabled=locked
-                on:change=move |event| change_runtime(event_target_value(&event))>
-                <option value="api" prop:selected=move || runtime.with(|value| value == "api")>"API model"</option>
-                {move || runtimes.data.with(|data| data.iter().flat_map(|data| &data.choices).filter(|choice| choice.runtime != "api").map(|choice| {
-                    let id = choice.runtime.clone();
-                    let label = if choice.available && choice.enabled { choice.label.clone() } else { format!("{} · {}", choice.label, choice.reason.as_deref().unwrap_or("Unavailable")) };
-                    view! { <option value=id.clone() disabled=!choice.available || !choice.enabled prop:selected=move || runtime.with(|value| value == &id)>{label}</option> }
-                }).collect_view())}
-            </select><span class="k-select__chev"><ui::Icon name="chevron-down" /></span></span>
-        </label>
-        <ErrorNotice error=runtimes.error.into() retry=runtimes.reload />
-        <ui::Field label="Provider" name="agent-provider">
-            <Select name="agent-provider" value=account.into() options=binding_options disabled=move || locked.get() || !discovers(&runtime.get())
-              change=Callback::new(move |value| { if account.get_untracked() != value { memory.set(String::new()); account.set(value); } }) />
-            <ErrorNotice error=accounts.error.into() retry=accounts.reload />
-            <ErrorNotice error=logins.error.into() retry=logins.reload />
-        </ui::Field>
-        <Show when=move || !discovers(&runtime.get())>
-            <ui::Field label="Harness model" name="agent-harness-model">
-                <Select name="agent-harness-model" value=harness options=Signal::derive(move || runtimes.data.with(|data| {
-                    let mut options = vec![("".into(), "Host default".into())];
-                    if let Some(choice) = data.as_ref().and_then(|data| data.choices.iter().find(|choice| choice.runtime == runtime.get())) {
-                        options.extend(choice.models.iter().map(|model| (model.id.clone(), model.label.clone())));
-                    }
-                    options
-                })) change=Callback::new(move |value| harness_model.set(Some(value))) disabled=locked />
-            </ui::Field>
-        </Show>
         <div class="k-stack agent-model-field">
-            <Text id="model" label=text("Model") value=model locked=Signal::derive(move || locked.get() || !discovers(&runtime.get()))
-                required=true models=true suggestions=suggestions placeholder=text("Enter model ID") changed=Callback::new(move |()| model_edited.set(true)) />
+            <Text id="model" label=text("Model") value=model locked=Signal::derive(move || locked.get() || provider_instance.with(|value| value.is_empty())) required=true models=true suggestions=suggestions placeholder=text("Choose a provider model") changed=Callback::new(move |()| model_edited.set(true)) />
             <datalist id="agent-model-catalog">{move || models.data.with(|data| data.iter().flat_map(|data| data.models.iter().map(|id| {
                 let label = data.catalog.iter().find(|item| item.id == *id).map_or(id, |item| &item.label).clone();
                 view! { <option value=id.clone() label=label></option> }
             })).collect_view())}</datalist>
-            <span class="k-field__hint" role="status" hidden=move || !discovers(&runtime.get()) || !models.busy.get()>"Loading models"</span>
+            <span class="k-field__hint" role="status" hidden=move || !models.busy.get()>"Loading models"</span>
             <ErrorNotice error=models.error.into() retry=models.reload />
         </div>
+        <Show when=move || !model_options_for_selection.with(Vec::is_empty)>
+            <div class="agent-model-options"><h3>Model options</h3>
+                {move || model_options_for_selection.get().into_iter().map(|option| {
+                    let key = option.id.clone();
+                    if option.kind == "boolean" {
+                        let checked = Signal::derive({ let key = key.clone(); move || model_options.with(|value| value.get(&key).and_then(Value::as_bool).unwrap_or(false)) });
+                        let change_key = option.id.clone();
+                        view! { <ui::Row title=option.id.clone() trailing=content(move || view! { <Switch label=option.id.clone() checked disabled=locked change=Callback::new(move |value| model_options.update(|options| options[&change_key] = json!(value))) /> }) /> }.into_any()
+                    } else {
+                        let values = option.values.clone();
+                        let change_key = option.id.clone();
+                        let value_key = change_key.clone();
+                        view! { <ui::Field label=option.id.clone() name="model-option"><select class="k-input k-select" aria-label=option.id.clone() prop:value=move || model_options.with(|options| options.get(&value_key).and_then(Value::as_str).unwrap_or_default().to_owned()) disabled=locked on:change=move |event| model_options.update(|options| options[&change_key] = json!(event_target_value(&event)))>{values.into_iter().map(|value| view! { <option value=value.clone()>{value.clone()}</option> }).collect_view()}</select></ui::Field> }.into_any()
+                    }
+                }).collect_view()}
+            </div>
+        </Show>
         {editing.then(|| view! {
-            <ui::Disclosure title="Fallback model" open=backup_open>
-                <Text id="backupModel" label=text("Fallback model") value=backup locked=Signal::derive(move || locked.get() || runtime.with(|runtime| runtime != "api"))
-                    optional=true models=true suggestions=suggestions placeholder=text("Enter model ID") />
-            </ui::Disclosure>
-            <ui::Disclosure title="Goal judge model" open=judge_open>
+            <ui::Disclosure title="Goal judge model" open=goal_open>
                 <Text id="goalJudgeModel" label=text("Goal judge model") value=goal locked optional=true models=true suggestions=suggestions placeholder=text("Use agent model") />
             </ui::Disclosure>
             <Card>{switch_row("Learn from conversations", learn.into(), locked, Callback::new(move |value| learn.set(value)))}</Card>
-            <Text id="memoryModel" label=text("Memory model") value=memory locked optional=true models=true suggestions=suggestions placeholder=memory_placeholder />
         })}
     };
     let limits = move || {
         view! {
-            {(!editing).then(|| view! {
-                <Text id="backupModel" label=text("Fallback model") value=backup locked=Signal::derive(move || locked.get() || runtime.with(|runtime| runtime != "api"))
-                    optional=true models=true suggestions=suggestions placeholder=text("Enter model ID") />
-            })}
             {number("threadLimit", "Parallel chats", threads, 1, 32, locked)}
-            {number("toolBudget", "Tool step limit", budget, 10, 200, Signal::derive(move || locked.get() || runtime.with(|runtime| runtime != "api")))}
+            {number("toolBudget", "Tool step limit", budget, 10, 200, locked)}
         }
     };
     let recovery = view! {
@@ -921,7 +632,7 @@ pub(super) fn agent_form(
                     }).collect_view()}
                 </div>
                 {profile_fields}
-                <details class="k-collapsible connection-disclosure" node_ref=advanced open=backup_open>
+                <details class="k-collapsible connection-disclosure" node_ref=advanced open=true>
                     <summary class="k-collapsible__trigger"><span class="k-collapsible__title">"Advanced settings"</span>
                       <span class="k-collapsible__chev"><ui::Icon name="chevron-down" /></span></summary>
                     <div class="k-collapsible__content">{model_fields}{limits()}</div>
