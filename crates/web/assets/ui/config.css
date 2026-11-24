@@ -271,6 +271,8 @@
 }
 
 .provider-fact { max-width: 100%; overflow-wrap: anywhere; color: var(--color-text-secondary); font-size: 13px; }
+.agent-model-options { display: flex; flex-direction: column; gap: 12px; }
+.agent-model-options h3 { margin: 0; color: var(--color-text-tertiary); font-size: 12px; font-weight: 500; line-height: 16px; text-transform: uppercase; }
 .provider-model-id { font-family: var(--font-mono-stack); overflow-wrap: anywhere; }
 .app-settings__page:has(.provider-models) .k-row { flex-wrap: wrap; gap: 8px; padding: 8px; }
 .app-settings__page:has(.provider-models) .k-row__trailing { flex-shrink: 1; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }

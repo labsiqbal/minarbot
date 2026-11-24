@@ -23,6 +23,32 @@ struct ModelOption {
     values: Vec<String>,
 }
 
+fn option_label(id: &str) -> String {
+    match id {
+        "reasoningEffort" => "Reasoning effort".into(),
+        "serviceTier" => "Service tier".into(),
+        "fastMode" => "Fast mode".into(),
+        _ => id
+            .chars()
+            .enumerate()
+            .fold(String::new(), |mut label, (index, ch)| {
+                if index > 0 && ch.is_uppercase() {
+                    label.push(' ');
+                }
+                if index == 0 {
+                    label.extend(ch.to_uppercase());
+                } else {
+                    label.extend(ch.to_lowercase());
+                }
+                label
+            }),
+    }
+}
+
+fn value_label(value: &str) -> String {
+    option_label(value)
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 struct Models {
     models: Vec<String>,
@@ -530,11 +556,11 @@ pub(super) fn agent_form(
     let model_options_for_selection = Signal::derive(move || models.data.with(|data| data.as_ref().and_then(|data| data.catalog.iter().find(|entry| entry.id == model.get()).map(|entry| entry.options.clone())).unwrap_or_default()));
     let model_fields = view! {
         <ui::Field label="Provider" name="provider-instance">
-            <span class="connection-select"><select class="k-input k-select" name="providerInstance" aria-label="Provider instance" prop:value=provider_instance disabled=locked
+            <span class="connection-select"><select class="k-input" name="providerInstance" aria-label="Provider instance" prop:value=provider_instance disabled=locked
                 on:change=move |event| { provider_instance.set(event_target_value(&event)); model.set(String::new()); model_options.set(json!({})); }>
                 <option value="">"Choose a provider"</option>
                 {move || instance_options.get().into_iter().map(|(id, label, available, reason)| view! { <option value=id disabled=!available>{if available { label } else { format!("{label} · {reason}") }}</option> }).collect_view()}
-            </select><span class="k-select__chev"><ui::Icon name="chevron-down" /></span></span>
+            </select></span>
             <ErrorNotice error=instances.error.into() retry=instances.reload />
         </ui::Field>
         <div class="k-stack agent-model-field">
@@ -553,12 +579,14 @@ pub(super) fn agent_form(
                     if option.kind == "boolean" {
                         let checked = Signal::derive({ let key = key.clone(); move || model_options.with(|value| value.get(&key).and_then(Value::as_bool).unwrap_or(false)) });
                         let change_key = option.id.clone();
-                        view! { <ui::Row title=option.id.clone() trailing=content(move || view! { <Switch label=option.id.clone() checked disabled=locked change=Callback::new(move |value| model_options.update(|options| options[&change_key] = json!(value))) /> }) /> }.into_any()
+                        let label = option_label(&option.id);
+                        view! { <ui::Row title=label.clone() trailing=content(move || view! { <Switch label=label.clone() checked disabled=locked change=Callback::new(move |value| model_options.update(|options| options[&change_key] = json!(value))) /> }) /> }.into_any()
                     } else {
                         let values = option.values.clone();
                         let change_key = option.id.clone();
                         let value_key = change_key.clone();
-                        view! { <ui::Field label=option.id.clone() name="model-option"><select class="k-input k-select" aria-label=option.id.clone() prop:value=move || model_options.with(|options| options.get(&value_key).and_then(Value::as_str).unwrap_or_default().to_owned()) disabled=locked on:change=move |event| model_options.update(|options| options[&change_key] = json!(event_target_value(&event)))>{values.into_iter().map(|value| view! { <option value=value.clone()>{value.clone()}</option> }).collect_view()}</select></ui::Field> }.into_any()
+                        let label = option_label(&option.id);
+                        view! { <ui::Field label=label.clone() name="model-option"><select class="k-input" aria-label=label.clone() prop:value=move || model_options.with(|options| options.get(&value_key).and_then(Value::as_str).unwrap_or_default().to_owned()) disabled=locked on:change=move |event| model_options.update(|options| options[&change_key] = json!(event_target_value(&event)))>{values.into_iter().map(|value| { let text = value_label(&value); view! { <option value=value.clone()>{text}</option> } }).collect_view()}</select></ui::Field> }.into_any()
                     }
                 }).collect_view()}
             </div>

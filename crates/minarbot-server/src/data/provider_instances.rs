@@ -248,11 +248,24 @@ fn row(db: &Connection, id: &str) -> Result<Option<Value>> {
 
 pub(crate) fn instance(state: &AppState, id: &str) -> Result<Option<Value>> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
-    row(&guard.connection, id)
+    instance_from_db(&guard.connection, id)
+}
+
+pub(crate) fn instance_from_db(db: &Connection, id: &str) -> Result<Option<Value>> {
+    row(db, id)
 }
 
 pub(crate) fn launch_config(state: &AppState, id: &str) -> Result<Option<LaunchConfig>> {
-    let Some(row) = instance(state, id)? else {
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    launch_config_from_db(state, &guard.connection, id)
+}
+
+pub(crate) fn launch_config_from_db(
+    state: &AppState,
+    db: &Connection,
+    id: &str,
+) -> Result<Option<LaunchConfig>> {
+    let Some(row) = row(db, id)? else {
         return Ok(None);
     };
     let kind = string(&row, "kind").to_owned();

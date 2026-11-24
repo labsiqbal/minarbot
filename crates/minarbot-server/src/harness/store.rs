@@ -303,8 +303,9 @@ pub async fn approve(
             None => Some(""),
         };
         let mut secrets = vec![token.to_owned()];
-        if let Some(instance) = crate::data::provider_instances::launch_config(
+        if let Some(instance) = crate::data::provider_instances::launch_config_from_db(
             state,
+            db,
             string(&profile, "provider_instance"),
         )? {
             secrets.extend(instance.3.into_values().filter(|value| !value.is_empty()));
@@ -1707,6 +1708,9 @@ pub async fn run(
         }
         db.connection.last_insert_rowid()
     };
+    if !memory {
+        state.turns.mark_started(turn_id);
+    }
     let external = if !judging && state.config.harness.test_harness_bridge.is_some() {
         bridge(
             state,

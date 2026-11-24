@@ -219,7 +219,7 @@ pub fn ready(state: &AppState, db: &Connection, agent: &str) -> Result<()> {
         ));
     }
     let instance = string(&profile, "provider_instance");
-    let instance = data::provider_instances::instance(state, instance)?
+    let instance = data::provider_instances::instance_from_db(db, instance)?
         .ok_or_else(|| error(503, "Choose a provider instance before starting this task."))?;
     if instance["enabled"] != 1 {
         return Err(error(503, "This provider instance is disabled."));
@@ -235,10 +235,14 @@ pub fn ready(state: &AppState, db: &Connection, agent: &str) -> Result<()> {
     }
     Ok(())
 }
-pub fn account(state: &AppState, db: &Connection, agent: &str) -> Result<data::providers::Account> {
+pub fn account(
+    _state: &AppState,
+    db: &Connection,
+    agent: &str,
+) -> Result<data::providers::Account> {
     let a = data::agents::read(db, agent)?;
     let id = string(&a, "providerInstance");
-    let row = data::provider_instances::instance(state, id)?
+    let row = data::provider_instances::instance_from_db(db, id)?
         .ok_or_else(|| error(503, "Choose a provider instance before starting this task."))?;
     if row["enabled"] != 1 {
         return Err(error(503, "This provider instance is disabled."));

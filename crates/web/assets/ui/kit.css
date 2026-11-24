@@ -50,6 +50,7 @@ input, textarea { caret-color: var(--color-brand); }
 .k-input:hover:not(:disabled):not(:focus) { border-color: var(--color-border-primary); }
 .k-input:focus, .k-input:focus-visible, .k-input[data-state='open'] { border-color: var(--color-border-focus); box-shadow: 0 0 0 3px var(--color-focus-ring); }
 .k-input[readonly], .k-input:disabled { color: var(--color-text-secondary); background: var(--color-bg-subtle); }
+select.k-input { display: block; }
 .is-invalid .k-input { border-color: var(--color-danger); }
 .k-textarea { height: auto; min-height: 96px; padding: 9px 11px; resize: vertical; line-height: 20px; font-family: inherit; }
 .k-select { justify-content: space-between; gap: 8px; text-align: left; cursor: pointer; }
@@ -72,6 +73,7 @@ input, textarea { caret-color: var(--color-brand); }
 .k-combobox__list { margin: 0; padding: 0; list-style: none; }
 .k-combobox__value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono-stack); font-size: 12.5px; }
 .k-combobox__value.is-label { font-family: inherit; font-size: 13px; }
+.k-combobox input[list]::-webkit-calendar-picker-indicator { display: none; }
 .k-combobox__empty { padding: 8px 10px; font-size: 13px; color: var(--color-text-tertiary); }
 .k-menu__item {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; padding: 6px 10px; border-radius: 8px;
