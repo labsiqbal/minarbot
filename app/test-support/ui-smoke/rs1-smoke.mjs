@@ -58,7 +58,7 @@ export async function widePanelsSmoke({ check, page, agentChat, visible, hidden,
   await check('RS1 settings icons, search, keyboard and filled current destination', async () => {
     const dialog = await settings('Appearance');
     const nav = dialog.getByRole('navigation', { name: 'Settings', exact: true });
-    const destinations = ['General', 'Appearance', 'Skills', 'Providers', 'Engines', 'Connected apps', 'Email', 'MCP connections', 'Vault', 'Machines', 'Devices', 'Computer', 'Updates', 'Usage', 'Shared data', 'Backup & restore', 'External access'];
+    const destinations = ['General', 'Appearance', 'Skills', 'Providers', 'Connected apps', 'Email', 'MCP connections', 'Vault', 'Machines', 'Devices', 'Computer', 'Updates', 'Usage', 'Shared data', 'Backup & restore', 'External access'];
     assert.deepEqual(await nav.getByRole('button').allTextContents(), destinations);
     assert(await nav.getByRole('button').evaluateAll(buttons => buttons.every(button => button.firstElementChild?.tagName.toLowerCase() === 'svg' && button.firstElementChild.getAttribute('aria-hidden') === 'true')));
     const selected = nav.getByRole('button', { name: 'Appearance', exact: true });

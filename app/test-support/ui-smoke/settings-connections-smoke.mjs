@@ -31,15 +31,12 @@ const ready = new Promise((resolve, reject) => {
 server.stdin.end(JSON.stringify({ database: join(dir, 'state.sqlite'), dist, port: 0, }));
 
 const agent = '10000000-0000-4000-8000-000000000001';
-const provider = '20000000-0000-4000-8000-000000000001';
-const login = '30000000-0000-4000-8000-000000000001';
 const connection = '40000000-0000-4000-8000-000000000001';
 const entry = { name: 'fixture-login', kind: 'login', origin: 'https://example.test', agents: [], revision: 1, hasTotp: true, hasNotes: true };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const proof = 'synthetic-value-only';
 const routes = [
   ['providers', 'Providers', 'Example provider'],
-  ['engines', 'Engines', 'Fixture login'],
   ['skills', 'Skills', 'No skills'],
   ['connected-apps', 'Connected apps', 'Connect apps'],
   ['hub', 'minarbot.com', 'Not linked'],
@@ -61,13 +58,7 @@ function fixtureRequests() {
     '/api/agents': { agents: [{ id: agent, name: 'Fixture agent', role: 'Fixture', runtime: 'api' }], guide: null, hubAvailable: true },
     '/api/projects': { projects: [] },
     '/api/channels': [],
-    '/api/provider-accounts': [{
-      id: provider, name: 'Example provider', source: 'settings', configured: true, provider: 'openai-compatible',
-      baseURL: 'https://provider.example.test/v1', host: 'provider.example.test', defaultModel: 'fixture/model', revision: 1,
-    }],
-    '/api/models': { models: ['fixture/model', 'fixture/other', 'another/model'] },
-    '/api/runtimes': { choices: [{ runtime: 'codex', label: 'Codex', available: true, enabled: true, signedIn: true, version: '1.2.3', reason: null, models: [] }] },
-    '/api/engine-logins': [{ id: login, name: 'Fixture login', runtime: 'codex', signedIn: false, checkedAt: null, command: 'codex login' }],
+    '/api/provider-instances': { providers: [{ id: 'fixture-codex', kind: 'codex', displayName: 'Fixture Codex', enabled: true, installed: true, version: '1.2.3', status: 'installed', auth: { status: 'authenticated', method: 'ChatGPT' }, binaryPath: '/usr/bin/codex', homePath: '/tmp/codex', shadowHomePath: '', launchArgs: [], environment: [], revision: 1, models: [] }] },
     '/api/skill-packs': { packs: [], next_after: null },
     ['/api/agents/' + agent + '/skills']: { items: [], next_after: null },
     '/api/connected-apps/key': { source: 'none', revision: 0 },
@@ -99,12 +90,7 @@ function fixtureRequests() {
     const privateValue = apiKey ?? token ?? key ?? password;
     if (privateValue) assert(privateValue === proof, 'Unexpected secret in test request.');
     posts.push([path, fields]);
-    if (path === '/api/provider-accounts/test') return http.fulfill({ json: { models: ['fixture/model'] } });
-    if (path === '/api/engine-logins/' + login + '/check') {
-      const changed = { ...fixtures['/api/engine-logins'][0], signedIn: true };
-      fixtures['/api/engine-logins'][0] = changed;
-      return http.fulfill({ json: changed });
-    }
+    if (path.startsWith('/api/provider-instances/')) return http.fulfill({ json: fixtures['/api/provider-instances'] });
     if (path === '/api/skills') {
       const created = body.files
         ? { ...body, name: 'fixture-import', description: 'Review a fixture', content: 'Check the folder.', revision: 1, latest: 1 }
@@ -140,22 +126,16 @@ async function exercise(page, slug) {
       const opener = button('Add provider');
       await opener.press('Enter');
       const editor = dialog('Add provider');
-      await editor.getByLabel('Name', { exact: true }).fill('Fixture draft');
-      await editor.getByLabel('API key', { exact: true }).fill(proof);
-      await editor.getByRole('button', { name: 'Test', exact: true }).press('Enter');
-      await editor.getByText('1 models found').waitFor();
+      await editor.getByRole('button', { name: 'Continue', exact: true }).press('Enter');
+      await editor.getByLabel('Display name', { exact: true }).fill('Fixture draft');
+      await editor.getByRole('button', { name: 'Continue', exact: true }).press('Enter');
+      await editor.getByRole('button', { name: 'Configure manually', exact: true }).press('Enter');
       await page.keyboard.press('Escape');
       await editor.waitFor({ state: 'hidden' });
       assert(await opener.evaluate(element => document.activeElement === element), 'Provider dialog lost opener focus.');
-      const search = page.getByRole('searchbox', { name: 'Search models for Example provider' });
-      await search.fill('unknown');
-      await page.getByText('No matching models', { exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Providers', exact: true }).waitFor();
       break;
     }
-    case 'engines':
-      await button('Check sign-in').press('Enter');
-      await page.getByRole('status').filter({ hasText: 'Signed in' }).waitFor();
-      break;
     case 'skills': {
       await button('Create skill').press('Enter');
       const editor = dialog('New skill');
