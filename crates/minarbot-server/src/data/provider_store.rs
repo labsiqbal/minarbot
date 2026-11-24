@@ -79,6 +79,46 @@ fn decrypt(key: &LessSafeKey, row: &Value) -> Option<String> {
     String::from_utf8(plain.to_vec()).ok()
 }
 
+/// Read a key written by the legacy provider-account store.  Migration keeps
+/// this separate from the public account reader so the old account ID remains
+/// the AEAD associated data until the value is re-encrypted for its instance.
+pub(crate) fn decrypt_legacy_secret(
+    database: &Path,
+    account_id: &str,
+    ciphertext: &str,
+) -> Option<String> {
+    let key = wrapping_key(database, false).ok()?;
+    let mut bytes = B64.decode(ciphertext).ok()?;
+    let nonce = bytes.get(..12)?.try_into().ok()?;
+    let plain = key
+        .open_in_place(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(account_id.as_bytes()),
+            &mut bytes[12..],
+        )
+        .ok()?;
+    String::from_utf8(plain.to_vec()).ok()
+}
+
+pub(crate) fn reencrypt_legacy_secret(
+    database: &Path,
+    account_id: &str,
+    instance_id: &str,
+    ciphertext: &str,
+) -> Option<String> {
+    let value = decrypt_legacy_secret(database, account_id, ciphertext)?;
+    let key = wrapping_key(database, true).ok()?;
+    let nonce = random::<12>().ok()?;
+    let mut bytes = value.into_bytes();
+    key.seal_in_place_append_tag(
+        Nonce::assume_unique_for_key(nonce),
+        Aad::from(instance_id.as_bytes()),
+        &mut bytes,
+    )
+    .ok()?;
+    Some(B64.encode([nonce.as_slice(), &bytes].concat()))
+}
+
 pub(crate) fn encrypt_secret(state: &AppState, id: &str, value: &str) -> Result<String> {
     let key = wrapping_key(&state.config.database, true)?;
     let nonce = random::<12>()?;

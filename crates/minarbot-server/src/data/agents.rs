@@ -205,8 +205,16 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
         } else {
             json!(0)
         };
-        let provider_reason =
-            binding_blocked_reason(db, &runtime, string(a, "provider_account"), &accounts)?;
+        let instance = if string(a, "provider_instance").is_empty() {
+            None
+        } else {
+            provider_instance_kind(db, string(a, "provider_instance"))?
+        };
+        let provider_reason = if let Some((_, enabled)) = instance.as_ref() {
+            (!enabled).then_some("This provider instance is disabled.")
+        } else {
+            binding_blocked_reason(db, &runtime, string(a, "provider_account"), &accounts)?
+        };
         let blocked_reason = provider_reason.or(runtime_blocked_reason(
             state,
             db,
@@ -303,6 +311,15 @@ fn provider_instance(v: &Value) -> Result<Option<&str>> {
                 .ok_or_else(|| error(400, "Invalid provider instance."))
         })
         .transpose()
+}
+
+fn provider_instance_kind(db: &Connection, id: &str) -> Result<Option<(String, bool)>> {
+    Ok(one(
+        db,
+        "SELECT kind,enabled FROM provider_instances WHERE id=?",
+        [id],
+    )?
+    .map(|row| (string(&row, "kind").to_owned(), row["enabled"] == 1)))
 }
 fn model_options(v: &Value) -> Result<Option<String>> {
     v.get("modelOptions")
@@ -404,15 +421,37 @@ pub fn create(
         .transpose()?
         .and_then(|v| v["runtime"].as_str().map(str::to_owned))
         .unwrap_or_else(|| "api".into());
-    let runtime = runtime(v)?.map(str::to_owned).unwrap_or_else(|| {
-        if previous.is_some() {
-            old_runtime
-        } else if executable(state, "codex").is_some() {
-            "codex".into()
-        } else {
-            "api".into()
+    let requested_runtime = runtime(v)?.map(str::to_owned);
+    let instance_kind = provider_instance
+        .map(|id| provider_instance_kind(db, id))
+        .transpose()?
+        .flatten();
+    if provider_instance.is_some() && instance_kind.is_none() {
+        return Err(error(400, "Provider instance not found."));
+    }
+    if let (Some(requested), Some((kind, _))) =
+        (requested_runtime.as_deref(), instance_kind.as_ref())
+    {
+        if requested != kind && requested != "api" {
+            return Err(error(
+                400,
+                "Provider instance does not match the selected runtime.",
+            ));
         }
-    });
+    }
+    let runtime = instance_kind
+        .as_ref()
+        .map(|(kind, _)| kind.clone())
+        .or(requested_runtime)
+        .unwrap_or_else(|| {
+            if previous.is_some() {
+                old_runtime
+            } else if executable(state, "codex").is_some() {
+                "codex".into()
+            } else {
+                "api".into()
+            }
+        });
     if previous.is_none() && runtime != "api" && executable(state, &runtime).is_none() {
         return Err(error(
             400,
@@ -447,7 +486,7 @@ pub fn create(
     if let Some(options) = &model_options {
         request["modelOptions"] = serde_json::from_str(options).map_err(|_| Failure::storage())?;
     }
-    if runtime != "api" {
+    if provider_instance.is_none() && runtime != "api" {
         request["runtime"] = json!(runtime);
     }
     if let Some(old) = previous {
@@ -548,7 +587,18 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     let account = account(v)?;
     let provider_instance = provider_instance(v)?;
     let model_options = model_options(v)?;
-    let runtime = runtime(v)?;
+    let instance_kind = provider_instance
+        .map(|id| provider_instance_kind(db, id))
+        .transpose()?
+        .flatten();
+    if provider_instance.is_some() && instance_kind.is_none() {
+        return Err(error(400, "Provider instance not found."));
+    }
+    let runtime = if provider_instance.is_some() {
+        None
+    } else {
+        runtime(v)?
+    };
     bounds(v)?;
     if v.get("webAccess").is_some_and(|value| !value.is_boolean()) {
         return Err(error(400, "Web access must be a boolean."));
@@ -605,8 +655,10 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         "learnFromConversations",
         "memoryModel",
     ] {
-        if let Some(value) = v.get(key) {
-            request[key] = value.clone();
+        if key != "runtime" || provider_instance.is_none() {
+            if let Some(value) = v.get(key) {
+                request[key] = value.clone();
+            }
         }
     }
     if runtime.is_some() {
@@ -642,7 +694,13 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         return Err(error(400,"Primary and fallback models must differ. Clear the fallback model or choose another model."));
     }
     let saved_binding = string(&current, "provider_account");
-    let selected_runtime = runtime.unwrap_or_else(|| string(&current, "runtime"));
+    let selected_runtime = instance_kind
+        .as_ref()
+        .map(|(kind, _)| kind.as_str())
+        .or(runtime)
+        .unwrap_or_else(|| string(&current, "runtime"));
+    let instance_changed =
+        provider_instance.is_some_and(|instance| instance != string(&current, "provider_instance"));
     if let Some(binding) = account.or_else(|| {
         (runtime.is_some()
             && (saved_binding.starts_with(super::logins::PREFIX)
@@ -668,6 +726,9 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
             db.execute("UPDATE agents SET runtime=? WHERE id=?", [runtime, id])?;
             reset_harness(db, id)?;
         }
+    }
+    if instance_changed {
+        reset_harness(db, id)?;
     }
     if let Some(raw) = v.get("harnessModel") {
         let harness_model = raw

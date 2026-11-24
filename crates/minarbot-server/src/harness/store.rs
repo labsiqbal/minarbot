@@ -682,8 +682,8 @@ async fn execute(
         if let Some(effort) = model_options["effort"].as_str() {
             args.extend(["--effort".into(), effort.into()]);
         }
-        if model_options["fast"] == true {
-            args.push("--fast".into());
+        if model_options["fastMode"] == true || model_options["fast"] == true {
+            args.extend(["--settings".into(), json!({"fastMode":true}).to_string()]);
         }
         args
     } else {
@@ -1676,6 +1676,16 @@ pub async fn run(
         ])
     } else if let Some(folder) = &device {
         json!([data::logins::DEVICE, folder, model])
+    } else if let Some(instance) = &instance {
+        json!([
+            "instance",
+            instance_id,
+            instance.0,
+            instance.1,
+            instance.2,
+            instance.3,
+            model
+        ])
     } else {
         return Err(Failure::storage());
     }

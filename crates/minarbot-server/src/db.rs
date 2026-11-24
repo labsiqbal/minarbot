@@ -40,45 +40,15 @@ const BASELINE_LEDGER: &[(&str, &str)] = &[
     ),
 ];
 pub(crate) const BASELINE_VERSION: i64 = BASELINE_LEDGER.len() as i64;
-const PROVIDER_INSTANCE_MIGRATION: &str = r#"
-CREATE TABLE IF NOT EXISTS provider_instances(
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN(0,1)),
-    binary_path TEXT NOT NULL DEFAULT '',
-    home_path TEXT NOT NULL DEFAULT '',
-    shadow_home_path TEXT NOT NULL DEFAULT '',
-    launch_args TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(launch_args)),
-    environment TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(environment)),
-    accent_color TEXT NOT NULL DEFAULT '',
-    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
-    created TEXT NOT NULL DEFAULT '',
-    updated TEXT NOT NULL DEFAULT ''
-) STRICT;
-ALTER TABLE agents ADD COLUMN provider_instance TEXT NOT NULL DEFAULT '';
-ALTER TABLE agents ADD COLUMN model_options TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(model_options));
-INSERT OR IGNORE INTO provider_instances(id,kind,display_name,created,updated)
-SELECT kind,kind,kind,'','' FROM (SELECT 'codex' AS kind UNION ALL SELECT 'claude' UNION ALL SELECT 'hermes' UNION ALL SELECT 'antigravity' UNION ALL SELECT 'grok' UNION ALL SELECT 'pi' UNION ALL SELECT 'opencode' UNION ALL SELECT 'gemini' UNION ALL SELECT 'kiro');
-INSERT OR IGNORE INTO provider_instances(id,kind,display_name,created,updated,environment)
-SELECT CASE WHEN family='anthropic' THEN 'claude-api-' ELSE 'codex-api-' END||id,
-       CASE WHEN family='anthropic' THEN 'claude' ELSE 'codex' END,
-       name,'','',json_array(json_object('name',CASE WHEN family='anthropic' THEN 'ANTHROPIC_API_KEY' ELSE 'MINARBOT_PROVIDER_KEY' END,'value',key_ciphertext,'secret',1,'legacyAccountId',id))
-FROM provider_accounts;
-"#;
-const LOCAL_AGENT_PROVIDER_MIGRATION: &str = r#"
-UPDATE agents SET provider_instance=CASE
-    WHEN provider_account='device' AND runtime IN('codex','claude') THEN runtime
-    WHEN provider_account LIKE 'login:%' THEN runtime||'-'||substr(provider_account,7)
-    WHEN provider_account<>'' AND runtime='codex' THEN 'codex-api-'||provider_account
-    WHEN provider_account<>'' AND runtime='claude' THEN 'claude-api-'||provider_account
-    ELSE provider_instance END
-WHERE provider_instance='';
-"#;
+const PROVIDER_INSTANCE_MIGRATION: &str = concat!(
+    include_str!("data/provider-instances.sql"),
+    "\nALTER TABLE agents ADD COLUMN provider_instance TEXT NOT NULL DEFAULT '';\n",
+    "ALTER TABLE agents ADD COLUMN model_options TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(model_options));\n",
+);
 const CANONICAL_MIGRATIONS: &[(&str, &str)] =
     &[("v7_provider_instances", PROVIDER_INSTANCE_MIGRATION)];
 pub const SCHEMA_VERSION: i64 = BASELINE_VERSION + CANONICAL_MIGRATIONS.len() as i64;
-const LOCAL_MIGRATIONS: &[&str] = &[PROVIDER_INSTANCE_MIGRATION, LOCAL_AGENT_PROVIDER_MIGRATION];
+const LOCAL_MIGRATIONS: &[&str] = &[PROVIDER_INSTANCE_MIGRATION];
 
 const PROVIDER_ACCOUNTS: &str = include_str!("data/provider-accounts.sql");
 const PROVIDER_INSTANCES: &str = include_str!("data/provider-instances.sql");

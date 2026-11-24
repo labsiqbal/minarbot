@@ -35,8 +35,8 @@ pub async fn call(
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         one(
             &guard.connection,
-            "SELECT a.runtime,a.provider_account FROM turns t JOIN agents a ON a.id=t.agent
-             WHERE t.id=? AND a.runtime<>'api'",
+            "SELECT a.runtime,a.provider_account,a.provider_instance FROM turns t JOIN agents a ON a.id=t.agent
+             WHERE t.id=? AND (a.runtime<>'api' OR a.provider_instance<>'')",
             [turn],
         )?
     };

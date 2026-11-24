@@ -298,7 +298,7 @@ pub(crate) async fn models_for_instance(
                 ]),
                 "claude" => json!([
                     {"id":"effort","type":"string","values":["low","medium","high"]},
-                    {"id":"fast","type":"boolean"}
+                    {"id":"fastMode","type":"boolean"}
                 ]),
                 _ => json!([]),
             };
