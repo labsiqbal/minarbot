@@ -779,6 +779,9 @@ async fn main() -> db::Result<()> {
         computer: computer.clone(),
     };
     if state.auth.is_none() {
+        data::provider_instances::configure_test_gateway(&state).map_err(|e| e.message)?;
+    }
+    if state.auth.is_none() {
         let db = state
             .database
             .lock()

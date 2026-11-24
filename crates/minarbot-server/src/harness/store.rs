@@ -1106,6 +1106,13 @@ async fn execute(
                         &arguments,
                         &result,
                     )?;
+                    if completed && kind == "mcpToolCall" {
+                        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+                        guard.connection.execute(
+                            "UPDATE turns SET tool_budget_used=tool_budget_used+1,tool_budget_stopped=CASE WHEN tool_budget_used+1 >= (SELECT tool_budget FROM agents WHERE agents.id=turns.agent) THEN tool_budget_used+1 ELSE tool_budget_stopped END WHERE id=?",
+                            [string(turn, "id")],
+                        )?;
+                    }
                 }
                 if method == "item/completed" && p["item"]["type"] == "commandExecution" {
                     let item = &p["item"];
@@ -1645,6 +1652,9 @@ pub async fn run(
         )?);
     }
     env.extend(instance_environment.clone());
+    if let Some(tool_budget) = profile["tool_budget"].as_i64() {
+        env.insert("MINARBOT_TOOL_BUDGET".into(), tool_budget.to_string());
+    }
     let same_home;
     {
         let mut homes = state.config.harness.homes.lock().await;

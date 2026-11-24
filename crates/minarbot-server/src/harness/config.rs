@@ -39,6 +39,20 @@ pub struct Config {
     #[serde(skip)]
     clocks: Arc<SyncMutex<HashMap<String, TurnClock>>>,
 }
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TestGateway {
+    #[serde(rename = "baseURL")]
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub default_model: Option<String>,
+    pub provider: Option<String>,
+    pub binary: String,
+    pub stream: Option<bool>,
+    pub stream_termination: Option<String>,
+    pub max_tokens: Option<u64>,
+}
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Bridge {

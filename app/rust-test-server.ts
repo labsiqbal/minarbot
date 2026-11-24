@@ -25,9 +25,26 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
   const connectors = await connectorsTestBridge(options).catch(async error => { await bridge.close(); throw error; });
   const pdfBridge = await pdfTestBridge(options.pdfFault);
   const harnessBridge = await harnessTestBridge(options.harness as Parameters<typeof harnessTestBridge>[0]);
-  const { peerTokenIssuer: unusedIssuer, machines, desktop, testPathPrefix, pdfFault: unusedPdfFault, ...serializable } = options;
+  const legacyAccount = Array.isArray(options.accounts) && options.accounts.length > 0 && typeof options.accounts[0] === 'object' && options.accounts[0] !== null ? options.accounts[0] as Record<string, unknown> : undefined;
+  const gateway = (options.baseURL !== undefined || legacyAccount !== undefined)
+    ? {
+      ...options.harness,
+      executables: { ...(options.harness?.executables ?? {}), codex: fileURLToPath(new URL('./fixtures/fake-gateway-harness.mjs', import.meta.url)) },
+      testGateway: {
+        baseURL: options.baseURL ?? legacyAccount?.baseURL,
+        apiKey: options.apiKey ?? legacyAccount?.apiKey,
+        defaultModel: options.defaultModel ?? legacyAccount?.defaultModel,
+        provider: options.provider ?? legacyAccount?.provider,
+        binary: fileURLToPath(new URL('./fixtures/fake-gateway-harness.mjs', import.meta.url)),
+        stream: options.stream,
+        streamTermination: options.streamTermination,
+        maxTokens: typeof options.maxTokens === 'number' ? options.maxTokens : undefined,
+      },
+    }
+    : options.harness;
+  const { peerTokenIssuer: unusedIssuer, machines, desktop, testPathPrefix, pdfFault: unusedPdfFault, ...serializable } = { ...options, harness: gateway };
   let config: string;
-  try { config = JSON.stringify({ ...serializable, hubLink: options.hubLink ? { origin: options.hubLink.origin, hubSigningPublicKey: options.hubLink.hubSigningPublicKey, development: options.hubLink.development, reconnectMs: options.hubLink.reconnectMs } : undefined, harness: options.harness ? { ...options.harness, issuer: undefined } : undefined, testHarnessBridge: harnessBridge.config, testPdfBridge: pdfBridge.config, desktop: desktop ? { ...desktop, runtime: undefined, now: undefined, testRuntime: !!desktop.runtime } : undefined, machines: machines ? { healthIntervalMs: machines.healthIntervalMs } : undefined, testConnectorBridge: connectors.config, testComputerBridge: bridge.config }, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key}`); return value; }); } catch (error) { await bridge.close(); await connectors.close(); await harnessBridge.close(); await pdfBridge.close(); throw error; }
+  try { config = JSON.stringify({ ...serializable, hubLink: options.hubLink ? { origin: options.hubLink.origin, hubSigningPublicKey: options.hubLink.hubSigningPublicKey, development: options.hubLink.development, reconnectMs: options.hubLink.reconnectMs } : undefined, harness: gateway ? { ...gateway, issuer: undefined } : undefined, testHarnessBridge: harnessBridge.config, testPdfBridge: pdfBridge.config, desktop: desktop ? { ...desktop, runtime: undefined, now: undefined, testRuntime: !!desktop.runtime } : undefined, machines: machines ? { healthIntervalMs: machines.healthIntervalMs } : undefined, testConnectorBridge: connectors.config, testComputerBridge: bridge.config }, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key}`); return value; }); } catch (error) { await bridge.close(); await connectors.close(); await harnessBridge.close(); await pdfBridge.close(); throw error; }
   const root = fileURLToPath(new URL('../', import.meta.url));
   const child = spawn(binary, ['--test-config'], { cwd: root, env: { ...process.env, ...(testPathPrefix ? { PATH: testPathPrefix + ':' + process.env.PATH } : {}), MINARBOT_TEST_SERVER: 'rust', MINARBOT_TEST_PARENT: String(process.pid) }, stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = new Promise<void>(closed => child.once('close', () => closed()));

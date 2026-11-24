@@ -303,6 +303,67 @@ pub(crate) fn launch_config_from_db(
     Ok(Some((kind, binary, args, environment)))
 }
 
+/// Seed one provider instance for legacy Node fixtures. Production config never
+/// reaches this path. The API key still uses the provider-instance encryption
+/// path so the gateway process receives only the decrypted launch environment.
+pub(crate) fn configure_test_gateway(state: &AppState) -> Result<()> {
+    if !state.config.harness.test_mode {
+        return Ok(());
+    }
+    let gateway = state
+        .config
+        .harness
+        .harness
+        .as_ref()
+        .and_then(|value| value.get("testGateway"))
+        .cloned()
+        .map(serde_json::from_value::<crate::harness::config::TestGateway>)
+        .transpose()
+        .map_err(|_| Failure::storage())?;
+    let Some(gateway) = gateway.as_ref() else {
+        return Ok(());
+    };
+    let key = gateway.api_key.as_deref().unwrap_or("");
+    let encrypted = provider_store::encrypt_secret(state, "codex-test-gateway", key)?;
+    let mut environment = vec![
+        json!({"name":"MINARBOT_GATEWAY_BASE_URL","value":gateway.base_url.trim_end_matches('/'),"secret":false}),
+        json!({"name":"MINARBOT_PROVIDER_KEY","value":encrypted,"secret":true}),
+    ];
+    for (name, value) in [
+        (
+            "MINARBOT_GATEWAY_MODEL",
+            gateway.default_model.as_deref().unwrap_or(""),
+        ),
+        (
+            "MINARBOT_GATEWAY_PROVIDER",
+            gateway.provider.as_deref().unwrap_or("openai-compatible"),
+        ),
+        (
+            "MINARBOT_GATEWAY_STREAM",
+            if gateway.stream == Some(true) {
+                "true"
+            } else {
+                "false"
+            },
+        ),
+        (
+            "MINARBOT_GATEWAY_STREAM_TERMINATION",
+            gateway.stream_termination.as_deref().unwrap_or("marker"),
+        ),
+    ] {
+        environment.push(json!({"name":name,"value":value,"secret":false}));
+    }
+    if let Some(max_tokens) = gateway.max_tokens {
+        environment.push(json!({"name":"MINARBOT_GATEWAY_MAX_TOKENS","value":max_tokens.to_string(),"secret":false}));
+    }
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    guard.connection.execute(
+        "INSERT INTO provider_instances(id,kind,display_name,enabled,binary_path,environment,created,updated) VALUES('codex-test-gateway','codex','Test gateway',1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET binary_path=excluded.binary_path,environment=excluded.environment,enabled=1",
+        params![gateway.binary, Value::Array(environment).to_string(), state.config.now().to_string(), state.config.now().to_string()],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn migrate_legacy(db: &Connection) -> crate::db::Result<()> {
     let table = |name: &str| -> rusqlite::Result<bool> {
         Ok(db
@@ -764,6 +825,26 @@ mod tests {
         assert!(valid_slug("codex"));
         assert!(!valid_slug("../codex"));
         assert!(!valid_slug(""));
+    }
+
+    #[test]
+    fn test_gateway_config_accepts_legacy_provider_shape() -> crate::db::Result<()> {
+        let gateway: crate::harness::config::TestGateway = serde_json::from_value(json!({
+            "baseURL": "http://127.0.0.1:1234/v1",
+            "apiKey": "fixture-secret",
+            "defaultModel": "fixture",
+            "provider": "openai-compatible",
+            "binary": "/tmp/fake-gateway-harness.mjs",
+            "stream": true,
+            "streamTermination": "marker",
+            "maxTokens": 1024
+        }))?;
+        assert_eq!(gateway.base_url, "http://127.0.0.1:1234/v1");
+        assert_eq!(gateway.api_key.as_deref(), Some("fixture-secret"));
+        assert_eq!(gateway.default_model.as_deref(), Some("fixture"));
+        assert_eq!(gateway.stream, Some(true));
+        assert_eq!(gateway.max_tokens, Some(1024));
+        Ok(())
     }
 
     #[test]
