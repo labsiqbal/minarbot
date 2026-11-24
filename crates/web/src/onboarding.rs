@@ -1,4 +1,4 @@
-use crate::{api, general::ErrorAlert, shell, workspace};
+use crate::{api, connection_ui::Switch, general::ErrorAlert, shell, workspace};
 use leptos::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -31,8 +31,21 @@ struct Auth {
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Model {
     id: String,
+    #[serde(default)]
+    options: Vec<ModelOption>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelOption {
+    id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    values: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -88,7 +101,11 @@ fn request_id() -> Result<String, String> {
 }
 
 #[derive(Deserialize)]
-struct Models { models: Vec<String> }
+struct Models {
+    models: Vec<String>,
+    #[serde(default)]
+    catalog: Vec<Model>,
+}
 
 fn recovery() -> Result<Option<Value>, String> {
     let storage = window().session_storage().ok().flatten().ok_or("Recovery storage is unavailable.")?;
@@ -112,6 +129,8 @@ pub fn page(error_icon: String) -> impl IntoView {
     let name = RwSignal::new(pending.with_untracked(|value| value.as_ref().ok().and_then(Option::as_ref).and_then(|value| value["name"].as_str()).unwrap_or_default().to_owned()));
     let model = RwSignal::new(String::new());
     let models = RwSignal::new(Vec::<String>::new());
+    let model_catalog = RwSignal::new(Vec::<Model>::new());
+    let model_options = RwSignal::new(json!({}));
     let selected = Memo::new(move |_| available.with(|entries| entries.iter().find(|entry| entry.value == choice.get()).cloned()));
     let directory = use_context::<ReadSignal<Option<Result<shell::Directory, String>>>>();
     let guide = move || directory.and_then(|signal| signal.get()).and_then(Result::ok).and_then(|value| value.guide).filter(|agent| !agent.hidden);
@@ -120,8 +139,8 @@ pub fn page(error_icon: String) -> impl IntoView {
         loading.set(true); load_error.set(String::new());
         leptos::task::spawn_local(async move {
             match connections().await {
-                Ok((items, automatic)) => {
-                    if !items.iter().any(|item| item.value == choice.get_untracked()) { choice.set(automatic.unwrap_or_default()); }
+                Ok((items, _automatic)) => {
+                    if !items.iter().any(|item| item.value == choice.get_untracked()) { choice.set(_automatic.unwrap_or_default()); }
                     available.set(items); loaded.set(true);
                 }
                 Err(message) => load_error.set(message),
@@ -135,7 +154,7 @@ pub fn page(error_icon: String) -> impl IntoView {
         generation.update(|value| *value += 1);
         let request = generation.get_untracked();
         if let Some(connection) = selected.get() {
-            model.set(connection.model.clone()); models.set(Vec::new());
+            model.set(connection.model.clone()); models.set(Vec::new()); model_catalog.set(Vec::new()); model_options.set(json!({}));
             let Some(instance) = connection.value.strip_prefix("instance:") else { return; };
             let url = format!("/api/provider-instances/{instance}/models");
             leptos::task::spawn_local(async move {
@@ -145,11 +164,13 @@ pub fn page(error_icon: String) -> impl IntoView {
                             if let Some(default) = value.models.first() { model.set(default.clone()); }
                         }
                         models.set(value.models);
+                        model_catalog.set(value.catalog);
                     }
                 }
             });
-        } else { model.set(String::new()); models.set(Vec::new()); }
+        } else { model.set(String::new()); models.set(Vec::new()); model_catalog.set(Vec::new()); model_options.set(json!({})); }
     });
+    let model_options_for_selection = Signal::derive(move || model_catalog.with(|catalog| catalog.iter().find(|entry| entry.id == model.get()).map(|entry| entry.options.clone()).unwrap_or_default()));
     let retry_creation = move || pending.with(|value| matches!(value, Ok(Some(_))));
     let create = move || !retry_creation() && selected.with(|entry| entry.as_ref().is_some_and(|entry| entry.ready));
     let locked = move || busy.get() || pending.with(|value| !matches!(value, Ok(None)));
@@ -162,7 +183,7 @@ pub fn page(error_icon: String) -> impl IntoView {
             let name = name.get_untracked().trim().to_owned();
             let model = model.get_untracked().trim().to_owned();
             if name.is_empty() || model.is_empty() { return Err("Enter a name and model.".into()); }
-            Ok(json!({"id": request_id()?, "name": name, "role": "", "model": model, "instructions": "Help the user complete their tasks.", "threadLimit": 2, "toolBudget": 90, "providerInstance": connection.value.strip_prefix("instance:").unwrap_or("")}))
+            Ok(json!({"id": request_id()?, "name": name, "role": "", "model": model, "instructions": "Help the user complete their tasks.", "threadLimit": 2, "toolBudget": 90, "providerInstance": connection.value.strip_prefix("instance:").unwrap_or(""), "modelOptions": model_options.get_untracked()}))
         });
         let save = command.and_then(|command| {
             let storage = window().session_storage().ok().flatten().ok_or("Recovery storage is unavailable.")?;
@@ -213,9 +234,30 @@ pub fn page(error_icon: String) -> impl IntoView {
                     <div class="first-run__form" hidden=move || !create() && pending.with(Result::is_ok)><div class="k-stack">
                         <button type="button" class="k-btn k-btn--md k-btn--secondary" hidden=move || guide().is_none() || locked() on:click=guide_click>{move || guide().map(|agent| format!("Set up with {}", agent.name))}</button>
                         <form class="k-stack" on:submit=submit>
+                            <label class="k-field"><span class="k-field__label">"Provider"</span><select class="k-input k-select" aria-label="Create agent provider" prop:value=choice disabled=locked on:change=move |event| choice.set(event_target_value(&event))>
+                                <option value="">"Choose a provider"</option>
+                                {move || available.get().into_iter().map(|entry| view! { <option value=entry.value.clone() disabled=!entry.ready>{if entry.ready { entry.label } else { format!("{} · {}", entry.label, entry.reason) }}</option> }).collect_view()}
+                            </select></label>
                             <label class="k-field"><span class="k-field__label">"Name"</span><input class="k-input" required maxlength="80" placeholder="Iris" prop:value=name readonly=locked on:input=move |event| name.set(event_target_value(&event)) /></label>
                             <label class="k-field"><span class="k-field__label">"Model"</span><input class="k-input" required maxlength="160" placeholder="Choose a provider model" list="onboarding-models" readonly=locked prop:value=move || pending.with(|value| value.as_ref().ok().and_then(Option::as_ref).and_then(|value| value["model"].as_str()).map(str::to_owned)).unwrap_or_else(|| model.get()) on:input=move |event| model.set(event_target_value(&event)) /></label>
                             <datalist id="onboarding-models">{move || models.get().into_iter().map(|entry| view! { <option value=entry /> }).collect_view()}</datalist>
+                            <Show when=move || !model_options_for_selection.with(Vec::is_empty)>
+                                <div class="agent-model-options"><h3>Model options</h3>
+                                    {move || model_options_for_selection.get().into_iter().map(|option| {
+                                        if option.kind == "boolean" {
+                                            let key = option.id.clone();
+                                            let checked = Signal::derive({ let key = key.clone(); move || model_options.with(|value| value.get(&key).and_then(Value::as_bool).unwrap_or(false)) });
+                                            let change_key = option.id.clone();
+                                            view! { <div class="k-row"><div class="k-row__main"><span class="k-row__text"><span class="k-row__title">{option.id.clone()}</span></span></div><Switch label=option.id.clone() checked change=Callback::new(move |value| model_options.update(|options| options[&change_key] = json!(value))) /></div> }.into_any()
+                                        } else {
+                                            let values = option.values.clone();
+                                            let change_key = option.id.clone();
+                                            let value_key = change_key.clone();
+                                            view! { <label class="k-field"><span class="k-field__label">{option.id.clone()}</span><select class="k-input k-select" aria-label=option.id.clone() prop:value=move || model_options.with(|options| options.get(&value_key).and_then(Value::as_str).unwrap_or_default().to_owned()) on:change=move |event| model_options.update(|options| options[&change_key] = json!(event_target_value(&event)))>{values.into_iter().map(|value| view! { <option value=value.clone()>{value.clone()}</option> }).collect_view()}</select></label> }.into_any()
+                                        }
+                                    }).collect_view()}
+                                </div>
+                            </Show>
                             <ErrorAlert message=error icon=error_icon.clone() />
                             <p role="alert" hidden=move || pending.with(Result::is_ok)>"Recovery data could not be read."</p>
                             <div class="k-row-actions"><button type="submit" class="k-btn k-btn--md k-btn--primary" disabled=move || busy.get() || pending.with(Result::is_err)>{move || if retry_creation() { "Retry creation" } else { "Create agent" }}</button></div>

@@ -1,4 +1,5 @@
 use crate::{api, connection_ui::*};
+use crate::provider_icons::ProviderMark;
 use leptos::{prelude::*, task::spawn_local};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -92,6 +93,12 @@ struct Envelope {
     providers: Vec<Instance>,
 }
 
+#[derive(Clone, Deserialize, Default, PartialEq)]
+struct MachineEnvironment {
+    #[serde(default)]
+    name: String,
+}
+
 fn kind_label(kind: &str) -> &'static str {
     match kind {
         "codex" => "Codex",
@@ -104,16 +111,6 @@ fn kind_label(kind: &str) -> &'static str {
         "gemini" => "Gemini",
         "kiro" => "Kiro",
         _ => "Provider",
-    }
-}
-
-fn kind_icon(kind: &str) -> &'static str {
-    match kind {
-        "codex" | "claude" => "brain",
-        "gemini" | "antigravity" => "wand-brain",
-        "pi" | "opencode" => "package",
-        "grok" => "globe",
-        _ => "server",
     }
 }
 
@@ -195,7 +192,7 @@ pub fn panel() -> impl IntoView {
                                     <div class="provider-instance-row" class:is-active=active>
                                         <button type="button" class="provider-instance-row__select" aria-current=move || active_for_button().then_some("true")
                                             on:click=move |_| selected.set(Some(id.clone()))>
-                                            <span class="provider-instance-row__icon"><Icon name=kind_icon(&provider.kind) /></span>
+                                            <span class="provider-instance-row__icon"><ProviderMark kind=provider.kind.clone() /></span>
                                             <span class="provider-instance-row__main">
                                                 <strong>{provider.display_name.clone()}</strong>
                                                 <small>{provider.version.clone().unwrap_or_else(|| kind_label(&provider.kind).into())}</small>
@@ -319,7 +316,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
     view! {
         <main class="k-card provider-instance-detail">
             <div class="provider-instance-detail__head">
-                <div class="provider-instance-title"><span class="provider-instance-detail__icon"><Icon name=kind_icon(&provider_kind_view) /></span><div><h2>{display_name.clone()}</h2><p>{kind_label(&provider_kind_view)}{version.clone().map(|version| format!(" · v{version}"))}</p></div></div>
+                <div class="provider-instance-title"><span class="provider-instance-detail__icon"><ProviderMark kind=provider_kind_view.clone() /></span><div><h2>{display_name.clone()}</h2><p>{kind_label(&provider_kind_view)}{version.clone().map(|version| format!(" · v{version}"))}</p></div></div>
                 <Badge success=provider_enabled>{if provider_enabled { "Enabled" } else { "Disabled" }}</Badge>
             </div>
             <Section title="Status" actions=Box::new(move || view! { <div class="provider-detail-actions"><Button label="Re-check" icon="refresh" busy=busy click=refresh.clone() /><Button label="Sign in" icon="key" busy=busy disabled=move || kind_for_button != "codex" && kind_for_button != "claude" click=sign_in.clone() /></div> }.into_any())>
@@ -361,6 +358,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
 
 #[component]
 fn AddProvider(close: UiAction, saved: impl Fn() + Copy + Send + 'static, error: RwSignal<String>) -> impl IntoView {
+    let machine = query::<MachineEnvironment>(|| "/api/environment".into());
     let step = RwSignal::new(0u8);
     let kind = RwSignal::new("codex".to_owned());
     let name = RwSignal::new(String::new());
@@ -370,6 +368,7 @@ fn AddProvider(close: UiAction, saved: impl Fn() + Copy + Send + 'static, error:
     let shadow = RwSignal::new(String::new());
     let args = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
+    let sign_in_status = RwSignal::new(String::new());
     let submit = move |event: web_sys::SubmitEvent| {
         event.prevent_default();
         if busy.get_untracked() { return; }
@@ -381,6 +380,7 @@ fn AddProvider(close: UiAction, saved: impl Fn() + Copy + Send + 'static, error:
         let kind_value = kind.get_untracked();
         let body = json!({"id":uuid(),"instanceId":id,"kind":kind_value,"displayName":display,"binaryPath":binary.get_untracked().trim(),"homePath":home.get_untracked().trim(),"shadowHomePath":shadow.get_untracked().trim(),"launchArgs":args.get_untracked().lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>(),"environment":[]});
         busy.set(true);
+        sign_in_status.set(String::new());
         spawn_local(async move {
             let result = match api::post::<Instance>(PATH, &body).await {
                 Ok(_) if sign_in => api::post::<Value>(&format!("{PATH}/{id}/sign-in"), &json!({"instanceId":id})).await.map(|_| ()),
@@ -388,39 +388,52 @@ fn AddProvider(close: UiAction, saved: impl Fn() + Copy + Send + 'static, error:
                 Err(message) => Err(message),
             };
             busy.set(false);
-            match result { Ok(_) => saved(), Err(message) => error.set(message) }
+            match result {
+                Ok(_) if sign_in => sign_in_status.set("Sign-in started. Finish in the provider home.".into()),
+                Ok(_) => saved(),
+                Err(message) => error.set(message),
+            }
         });
     };
-    let kinds = [("codex", "Codex"), ("claude", "Claude"), ("cursor", "Cursor"), ("grok", "Grok"), ("opencode", "OpenCode"), ("antigravity", "Antigravity"), ("pi", "Pi"), ("gemini", "Gemini"), ("kiro", "Kiro")];
+    let kinds = [("codex", "Codex"), ("claude", "Claude"), ("hermes", "Hermes"), ("antigravity", "Antigravity"), ("grok", "Grok"), ("pi", "Pi"), ("opencode", "OpenCode"), ("gemini", "Gemini"), ("kiro", "Kiro")];
+    let sign_in_kind = move || matches!(kind.get().as_str(), "codex" | "claude");
     view! {
-        <Modal title="Add provider".to_owned() description="Add an account or configure a provider on this machine".to_owned() size="lg" busy=busy close=close.clone()
+        <Modal title="Add provider".to_owned() size="lg" busy=busy close=close.clone()
             footer=Box::new(move || view! {
                 <Button label="Cancel" disabled=busy click=close.clone() />
-                <Show when=move || step.get() < 2><Button label="Continue" variant="primary" click=UiAction::new(move |()| step.update(|value| *value = (*value + 1).min(2))) /></Show>
-                <Show when=move || step.get() == 2>
+                <Show when=move || step.get() == 0><Button label="Continue" variant="primary" click=UiAction::new(move |()| step.update(|value| *value = (*value + 1).min(2))) /></Show>
+                <Show when=move || step.get() == 1 && !sign_in_kind()><Button label="Continue" variant="primary" click=UiAction::new(move |()| step.update(|value| *value = (*value + 1).min(2))) /></Show>
+                <Show when=move || step.get() == 1 && sign_in_kind()>
                     <Button label="Configure manually" submit=true form="provider-wizard-form" value="manual" busy=busy />
-                    <button type="submit" class="k-btn k-btn--md k-btn--primary" form="provider-wizard-form" value="signin" disabled=move || busy.get()>{move || if kind.get() == "codex" { "Continue with ChatGPT" } else if kind.get() == "claude" { "Sign in with Claude" } else { "Configure provider" }}</button>
+                    <button type="submit" class="k-btn k-btn--md k-btn--primary" form="provider-wizard-form" value="signin" disabled=move || busy.get()>{move || if kind.get() == "codex" { "Continue with ChatGPT" } else { "Sign in with Claude" }}</button>
+                </Show>
+                <Show when=move || step.get() == 2>
+                    <Show when=sign_in_kind fallback=move || view! { <Button label="Configure manually" variant="primary" submit=true form="provider-wizard-form" value="manual" busy=busy /> }>
+                        <Button label="Configure manually" submit=true form="provider-wizard-form" value="manual" busy=busy />
+                        <button type="submit" class="k-btn k-btn--md k-btn--primary" form="provider-wizard-form" value="signin" disabled=move || busy.get()>{move || if kind.get() == "codex" { "Continue with ChatGPT" } else { "Sign in with Claude" }}</button>
+                    </Show>
                 </Show>
             }.into_any())>
             <form id="provider-wizard-form" class="k-stack provider-wizard" on:submit=submit>
+                <p class="provider-wizard-subtitle">{move || format!("Add an account or configure a provider on {}", machine.data.with(|data| data.as_ref().map(|data| data.name.clone()).filter(|name| !name.is_empty()).unwrap_or_else(|| "this machine".into())))}</p>
                 <ol class="provider-wizard-stepper" aria-label="Provider setup steps">
                     <li class:active=move || step.get() == 0><span>1</span>Provider</li><li class:active=move || step.get() == 1><span>2</span>Identity</li><li class:active=move || step.get() == 2><span>3</span>Config</li>
                 </ol>
                 <Show when=move || step.get() == 0>
                     <fieldset class="provider-kind-grid"><legend>Provider</legend>{kinds.into_iter().map(|(id, label)| view! {
-                        <button type="button" class="provider-kind-tile" class:is-active=move || kind.get() == id on:click=move |_| kind.set(id.into())><Icon name=kind_icon(id) /><span>{label}</span><Show when=move || kind.get() == id><Icon name="check" /></Show></button>
+                        <button type="button" class="provider-kind-tile" class:is-active=move || kind.get() == id on:click=move |_| kind.set(id.into())><ProviderMark kind=id.to_owned() /><span>{label}</span><Show when=move || kind.get() == id><Icon name="check" /></Show></button>
                     }).collect_view()}</fieldset>
                 </Show>
                 <Show when=move || step.get() == 1>
                     <label class="k-field"><span class="k-field__label">Display name</span><input class="k-input" name="displayName" required placeholder=move || format!("My {}", kind_label(&kind.get())) prop:value=name on:input=move |event| name.set(event_target_value(&event)) /></label>
                     <label class="k-field"><span class="k-field__label">Instance ID <span class="k-field__optional">Optional</span></span><input class="k-input" name="instanceId" placeholder="Generated from display name" prop:value=instance_id on:input=move |event| instance_id.set(event_target_value(&event)) /></label>
-                    <p class="k-field__hint">Sign-in runs inside this provider instance home.</p>
                 </Show>
                 <Show when=move || step.get() == 2>
                     <div class="k-grid-2"><label class="k-field"><span class="k-field__label">Binary path</span><input class="k-input" name="binaryPath" prop:value=binary on:input=move |event| binary.set(event_target_value(&event)) /></label><label class="k-field"><span class="k-field__label">{if kind.get() == "codex" { "CODEX_HOME path" } else { "Config directory" }}</span><input class="k-input" name="homePath" prop:value=home on:input=move |event| home.set(event_target_value(&event)) /></label></div>
                     <label class="k-field"><span class="k-field__label">Shadow home path <span class="k-field__optional">Optional</span></span><input class="k-input" name="shadowHomePath" prop:value=shadow on:input=move |event| shadow.set(event_target_value(&event)) /></label>
                     <label class="k-field"><span class="k-field__label">Launch arguments <span class="k-field__optional">Optional</span></span><textarea class="k-input k-textarea provider-args" name="launchArgs" prop:value=args on:input=move |event| args.set(event_target_value(&event)) placeholder="One argument per line"></textarea></label>
                 </Show>
+                <Show when=move || !sign_in_status.get().is_empty()><p class="provider-wizard-status" role="status">{sign_in_status}</p></Show>
             </form>
         </Modal>
     }

@@ -56,6 +56,11 @@
           "sourcePath": "apps/web/src/themePalette.ts; apps/web/src/vscodeThemeImport.ts",
           "localPath": "app/src/ui/themes.ts",
           "adaptation": "Semantic role projection and minimum contrast across role surfaces adapted to Minarbot's existing tokens. Uses Hermes sRGB mixing rather than copying T3's OKLCH solver or importing VS Code theme files."
+        },
+        {
+          "sourcePath": "apps/web/src/components/Icons.tsx; apps/web/src/components/chat/ProviderInstanceIcon.tsx; packages/provider-grok/src/client.ts; packages/provider-opencode/src/client.ts; packages/provider-pi/src/client.ts; packages/provider-kiro/src/client.ts",
+          "localPath": "crates/web/src/provider_icons.rs",
+          "adaptation": "Provider marks are inline SVG adaptations for Codex, Claude, Grok, OpenCode, Pi and Kiro. Antigravity, Gemini and Hermes use original Minarbot geometry. All marks use currentColor or fixed brand colors and share one local size/alignment component."
         }
       ]
     }
