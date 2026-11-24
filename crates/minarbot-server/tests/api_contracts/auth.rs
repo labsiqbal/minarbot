@@ -26,6 +26,7 @@ use tokio::net::TcpListener;
 
 const ISSUER: &str = "https://fixture.clerk.accounts.dev";
 const ORIGIN: &str = "https://minarbot.example";
+const CURRENT_SCHEMA_VERSION: i64 = 7;
 pub(super) const CLOCK: i64 = 1_790_000_000_000;
 
 fn openssl(args: &[&str]) -> Result<Vec<u8>> {
@@ -576,7 +577,10 @@ async fn canonical_schema_reopens_and_rejects_future_versions_and_checksum_drift
     assert_eq!(schema(&root)?, expected);
 
     Connection::open(root.database())?.execute(
-        "INSERT INTO schema_migrations VALUES(7,'future','future',0)",
+        &format!(
+            "INSERT INTO schema_migrations VALUES({},'future','future',0)",
+            CURRENT_SCHEMA_VERSION + 1
+        ),
         [],
     )?;
     let future = root
@@ -587,9 +591,10 @@ async fn canonical_schema_reopens_and_rejects_future_versions_and_checksum_drift
     assert!(future
         .to_string()
         .contains("Database schema is newer than this server"));
-    Connection::open(root.database())?.execute_batch(
-        "DELETE FROM schema_migrations WHERE version=7; UPDATE schema_migrations SET checksum='bad' WHERE version=6;"
-    )?;
+    Connection::open(root.database())?.execute_batch(&format!(
+        "DELETE FROM schema_migrations WHERE version={}; UPDATE schema_migrations SET checksum='bad' WHERE version=6;",
+        CURRENT_SCHEMA_VERSION + 1
+    ))?;
     let drift = root
         .start(options)
         .await
@@ -606,7 +611,7 @@ fn schema(root: &TestRoot) -> Result<Vec<Value>> {
     let version: i64 = db.query_row("SELECT max(version) FROM schema_migrations", [], |row| {
         row.get(0)
     })?;
-    assert_eq!(version, 6);
+    assert_eq!(version, CURRENT_SCHEMA_VERSION);
     let indexes = [
         "files_scope_seq",
         "occurrence_pending",
