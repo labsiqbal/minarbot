@@ -78,8 +78,7 @@ pub fn promote(
     {
         return Err(error(409, "Restore the conversation first."));
     }
-    let native = data::agents::read(db, string(&turn, "agent"))?["runtime"] != "api";
-    let mode = if native { "restart" } else { string(v, "mode") };
+    let mode = string(v, "mode");
     if mode == "steer" && data::json(&turn["attachments"])? != json!([]) {
         return Err(error(409, "This message can be queued or restarted."));
     }
@@ -102,7 +101,7 @@ pub fn promote(
             cancel(db, target, "Stopped for restart.")?;
             db.execute("INSERT INTO queue_positions VALUES(?,?) ON CONFLICT(turn) DO UPDATE SET position=excluded.position",params![id,history::position(db,&active)?])?;
         }
-        db.execute("UPDATE turns SET dispatch_mode=?,dispatch_target=?,dispatch_label=?,revision=revision+1 WHERE id=?",params![mode,target,if native {"Runtime cannot steer; restarted from interrupted turn"} else if mode=="steer"{"Waiting for steering safe point"}else{"Restarted from interrupted turn"},id])?;
+        db.execute("UPDATE turns SET dispatch_mode=?,dispatch_target=?,dispatch_label=?,revision=revision+1 WHERE id=?",params![mode,target,if mode=="steer"{"Waiting for steering safe point"}else{"Restarted from interrupted turn"},id])?;
     }
     let result = one(db, "SELECT * FROM turns WHERE id=?", [id])?.ok_or_else(Failure::storage)?;
     data::save_receipt(db, "task_controls", string(v, "id"), &request, &result)?;

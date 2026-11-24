@@ -1,7 +1,7 @@
 use super::*;
 
 pub fn secrets(state: &AppState, db: &Connection) -> Result<Vec<String>> {
-    let mut values = data::providers::accounts(state)?
+    let mut values = data::providers::accounts_at(db)?
         .into_iter()
         .filter_map(|account| account.key)
         .collect::<Vec<_>>();

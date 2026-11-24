@@ -1,5 +1,20 @@
+#![allow(dead_code)]
+
 use super::*;
 use reqwest::Response;
+
+async fn wait_for_chunk<T>(
+    idle: Option<std::time::Duration>,
+    operation: impl std::future::Future<Output = T>,
+) -> Result<T> {
+    if let Some(limit) = idle {
+        tokio::time::timeout(limit, operation)
+            .await
+            .map_err(|_| error(502, provider::STREAM_ERROR))
+    } else {
+        Ok(operation.await)
+    }
+}
 pub fn text(state: &AppState, call: i64, text: &str, final_text: bool) -> Result<()> {
     if text.len() > 2 * 1024 * 1024 {
         return Err(error(502, provider::MALFORMED));
@@ -379,7 +394,7 @@ pub async fn read(
     let mut name = String::new();
     let mut size = 0;
     let mut count = 0;
-    while let Some(chunk) = provider::wait_for_stream_data(idle, response.chunk())
+    while let Some(chunk) = wait_for_chunk(idle, response.chunk())
         .await?
         .map_err(|_| error(502, provider::STREAM_ERROR))?
     {

@@ -60,7 +60,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             && crate::automation::model(&guard.connection, id)?.is_none()
             && exists(
                 &guard.connection,
-                "SELECT 1 FROM agents WHERE id=? AND runtime='api'",
+                "SELECT 1 FROM agents WHERE id=? AND provider_instance<>''",
                 [string(&turn, "agent")],
             )? {
             crate::mcp::codegraph::project(state, &guard.connection, &turn)?
@@ -108,17 +108,19 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         }
         let early_replies = super::messaging::capture(db, id)?;
         room::admit(db, id)?;
-        let mut system =
-            if profile["runtime"] == "api" || crate::automation::model(db, id)?.is_some() {
-                base_instructions(
-                    "api",
-                    string(&profile, "model"),
-                    string(&turn, "agent"),
-                    &tools,
-                )?
-            } else {
-                String::new()
-            };
+        let runtime = one(
+            db,
+            "SELECT kind FROM provider_instances WHERE id=?",
+            [string(&profile, "provider_instance")],
+        )?
+        .map(|row| string(&row, "kind").to_owned())
+        .unwrap_or_default();
+        let mut system = base_instructions(
+            &runtime,
+            string(&profile, "model"),
+            string(&turn, "agent"),
+            &tools,
+        )?;
         if let Some(channel) = turn["channel"].as_str() {
             let room = one(
                 db,
@@ -358,18 +360,12 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         }
         return Ok(());
     }
-    let mut model = {
+    let model = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         if let Some(model) = crate::automation::model(&guard.connection, id)? {
             model
         } else {
-            one(
-                &guard.connection,
-                "SELECT model FROM model_fallbacks WHERE turn=? AND agent=?",
-                [id, string(&turn, "agent")],
-            )?
-            .map(|r| string(&r, "model").to_owned())
-            .unwrap_or_else(|| string(&profile, "model").to_owned())
+            string(&profile, "model").to_owned()
         }
     };
     let mut used_ids = std::collections::HashSet::new();
@@ -434,36 +430,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 failure
             }
         });
-        let reply = match reply {
-            Err(e)
-                if e.code == "provider_unavailable"
-                    && !string(&profile, "backup_model").is_empty()
-                    && model == string(&profile, "model")
-                    && !tools.is_empty() =>
-            {
-                let attempts = {
-                    let db = state.database.lock().map_err(|_| Failure::storage())?;
-                    db.connection.query_row(
-                        "SELECT count(*) FROM provider_calls WHERE turn=? AND phase='answer'",
-                        [id],
-                        |r| r.get::<_, i64>(0),
-                    )?
-                };
-                if attempts != 1 || used > 0 {
-                    return Err(e);
-                }
-                model = string(&profile, "backup_model").into();
-                {
-                    let db = state.database.lock().map_err(|_| Failure::storage())?;
-                    db.connection.execute(
-                        "INSERT OR REPLACE INTO model_fallbacks VALUES(?,?,?)",
-                        params![id, turn["agent"].as_str(), model],
-                    )?;
-                }
-                provider::call(state, id, &model, &messages, &tools, "answer").await?
-            }
-            r => r?,
-        };
+        let reply = reply?;
         match reply {
             provider::Answer::Text(text) => {
                 {
@@ -539,13 +506,8 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                     )?;
                 }
                 if crate::computer::hub::check(state, id)?.is_some()
-                    && [
-                        "delegate_task",
-                        "send_message",
-                        "interrupt_agent",
-                        "set_provider_account",
-                    ]
-                    .contains(&string(&call["function"], "name"))
+                    && ["delegate_task", "send_message", "interrupt_agent"]
+                        .contains(&string(&call["function"], "name"))
                 {
                     return Err(error(
                         403,
@@ -741,7 +703,7 @@ pub(super) fn base_instructions(
         )
         .replace("MINARBOT_AGENT", agent)
         .replace(
-            "through the api runtime",
+            "through the provider runtime",
             &format!("through the {runtime} runtime"),
         );
     if tools
@@ -937,9 +899,9 @@ mod tests {
 
     #[test]
     fn base_guidance_names_only_enabled_tools() -> Result<()> {
-        let text = base_instructions("api", "fixture", "test-agent", &[])?;
+        let text = base_instructions("provider", "fixture", "test-agent", &[])?;
         for phrase in [
-            "Minarbot through the api runtime, model fixture",
+            "Minarbot through the provider runtime, model fixture",
             "Only the user's own messages",
             "ordinary inline Markdown links",
             "One relevant check per deliverable",

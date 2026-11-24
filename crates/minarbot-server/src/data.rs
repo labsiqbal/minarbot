@@ -43,6 +43,7 @@ pub(crate) use sync::append_mutation;
 
 pub fn maintenance(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        eprintln!("data maintenance start");
         let period = std::time::Duration::from_secs(if state.auth.is_some() { 5 } else { 60 });
         let mut timer = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
         loop {
@@ -271,20 +272,13 @@ pub fn handles(path: &str) -> bool {
                 | "project-folders"
                 | "sidebar"
                 | "usage"
-                | "provider-accounts"
                 | "provider-instances"
-                | "models"
-        ] | ["api", "provider-accounts", "test"]
-            | ["api", "engine-logins"]
-            | ["api", "engine-logins", _, "check" | "remove"]
-            | ["api", "provider-accounts", _, "test" | "edit" | "delete"]
-            | [
-                "api",
-                "provider-instances",
-                _,
-                "edit" | "update" | "delete" | "refresh" | "sign-in" | "signin" | "models"
-            ]
-            | ["api", "sidebar", "summary"]
+        ] | [
+            "api",
+            "provider-instances",
+            _,
+            "edit" | "update" | "delete" | "refresh" | "sign-in" | "signin" | "models"
+        ] | ["api", "sidebar", "summary"]
             | ["api", "conversations", "settings"]
             | ["api", "settings", "library-docs"]
             | ["api", "settings", "web-search"]
@@ -411,12 +405,7 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
         let bytes = axum::body::to_bytes(request.into_body(), limit)
             .await
             .map_err(|_| error(413, "Request is too large."))?;
-        body = if parts.get(1) == Some(&"provider-accounts") {
-            crate::web::parse_json(&bytes)
-                .map_err(|_| error(400, "Invalid provider account JSON."))?
-        } else {
-            serde_json::from_slice(&bytes).map_err(|_| error(400, "Invalid JSON."))?
-        };
+        body = serde_json::from_slice(&bytes).map_err(|_| error(400, "Invalid JSON."))?;
         if !body.is_object() {
             return Err(error(400, "JSON object is required."));
         }
@@ -424,31 +413,6 @@ pub async fn local(state: &AppState, request: Request) -> Result<Response> {
         if !uuid(&id) {
             return Err(error(400, "Invalid request ID."));
         }
-    }
-    if path == "/api/models" && method == Method::GET {
-        return Ok(json_response(200, providers::models(state, &q).await?));
-    }
-    if parts.get(1) == Some(&"engine-logins") {
-        if headers.contains_key("authorization")
-            || headers.contains_key("origin") && !origin(state, &headers)
-        {
-            return Err(error(
-                403,
-                "Engine logins require the local owner in Minarbot.",
-            ));
-        }
-        return logins::route(state, &parts, &method, &q, &body).await;
-    }
-    if parts.get(1) == Some(&"provider-accounts") {
-        if headers.contains_key("authorization")
-            || headers.contains_key("origin") && !origin(state, &headers)
-        {
-            return Err(error(
-                403,
-                "Provider accounts require the local owner in Minarbot.",
-            ));
-        }
-        return provider_store::route(state, &parts, &method, &q, &body).await;
     }
     if parts.get(1) == Some(&"provider-instances") {
         if headers.contains_key("authorization")
@@ -581,10 +545,21 @@ fn route(
             headers,
             get,
         )?,
-        ["api", "agents"] if get => agents::list(state, db)?,
+        ["api", "agents"] if get => {
+            let mut value = agents::list(state, db)?;
+            if let Some(items) = value["agents"].as_array_mut() {
+                for item in items {
+                    *item = agents::public_profile(item.clone());
+                }
+            }
+            if value["guide"].is_object() {
+                value["guide"] = agents::public_profile(value["guide"].clone());
+            }
+            value
+        }
         ["api", "agents"] if post => {
             let (status, v) = agents::create(state, db, v, avatar)?;
-            return Ok(json_response(status, v));
+            return Ok(json_response(status, agents::public_profile(v)));
         }
         ["api", "agents", id, "folder"] if get || post => {
             agent_folders::route(state, db, id, false, get, v, q, headers)?
@@ -600,7 +575,7 @@ fn route(
                     "Guide connection requires the local Owner in Minarbot.",
                 ));
             }
-            agents::edit(state, db, id, v)?
+            agents::public_profile(agents::edit(state, db, id, v)?)
         }
         ["api", "agents", id, "visibility"] if post => {
             let value = agents::visibility(state, db, id, v)?;

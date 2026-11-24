@@ -446,25 +446,6 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
                 "Transcription requires user approval in Minarbot.",
             ));
         }
-        let provider_question = match tail {
-            ["turns", turn, "questions", question, "answer"] => data::exists(
-                db,
-                "SELECT 1 FROM provider_account_changes p JOIN turns t ON t.id=(SELECT turn FROM questions WHERE id=p.question) WHERE p.question=? AND p.agent=? AND t.id=? AND t.channel IS NULL AND t.thread IS NULL",
-                params![question, agent, turn],
-            )?,
-            ["threads", thread, "turns", turn, "questions", question, "answer"] => data::exists(
-                db,
-                "SELECT 1 FROM provider_account_changes p JOIN turns t ON t.id=(SELECT turn FROM questions WHERE id=p.question) JOIN threads s ON s.id=t.thread WHERE p.question=? AND p.agent=? AND t.id=? AND t.thread=? AND s.agent=? AND s.deleted=0",
-                params![question, agent, turn, thread, agent],
-            )?,
-            _ => false,
-        };
-        if provider_question {
-            return Err(error(
-                403,
-                "Account changes can only be confirmed in Minarbot.",
-            ));
-        }
         let get = parts.method == Method::GET;
         let message = match tail {
             ["turns", _, "cancel"] | ["threads", _, "turns", _, "cancel"] if !post => {
@@ -549,10 +530,10 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
             }
             ["provider"] if !post => {
                 let a = data::agents::read(db, agent)?;
-                let accounts=data::providers::accounts(state)?.into_iter().map(|a|json!({"id":a.id,"name":a.name,"provider":a.family,"configured":!a.base.is_empty(),"defaultModel":a.model})).collect::<Vec<_>>();
+                let providers = data::provider_instances::list(state)?["providers"].clone();
                 return Ok(crate::json_response(
                     200,
-                    json!({"revision":a["revision"],"model":a["model"],"backupModel":a["backup_model"],"providerAccount":a["provider_account"],"accounts":accounts}),
+                    json!({"revision":a["revision"],"model":a["model"],"providerInstance":a["providerInstance"],"providers":providers}),
                 ));
             }
             ["workflow-runs", id, rest @ ..] => {
@@ -681,19 +662,13 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
             | ["turns", _, "questions", _, "answer"]
             | ["threads"] => (path.replacen("/api/scripts/", "/api/", 1), body),
             ["models"] => {
-                if q.iter().any(|(k, _)| k != "account") {
+                if q.iter().any(|(k, _)| k != "instance") {
                     return Err(error(400, "Invalid catalog parameters."));
                 }
                 let a = data::agents::read(db, agent)?;
-                let account = data::param(&q, "account").unwrap_or(string(&a, "provider_account"));
-                (
-                    format!(
-                        "/api/models?account={}",
-                        url::form_urlencoded::byte_serialize(account.as_bytes())
-                            .collect::<String>()
-                    ),
-                    body,
-                )
+                let instance =
+                    data::param(&q, "instance").unwrap_or(string(&a, "providerInstance"));
+                (format!("/api/provider-instances/{instance}/models"), body)
             }
             ["provider"] if post => {
                 if !data::closed(

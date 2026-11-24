@@ -490,7 +490,7 @@ mod tests {
                 principal: p.clone(),
                 generation: 7,
                 sender: tx,
-                provider_accounts: None,
+                provider_instances: None,
             },
         );
         let check=async {

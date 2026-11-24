@@ -543,7 +543,7 @@ pub(super) fn create(
             }
         }
         let caps = json!({"v":1,"tools":TOOLS,"resources":[]});
-        db.execute("INSERT INTO agents(id,name,role,model,instructions,thread_limit,tool_budget,backup_model,provider_account,revision) VALUES(?,?,?,?,?,?,?,?,?,1)",rusqlite::params![aid,command["name"].as_str(),command["role"].as_str().unwrap_or(""),command["model"].as_str(),command["instructions"].as_str(),command["threadLimit"].as_i64(),command["toolBudget"].as_i64().unwrap_or(90),command["backupModel"].as_str(),binding.as_ref().map(|b|string(b,"provider_account_id")).unwrap_or("")])?;
+        db.execute("INSERT INTO agents(id,name,role,model,instructions,thread_limit,tool_budget,provider_instance,model_options,revision) VALUES(?,?,?,?,?,?,?,?,?,1)",rusqlite::params![aid,command["name"].as_str(),command["role"].as_str().unwrap_or(""),command["model"].as_str(),command["instructions"].as_str(),command["threadLimit"].as_i64(),command["toolBudget"].as_i64().unwrap_or(90),string(&command,"providerInstance"),command.get("modelOptions").map(|value| value.to_string()).unwrap_or_else(|| "{}".into())])?;
         db.execute(
             "INSERT INTO agent_authority VALUES(?,?,?,?,1)",
             rusqlite::params![

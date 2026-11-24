@@ -181,7 +181,7 @@ async fn send(state: &AppState, turn: &Value, call: &Value, args: &Value) -> Res
         )?;
         let input = json!({"ciphertext":ciphertext,"callId":call_id,"created":state.config.now()});
         let card = crate::harness::config::CardWait::start(state, turn_id)?;
-        db.execute("INSERT INTO harness_approvals(id,turn,agent,runtime,workspace,kind,description,input,state) VALUES(?,?,?,'api','','email','Save this email draft?',?,'approval')",
+        db.execute("INSERT INTO harness_approvals(id,turn,agent,runtime,workspace,kind,description,input,state) VALUES(?,?,?,'provider','','email','Save this email draft?',?,'approval')",
             params![id,turn_id,agent,input.to_string()])?;
         card
     };

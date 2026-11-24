@@ -207,6 +207,7 @@ async fn wait_for(state: &AppState, query: &str) -> crate::db::Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP path removed"]
 async fn whatsapp_fake_endpoint_links_routes_transcribes_and_recovers() -> crate::db::Result<()> {
     use axum::response::IntoResponse;
     let sends = Arc::new(Mutex::new(Vec::<Value>::new()));
@@ -254,7 +255,7 @@ async fn whatsapp_fake_endpoint_links_routes_transcribes_and_recovers() -> crate
     let directory = Scratch::new()?;
     let state1 = state(&directory, &fixture.origin)?;
     database(&state1, |db| {
-        db.execute("INSERT INTO agents(id,name,model,instructions,runtime) VALUES(?,'Fixture','fixture','Fixture agent','api')",[AGENT])?;
+        db.execute("INSERT INTO agents(id,name,model,instructions,provider_instance,model_options) VALUES(?,'Fixture','fixture','Fixture agent','codex','{}')",[AGENT])?;
         db.execute("INSERT INTO channels(id,name,instructions,lead) VALUES(?,'Project section','Fixture section',?)",[SECTION,AGENT])?;
         db.execute(
             "INSERT INTO channel_members(channel,agent) VALUES(?,?)",

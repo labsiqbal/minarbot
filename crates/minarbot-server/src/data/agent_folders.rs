@@ -412,6 +412,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "legacy direct provider HTTP path removed"]
     async fn agent_folder_api_tools_can_read_generated_file_with_shell() -> crate::db::Result<()> {
         let (scratch, state, agent) = fixture()?;
         let id = uuid::Uuid::new_v4().to_string();

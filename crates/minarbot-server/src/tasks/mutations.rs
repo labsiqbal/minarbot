@@ -564,24 +564,12 @@ fn tool(
         "read_provider_settings" => {
             let profile = one(
                 db,
-                "SELECT revision,model,backup_model FROM agents WHERE id=?",
+                "SELECT revision,model,provider_instance FROM agents WHERE id=?",
                 [agent],
             )?
             .ok_or_else(Failure::storage)?;
-            let binding = if current["participation"]["provider_binding"].is_null() {
-                None
-            } else {
-                one(db,"SELECT provider_account_id,readiness FROM provider_bindings WHERE id=? AND device=? AND owner_account=?",[string(&current["participation"],"provider_binding"),string(task,"home_device"),string(&current["member"],"account")])?
-            };
-            if !current["participation"]["provider_binding"].is_null() && binding.is_none() {
-                return Err(fail(
-                    409,
-                    "binding_stale",
-                    "Provider binding is unavailable.",
-                ));
-            }
             Ok(
-                json!({"revision":profile["revision"],"providerAccount":binding.as_ref().map(|b|string(b,"provider_account_id")).unwrap_or(""),"model":profile["model"],"backupModel":profile["backup_model"],"configured":binding.as_ref().is_some_and(|b|b["readiness"]=="ready")}),
+                json!({"revision":profile["revision"],"providerInstance":profile["provider_instance"],"model":profile["model"],"configured":!string(&profile,"provider_instance").is_empty()}),
             )
         }
         name @ ("search_memory" | "remember_memory" | "select_memory") => {

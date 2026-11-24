@@ -881,9 +881,6 @@ pub async fn run() -> db::Result<()> {
     }
 }
 
-#[cfg(test)]
-pub(crate) use provider::check_settings_account;
-
 fn command_output(result: Result<Value>) -> db::Result<()> {
     match result {
         Ok(value) => {

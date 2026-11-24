@@ -365,9 +365,7 @@ pub fn route(
     Err(error(404, "Route not found."))
 }
 pub fn tick(state: &AppState, db: &Connection) -> Result<()> {
-    let configured = data::providers::accounts(state)?
-        .iter()
-        .any(|a| !a.base.is_empty());
+    let configured = data::exists(db, "SELECT 1 FROM provider_instances WHERE enabled=1", [])?;
     let now = state.config.now();
     let mut admitted = 0;
     for r in all(db,"SELECT r.*,l.routine IS NOT NULL AS is_loop FROM routines r LEFT JOIN routine_loops l ON l.routine=r.id WHERE enabled=1 AND trigger='schedule' AND next_at<=? AND r.id NOT IN(SELECT routine FROM local_routine_deletions) AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=r.agent AND v.hidden=1) ORDER BY next_at",[now])? {

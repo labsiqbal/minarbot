@@ -1,18 +1,42 @@
+#![allow(dead_code)]
+
 use super::*;
 use axum::response::IntoResponse;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use rusqlite::OptionalExtension;
+use rusqlite::{params, OptionalExtension};
 use std::path::PathBuf;
 
 pub fn read(db: &Connection, id: &str) -> Result<Value> {
     let mut agent = one(db, "SELECT * FROM agents WHERE id=?", [id])?
         .ok_or_else(|| error(404, "Agent not found."))?;
-    if agent.get("provider_instance").is_some() {
-        agent["providerInstance"] = agent["provider_instance"].clone();
-        agent["modelOptions"] =
-            serde_json::from_str(string(&agent, "model_options")).unwrap_or_else(|_| json!({}));
-    }
+    agent["providerInstance"] = agent["provider_instance"].clone();
+    agent["modelOptions"] =
+        serde_json::from_str(string(&agent, "model_options")).unwrap_or_else(|_| json!({}));
+    agent["runtime"] = one(
+        db,
+        "SELECT kind FROM provider_instances WHERE id=?",
+        [string(&agent, "provider_instance")],
+    )?
+    .map(|row| row["kind"].clone())
+    .unwrap_or(Value::Null);
+    agent["provider_account"] = json!("");
+    agent["backup_model"] = json!("");
     Ok(agent)
+}
+
+pub(crate) fn public_profile(mut value: Value) -> Value {
+    if let Some(map) = value.as_object_mut() {
+        for key in [
+            "runtime",
+            "provider_account",
+            "backup_model",
+            "provider_instance",
+            "model_options",
+        ] {
+            map.remove(key);
+        }
+    }
+    value
 }
 pub fn hidden(db: &Connection, id: &str) -> Result<bool> {
     Ok(one(
@@ -23,7 +47,8 @@ pub fn hidden(db: &Connection, id: &str) -> Result<bool> {
     .is_some_and(|v| v["hidden"] == 1))
 }
 pub fn capabilities(runtime: &str) -> Value {
-    json!({"queue":true,"restart":true,"steer":runtime=="api"})
+    let _ = runtime;
+    json!({"queue":true,"restart":true,"steer":false})
 }
 pub fn executable(state: &AppState, runtime: &str) -> Option<PathBuf> {
     crate::harness::executable(state, runtime)
@@ -37,51 +62,10 @@ pub(super) fn reset_harness(db: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn provider_blocked_reason(
-    runtime: &str,
-    account: Option<&providers::Account>,
-) -> Option<&'static str> {
-    let family = account
-        .filter(|account| !account.base.is_empty())
-        .map(|account| account.family.as_str());
-    match runtime {
-        "api" if family.is_none() => Some("This agent needs a provider account."),
-        "codex" if family != Some("openai-compatible") => {
-            Some("Codex needs an OpenAI-compatible provider.")
-        }
-        // Claude's isolated home passes any configured base to its Anthropic client.
-        "claude" if family.is_none() => Some("Claude Code needs an Anthropic-compatible endpoint."),
-        "api" | "codex" | "claude" => None,
-        _ if account.is_none() => Some("This agent's provider account is unavailable."),
-        _ => None,
-    }
-}
-
-pub fn binding_blocked_reason(
-    db: &Connection,
-    runtime: &str,
-    binding: &str,
-    accounts: &[providers::Account],
-) -> Result<Option<&'static str>> {
-    if binding == super::logins::DEVICE {
-        return Ok(
-            (!super::logins::device_runtime(runtime)).then_some(super::logins::DEVICE_RUNTIME_ONLY)
-        );
-    }
-    if binding.starts_with(super::logins::PREFIX) {
-        let profile = super::logins::bound(db, binding)?;
-        return Ok(super::logins::blocked_reason(runtime, profile.as_ref()));
-    }
-    Ok(provider_blocked_reason(
-        runtime,
-        accounts.iter().find(|account| account.id == binding),
-    ))
-}
-
 pub(crate) fn device_provider_status(device: &str, account: &Value) -> Value {
     let runnable = account.is_string();
     json!({
-        "provider_account": account,
+        "provider_instance": account,
         "runnable": runnable,
         "blocked_reason": (!runnable).then(|| format!("No provider on {device}"))
     })
@@ -138,9 +122,6 @@ fn runtime_blocked_reason(
     runtime: &str,
     workspace_connected: bool,
 ) -> Result<Option<&'static str>> {
-    if runtime == "api" {
-        return Ok(None);
-    }
     if executable(state, runtime).is_none() {
         return Ok(Some("This engine is unavailable on this host."));
     }
@@ -176,16 +157,22 @@ fn runtime_blocked_reason(
     Ok(None)
 }
 pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
-    let accounts = providers::accounts(state)?;
     let mut rows = all(
         db,
         "SELECT a.*,j.model AS goal_judge_model FROM agents a
-        LEFT JOIN goal_judge_models j ON j.agent=a.id AND j.runtime=a.runtime ORDER BY a.rowid",
+        LEFT JOIN provider_instances pi ON pi.id=a.provider_instance
+        LEFT JOIN goal_judge_models j ON j.agent=a.id AND j.runtime=pi.kind ORDER BY a.rowid",
         [],
     )?;
     for a in &mut rows {
         let id = string(a, "id").to_owned();
-        let runtime = string(a, "runtime").to_owned();
+        let runtime = one(
+            db,
+            "SELECT kind FROM provider_instances WHERE id=?",
+            [string(a, "provider_instance")],
+        )?
+        .map(|row| string(&row, "kind").to_owned())
+        .unwrap_or_default();
         let avatar = avatar_read(db, &id)?;
         let workspace_connected = super::agent_folders::effective(state, db, &id).is_ok();
         a["workspace_connected"] = json!(workspace_connected);
@@ -205,15 +192,10 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
         } else {
             json!(0)
         };
-        let instance = if string(a, "provider_instance").is_empty() {
-            None
-        } else {
-            provider_instance_kind(db, string(a, "provider_instance"))?
-        };
-        let provider_reason = if let Some((_, enabled)) = instance.as_ref() {
-            (!enabled).then_some("This provider instance is disabled.")
-        } else {
-            binding_blocked_reason(db, &runtime, string(a, "provider_account"), &accounts)?
+        let provider_reason = match provider_instance_kind(db, string(a, "provider_instance"))? {
+            None => Some("Choose a provider instance."),
+            Some((_, false)) => Some("This provider instance is disabled."),
+            Some((_, true)) => None,
         };
         let blocked_reason = provider_reason.or(runtime_blocked_reason(
             state,
@@ -226,6 +208,13 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
         a["runnable"] = json!(blocked_reason.is_none());
         a["blocked_reason"] = json!(blocked_reason);
         a["hidden"] = json!(hidden(db, &id)?);
+        a["providerInstance"] = a["provider_instance"].clone();
+        a["modelOptions"] =
+            serde_json::from_str(string(a, "model_options")).unwrap_or_else(|_| json!({}));
+        if let Some(map) = a.as_object_mut() {
+            map.remove("provider_instance");
+            map.remove("model_options");
+        }
         a["visibility_revision"] = one(
             db,
             "SELECT revision FROM agent_visibility WHERE agent=?",
@@ -277,22 +266,6 @@ pub(super) fn role(v: Option<&Value>) -> Result<String> {
     }
     Ok(s.trim().into())
 }
-fn backup(v: &Value, model: &str) -> Result<Option<String>> {
-    let Some(value) = v.get("backupModel") else {
-        return Ok(None);
-    };
-    let s=value.as_str().filter(|s|s.encode_utf16().count()<=160&&!s.chars().any(|c|c<' '||c=='\u{7f}')&&s.trim()!=model).ok_or_else(||error(400,"Fallback model must differ from the primary model, up to 160 characters. Leave empty to disable."))?;
-    Ok(Some(s.trim().into()))
-}
-fn account(v: &Value) -> Result<Option<&str>> {
-    v.get("providerAccount")
-        .map(|v| {
-            v.as_str()
-                .filter(|s| s.encode_utf16().count() <= 64)
-                .ok_or_else(|| error(400, "Invalid provider account."))
-        })
-        .transpose()
-}
 fn provider_instance(v: &Value) -> Result<Option<&str>> {
     v.get("providerInstance")
         .map(|value| {
@@ -312,15 +285,6 @@ fn provider_instance(v: &Value) -> Result<Option<&str>> {
         })
         .transpose()
 }
-
-fn provider_instance_kind(db: &Connection, id: &str) -> Result<Option<(String, bool)>> {
-    Ok(one(
-        db,
-        "SELECT kind,enabled FROM provider_instances WHERE id=?",
-        [id],
-    )?
-    .map(|row| (string(&row, "kind").to_owned(), row["enabled"] == 1)))
-}
 fn model_options(v: &Value) -> Result<Option<String>> {
     v.get("modelOptions")
         .map(|value| {
@@ -331,46 +295,39 @@ fn model_options(v: &Value) -> Result<Option<String>> {
         })
         .transpose()
 }
-fn validate_account(state: &AppState, db: &Connection, runtime: &str, binding: &str) -> Result<()> {
-    if binding == super::logins::DEVICE {
-        if !super::logins::device_runtime(runtime) {
-            return Err(error(400, super::logins::DEVICE_RUNTIME_ONLY));
-        }
-    } else if binding.starts_with(super::logins::PREFIX) {
-        let profile = super::logins::bound(db, binding)?
-            .ok_or_else(|| error(400, "Engine login profile not found."))?;
-        if profile["runtime"] != runtime {
-            return Err(error(400, "Choose an engine login for this runtime."));
-        }
-    } else if !providers::accounts(state)
-        .is_ok_and(|accounts| accounts.iter().any(|account| account.id == binding))
-    {
-        return Err(error(400, "Provider account not found."));
-    }
-    Ok(())
+fn provider_instance_kind(db: &Connection, id: &str) -> Result<Option<(String, bool)>> {
+    Ok(one(
+        db,
+        "SELECT kind,enabled FROM provider_instances WHERE id=?",
+        [id],
+    )?
+    .map(|row| (string(&row, "kind").to_owned(), row["enabled"] == 1)))
 }
-fn runtime(v: &Value) -> Result<Option<&str>> {
-    v.get("runtime")
-        .map(|v| {
-            v.as_str()
-                .filter(|s| {
-                    [
-                        "api",
-                        "codex",
-                        "claude",
-                        "hermes",
-                        "antigravity",
-                        "grok",
-                        "pi",
-                        "opencode",
-                        "gemini",
-                        "kiro",
-                    ]
-                    .contains(s)
-                })
-                .ok_or_else(|| error(400, "Invalid agent runtime."))
-        })
-        .transpose()
+fn test_runtime_instance(state: &AppState, db: &Connection, v: &Value) -> Result<Option<String>> {
+    if !state.config.harness.test_mode {
+        return Ok(None);
+    }
+    let runtime = v.get("runtime").and_then(Value::as_str);
+    let Some(runtime) = runtime.filter(|runtime| crate::harness::RUNTIMES.contains(runtime)) else {
+        return Ok(None);
+    };
+    db.execute(
+        "INSERT INTO provider_instances(id,kind,display_name) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING",
+        params![runtime, runtime, crate::harness::label(runtime)],
+    )?;
+    Ok(Some(runtime.to_owned()))
+}
+fn default_provider_instance(state: &AppState, db: &Connection) -> Result<Option<String>> {
+    let rows = all(
+        db,
+        "SELECT id,kind FROM provider_instances WHERE enabled=1 ORDER BY CASE kind WHEN 'codex' THEN 0 WHEN 'claude' THEN 1 ELSE 2 END,rowid",
+        [],
+    )?;
+    Ok(rows
+        .iter()
+        .find(|row| executable(state, string(row, "kind")).is_some())
+        .or_else(|| rows.first())
+        .map(|row| string(row, "id").to_owned()))
 }
 fn bounds(v: &Value) -> Result<()> {
     if v.get("threadLimit").is_some_and(|v| !integer(v, 1, 32)) {
@@ -411,52 +368,25 @@ pub fn create(
     let instructions = field(v, "instructions", 8000)?;
     let role = role(v.get("role"))?;
     let previous = one(db, "SELECT request FROM agent_creations WHERE id=?", [id])?;
-    let backup = backup(v, &model)?;
-    let account = account(v)?;
-    let provider_instance = provider_instance(v)?;
+    let provider_instance = provider_instance(v)?
+        .map(str::to_owned)
+        .or(default_provider_instance(state, db)?);
     let model_options = model_options(v)?;
     let old_runtime = previous
         .as_ref()
         .map(|r| json(&r["request"]))
         .transpose()?
-        .and_then(|v| v["runtime"].as_str().map(str::to_owned))
-        .unwrap_or_else(|| "api".into());
-    let requested_runtime = runtime(v)?.map(str::to_owned);
+        .and_then(|v| v["providerInstance"].as_str().map(str::to_owned));
     let instance_kind = provider_instance
+        .as_deref()
         .map(|id| provider_instance_kind(db, id))
         .transpose()?
         .flatten();
     if provider_instance.is_some() && instance_kind.is_none() {
         return Err(error(400, "Provider instance not found."));
     }
-    if let (Some(requested), Some((kind, _))) =
-        (requested_runtime.as_deref(), instance_kind.as_ref())
-    {
-        if requested != kind && requested != "api" {
-            return Err(error(
-                400,
-                "Provider instance does not match the selected runtime.",
-            ));
-        }
-    }
-    let runtime = instance_kind
-        .as_ref()
-        .map(|(kind, _)| kind.clone())
-        .or(requested_runtime)
-        .unwrap_or_else(|| {
-            if previous.is_some() {
-                old_runtime
-            } else if executable(state, "codex").is_some() {
-                "codex".into()
-            } else {
-                "api".into()
-            }
-        });
-    if previous.is_none() && runtime != "api" && executable(state, &runtime).is_none() {
-        return Err(error(
-            400,
-            "Coding runtime requires an installed executable on PATH.",
-        ));
+    if provider_instance.is_none() && old_runtime.is_some() {
+        return Err(error(400, "Choose a provider instance."));
     }
     bounds(v)?;
     let mut request = json!({"name":name,"model":model,"instructions":instructions});
@@ -474,20 +404,11 @@ pub fn create(
             request[key] = value.clone();
         }
     }
-    if let Some(b) = &backup {
-        request["backupModel"] = json!(b);
-    }
-    if let Some(a) = account {
-        request["providerAccount"] = json!(a);
-    }
-    if let Some(instance) = provider_instance {
+    if let Some(instance) = &provider_instance {
         request["providerInstance"] = json!(instance);
     }
     if let Some(options) = &model_options {
         request["modelOptions"] = serde_json::from_str(options).map_err(|_| Failure::storage())?;
-    }
-    if provider_instance.is_none() && runtime != "api" {
-        request["runtime"] = json!(runtime);
     }
     if let Some(old) = previous {
         if json(&old["request"])? != request {
@@ -504,32 +425,11 @@ pub fn create(
         }
         return Ok((200, a));
     }
-    if let Some(account) = account {
-        validate_account(state, db, &runtime, account)?;
-    }
     let image = avatar.get(input)?;
     super::agent_folders::ensure_managed(state, id)?;
-    db.execute("INSERT INTO agents(id,name,role,model,instructions,thread_limit,tool_budget,backup_model,provider_account,runtime) VALUES(?,?,?,?,?,?,?,?,?,?)",rusqlite::params![id,name,role,model,instructions,v["threadLimit"].as_i64().unwrap_or(2),v["toolBudget"].as_i64().unwrap_or(90),backup.as_deref().unwrap_or(""),account.unwrap_or(""),runtime])?;
-    if let Some(instance) = provider_instance {
-        db.execute(
-            "UPDATE agents SET provider_instance=? WHERE id=?",
-            [instance, id],
-        )?;
-    }
-    if let Some(options) = model_options {
-        db.execute(
-            "UPDATE agents SET model_options=? WHERE id=?",
-            rusqlite::params![options, id],
-        )?;
-    }
+    db.execute("INSERT INTO agents(id,name,role,model,instructions,thread_limit,tool_budget,provider_instance,model_options) VALUES(?,?,?,?,?,?,?,?,?)",rusqlite::params![id,name,role,model,instructions,v["threadLimit"].as_i64().unwrap_or(2),v["toolBudget"].as_i64().unwrap_or(90),provider_instance.as_deref().unwrap_or(""),model_options.as_deref().unwrap_or("{}")])?;
     crate::connectors::mailbox::register(db, id, &name)?;
     if setup {
-        let a = providers::accounts(state)?
-            .into_iter()
-            .find(|a| a.id == account.unwrap_or(""));
-        if runtime == "api" && a.as_ref().is_none_or(|a| a.base.is_empty()) {
-            return Err(error(503,"The default provider account is not configured. Check server configuration before sending again."));
-        }
         let prompt=format!("Initial name: {}. Draft this agent's profile from the needs in the initial instructions. Use edit_profile to save a fitting name, a short role and clear working instructions. Do not start the actual work or change the account, permissions or model. If the needs are unclear, ask with ask_user. After saving the profile, briefly explain what the agent can and cannot do.\n\nInitial needs:\n{instructions}",json!(name));
         db.execute(
             "INSERT INTO turns(id,agent,text,status,created) VALUES(?,?,?,'queued',?)",
@@ -562,8 +462,8 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
                 "id",
                 "revision",
                 "model",
-                "runtime",
-                "providerAccount",
+                "providerInstance",
+                "modelOptions",
                 "confirmRuntime",
             ],
         ) {
@@ -583,22 +483,18 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     let model = field(v, "model", 160)?;
     let instructions = field(v, "instructions", 8000)?;
     let role = v.get("role").map(|v| role(Some(v))).transpose()?;
-    let backup = backup(v, &model)?;
-    let account = account(v)?;
-    let provider_instance = provider_instance(v)?;
+    let provider_instance = provider_instance(v)?
+        .map(str::to_owned)
+        .or(test_runtime_instance(state, db, v)?);
     let model_options = model_options(v)?;
     let instance_kind = provider_instance
+        .as_deref()
         .map(|id| provider_instance_kind(db, id))
         .transpose()?
         .flatten();
     if provider_instance.is_some() && instance_kind.is_none() {
         return Err(error(400, "Provider instance not found."));
     }
-    let runtime = if provider_instance.is_some() {
-        None
-    } else {
-        runtime(v)?
-    };
     bounds(v)?;
     if v.get("webAccess").is_some_and(|value| !value.is_boolean()) {
         return Err(error(400, "Web access must be a boolean."));
@@ -642,12 +538,9 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     };
     for key in [
         "role",
-        "runtime",
         "harnessModel",
         "threadLimit",
         "toolBudget",
-        "backupModel",
-        "providerAccount",
         "providerInstance",
         "modelOptions",
         "webAccess",
@@ -655,14 +548,9 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         "learnFromConversations",
         "memoryModel",
     ] {
-        if key != "runtime" || provider_instance.is_none() {
-            if let Some(value) = v.get(key) {
-                request[key] = value.clone();
-            }
+        if let Some(value) = v.get(key) {
+            request[key] = value.clone();
         }
-    }
-    if runtime.is_some() {
-        request["confirmRuntime"] = v["confirmRuntime"].clone();
     }
     if let Some(old) = receipt(
         db,
@@ -690,43 +578,19 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
             "Wait for or cancel agent work before changing the profile.",
         ));
     }
-    if backup.is_none() && current["backup_model"] == model {
-        return Err(error(400,"Primary and fallback models must differ. Clear the fallback model or choose another model."));
-    }
-    let saved_binding = string(&current, "provider_account");
     let selected_runtime = instance_kind
         .as_ref()
-        .map(|(kind, _)| kind.as_str())
-        .or(runtime)
-        .unwrap_or_else(|| string(&current, "runtime"));
-    let instance_changed =
-        provider_instance.is_some_and(|instance| instance != string(&current, "provider_instance"));
-    if let Some(binding) = account.or_else(|| {
-        (runtime.is_some()
-            && (saved_binding.starts_with(super::logins::PREFIX)
-                || saved_binding == super::logins::DEVICE))
-            .then_some(saved_binding)
-    }) {
-        validate_account(state, db, selected_runtime, binding)?;
-    }
-    if let Some(runtime) = runtime {
-        if runtime != string(&current, "runtime") {
-            if v["confirmRuntime"] != true {
-                return Err(error(
-                    409,
-                    "Confirm the runtime change in Minarbot before saving.",
-                ));
-            }
-            if runtime != "api" && executable(state, runtime).is_none() {
-                return Err(error(
-                    400,
-                    "Coding runtime requires an installed executable on PATH.",
-                ));
-            }
-            db.execute("UPDATE agents SET runtime=? WHERE id=?", [runtime, id])?;
-            reset_harness(db, id)?;
-        }
-    }
+        .map(|(kind, _)| kind.clone())
+        .or_else(|| {
+            provider_instance_kind(db, string(&current, "providerInstance"))
+                .ok()
+                .flatten()
+                .map(|(kind, _)| kind)
+        })
+        .unwrap_or_default();
+    let instance_changed = provider_instance
+        .as_deref()
+        .is_some_and(|instance| instance != string(&current, "providerInstance"));
     if instance_changed {
         reset_harness(db, id)?;
     }
@@ -738,10 +602,7 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
             })
             .ok_or_else(|| error(400, "Invalid harness model."))?
             .trim();
-        let selected = runtime.unwrap_or_else(|| string(&current, "runtime"));
-        if matches!(selected, "api" | "codex" | "claude") {
-            return Err(error(400, "Harness model is unavailable for this runtime."));
-        }
+        let selected = selected_runtime.as_str();
         if one(
             db,
             "SELECT model FROM harness_models WHERE agent=? AND runtime=?",
@@ -756,29 +617,13 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
         }
         db.execute("INSERT INTO harness_models(agent,runtime,model) VALUES(?,?,?) ON CONFLICT(agent,runtime) DO UPDATE SET model=excluded.model",[id,selected,harness_model])?;
     }
-    let binding_changed = account.is_some_and(|a| a != saved_binding)
-        || selected_runtime != string(&current, "runtime");
+    let binding_changed = instance_changed;
     let memory_model = memory_model.or(binding_changed.then_some(""));
-    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),backup_model=coalesce(?,backup_model),provider_account=coalesce(?,provider_account),web_access=coalesce(?,web_access),learn_from_conversations=coalesce(?,learn_from_conversations),memory_model=coalesce(?,memory_model),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),backup,account,v["webAccess"].as_bool(),learn,memory_model,id])?;
-    if let Some(instance) = provider_instance {
-        db.execute(
-            "UPDATE agents SET provider_instance=? WHERE id=?",
-            [instance, id],
-        )?;
-    }
-    if let Some(options) = model_options {
-        db.execute(
-            "UPDATE agents SET model_options=? WHERE id=?",
-            rusqlite::params![options, id],
-        )?;
-    }
-    if account.is_some_and(|a| a != string(&current, "provider_account"))
-        && table(db, "model_fallbacks")?
-    {
-        db.execute("DELETE FROM model_fallbacks WHERE agent=?", [id])?;
-    }
+    db.execute("UPDATE agents SET name=?,role=coalesce(?,role),model=?,instructions=?,thread_limit=coalesce(?,thread_limit),tool_budget=coalesce(?,tool_budget),provider_instance=coalesce(?,provider_instance),model_options=coalesce(?,model_options),web_access=coalesce(?,web_access),learn_from_conversations=coalesce(?,learn_from_conversations),memory_model=coalesce(?,memory_model),revision=revision+1 WHERE id=?",rusqlite::params![name,role,model,instructions,v["threadLimit"].as_i64(),v["toolBudget"].as_i64(),provider_instance,model_options,v["webAccess"].as_bool(),learn,memory_model,id])?;
     if let Some(model) = v.get("goalJudgeModel") {
-        crate::turns::goals::save_model(db, id, selected_runtime, model)?;
+        if !selected_runtime.is_empty() {
+            crate::turns::goals::save_model(db, id, &selected_runtime, model)?;
+        }
     }
     let mut updated = read(db, id)?;
     if state.auth.is_none() && v.get("goalJudgeModel").is_some() {
@@ -859,9 +704,6 @@ pub fn template(db: &Connection, id: &str) -> Result<Value> {
     let mut out = json!({"format":"minarbot-agent","version":1,"name":a["name"],"role":a["role"],"model":a["model"],"instructions":a["instructions"],"threadLimit":a["thread_limit"]});
     if a["tool_budget"] != 90 {
         out["toolBudget"] = a["tool_budget"].clone();
-    }
-    if !string(&a, "backup_model").is_empty() {
-        out["backupModel"] = a["backup_model"].clone();
     }
     if let Some(image) = image(db, id)? {
         out["avatar"] = json!(STANDARD.encode(image));
@@ -1104,104 +946,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn device_sign_in_binds_only_codex_and_claude() -> Result<()> {
-        let db = Connection::open_in_memory()?;
-        for (runtime, runnable) in [
-            ("codex", true),
-            ("claude", true),
-            ("api", false),
-            ("pi", false),
-        ] {
-            assert_eq!(
-                binding_blocked_reason(&db, runtime, super::super::logins::DEVICE, &[])?.is_none(),
-                runnable,
-                "{runtime}"
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn device_binding_uses_only_the_reported_account() {
-        let report = json!([{"id":"device-account","provider":"openai-compatible","defaultModel":"fixture"}]);
-        let binding =
-            json!({"id":"grant","provider_account_id":"missing","provider_id":"openai-compatible"});
-        let account = device_binding_account(&report, &binding);
-        let status = device_provider_status(
-            "Laptop",
-            account.map_or(&Value::Null, |account| &account["id"]),
-        );
-        assert_eq!(status["runnable"], false);
-        assert_eq!(status["blocked_reason"], "No provider on Laptop");
+    fn device_binding_uses_only_the_reported_instance() {
+        let report = json!([{"id":"instance","provider":"codex","defaultModel":"fixture"}]);
+        let binding = json!({"id":"grant","provider_account_id":"missing","provider_id":"codex"});
+        assert!(device_binding_account(&report, &binding).is_none());
         let mut binding = binding;
-        binding["provider_account_id"] = json!("device-account");
+        binding["provider_account_id"] = json!("instance");
         assert_eq!(
             device_binding_account(&report, &binding).map(|account| &account["id"]),
-            Some(&json!("device-account"))
+            Some(&json!("instance"))
         );
     }
 
     #[test]
-    fn runtime_provider_requirements_match_execution() {
-        let account = |family: &str, base: &str| providers::Account {
-            id: String::new(),
-            name: "Fixture".into(),
-            family: family.into(),
-            base: base.into(),
-            key: None,
-            model: String::new(),
-            stream: false,
-            termination: "marker".into(),
-            max_tokens: 4096,
-            source: "environment",
-        };
-        let base = "http://127.0.0.1:1/v1";
-        let unconfigured = account("openai-compatible", "");
-        let openai = account("openai-compatible", base);
-        let anthropic = account("anthropic", base);
-        let gemini = account("gemini", base);
-        for (runtime, account, runnable) in [
-            ("api", None, false),
-            ("api", Some(&unconfigured), false),
-            ("api", Some(&openai), true),
-            ("api", Some(&anthropic), true),
-            ("api", Some(&gemini), true),
-            ("codex", None, false),
-            ("codex", Some(&unconfigured), false),
-            ("codex", Some(&openai), true),
-            ("codex", Some(&anthropic), false),
-            ("claude", None, false),
-            ("claude", Some(&unconfigured), false),
-            ("claude", Some(&anthropic), true),
-            ("claude", Some(&openai), true),
-            ("pi", Some(&unconfigured), true),
-            ("pi", None, false),
-        ] {
-            assert_eq!(
-                provider_blocked_reason(runtime, account).is_none(),
-                runnable,
-                "{runtime}"
-            );
-        }
-    }
-
-    #[test]
-    fn dispatch_capabilities_only_advertise_steering_for_api() {
-        assert_eq!(
-            capabilities("api"),
-            json!({"queue": true, "restart": true, "steer": true})
-        );
-        for runtime in [
-            "codex",
-            "claude",
-            "hermes",
-            "antigravity",
-            "grok",
-            "pi",
-            "opencode",
-            "gemini",
-            "kiro",
-        ] {
+    fn dispatch_capabilities_disable_steering() {
+        for runtime in ["codex", "claude", "hermes", "gemini", "kiro"] {
             assert_eq!(
                 capabilities(runtime),
                 json!({"queue": true, "restart": true, "steer": false})

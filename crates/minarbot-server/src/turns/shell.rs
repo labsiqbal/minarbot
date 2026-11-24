@@ -85,56 +85,21 @@ async fn approval(
     command: &str,
     args: &Value,
 ) -> Result<bool> {
-    let native = {
-        let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        data::agents::read(&guard.connection, string(turn, "agent"))?["runtime"] != "api"
-            && !harness::peer(&guard.connection, string(turn, "id"))?
-    };
-    if native {
-        if binding.write && !COMMAND_REQUIRING_APPROVAL.is_match(command) {
-            return Ok(true);
-        }
-        return crate::harness::approve(
-            state,
-            string(turn, "id"),
-            "command",
-            Some(command),
-            "Run workspace shell command?",
-            args,
-            "",
-        )
-        .await;
+    if binding.write && !COMMAND_REQUIRING_APPROVAL.is_match(command) {
+        return Ok(true);
     }
-    let id = uuid::Uuid::new_v4().to_string();
-    let mut changes = state.events.subscribe();
-    let _wait = {
-        let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        let wait = crate::harness::config::CardWait::start(state, string(turn, "id"))?;
-        guard.connection.execute("INSERT INTO harness_approvals(id,turn,agent,runtime,workspace,kind,description,command,prefix,input,state) VALUES (?,?,?,'api',?,'command','Run workspace shell command?',?,NULL,?,'approval')",params![id,turn["id"].as_str(),turn["agent"].as_str(),binding.directory.to_str(),command,args.to_string()])?;
-        wait
-    };
-    loop {
-        {
-            let guard = state.database.lock().map_err(|_| Failure::storage())?;
-            let row = one(
-                &guard.connection,
-                "SELECT state,decision FROM harness_approvals WHERE id=?",
-                [&id],
-            )?
-            .ok_or_else(Failure::storage)?;
-            if row["state"] == "decided" {
-                return Ok(row["decision"] != "deny");
-            }
-            if row["state"] != "approval" {
-                return Err(error(
-                    409,
-                    "Harness approval expired because this turn stopped.",
-                ));
-            }
-        }
-        tokio::select! {_=changes.recv()=>(),_=tokio::time::sleep(std::time::Duration::from_millis(200))=>()}
-    }
+    return crate::harness::approve(
+        state,
+        string(turn, "id"),
+        "command",
+        Some(command),
+        "Run workspace shell command?",
+        args,
+        "",
+    )
+    .await;
 }
+
 pub async fn run(state: &AppState, turn: &Value, call: &Value, args: Value) -> Result<Value> {
     if !crate::platform::LINUX_SANDBOX {
         return Err(error(503, "Shell sandbox is unavailable on this platform."));

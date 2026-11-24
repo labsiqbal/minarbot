@@ -36,7 +36,7 @@ struct Stream {
     principal: Principal,
     generation: i64,
     sender: mpsc::Sender<String>,
-    provider_accounts: Option<(Value, bool)>,
+    provider_instances: Option<(Value, bool)>,
 }
 #[derive(Default)]
 struct Runtime {
@@ -948,7 +948,7 @@ fn envelope(result: Value) -> Response {
         json!({"ok":true,"data":result["data"],"revision":result["receipt"]["recordRevision"],"receipt":result["receipt"]}),
     )
 }
-pub(crate) fn provider_accounts(device: &Value, account: &str) -> Result<Option<(Value, bool)>> {
+pub(crate) fn provider_instances(device: &Value, account: &str) -> Result<Option<(Value, bool)>> {
     Ok(runtime()?
         .streams
         .get(text(device, "id"))
@@ -958,7 +958,7 @@ pub(crate) fn provider_accounts(device: &Value, account: &str) -> Result<Option<
                 && device["generation"] == stream.principal.generation
                 && device["connection_generation"] == stream.generation
         })
-        .and_then(|stream| stream.provider_accounts.clone()))
+        .and_then(|stream| stream.provider_instances.clone()))
 }
 
 pub(crate) fn device_label(db: &Connection, device: &Value, owner: &str) -> Result<String> {
@@ -1025,15 +1025,15 @@ pub async fn human(
         authority(db)?;
         let mut devices = rows(db,"SELECT id,installation,generation,connection_generation,status,zone,zone_revision,last_seen,capabilities_json,revision,descriptor_json FROM devices WHERE account=? ORDER BY id",[&actor.account])?;
         for device in &mut devices {
-            let Some((accounts, complete)) = provider_accounts(device, &actor.account)? else {
+            let Some((accounts, complete)) = provider_instances(device, &actor.account)? else {
                 continue;
             };
             let id = text(device, "id");
             let name = device_label(db, device, &actor.account)?;
             let bindings =
                 data::agents::device_bindings(db, id, &actor.account, &name, &accounts, complete)?;
-            device["providerAccounts"] = accounts;
-            device["providerAccountsComplete"] = json!(complete);
+            device["providerInstances"] = accounts;
+            device["providerInstancesComplete"] = json!(complete);
             device["agentProviders"] = bindings;
         }
         return Ok(Some(crate::json_response(
@@ -1205,8 +1205,8 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
                 "zone",
                 "zoneRevision",
                 "journalWatermark",
-                "providerAccounts",
-                "providerAccountsComplete",
+                "providerInstances",
+                "providerInstancesComplete",
             ],
         )?;
         let mut normalized = v.clone();
@@ -1215,7 +1215,10 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
         let zone = zone(&v["zone"])?;
         let zr = revision(&v["zoneRevision"], 1)?;
         revision(&v["journalWatermark"], 0)?;
-        let accounts = match (v.get("providerAccounts"), v.get("providerAccountsComplete")) {
+        let accounts = match (
+            v.get("providerInstances"),
+            v.get("providerInstancesComplete"),
+        ) {
             (None, None) => None,
             (Some(accounts), Some(Value::Bool(complete))) => {
                 data::providers::validate_metadata(accounts)?;
@@ -1224,7 +1227,7 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
             _ => {
                 return Err(fail(
                     400,
-                    "invalid_provider_accounts",
+                    "invalid_provider_instances",
                     "Invalid device provider accounts.",
                 ))
             }
@@ -1281,7 +1284,7 @@ pub async fn host(state: &AppState, request: Request, request_id: &str) -> Resul
                 .get_mut(&device)
                 .filter(|stream| stream.generation == connection)
             {
-                stream.provider_accounts = accounts;
+                stream.provider_instances = accounts;
             }
         }
         return Ok(envelope(result));
@@ -1316,7 +1319,7 @@ async fn open_stream(state: &AppState, p: Principal) -> Result<Response> {
                 principal: p.clone(),
                 generation: next,
                 sender: tx,
-                provider_accounts: None,
+                provider_instances: None,
             },
         );
         next

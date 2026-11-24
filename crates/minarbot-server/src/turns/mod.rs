@@ -1,8 +1,9 @@
+#![allow(dead_code)]
+
 pub(crate) use admission::account as hub_account;
 pub(crate) use admission::prepare as prepare_script;
 pub(crate) use admission::route as script_route;
 pub(crate) use history::{inspect, readable_file, requested_files};
-mod accounts;
 pub(crate) mod admission;
 mod compaction;
 mod coordination;
@@ -61,7 +62,6 @@ pub struct Runtime {
     wake: Arc<Notify>,
     requested_pass: Arc<AtomicU64>,
     scheduled: watch::Sender<u64>,
-    client: reqwest::Client,
     stopping: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Runtime {
@@ -73,10 +73,6 @@ impl Runtime {
             requested_pass: Default::default(),
             scheduled: Default::default(),
             stopping: Default::default(),
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|_| "Cannot initialize provider HTTP client.".to_owned())?,
         })
     }
     fn cancel(&self, turn: &str) {
@@ -231,7 +227,8 @@ fn schedule(state: &AppState, reader: &Connection) -> Result<()> {
     if pending(state) {
         return Ok(());
     }
-    for root in room::settlements(reader)? {
+    let roots = room::settlements(reader)?;
+    for root in roots {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         if pending(state) {
             return Ok(());
