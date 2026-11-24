@@ -282,7 +282,7 @@ fn system(section: SettingsRoute) -> crate::lazy_view::ChunkView {
 fn connections(section: SettingsRoute) -> crate::lazy_view::ChunkView {
     request_animation_frame(focus_heading);
     Ok(match section {
-        SettingsRoute::Providers => crate::providers::panel().into_any(),
+        SettingsRoute::Providers => crate::provider_instances::panel().into_any(),
         SettingsRoute::Engines => crate::engines::panel().into_any(),
         SettingsRoute::Vault => crate::vault::panel().into_any(),
         SettingsRoute::Email => crate::email::panel().into_any(),

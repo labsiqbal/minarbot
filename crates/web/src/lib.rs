@@ -28,6 +28,7 @@ mod pairing;
 mod project_integrations;
 mod projects;
 mod providers;
+mod provider_instances;
 mod routes;
 #[cfg(any(feature = "conversation", feature = "workflows"))]
 mod routine_label;
