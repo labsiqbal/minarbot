@@ -59,6 +59,25 @@ struct Account {
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+struct ProviderInstance {
+    id: String,
+    display_name: String,
+    kind: String,
+    #[serde(default)]
+    models: Vec<Model>,
+    #[serde(default)]
+    model_ids: Vec<String>,
+    #[serde(default)]
+    enabled: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Default)]
+struct ProviderInstances {
+    providers: Vec<ProviderInstance>,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 struct Login {
     id: String,
     name: String,
@@ -77,6 +96,8 @@ const CREATION_FIELDS: &[&str] = &[
     "toolBudget",
     "runtime",
     "providerAccount",
+    "providerInstance",
+    "modelOptions",
     "setup",
 ];
 
@@ -98,6 +119,12 @@ fn valid_base(value: &Value) -> bool {
             .as_str()
             .is_some_and(|text| Some(text.trim()) != primary && !text.chars().any(char::is_control))
         && bounded(&value["providerAccount"], 64, false)
+        && value
+            .get("providerInstance")
+            .is_none_or(|instance| bounded(instance, 64, false))
+        && value
+            .get("modelOptions")
+            .is_none_or(|options| options.is_object())
         && value["threadLimit"]
             .as_u64()
             .is_some_and(|value| (1..=32).contains(&value))
@@ -307,6 +334,18 @@ pub(super) fn agent_form(
         profile.runtime.unwrap_or_else(|| "api".into()),
     ));
     let account = RwSignal::new(initial("providerAccount", profile.provider_account));
+    let provider_instance = RwSignal::new(initial(
+        "providerInstance",
+        profile.provider_instance,
+    ));
+    let model_options = RwSignal::new(
+        saved["modelOptions"]
+            .as_object()
+            .cloned()
+            .or_else(|| profile.model_options.as_object().cloned())
+            .map(Value::Object)
+            .unwrap_or_else(|| json!({})),
+    );
     let backup = RwSignal::new(initial("backupModel", profile.backup_model));
     let goal = RwSignal::new(initial(
         "goalJudgeModel",
@@ -349,6 +388,7 @@ pub(super) fn agent_form(
     });
     let accounts = query::<Vec<Account>>(|| "/api/provider-accounts".into());
     let logins = query::<Vec<Login>>(|| "/api/engine-logins".into());
+    let instances = query::<ProviderInstances>(|| "/api/provider-instances".into());
     let models = query::<Models>(move || {
         let runtime = runtime.get_untracked();
         if !discovers(&runtime) {
@@ -606,6 +646,7 @@ pub(super) fn agent_form(
             "name": name_value, "role": role.get_untracked().trim(), "model":model_value,
             "instructions":brief, "threadLimit":thread_limit, "toolBudget":tool_budget,
             "backupModel":backup.get_untracked().trim(), "providerAccount":account.get_untracked(),
+            "providerInstance":provider_instance.get_untracked(), "modelOptions":model_options.get_untracked(),
         });
         if let Some(revision) = revision {
             body["revision"] = json!(revision);
@@ -662,6 +703,23 @@ pub(super) fn agent_form(
         models
             .data
             .with(|data| data.as_ref().is_some_and(|data| !data.models.is_empty()))
+    });
+    let instance_options = Signal::derive(move || {
+        instances
+            .data
+            .with(|data| {
+                data.as_ref()
+                    .map(|data| {
+                        data.providers
+                            .iter()
+                            .filter(|provider| provider.enabled)
+                            .map(|provider| {
+                                (provider.id.clone(), provider.display_name.clone())
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
     });
     let memory_placeholder = Signal::derive(move || {
         let main = model.get();
@@ -734,6 +792,14 @@ pub(super) fn agent_form(
         </label>
     };
     let model_fields = view! {
+        <ui::Field label="Provider" name="provider-instance">
+            <Select name="providerInstance" value=provider_instance.into() options=instance_options
+                disabled=move || locked.get() change=Callback::new(move |value| {
+                    provider_instance.set(value);
+                    account.set(String::new());
+                }) />
+            <ErrorNotice error=instances.error.into() retry=instances.reload />
+        </ui::Field>
         {agent.as_ref().filter(|agent| agent.profile.runtime.as_deref() == Some("api")).map(|_| view! {
             <Button label="Use Codex" disabled=move || locked.get() || !runtimes.data.with(|data| data.as_ref().is_some_and(|data| data.choices.iter().any(|choice| choice.runtime == "codex" && choice.available && choice.enabled)))
               click=Callback::new(move |()| { change_runtime("codex".into()); if let Some(form) = form.get_untracked() { let _ = form.request_submit(); } }) />

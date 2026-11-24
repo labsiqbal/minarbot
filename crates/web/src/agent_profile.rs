@@ -25,6 +25,8 @@ pub(crate) struct Profile {
     pub instructions: String,
     pub runtime: Option<String>,
     pub provider_account: String,
+    pub provider_instance: String,
+    pub model_options: Value,
     pub backup_model: String,
     pub goal_judge_model: Option<String>,
     pub memory_model: String,

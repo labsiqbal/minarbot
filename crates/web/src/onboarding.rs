@@ -18,6 +18,23 @@ struct Provider {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderInstance {
+    id: String,
+    display_name: String,
+    kind: String,
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    models: Vec<Model>,
+}
+
+#[derive(Deserialize)]
+struct ProviderInstances {
+    providers: Vec<ProviderInstance>,
+}
+
+#[derive(Deserialize)]
 struct Runtimes {
     choices: Vec<Runtime>,
 }
@@ -72,6 +89,27 @@ fn provider_connection(provider: Provider, codex: bool) -> Connection {
 }
 
 pub(crate) async fn connections() -> Result<(Vec<Connection>, Option<String>, bool), String> {
+    let instances = api::read::<ProviderInstances>("/api/provider-instances").await?;
+    let instances: Vec<_> = instances
+        .providers
+        .into_iter()
+        .filter(|instance| instance.enabled)
+        .map(|instance| Connection {
+            value: format!("instance:{}", instance.id),
+            label: instance.display_name,
+            runtime: instance.kind,
+            account: String::new(),
+            model: instance
+                .models
+                .first()
+                .map(|model| model.id.clone())
+                .unwrap_or_else(|| "default".into()),
+        })
+        .collect();
+    if !instances.is_empty() {
+        let automatic = instances.first().map(|entry| entry.value.clone());
+        return Ok((instances, automatic, true));
+    }
     let providers: Vec<Provider> = api::read(PROVIDERS).await?;
     let logins: Vec<Login> = api::read("/api/engine-logins").await?;
     let runtimes = api::read::<Runtimes>("/api/runtimes").await?.choices;
@@ -385,10 +423,14 @@ pub fn page(error_icon: String) -> impl IntoView {
             if let Ok(query) = web_sys::UrlSearchParams::new() {
                 query.set("runtime", &connection.runtime);
                 query.set("account", &connection.account);
-                let url = format!(
-                    "/api/models?{}",
-                    query.to_string().as_string().unwrap_or_default()
-                );
+                let url = if let Some(instance) = connection.value.strip_prefix("instance:") {
+                    format!("/api/provider-instances/{instance}/models")
+                } else {
+                    format!(
+                        "/api/models?{}",
+                        query.to_string().as_string().unwrap_or_default()
+                    )
+                };
                 leptos::task::spawn_local(async move {
                     if let Ok(value) = api::read::<Models>(&url).await {
                         if generation.try_get_untracked() == Some(request) {
@@ -432,6 +474,7 @@ pub fn page(error_icon: String) -> impl IntoView {
                 "id": request_id()?, "name": name, "role": "", "model": model, "backupModel": "",
                 "instructions": "Help the user complete their tasks.", "threadLimit": 2, "toolBudget": 90,
                 "providerAccount": connection.account, "runtime": connection.runtime,
+                "providerInstance": connection.value.strip_prefix("instance:").unwrap_or(""),
             }))
         });
         let save = command.and_then(|command| {

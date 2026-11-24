@@ -28,12 +28,28 @@ struct Instance {
     shadow_home_path: String,
     #[serde(default)]
     launch_args: Vec<String>,
+    #[serde(default)]
+    environment: Vec<Environment>,
     revision: u64,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+struct Environment {
+    name: String,
+    #[serde(default)]
+    secret: bool,
+    #[serde(default)]
+    value_redacted: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
 struct Auth {
     status: String,
+    #[serde(default)]
+    method: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
@@ -90,7 +106,7 @@ pub fn panel() -> impl IntoView {
                                         <span class="provider-instance-row__main">
                                             <strong>{provider.display_name.clone()}</strong>
                                             <small>{provider.version.clone().unwrap_or_else(|| provider.kind.clone())}</small>
-                                            <small>{if provider.auth.status == "authenticated" { "Authenticated" } else if provider.installed { "Not authenticated" } else { "Not installed" }}</small>
+                                            <small>{if provider.auth.status == "authenticated" { format!("Authenticated · {}", provider.auth.method.clone().unwrap_or_default()) } else if provider.installed { provider.auth.reason.clone().unwrap_or_else(|| "Not authenticated".into()) } else { "Not installed".into() }}</small>
                                         </span>
                                         <span class="provider-instance-row__toggle" aria-hidden="true">{if provider.enabled { "On" } else { "Off" }}</span>
                                     </button>
@@ -119,14 +135,22 @@ fn detail(provider: Instance) -> AnyView {
             </div>
             <Section title="Status" actions=Box::new(|| ().into_any())>
                 <Row title="Status" trailing=Box::new(move || view! { <span>{status.clone()}</span> }.into_any()) />
-                <Row title="Authentication" trailing=Box::new(move || view! { <span>{provider.auth.status.clone()}</span> }.into_any()) />
+                <Row title="Authentication" trailing=Box::new(move || view! { <span>{if provider.auth.status == "authenticated" { format!("Authenticated · {}", provider.auth.method.clone().unwrap_or_default()) } else { provider.auth.reason.clone().unwrap_or_else(|| "Not authenticated".into()) }}</span> }.into_any()) />
                 <Row title="Models" trailing=Box::new(move || view! { <span>{provider.models.len()}</span> }.into_any()) />
+            </Section>
+            <Section title="Configuration" actions=Box::new(|| ().into_any())>
+                <Row title="Display name" trailing=Box::new(move || view! { <span>{provider.display_name.clone()}</span> }.into_any()) />
             </Section>
             <Section title="Runtime" actions=Box::new(|| ().into_any())>
                 <Row title="Binary path" trailing=Box::new(move || view! { <code>{provider.binary_path.clone()}</code> }.into_any()) />
-                <Row title="Home path" trailing=Box::new(move || view! { <code>{provider.home_path.clone()}</code> }.into_any()) />
+                <Row title=if provider.kind == "codex" { "CODEX_HOME" } else { "Config directory" } trailing=Box::new(move || view! { <code>{provider.home_path.clone()}</code> }.into_any()) />
                 {(!provider.shadow_home_path.is_empty()).then(|| view! { <Row title="Shadow home path" trailing=Box::new(move || view! { <code>{provider.shadow_home_path.clone()}</code> }.into_any()) /> })}
                 <Row title="Launch arguments" trailing=Box::new(move || view! { <code>{provider.launch_args.join(" ")}</code> }.into_any()) />
+            </Section>
+            <Section title="Environment" actions=Box::new(|| view! { <Button label="Add variable" /> }.into_any())>
+                {provider.environment.into_iter().map(|variable| view! {
+                    <Row title=variable.name.clone() trailing=Box::new(move || view! { <code>{if variable.secret || variable.value_redacted { "••••••" } else { "" }}</code> }.into_any()) />
+                }).collect_view()}
             </Section>
         </main>
     }.into_any()
@@ -164,10 +188,16 @@ fn AddProvider(
                     <Button label="Continue" variant="primary" click=UiAction::new(move |()| step.update(|step| *step += 1)) />
                 </Show>
                 <Show when=move || step.get() == 2>
-                    <Button label="Configure" variant="primary" submit=true form="provider-instance-form" busy=busy />
+                    <Button label="Configure manually" submit=true form="provider-instance-form" busy=busy />
+                    <Button label="Sign in" variant="primary" submit=true form="provider-instance-form" busy=busy />
                 </Show>
             }.into_any())>
             <form id="provider-instance-form" class="k-stack" on:submit=submit>
+                <ol class="provider-wizard-stepper" aria-label="Provider setup steps">
+                    <li class:active=move || step.get() == 0>"1 Provider"</li>
+                    <li class:active=move || step.get() == 1>"2 Identity"</li>
+                    <li class:active=move || step.get() == 2>"3 Config"</li>
+                </ol>
                 <Show when=move || step.get() == 0>
                     <Field label="Provider" name="kind"><Select name="kind" value=Signal::derive(move || kind.get())
                         options=Signal::derive(|| ["codex","claude","hermes","antigravity","grok","pi","opencode","gemini","kiro"].into_iter().map(|kind| (kind.into(), kind.into())).collect())
