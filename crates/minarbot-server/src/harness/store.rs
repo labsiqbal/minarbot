@@ -522,6 +522,8 @@ async fn execute(
     saved: Option<String>,
     binding: &crate::config::WorkspaceConfig,
     secrets: Vec<String>,
+    launch_args: Option<Vec<String>>,
+    model_options: Value,
     clock: Option<config::TurnClock>,
 ) -> Result<String> {
     let executable = executable.ok_or_else(|| {
@@ -677,6 +679,12 @@ async fn execute(
         if !native_model.is_empty() {
             args.extend(["--model".into(), native_model.clone()]);
         }
+        if let Some(effort) = model_options["effort"].as_str() {
+            args.extend(["--effort".into(), effort.into()]);
+        }
+        if model_options["fast"] == true {
+            args.push("--fast".into());
+        }
         args
     } else {
         acp_args(runtime, executable)
@@ -717,6 +725,9 @@ async fn execute(
                 instructions.clone(),
             ]);
         }
+    }
+    if let Some(extra) = launch_args {
+        args.extend(extra);
     }
     let turn_id = string(turn, "id");
     let mut child = TurnProcess {
@@ -770,6 +781,12 @@ async fn execute(
         }
         if !native_model.is_empty() {
             params["model"] = json!(native_model);
+        }
+        if let Some(effort) = model_options["reasoningEffort"].as_str() {
+            params["modelReasoningEffort"] = json!(effort);
+        }
+        if let Some(tier) = model_options["serviceTier"].as_str() {
+            params["serviceTier"] = json!(tier);
         }
         if let Some(id) = &saved {
             params["threadId"] = json!(id);
@@ -1547,7 +1564,10 @@ pub async fn run(
                 .ok_or_else(|| error(403, "Coding harness requires a host workspace folder."))?
         };
         let provider = string(&profile, "provider_account");
-        let (account, login, device) = if provider == data::logins::DEVICE {
+        let selected_instance = string(&profile, "provider_instance");
+        let (account, login, device) = if !selected_instance.is_empty() {
+            (None, None, None)
+        } else if provider == data::logins::DEVICE {
             let runtime = string(&profile, "runtime");
             if !data::logins::device_runtime(runtime) {
                 return Err(error(503, data::logins::DEVICE_RUNTIME_ONLY));
@@ -1592,12 +1612,34 @@ pub async fn run(
         };
         (turn, profile, binding, account, login, device)
     };
-    let runtime = string(&profile, "runtime");
-    let executable = super::executable(state, runtime);
+    let instance_id = string(&profile, "provider_instance");
+    let instance = if instance_id.is_empty() {
+        None
+    } else {
+        data::provider_instances::launch_config(state, instance_id)?
+    };
+    let runtime = instance
+        .as_ref()
+        .map(|instance| instance.0.as_str())
+        .unwrap_or_else(|| string(&profile, "runtime"));
+    let executable = instance
+        .as_ref()
+        .and_then(|instance| instance.1.clone())
+        .or_else(|| super::executable(state, runtime));
+    let instance_args = instance
+        .as_ref()
+        .and_then(|instance| (!instance.2.is_empty()).then(|| instance.2.clone()));
+    let instance_environment = instance
+        .as_ref()
+        .map(|instance| instance.3.clone())
+        .unwrap_or_default();
+    let model_options =
+        serde_json::from_str(string(&profile, "model_options")).unwrap_or_else(|_| json!({}));
     let mise = executable.as_deref().is_some_and(process::mise_shim);
     // Claude on the device sign-in runs with the real HOME; see logins::device_environment.
     let device_claude = device.is_some() && runtime == "claude";
-    let isolated_home = (mise || ["codex", "claude"].contains(&runtime)) && !device_claude;
+    let isolated_home =
+        (mise || ["codex", "claude"].contains(&runtime)) && !device_claude && instance.is_none();
     let conversation = turn["channel"]
         .as_str()
         .or(turn["thread"].as_str())
@@ -1672,6 +1714,7 @@ pub async fn run(
             env.remove(variable);
         }
     }
+    env.extend(instance_environment.clone());
     let same_home;
     {
         let mut homes = state.config.harness.homes.lock().await;
@@ -1807,6 +1850,7 @@ pub async fn run(
             secrets.extend(data::logins::secrets(runtime, &bytes));
         }
     }
+    secrets.extend(instance_environment.values().cloned());
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         secrets.extend(crate::mcp::secrets::project(
@@ -1835,6 +1879,8 @@ pub async fn run(
             saved,
             &binding,
             secrets,
+            instance_args.clone(),
+            model_options.clone(),
             clock,
         )
     };

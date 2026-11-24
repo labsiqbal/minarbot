@@ -261,6 +261,52 @@ pub(crate) async fn models(
         .await
 }
 
+pub(crate) async fn models_for_instance(
+    state: &AppState,
+    instance_id: &str,
+    _include_custom: bool,
+) -> Result<Value> {
+    let config = crate::data::provider_instances::launch_config(state, instance_id)?
+        .ok_or_else(|| error(404, "Provider instance not found."))?;
+    let (runtime, binary, configured_args, configured_environment) = config;
+    let executable = binary.unwrap_or_else(|| {
+        executable(state, &runtime).unwrap_or_else(|| Path::new(&runtime).to_path_buf())
+    });
+    let scratch = ProbeHome::new().map_err(|_| launch_error(&runtime))?;
+    let mut env = state.config.harness.environment.clone();
+    env.extend(configured_environment);
+    env.insert("TMPDIR".into(), scratch.0.to_string_lossy().into_owned());
+    mise_environment(&executable, &mut env);
+    let mut launch_args = if configured_args.is_empty() {
+        args(&runtime)
+    } else {
+        configured_args
+    };
+    if launch_args.is_empty() {
+        launch_args = args(&runtime);
+    }
+    let process = Process::launch(&executable, &launch_args, &scratch.0, &env)
+        .map_err(|_| launch_error(&runtime))?;
+    let catalog = probe_process(process, &runtime, PROBE_TIMEOUT).await?;
+    let mut result = response(catalog);
+    if let Some(models) = result["catalog"].as_array_mut() {
+        for model in models {
+            model["options"] = match runtime.as_str() {
+                "codex" => json!([
+                    {"id":"reasoningEffort","type":"string","values":["minimal","low","medium","high","xhigh"]},
+                    {"id":"serviceTier","type":"string","values":["auto","fast"]}
+                ]),
+                "claude" => json!([
+                    {"id":"effort","type":"string","values":["low","medium","high"]},
+                    {"id":"fast","type":"boolean"}
+                ]),
+                _ => json!([]),
+            };
+        }
+    }
+    Ok(result)
+}
+
 fn launch_error(runtime: &str) -> Failure {
     error(
         502,
