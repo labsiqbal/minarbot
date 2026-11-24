@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::*;
 use crate::mcp::codegraph;
 use crate::{
@@ -9,7 +11,6 @@ use crate::{
     mcp::secrets::redact,
     turns,
 };
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs::{DirBuilder, OpenOptions},
@@ -301,12 +302,13 @@ pub async fn approve(
             Some(binding) => binding.directory.to_str(),
             None => Some(""),
         };
-        let secrets = data::providers::accounts(state)?
-            .into_iter()
-            .filter_map(|a| a.key)
-            .chain(std::iter::once(token.into()))
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>();
+        let mut secrets = vec![token.to_owned()];
+        if let Some(instance) = crate::data::provider_instances::launch_config(
+            state,
+            string(&profile, "provider_instance"),
+        )? {
+            secrets.extend(instance.3.into_values().filter(|value| !value.is_empty()));
+        }
         let prefix = command
             .filter(|_| kind == "command")
             .filter(|c| !secrets.iter().any(|s| c.contains(s)))
@@ -1539,7 +1541,7 @@ pub async fn run(
         .then(process::ProbeHome::new)
         .transpose()
         .map_err(|_| Failure::storage())?;
-    let (turn, profile, binding, account, login, device) = {
+    let (turn, profile, binding) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         if memory {
@@ -1563,54 +1565,13 @@ pub async fn run(
             turns::harness::workspace(state, db, &turn)?
                 .ok_or_else(|| error(403, "Coding harness requires a host workspace folder."))?
         };
-        let provider = string(&profile, "provider_account");
-        let selected_instance = string(&profile, "provider_instance");
-        let (account, login, device) = if !selected_instance.is_empty() {
-            (None, None, None)
-        } else if provider == data::logins::DEVICE {
-            let runtime = string(&profile, "runtime");
-            if !data::logins::device_runtime(runtime) {
-                return Err(error(503, data::logins::DEVICE_RUNTIME_ONLY));
-            }
-            let folder = data::logins::device_folder(runtime).ok_or_else(|| {
-                error(
-                    503,
-                    "This machine's engine folder could not be found. Sign in to the CLI on this machine.",
-                )
-            })?;
-            (None, None, Some(folder))
-        } else if provider.starts_with(data::logins::PREFIX) {
-            let selected = data::logins::bound(db, provider)?;
-            if let Some(reason) =
-                data::logins::blocked_reason(string(&profile, "runtime"), selected.as_ref())
-            {
-                return Err(error(503, reason));
-            }
-            let selected = selected.ok_or_else(Failure::storage)?;
-            let credentials = data::logins::credentials(state, &selected)?.ok_or_else(|| {
-                error(
-                    503,
-                    "Engine login credentials are missing. Check sign-in in Settings > Engines.",
-                )
-            })?;
-            (
-                None,
-                Some((string(&selected, "id").to_owned(), credentials)),
-                None,
-            )
-        } else {
-            let account = data::providers::accounts(state)?
-                .into_iter()
-                .find(|account| account.id == provider)
-                .ok_or_else(|| {
-                    error(
-                        503,
-                        "The selected provider account is not configured. Check Settings > Providers.",
-                    )
-                })?;
-            (Some(account), None, None)
-        };
-        (turn, profile, binding, account, login, device)
+        if string(&profile, "provider_instance").is_empty() {
+            return Err(error(
+                503,
+                "Choose a provider instance before starting this task.",
+            ));
+        }
+        (turn, profile, binding)
     };
     let instance_id = string(&profile, "provider_instance");
     let instance = if instance_id.is_empty() {
@@ -1621,7 +1582,7 @@ pub async fn run(
     let runtime = instance
         .as_ref()
         .map(|instance| instance.0.as_str())
-        .unwrap_or_else(|| string(&profile, "runtime"));
+        .ok_or_else(|| error(503, "Choose a provider instance before starting this task."))?;
     let executable = instance
         .as_ref()
         .and_then(|instance| instance.1.clone())
@@ -1637,9 +1598,7 @@ pub async fn run(
         serde_json::from_str(string(&profile, "model_options")).unwrap_or_else(|_| json!({}));
     let mise = executable.as_deref().is_some_and(process::mise_shim);
     // Claude on the device sign-in runs with the real HOME; see logins::device_environment.
-    let device_claude = device.is_some() && runtime == "claude";
-    let isolated_home =
-        (mise || ["codex", "claude"].contains(&runtime)) && !device_claude && instance.is_none();
+    let isolated_home = false;
     let conversation = turn["channel"]
         .as_str()
         .or(turn["thread"].as_str())
@@ -1657,26 +1616,7 @@ pub async fn run(
         (!judging).then_some(&binding.directory)
     ])
     .to_string();
-    let fingerprint = if let Some(account) = &account {
-        json!([
-            account.id,
-            account.base,
-            format!(
-                "{:x}",
-                Sha256::digest(account.key.as_deref().unwrap_or("").as_bytes())
-            ),
-            model
-        ])
-    } else if let Some((id, bytes)) = &login {
-        json!([
-            data::logins::PREFIX,
-            id,
-            format!("{:x}", Sha256::digest(bytes)),
-            model
-        ])
-    } else if let Some(folder) = &device {
-        json!([data::logins::DEVICE, folder, model])
-    } else if let Some(instance) = &instance {
+    let fingerprint = if let Some(instance) = &instance {
         json!([
             "instance",
             instance_id,
@@ -1687,7 +1627,10 @@ pub async fn run(
             model
         ])
     } else {
-        return Err(Failure::storage());
+        return Err(error(
+            503,
+            "Choose a provider instance before starting this task.",
+        ));
     }
     .to_string();
     let mut env = state.config.harness.environment.clone();
@@ -1699,30 +1642,6 @@ pub async fn run(
             turn_id,
             string(&turn, "agent"),
         )?);
-    }
-    if device_claude {
-        env.extend(
-            data::logins::device_environment(runtime)
-                .into_iter()
-                .map(|(key, value)| (key.into(), value.to_string_lossy().into_owned())),
-        );
-    }
-    if login.is_some() || device.is_some() {
-        for variable in [
-            "OPENAI_API_KEY",
-            "CODEX_API_KEY",
-            "CODEX_ACCESS_TOKEN",
-            "OPENAI_BASE_URL",
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN",
-            "ANTHROPIC_BASE_URL",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            "CLAUDE_CODE_USE_BEDROCK",
-            "CLAUDE_CODE_USE_VERTEX",
-            "CLAUDE_CODE_USE_FOUNDRY",
-        ] {
-            env.remove(variable);
-        }
     }
     env.extend(instance_environment.clone());
     let same_home;
@@ -1747,17 +1666,7 @@ pub async fn run(
                 homes.remove(&key);
                 homes.insert(
                     key.clone(),
-                    home(
-                        &root,
-                        runtime,
-                        account.as_ref(),
-                        login
-                            .as_ref()
-                            .map(|(id, bytes)| (id.as_str(), bytes.as_slice())),
-                        device.as_deref(),
-                        model,
-                        fingerprint,
-                    )?,
+                    home(&root, runtime, None, None, None, model, fingerprint)?,
                 );
             }
             env.extend(
@@ -1845,21 +1754,7 @@ pub async fn run(
     if mise {
         process::configure_mise(&mut env);
     }
-    let model = if (login.is_some() || device.is_some()) && model == "default" {
-        ""
-    } else {
-        model
-    };
     let mut secrets = vec![token.clone()];
-    secrets.extend(account.and_then(|account| account.key));
-    if let Some((_, bytes)) = login {
-        secrets.extend(data::logins::secrets(runtime, &bytes));
-    }
-    if device.is_some() {
-        if let Some(bytes) = data::logins::device_credentials(runtime) {
-            secrets.extend(data::logins::secrets(runtime, &bytes));
-        }
-    }
     secrets.extend(instance_environment.values().cloned());
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -1969,7 +1864,8 @@ while read -r request; do :; done
         crate::mcp::initialize(&database.connection).map_err(|failure| failure.message)?;
         crate::computer::initialize(&database.connection)?;
         database.connection.execute_batch(
-            "INSERT INTO agents(id,name,model,instructions,runtime) VALUES('agent','Test','','','hermes');
+            "INSERT INTO provider_instances(id,kind,display_name) VALUES('hermes','hermes','Hermes');
+             INSERT INTO agents(id,name,model,instructions,provider_instance,model_options) VALUES('agent','Test','','','hermes','{}');
              INSERT INTO turns(id,agent,text,status,created) VALUES('turn','agent','Wait','queued','');",
         )?;
         let state = AppState {

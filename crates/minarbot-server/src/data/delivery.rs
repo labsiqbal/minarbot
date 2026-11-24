@@ -80,7 +80,8 @@ mod tests {
         );
         let db = Connection::open_in_memory()?;
         db.execute_batch(
-            "CREATE TABLE agents(id TEXT,name TEXT);
+            "CREATE TABLE agents(id TEXT,name TEXT,provider_instance TEXT DEFAULT '',model_options TEXT DEFAULT '{}');
+             CREATE TABLE provider_instances(id TEXT,kind TEXT);
              CREATE TABLE threads(id TEXT,name TEXT,agent TEXT DEFAULT 'helper',revision INTEGER DEFAULT 1,archived INTEGER DEFAULT 0,deleted INTEGER DEFAULT 0);
              CREATE TABLE turns(seq INTEGER,id TEXT,thread TEXT,agent TEXT,parent TEXT,origin TEXT,text TEXT,status TEXT,paused INTEGER DEFAULT 0);
              CREATE TABLE agent_deliveries(turn TEXT,request TEXT);
@@ -92,7 +93,7 @@ mod tests {
              CREATE TABLE conversation_settings(id INTEGER,auto_archive INTEGER);
              CREATE VIEW conversation_attention AS SELECT id AS thread FROM threads WHERE 0;
              INSERT INTO conversation_settings VALUES(1,1);
-             INSERT INTO agents VALUES('helper','Helper'),('lead','Right Hand');
+             INSERT INTO agents(id,name) VALUES('helper','Helper'),('lead','Right Hand');
              INSERT INTO threads(id,name) VALUES('peer','Message from Minarbot: omarchy'),('renamed','Owner title'),('legacy','Message from Right Hand'),('owner','Owner side');
              INSERT INTO turns(seq,id,thread,agent,parent,origin,text,status) VALUES
                  (1,'remote','peer','helper',NULL,'peer:Minarbot: omarchy','Inspect   release','done'),

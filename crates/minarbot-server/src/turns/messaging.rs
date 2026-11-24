@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::*;
 
 fn ancestors(db: &Connection, turn: &str) -> Result<Vec<Value>> {

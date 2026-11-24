@@ -152,12 +152,6 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         specs.retain(|t| t["function"]["name"] != "delegate_task");
         specs.splice(0..0, super::coordination::tools(db, turn)?);
     }
-    if private {
-        specs.push(json!({"type":"function","function":{"name":"set_provider_account","description":"Request a user-confirmed switch to an already configured provider account and explicit model. Pauses the task; no binding changes until the user approves through Minarbot. This may disclose conversation history to the selected provider. Backup model is cleared. Cannot create accounts or change credentials.","parameters":{"type":"object","properties":{"revision":{"type":"integer","minimum":1},"providerAccount":{"type":"string"},"model":{"type":"string","maxLength":160}},"required":["revision","providerAccount","model"],"additionalProperties":false}}}));
-        specs.push(json!({"type":"function","function":{"name":"list_provider_models","description":"Read model suggestions for a configured account, defaulting to your current account. Returns up to 100 sorted IDs and next_after; supply it as after for another page. Catalog may change between pages and does not guarantee model access. Does not change settings.","parameters":{"type":"object","properties":{"account":{"type":"string","maxLength":64},"after":{"type":"string","maxLength":160}},"additionalProperties":false}}}));
-        specs.push(json!({"type":"function","function":{"name":"list_provider_accounts","description":"List your configured provider account choices without credentials or endpoint paths. Returns account ID, display name, provider family, origin and default model. Use set_provider_account only after the user requests a switch.","parameters":{"type":"object","properties":{},"additionalProperties":false}}}));
-        specs.push(json!({"type":"function","function":{"name":"set_provider_model","description":"Change your own primary or backup model only when the user requests it. Supply current revision from read_provider_settings. Current execution keeps its model.","parameters":{"type":"object","properties":{"revision":{"type":"integer","minimum":1},"model":{"type":"string","maxLength":160},"backupModel":{"type":"string","maxLength":160}},"required":["revision"],"additionalProperties":false}}}));
-    }
     if state.computer.enabled()
         && exists(
             db,
@@ -273,63 +267,6 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
                 json!({"id":args["id"],"name":file.meta["name"],"source":"pdf-text","note":"Extracted text only. Images, scanned pages and visual layout are not included.","text":super::history::slice(text,offset,8000),"offset":offset,"next_offset":if text.encode_utf16().count()>offset+8000 {Some(offset+8000)}else{None}}),
             );
         }
-    }
-    if name == "list_provider_models" {
-        if !closed(&args, &["account", "after"])
-            || args.get("account").is_some_and(|v| {
-                v.as_str().is_none_or(|id| {
-                    id.len() > 64
-                        || !id.is_empty()
-                            && (!id.as_bytes()[0].is_ascii_lowercase()
-                                && !id.as_bytes()[0].is_ascii_digit()
-                                || !id.bytes().all(|b| {
-                                    b.is_ascii_lowercase()
-                                        || b.is_ascii_digit()
-                                        || b"_-".contains(&b)
-                                }))
-                })
-            })
-            || args.get("after").is_some_and(|v| {
-                v.as_str().is_none_or(|s| {
-                    s.encode_utf16().count() > 160
-                        || s.trim() != s
-                        || s.chars().any(|c| c < ' ' || c == '\u{7f}')
-                })
-            })
-        {
-            return Err(error(400, "Invalid model catalog parameters."));
-        }
-        let account = match args["account"].as_str() {
-            Some(id) => id.to_owned(),
-            None => {
-                let guard = state.database.lock().map_err(|_| Failure::storage())?;
-                string(
-                    &data::agents::read(&guard.connection, string(turn, "agent"))?,
-                    "provider_account",
-                )
-                .to_owned()
-            }
-        };
-        let result =
-            data::providers::models(state, &[("account".to_owned(), account.clone())]).await;
-        return Ok(match result {
-            Ok(value) => {
-                let after = args["after"].as_str().unwrap_or("");
-                let models = value["models"]
-                    .as_array()
-                    .ok_or_else(Failure::storage)?
-                    .iter()
-                    .filter(|id| id.as_str().is_some_and(|id| id > after))
-                    .collect::<Vec<_>>();
-                json!({"account":account,"models":models.iter().take(100).collect::<Vec<_>>(),"next_after":if models.len()>100 {models[99].clone()} else {Value::Null}})
-            }
-            Err(e) if e.status == 503 => {
-                json!({"account":account,"error":"Provider account is unavailable.","status":503})
-            }
-            Err(_) => {
-                json!({"account":account,"error":"Model listing is unavailable.","status":502})
-            }
-        });
     }
     if name == "generate_image" {
         return super::media::generate(state, turn, call, &args).await;
@@ -478,14 +415,11 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
             "read_history",
             "read_message",
             "search_memory",
-            "list_provider_accounts",
-            "read_provider_settings",
             "list_skills",
             "read_skill",
             "read_skill_file",
             "ask_user",
             "wait_for_event",
-            "set_provider_account",
         ]
         .contains(&name)
         {
@@ -544,7 +478,6 @@ pub(super) fn dispatch(
         "list_routines" | "read_routine" | "set_routine_flow" | "no_update" | "report_failure" => {
             crate::automation::tool(db, turn, name, args)
         }
-        "set_provider_account" => super::accounts::request(state, db, turn, call, args),
         "read_history" | "read_message" | "read_attachment" => {
             super::history::read(db, turn, name, args)
         }
@@ -562,85 +495,6 @@ pub(super) fn dispatch(
             };
             Ok(
                 json!({"id":file.meta["id"],"name":file.meta["name"],"size":file.bytes.len(),"url":format!("/api/{}/files/{}",execution::scope(turn).replace(':',"/"),string(args,"id")),"openedAt":iso(db,state.config.now())?}),
-            )
-        }
-        "read_provider_settings" => {
-            if !turn["channel"].is_null() {
-                return Err(error(
-                    403,
-                    "Provider settings are only available in the agent's private conversation.",
-                ));
-            }
-            if !closed(args, &[]) {
-                return Err(error(
-                    400,
-                    "Reading provider settings does not accept arguments.",
-                ));
-            }
-            let a = data::agents::read(db, agent)?;
-            let configured = data::providers::accounts(state)?
-                .iter()
-                .any(|x| x.id == a["provider_account"] && !x.base.is_empty());
-            Ok(
-                json!({"revision":a["revision"],"providerAccount":a["provider_account"],"model":a["model"],"backupModel":a["backup_model"],"configured":configured}),
-            )
-        }
-        "list_provider_accounts" => {
-            if !closed(args, &[]) {
-                return Err(error(
-                    400,
-                    "Provider account listing does not accept arguments.",
-                ));
-            }
-            Ok(json!(data::providers::accounts(state)?.into_iter().map(|a|json!({"id":a.id,"name":a.name,"provider":a.family,"origin":url::Url::parse(&a.base).map(|u|u.origin().ascii_serialization()).ok(),"defaultModel":a.model,"configured":!a.base.is_empty()})).collect::<Vec<_>>()))
-        }
-        "set_provider_model" => {
-            if !closed(args, &["revision", "model", "backupModel"])
-                || !integer(&args["revision"], 1, 9_007_199_254_740_991)
-                || args.get("model").is_none() && args.get("backupModel").is_none()
-            {
-                return Err(error(400, "Invalid model change."));
-            }
-            let a = data::agents::read(db, agent)?;
-            if a["revision"] != args["revision"] {
-                return Err(error(
-                    409,
-                    "Profile changed. Ask the user for guidance before changing it again.",
-                ));
-            }
-            let model = if args.get("model").is_some() {
-                field(args, "model", 160)?
-            } else {
-                string(&a, "model").into()
-            };
-            if model.chars().any(char::is_control) {
-                return Err(error(400, "Invalid model."));
-            }
-            let backup = if let Some(b) = args.get("backupModel") {
-                b.as_str()
-                    .filter(|b| b.encode_utf16().count() <= 160 && !b.chars().any(char::is_control))
-                    .ok_or_else(|| {
-                        error(
-                            400,
-                            "Fallback model is invalid or matches the primary model.",
-                        )
-                    })?
-                    .trim()
-            } else {
-                string(&a, "backup_model")
-            };
-            if backup == model {
-                return Err(error(
-                    400,
-                    "Fallback model is invalid or matches the primary model.",
-                ));
-            }
-            db.execute(
-                "UPDATE agents SET model=?,backup_model=?,revision=revision+1 WHERE id=?",
-                params![model, backup, agent],
-            )?;
-            Ok(
-                json!({"revision":a["revision"].as_i64().unwrap_or(0)+1,"model":model,"backupModel":backup,"providerAccount":a["provider_account"]}),
             )
         }
         "wait_for_event" => super::waits::request(state, db, turn, call, args),

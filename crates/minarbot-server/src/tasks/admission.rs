@@ -256,7 +256,7 @@ pub fn admit(db: &Connection, account: &str, v: &Value, now: i64) -> Result<Valu
         )
     };
     if let Some((accounts, true)) =
-        crate::computer::devices::provider_accounts(&d, string(&m, "account"))?
+        crate::computer::devices::provider_instances(&d, string(&m, "account"))?
     {
         if binding.as_ref().is_some_and(|binding| {
             data::agents::device_binding_account(&accounts, binding).is_none()

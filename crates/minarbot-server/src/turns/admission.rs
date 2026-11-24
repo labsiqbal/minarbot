@@ -218,43 +218,43 @@ pub fn ready(state: &AppState, db: &Connection, agent: &str) -> Result<()> {
             "Choose an AI connection for the built-in guide.",
         ));
     }
-    let runtime = string(&profile, "runtime");
-    if runtime == "api" {
-        account(state, db, agent)?;
-        return Ok(());
+    let instance = string(&profile, "provider_instance");
+    let instance = data::provider_instances::instance(state, instance)?
+        .ok_or_else(|| error(503, "Choose a provider instance before starting this task."))?;
+    if instance["enabled"] != 1 {
+        return Err(error(503, "This provider instance is disabled."));
     }
-    if crate::harness::executable(state, runtime).is_none() {
+    let runtime = string(&instance, "kind");
+    if crate::harness::executable(state, runtime).is_none()
+        && instance["binary_path"].as_str().is_none_or(str::is_empty)
+    {
         return Err(error(
             503,
-            "Coding runtime requires an installed executable on PATH.",
+            "This provider instance is not installed on this host.",
         ));
-    }
-    let accounts = data::providers::accounts(state)?;
-    if let Some(reason) = data::agents::binding_blocked_reason(
-        db,
-        runtime,
-        string(&profile, "provider_account"),
-        &accounts,
-    )? {
-        return Err(error(503, reason));
     }
     Ok(())
 }
 pub fn account(state: &AppState, db: &Connection, agent: &str) -> Result<data::providers::Account> {
     let a = data::agents::read(db, agent)?;
-    let id = string(&a, "provider_account");
-    let a=data::providers::accounts(state)?.into_iter().find(|a|a.id==id).ok_or_else(||error(503,"The selected provider account is missing. Choose another account or update server configuration."))?;
-    if a.base.is_empty() {
-        return Err(error(
-            503,
-            if id.is_empty() {
-                "The default provider account is not configured. Check server configuration or choose a configured account."
-            } else {
-                "The selected provider account is not configured. Check server configuration or choose another account."
-            },
-        ));
+    let id = string(&a, "providerInstance");
+    let row = data::provider_instances::instance(state, id)?
+        .ok_or_else(|| error(503, "Choose a provider instance before starting this task."))?;
+    if row["enabled"] != 1 {
+        return Err(error(503, "This provider instance is disabled."));
     }
-    Ok(a)
+    Ok(data::providers::Account {
+        id: id.to_owned(),
+        name: string(&row, "display_name").to_owned(),
+        family: string(&row, "kind").to_owned(),
+        base: String::new(),
+        key: None,
+        model: string(&a, "model").to_owned(),
+        stream: false,
+        termination: "marker".into(),
+        max_tokens: 4096,
+        source: "instance",
+    })
 }
 pub fn route(
     state: &AppState,
@@ -468,13 +468,12 @@ pub(crate) fn create(
         ));
     }
     ready(state, db, &agent)?;
-    if data::agents::read(db, &agent)?["runtime"] != "api"
-        && super::harness::workspace(
-            state,
-            db,
-            &json!({"agent":agent,"channel":channel,"thread":thread}),
-        )?
-        .is_none()
+    if super::harness::workspace(
+        state,
+        db,
+        &json!({"agent":agent,"channel":channel,"thread":thread}),
+    )?
+    .is_none()
     {
         return Err(error(
             503,
@@ -562,8 +561,6 @@ pub(crate) fn create(
                 db.execute("INSERT INTO room_dispatches VALUES(?,?)", params![id, root])?;
             }
         }
-        let native = data::agents::read(db, &agent)?["runtime"] != "api";
-        let mode = if native { "restart" } else { mode };
         if let Some(a) = active.filter(|a| a["status"] == "running") {
             let active = string(&a, "id");
             db.execute(
@@ -589,7 +586,7 @@ pub(crate) fn create(
                 dispatch::cancel(db, active, "Stopped for restart. Provider effects may already have happened; uncertain operations were not replayed.")?;
                 db.execute("INSERT INTO queue_positions VALUES(?,?) ON CONFLICT(turn) DO UPDATE SET position=excluded.position",params![id,history::position(db,&a)?])?;
                 state.turns.cancel(active);
-                db.execute("UPDATE turns SET dispatch_mode='restart',dispatch_target=?,dispatch_label=? WHERE id=?",[active,if native {"Runtime cannot steer; restarted from interrupted turn"}else{"Restarted from interrupted turn"},id])?;
+                db.execute("UPDATE turns SET dispatch_mode='restart',dispatch_target=?,dispatch_label='Restarted from interrupted turn' WHERE id=?",[active,id])?;
             }
         } else {
             db.execute(

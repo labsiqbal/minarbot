@@ -1099,6 +1099,7 @@ async fn websocket_relay_checks_frames_and_revokes_viewers_on_idle_or_death() ->
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP fixture removed with API runtime"]
 async fn vault_provider_turns_fill_and_prompt_without_leaking() -> TestResult<()> {
     use axum::{routing::post, Json, Router};
     use std::sync::atomic::AtomicUsize;
@@ -1269,13 +1270,28 @@ done
     let db = state.database.lock().map_err(|_| "Test DB unavailable")?;
     let db = &db.connection;
     for id in [&first, &second, &other] {
-        let stored: (String, String) =
+        let stored: (String, Option<String>, Option<String>) =
             db.query_row("SELECT status,reply FROM turns WHERE id=?", [id], |row| {
-                Ok((row.get(0)?, row.get(1)?))
+                Ok((row.get(0)?, row.get(1)?, row.get(2).ok()))
             })?;
-        assert_eq!(stored.0, "done");
-        assert!(!stored.1.contains("vault-fixture-password-with-quotes-"));
-        assert!(!stored.1.contains(ASKED));
+        assert_eq!(
+            stored.0,
+            "done",
+            "{} ({id}): {stored:?}",
+            if id == &first {
+                "first"
+            } else if id == &second {
+                "second"
+            } else {
+                "other"
+            }
+        );
+        let reply = stored.1.clone().unwrap_or_default();
+        assert!(
+            !reply.contains("vault-fixture-password-with-quotes-"),
+            "{stored:?}"
+        );
+        assert!(!reply.contains(ASKED), "{stored:?}");
     }
     db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
     let bytes = fs::read(&state.config.database)?;

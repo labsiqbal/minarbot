@@ -135,16 +135,6 @@ fn default_name(kind: &str) -> String {
     harness::label(kind).to_owned()
 }
 
-fn ensure_defaults(db: &Connection, now: &str) -> Result<()> {
-    for kind in KINDS {
-        db.execute(
-            "INSERT INTO provider_instances(id,kind,display_name,created,updated) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
-            params![kind, kind, default_name(kind), now, now],
-        )?;
-    }
-    Ok(())
-}
-
 fn secret_environment(
     state: &AppState,
     id: &str,
@@ -460,6 +450,25 @@ pub(crate) fn migrate_legacy(db: &Connection) -> crate::db::Result<()> {
             [],
         )?;
     }
+    // Legacy bindings have been copied into provider instances. Remove the
+    // old storage so new callers cannot accidentally depend on it. SQLite
+    // preserves all remaining agent columns and values while dropping each
+    // obsolete column, and rerunning this block is harmless.
+    for column in ["runtime", "provider_account", "backup_model"] {
+        let present = all(db, "PRAGMA table_info(agents)", [])
+            .map_err(|error| error.message)?
+            .iter()
+            .any(|row| row["name"] == column);
+        if present {
+            db.execute(&format!("ALTER TABLE agents DROP COLUMN {column}"), [])?;
+        }
+    }
+    if table("provider_accounts")? {
+        db.execute_batch("DROP TABLE provider_accounts")?;
+    }
+    if table("engine_logins")? {
+        db.execute_batch("DROP TABLE engine_logins")?;
+    }
     Ok(())
 }
 
@@ -647,9 +656,7 @@ async fn sign_in(state: &AppState, id: &str) -> Result<Response> {
 }
 
 pub fn list(state: &AppState) -> Result<Value> {
-    let now = state.config.now().to_string();
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
-    ensure_defaults(&guard.connection, &now)?;
     Ok(
         json!({"providers":all(&guard.connection, &format!("{SELECT} ORDER BY rowid"), [])?.iter().map(|row| public(state, row)).collect::<Vec<_>>() }),
     )
@@ -775,6 +782,101 @@ mod tests {
             directory
                 .join("engine-logins/codex/login")
                 .to_string_lossy()
+        );
+        fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrates_018_legacy_bindings_and_drops_legacy_storage() -> crate::db::Result<()> {
+        let directory = std::env::temp_dir().join(format!(
+            "minarbot-provider-migration-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory)?;
+        let database = directory.join("state.sqlite");
+        let db = Connection::open(&database)?;
+        db.execute_batch(
+            "CREATE TABLE provider_instances(id TEXT PRIMARY KEY,kind TEXT NOT NULL,display_name TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,binary_path TEXT NOT NULL DEFAULT '',home_path TEXT NOT NULL DEFAULT '',shadow_home_path TEXT NOT NULL DEFAULT '',launch_args TEXT NOT NULL DEFAULT '[]',environment TEXT NOT NULL DEFAULT '[]',accent_color TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 1,created TEXT NOT NULL DEFAULT '',updated TEXT NOT NULL DEFAULT '');
+             CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,instructions TEXT NOT NULL,provider_instance TEXT NOT NULL DEFAULT '',model_options TEXT NOT NULL DEFAULT '{}',provider_account TEXT NOT NULL DEFAULT '',runtime TEXT NOT NULL DEFAULT 'api',backup_model TEXT NOT NULL DEFAULT '');
+             CREATE TABLE provider_accounts(id TEXT PRIMARY KEY,name TEXT NOT NULL,family TEXT NOT NULL,base_url TEXT NOT NULL,key_ciphertext TEXT NOT NULL,default_model TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1);
+             CREATE TABLE engine_logins(id TEXT PRIMARY KEY,runtime TEXT NOT NULL,name TEXT NOT NULL,created TEXT NOT NULL);
+             CREATE TABLE turns(id TEXT PRIMARY KEY,agent TEXT NOT NULL,text TEXT NOT NULL);
+             CREATE TABLE threads(id TEXT PRIMARY KEY,agent TEXT NOT NULL,name TEXT NOT NULL);",
+        )?;
+        let codex_secret =
+            provider_store::encrypt_legacy_secret(&database, "openai", "secret-codex")?;
+        let claude_secret =
+            provider_store::encrypt_legacy_secret(&database, "anthropic", "secret-claude")?;
+        db.execute(
+            "INSERT INTO provider_accounts VALUES('openai','OpenAI','openai-compatible','https://provider.example',?,'gpt-5',1),('anthropic','Claude','anthropic','https://anthropic.example',?,'claude-sonnet',1),('gemini','Gemini','gemini','https://gemini.example','ciphertext','gemini-2',1)",
+            params![codex_secret, claude_secret],
+        )?;
+        db.execute(
+            "INSERT INTO engine_logins VALUES('login','codex','Personal','2026-01-01')",
+            [],
+        )?;
+        db.execute(
+            "INSERT INTO agents VALUES
+                ('api-codex','API Codex','','','', '{}','openai','api',''),
+                ('device-codex','Device Codex','','','', '{}','login:login','codex',''),
+                ('api-gemini','API Gemini','','','', '{}','gemini','api','')",
+            [],
+        )?;
+        db.execute(
+            "INSERT INTO threads VALUES('thread','api-codex','History')",
+            [],
+        )?;
+        db.execute(
+            "INSERT INTO turns VALUES('turn','api-codex','Conversation')",
+            [],
+        )?;
+
+        migrate_legacy(&db)?;
+
+        let instance: String = db.query_row(
+            "SELECT provider_instance FROM agents WHERE id='api-codex'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(instance, "codex-api-openai");
+        let login_instance: String = db.query_row(
+            "SELECT provider_instance FROM agents WHERE id='device-codex'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(login_instance, "codex-login");
+        let gemini_instance: String = db.query_row(
+            "SELECT provider_instance FROM agents WHERE id='api-gemini'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(gemini_instance.is_empty());
+        let environment: String = db.query_row(
+            "SELECT environment FROM provider_instances WHERE id='codex-api-openai'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(!environment.contains("secret-codex"));
+        assert!(!environment.contains("legacyAccountId"));
+        assert!(db
+            .query_row(
+                "SELECT 1 FROM sqlite_schema WHERE type='table' AND name IN('provider_accounts','engine_logins')",
+                [],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_none());
+        let columns = all(&db, "PRAGMA table_info(agents)", []).map_err(|e| e.message)?;
+        for name in ["runtime", "provider_account", "backup_model"] {
+            assert!(!columns.iter().any(|column| column["name"] == name));
+        }
+        assert_eq!(
+            db.query_row("SELECT text FROM turns WHERE id='turn'", [], |row| row
+                .get::<_, String>(
+                0
+            ))?,
+            "Conversation"
         );
         fs::remove_dir_all(directory)?;
         Ok(())

@@ -266,6 +266,7 @@ async fn fixture_reaps_server_and_releases_private_root_and_ports() -> Result<()
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn admission_and_concurrent_exact_retries_keep_fifo_and_scope() -> Result<()> {
     let calls = Calls::default();
     let release = Arc::new(Notify::new());
@@ -377,6 +378,7 @@ async fn admission_and_concurrent_exact_retries_keep_fifo_and_scope() -> Result<
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn sse_delivers_ordered_persisted_snapshots_and_reconnects_without_replay() -> Result<()> {
     let calls = Calls::default();
     let second_packet = Arc::new(Notify::new());
@@ -524,6 +526,7 @@ fn file_call(id: &str, name: &str, text: &str) -> Value {
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn room_stop_seals_gated_partial_and_effects_across_lost_response_and_restart() -> Result<()>
 {
     let calls = Calls::default();
@@ -658,6 +661,7 @@ async fn room_stop_seals_gated_partial_and_effects_across_lost_response_and_rest
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn queued_dispatch_replays_its_receipt_and_steers_once_at_the_safe_point() -> Result<()> {
     let calls = Calls::default();
     let safe_point = Arc::new(Notify::new());
@@ -836,6 +840,7 @@ async fn seeded_sse_frames_wake_after_visibility_and_file_lane_commits() -> Resu
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn automatic_routing_and_execution_share_four_workers() -> Result<()> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Semaphore;

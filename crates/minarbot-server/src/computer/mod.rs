@@ -201,8 +201,9 @@ pub fn maintenance(state: AppState) -> Vec<tokio::task::JoinHandle<()>> {
     let setup_task = state
         .auth
         .is_none()
-        .then(|| setup::begin(&state, false).ok().flatten())
-        .flatten();
+        .then(|| (!state.config.harness.test_mode).then_some(()))
+        .flatten()
+        .and_then(|_| setup::begin(&state, false).ok().flatten());
     let mut tasks = vec![
         tokio::spawn(remote::worker(state.clone())),
         hub::maintenance(state.clone()),

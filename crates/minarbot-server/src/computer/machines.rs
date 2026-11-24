@@ -191,8 +191,8 @@ fn visible(s: &AppState, r: &Value) -> Result<Value> {
         )
     })? {
         let report = crate::web::parse_json(text(&report, "report").as_bytes())?;
-        v["providerAccounts"] = report["providerAccounts"].clone();
-        if let Some(bindings) = report["agentProviderAccounts"].as_object() {
+        v["providerInstances"] = report["providerInstances"].clone();
+        if let Some(bindings) = report["agentProviderInstances"].as_object() {
             v["agentProviders"] = json!(bindings
                 .iter()
                 .map(|(id, account)| (
@@ -649,8 +649,8 @@ fn agents(value: &Value) -> Result<Value> {
         &[
             "agents",
             "messagingAllowed",
-            "providerAccounts",
-            "agentProviderAccounts",
+            "providerInstances",
+            "agentProviderInstances",
         ],
     )?;
     if value
@@ -678,8 +678,8 @@ fn agents(value: &Value) -> Result<Value> {
 fn provider_report(roster: &Value, agents: &Value) -> Result<Option<Value>> {
     let invalid = || error(502, "Invalid remote provider report.");
     let (accounts, bindings) = match (
-        roster.get("providerAccounts"),
-        roster.get("agentProviderAccounts"),
+        roster.get("providerInstances"),
+        roster.get("agentProviderInstances"),
     ) {
         (None, None) => return Ok(None),
         (Some(accounts), Some(Value::Object(bindings))) => (accounts, bindings),
@@ -707,7 +707,7 @@ fn provider_report(roster: &Value, agents: &Value) -> Result<Option<Value>> {
         return Err(invalid());
     }
     Ok(Some(
-        json!({"providerAccounts":accounts,"agentProviderAccounts":bindings}),
+        json!({"providerInstances":accounts,"agentProviderInstances":bindings}),
     ))
 }
 
@@ -716,7 +716,7 @@ pub(super) fn agent_provider_block(
     machine: &str,
     agent: &str,
 ) -> Result<Option<String>> {
-    let row = one(db, "SELECT m.name FROM machine_provider_reports r JOIN paired_machines m USING(environment_id),json_each(r.report,'$.agentProviderAccounts') b WHERE m.environment_id=? AND b.key=? AND b.type='null'",[machine,agent])?;
+    let row = one(db, "SELECT m.name FROM machine_provider_reports r JOIN paired_machines m USING(environment_id),json_each(r.report,'$.agentProviderInstances') b WHERE m.environment_id=? AND b.key=? AND b.type='null'",[machine,agent])?;
     Ok(row.map(|row| format!("No provider on {}", text(&row, "name"))))
 }
 
@@ -1022,42 +1022,28 @@ async fn peer_agents(
         return Ok(json!({"reachable":true}));
     }
     let mut result = with_db(s, |db| {
-        let mut roster = rows(db,"SELECT id,name,role,model,runtime,provider_account,CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.agent=agents.id AND t.status IN('queued','running') AND t.paused=0) THEN 'working' ELSE 'idle' END AS status FROM agents WHERE id<>? ORDER BY rowid",[crate::mcp::guide::ID])?;
+        let mut roster = rows(db,"SELECT id,name,role,model,provider_instance,CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.agent=agents.id AND t.status IN('queued','running') AND t.paused=0) THEN 'working' ELSE 'idle' END AS status FROM agents WHERE id<>? ORDER BY rowid",[crate::mcp::guide::ID])?;
         let mut result = json!({});
         if report_providers {
-            let accounts = providers::accounts(s)?;
-            let (metadata, _) = providers::metadata(&accounts);
+            let metadata = crate::data::provider_instances::list(s)?["providers"].clone();
             let mut bindings = serde_json::Map::new();
             for agent in &roster {
-                let binding = text(agent, "provider_account");
-                if binding.starts_with(crate::data::logins::PREFIX)
-                    || binding == crate::data::logins::DEVICE
-                {
-                    continue;
-                }
-                if local_agents::binding_blocked_reason(
-                    db,
-                    text(agent, "runtime"),
-                    binding,
-                    &accounts,
-                )?
-                .is_some()
-                {
+                let binding = text(agent, "provider_instance");
+                if binding.is_empty() {
                     bindings.insert(text(agent, "id").to_owned(), Value::Null);
                 } else if metadata
                     .as_array()
-                    .is_some_and(|accounts| accounts.iter().any(|a| a["id"] == binding))
+                    .is_some_and(|instances| instances.iter().any(|a| a["id"] == binding))
                 {
                     bindings.insert(text(agent, "id").to_owned(), json!(binding));
                 }
             }
-            result["providerAccounts"] = metadata;
-            result["agentProviderAccounts"] = json!(bindings);
+            result["providerInstances"] = metadata;
+            result["agentProviderInstances"] = json!(bindings);
         }
         for agent in &mut roster {
             if let Some(fields) = agent.as_object_mut() {
-                fields.remove("runtime");
-                fields.remove("provider_account");
+                fields.remove("provider_instance");
             }
         }
         result["agents"] = json!(roster);

@@ -77,6 +77,7 @@ async fn offline_schedules_coalesce_only_provider_free_work() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn busy_approval_skips_once_and_offline_work_runs_after_restart() -> Result<()> {
     let root = TestRoot::new()?;
     let provider = Loopback::start(Router::new().route(

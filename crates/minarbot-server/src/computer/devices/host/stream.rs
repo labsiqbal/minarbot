@@ -127,8 +127,8 @@ impl Host {
                 .as_ref()
                 .and_then(|provider| provider.metadata().ok().flatten())
             {
-                body["providerAccounts"] = accounts;
-                body["providerAccountsComplete"] = json!(complete);
+                body["providerInstances"] = accounts;
+                body["providerInstancesComplete"] = json!(complete);
             }
         }
         self.post("heartbeat", &session.token, &body).await?;

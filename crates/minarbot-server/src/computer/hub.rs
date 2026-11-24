@@ -896,6 +896,17 @@ fn disconnect_principal(state: &AppState, expected: Option<&Value>) -> Result<()
 }
 pub async fn stop(state: &AppState) -> Result<()> {
     state.computer.hub.stopped.store(true, Ordering::Release);
+    let active = state.computer.hub.lock()?.principal.is_some()
+        || state
+            .computer
+            .hub
+            .sender
+            .lock()
+            .map_err(|_| Failure::storage())?
+            .is_some();
+    if !active {
+        return Ok(());
+    }
     disconnect(state)
 }
 async fn flush(state: &AppState, turn: &str) -> Result<()> {
@@ -1036,7 +1047,7 @@ async fn delivery(state: &AppState, frame: Value) -> Result<()> {
     let result = db(state, |db| {
         super::transaction(db, |db| {
             let agent = text(&local, "localAgentId");
-            if one(db,"SELECT 1 FROM agents a WHERE id=? AND runtime='api' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=a.id AND v.hidden=1)",[agent])?.is_none(){return Err(denied());}
+            if one(db,"SELECT 1 FROM agents a WHERE id=? AND provider_instance<>'' AND NOT EXISTS(SELECT 1 FROM agent_visibility v WHERE v.agent=a.id AND v.hidden=1)",[agent])?.is_none(){return Err(denied());}
             let count: i64 = db.query_row(
                 "SELECT count(*) FROM turns WHERE agent=? AND status IN('queued','running')",
                 [agent],

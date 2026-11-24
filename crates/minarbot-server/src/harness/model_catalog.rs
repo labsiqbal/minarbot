@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::{
     executable, mise_environment, path,
     process::{ProbeHome, Process},

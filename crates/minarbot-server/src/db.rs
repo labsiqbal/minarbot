@@ -50,7 +50,6 @@ const CANONICAL_MIGRATIONS: &[(&str, &str)] =
 pub const SCHEMA_VERSION: i64 = BASELINE_VERSION + CANONICAL_MIGRATIONS.len() as i64;
 const LOCAL_MIGRATIONS: &[&str] = &[PROVIDER_INSTANCE_MIGRATION];
 
-const PROVIDER_ACCOUNTS: &str = include_str!("data/provider-accounts.sql");
 const PROVIDER_INSTANCES: &str = include_str!("data/provider-instances.sql");
 const CANONICAL_SCHEMA: &str = concat!(
     include_str!("data/canonical-current.sql"),
@@ -235,7 +234,6 @@ pub(crate) fn migrate_user_version(
 fn create_canonical(db: &Connection, now: i64) -> Result<()> {
     db.execute_batch(CANONICAL_SCHEMA)?;
     provider_tables(db)?;
-    db.execute_batch(PROVIDER_ACCOUNTS)?;
     db.execute_batch(PROVIDER_INSTANCES)?;
     crate::turns::initialize_canonical(db).map_err(|error| error.message)?;
     crate::files::init_canonical_schema(db)?;
@@ -340,7 +338,6 @@ fn local(db: &Connection) -> Result<()> {
     let tx = Transaction::new_unchecked(db, TransactionBehavior::Immediate)?;
     tx.execute_batch(include_str!("data/local-current.sql"))?;
     provider_tables(&tx)?;
-    tx.execute_batch(PROVIDER_ACCOUNTS)?;
     tx.execute_batch(PROVIDER_INSTANCES)?;
     tx.execute_batch(include_str!("provider-indexes.sql"))?;
     migrate_user_version(

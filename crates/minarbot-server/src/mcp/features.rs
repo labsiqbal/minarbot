@@ -541,7 +541,7 @@ pub(crate) fn plan(db: &Connection, c: &Value, name: &str, a: &Value, id: &str) 
 }
 pub(crate) fn clean(state: &AppState, db: &Connection, v: &Value) -> Result<Value> {
     let mut v = v.clone();
-    for a in data::providers::accounts(state)? {
+    for a in data::providers::accounts_at(db)? {
         if let Some(key) = a.key.as_deref() {
             v = connections::redact(&v, key);
         }

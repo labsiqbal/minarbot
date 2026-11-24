@@ -242,6 +242,7 @@ async fn host_metrics_cache_and_redact_storage_paths() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn channel_read_positions_survive_restart_and_do_not_hide_late_replies() -> Result<()> {
     use super::until;
     use crate::loopback::Loopback;

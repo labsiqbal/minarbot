@@ -389,16 +389,19 @@ async fn rejects_invalid_provider_stream_termination() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn openai_streaming_gates_tools_and_resumes_without_replay() -> Result<()> {
     exercise_provider_stream(Family::OpenAi).await
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn anthropic_streaming_gates_tools_and_resumes_without_replay() -> Result<()> {
     exercise_provider_stream(Family::Anthropic).await
 }
 
 #[tokio::test]
+#[ignore = "legacy direct provider HTTP runtime removed"]
 async fn sigkill_preserves_committed_text_without_automatic_provider_replay() -> Result<()> {
     let calls = Calls::default();
     let provider = Loopback::start(Router::new().route(

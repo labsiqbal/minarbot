@@ -287,15 +287,13 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
         let mut events = state.events.subscribe();
         let canonical = state.auth.is_some();
         let period = std::time::Duration::from_secs(1);
-        let start = tokio::time::Instant::now()
-            + if canonical {
-                period
-            } else {
-                std::time::Duration::ZERO
-            };
+        let start = tokio::time::Instant::now() + period;
         let mut timer = tokio::time::interval_at(start, period);
         loop {
-            tokio::select! {_ = events.recv(), if !canonical=>(), _=timer.tick()=>()}
+            tokio::select! {
+                _ = events.recv(), if canonical => (),
+                _ = timer.tick() => (),
+            }
             if state.auth.is_some() {
                 if crate::tasks::maintain(&state).is_err() {
                     eprintln!("Task wait maintenance failed");
@@ -331,6 +329,7 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
             if let Err(e) = result {
                 eprintln!("Automation scheduling failed: {}", e.message);
             }
+            tokio::task::yield_now().await;
         }
     })
 }

@@ -164,7 +164,7 @@ fn expire(state: &AppState, db: &Connection) -> Result<()> {
 }
 fn schedules(state: &AppState, db: &Connection) -> Result<()> {
     let now = state.config.now();
-    let ready = data::providers::accounts(state)?
+    let ready = data::providers::accounts_at(db)?
         .iter()
         .any(|a| !a.base.is_empty());
     for s in all(db,"SELECT s.* FROM workflow_schedules s JOIN workflows w ON w.id=s.workflow JOIN workflow_versions v ON v.workflow=w.id AND v.revision=w.revision WHERE s.enabled=1 AND s.next_at<=? AND w.deleted=0 AND NOT EXISTS(SELECT 1 FROM agent_visibility a WHERE a.agent=w.agent AND a.hidden=1) AND(EXISTS(SELECT 1 FROM workflow_runs WHERE workflow=w.id AND status IN('ready','waiting','approval')) OR ((? OR NOT EXISTS(SELECT 1 FROM json_each(v.graph,'$.nodes') WHERE json_extract(value,'$.kind') IN('agent','model','parallel') OR (json_extract(value,'$.kind')='condition' AND json_extract(value,'$.operator')='model'))) AND(SELECT count(*) FROM workflow_runs WHERE status IN('ready','waiting','approval'))<100)) ORDER BY s.next_at,s.workflow LIMIT 100",params![now,ready])? {

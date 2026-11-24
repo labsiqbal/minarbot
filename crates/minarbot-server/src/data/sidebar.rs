@@ -103,7 +103,7 @@ pub fn summary(
     if h.contains_key("origin") && !origin(state, h) {
         return Err(error(403, "Origin is not allowed."));
     }
-    let mut secrets = providers::accounts(state)?
+    let mut secrets = providers::accounts_at(db)?
         .into_iter()
         .filter_map(|a| a.key)
         .collect::<Vec<_>>();

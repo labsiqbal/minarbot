@@ -1,7 +1,7 @@
 use super::*;
 
 pub fn answer(
-    state: &AppState,
+    _state: &AppState,
     db: &Connection,
     path: &str,
     conversation: (&str, &str),
@@ -73,10 +73,7 @@ pub fn answer(
         params![text.trim(), question],
     )?;
     let result = json!({"id":question,"answer":text.trim()});
-    let mut journal = json!({"answer":text.trim()});
-    if let Some(change) = super::accounts::confirm(state, db, question, text.trim())? {
-        journal["effect"] = change;
-    }
+    let journal = json!({"answer":text.trim()});
     db.execute("INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES (?,?,?,?,?,?)",params![turn,row["call_id"].as_str(),row["call"].as_str(),journal.to_string(),row["after_output"].as_i64(),row["after_action"].as_i64()])?;
     db.execute(
         "UPDATE turns SET status='queued',paused=0,revision=revision+1,error=NULL WHERE id=?",
