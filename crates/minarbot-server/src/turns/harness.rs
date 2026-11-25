@@ -197,7 +197,7 @@ pub async fn tool(
             .connection
             .query_row(
                 "SELECT delivery FROM delegation_tasks WHERE id=?",
-                [string(&args, "taskId")],
+                [string(args, "taskId")],
                 |r| r.get::<_, String>(0),
             )
             .map_err(|_| error(404, "Task was not found."))?;

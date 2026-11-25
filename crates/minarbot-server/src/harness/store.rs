@@ -1822,7 +1822,7 @@ pub async fn run(
     }
     let instance_secrets = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        data::provider_instances::secret_environment_values(&state, &guard.connection, instance_id)?
+        data::provider_instances::secret_environment_values(state, &guard.connection, instance_id)?
     };
     let mut secrets = vec![token.clone()];
     secrets.extend(instance_secrets);
