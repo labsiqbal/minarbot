@@ -119,6 +119,7 @@ each iteration as a case.
 | --- | ---: | ---: | ---: | --- |
 | `app/queue-edits.test.ts` | 3 | 3 | 0 | 0 (deleted) |
 | `app/queue-order.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/agent-delete.test.ts` | 6 | 6 | 0 | 0 (deleted) |
 
 <!-- fixture-summary -->
 
@@ -135,6 +136,17 @@ each iteration as a case.
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
 | queue order survives restart, preserves transcript order, blocks edits and scopes, supplies reordered context | `fx_queues::queue_order_survives_restart_preserves_transcript_order_blocks_edits_and_scopes_supplies_reordered_context` | 30 -> 24 | Full. The two provider-side Node asserts (summary before `EARLY LAST`, `SECOND` before `FIRST`) fail the model step instead, which fails the turn the test waits on. The Node count includes three helper asserts. |
+
+### `app/agent-delete.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| delete cascades every agent FK, scoped data, workflows, desktop and journals, preserving room history and shared resources | `fx_agents::delete_cascades_every_agent_fk_scoped_data_workflows_desktop_and_journals_preserving_room_history_and_shared_resources` | 21 -> 21 | Full. |
+| delete guards last agent, active/paused/queued work, unknown IDs, cross origin, bearer/peer/script views and hub grant ownership | `fx_agents::delete_guards_last_agent_active_paused_queued_work_unknown_ids_cross_origin_bearer_peer_script_views_and_hub_grant_ownership` | 10 -> 10 | Full. |
+| delete preserves coordination journals until another agent finishes its dependent work | `fx_agents::delete_preserves_coordination_journals_until_another_agent_finishes_its_dependent_work` | 5 -> 5 | Full. |
+| running provider work must settle before delete; transactional failure preserves agent and desktop for retry | `fx_agents::running_provider_work_must_settle_before_delete_transactional_failure_preserves_agent_and_desktop_for_retry` | 11 -> 8 | Full; `assert(started)` is the parked model request, the Node count includes helper asserts. |
+| paired peer cannot delete owner agents; deletion on owner refreshes peer roster | `fx_agents::paired_peer_cannot_delete_owner_agents_deletion_on_owner_refreshes_peer_roster` | 6 -> 4 | Full: issued token, 403, 404, refreshed roster. Both servers use `peer::PeerBridge` (token issuer and loopback `peer-http`) and start through `server::start_pair`. |
+| owned Git checkpoint refs clean up durably without removing project files; failed cleanup retries | `fx_agents::owned_git_checkpoint_refs_clean_up_durably_without_removing_project_files_failed_cleanup_retries` | 6 -> 6 | Full. |
 
 <!-- fixture-cases -->
 

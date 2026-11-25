@@ -463,6 +463,16 @@ impl TestRoot {
             Err(error) => Ok(error.to_string()),
         }
     }
+
+    /// Like [`TestRoot::start_error`] for a test that already holds a server
+    /// (running or stopped): the failing start uses that server's slot, so
+    /// it never waits for a second one.
+    pub async fn start_error_beside(&self, _holder: &Server, config: ServerConfig) -> Result<String> {
+        match spawn(self, &config).await {
+            Ok(_) => Err("server started although a startup failure was expected".into()),
+            Err(error) => Ok(error.to_string()),
+        }
+    }
 }
 
 impl Drop for TestRoot {
@@ -879,4 +889,33 @@ fn ensure_killed(status: ExitStatus) -> Result<()> {
 
 fn find_row(rows: &Value, id: &str) -> Option<Value> {
     rows.as_array()?.iter().find(|row| row["id"] == id).cloned()
+}
+
+/// Start two servers that run at the same time (an owner and a paired peer).
+/// Both slots are taken at once, so two such tests can never each hold one
+/// slot while waiting for the other.
+pub async fn start_pair(
+    first: &TestRoot,
+    first_config: ServerConfig,
+    second: &TestRoot,
+    second_config: ServerConfig,
+) -> Result<(Server, Server)> {
+    let mut slot = slots().acquire_many_owned(2).await?;
+    let other = slot.split(1).ok_or("could not split the server slots")?;
+    let first_process = spawn(first, &first_config).await?;
+    let second_process = spawn(second, &second_config).await?;
+    Ok((
+        Server {
+            root: first.clone(),
+            config: first_config,
+            process: Some(first_process),
+            _slot: slot,
+        },
+        Server {
+            root: second.clone(),
+            config: second_config,
+            process: Some(second_process),
+            _slot: other,
+        },
+    ))
 }
