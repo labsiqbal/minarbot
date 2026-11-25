@@ -2410,3 +2410,683 @@ async fn canonical_sites_in_direct_page_scoped_metadata_and_retain_atomic_deleti
 async fn canonical_sites_in_side_page_scoped_metadata_and_retain_atomic_deletion() -> Result<()> {
     sites(true).await
 }
+
+use crate::sb_task_support::{prepared, Prepared};
+use minarbot_testkit::protocol::{canonical_json, digest_command};
+
+/// `(resultDigest, resultRef)` of `content` for `action`.
+fn result_ref(task: &str, action: &str, content: &Value) -> (String, Value) {
+    let digest = sha256_hex(canonical_json(content));
+    let reference = json!({"v": 1, "taskId": task, "actionId": action, "digest": digest,
+        "size": canonical_json(content).len(), "encoding": "canonical-json-v1"});
+    (digest, reference)
+}
+
+fn with(mut value: Value, change: Value) -> Value {
+    if let (Some(target), Value::Object(fields)) = (value.as_object_mut(), change) {
+        target.extend(fields);
+    }
+    value
+}
+
+/// `journalEntryBody(sourceAuthority, device, generation, entry)`.
+fn journal_entry_body(authority: &Value, device: &str, generation: i64, entry: &Value) -> Value {
+    json!([
+        "minarbot-journal-entry-v1",
+        authority,
+        device,
+        generation,
+        entry["taskId"],
+        entry["actionId"],
+        entry["sequence"],
+        entry["executorGeneration"],
+        entry["actionKind"],
+        entry["payloadDigest"],
+        entry["intentDigest"],
+        entry.get("bindingId").cloned().unwrap_or(Value::Null),
+        entry.get("bindingRevision").cloned().unwrap_or(Value::Null),
+        entry["grantRevision"],
+        entry["state"],
+        entry["effectStatus"],
+        entry.get("resultDigest").cloned().unwrap_or(Value::Null),
+        entry.get("resultRef").cloned().unwrap_or(Value::Null),
+        entry["journalSequence"]
+    ])
+}
+
+/// `stopEvidenceBody(stop)`.
+fn stop_evidence_body(stop: &Value) -> Value {
+    let children: Vec<Value> = stop["children"]
+        .as_array()
+        .map(|children| {
+            children
+                .iter()
+                .map(|child| {
+                    json!([
+                        child["processId"],
+                        child["processStart"],
+                        child["processGroupId"]
+                    ])
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    json!([
+        "minarbot-stop-evidence-v1",
+        stop["sourceAuthority"],
+        stop["taskId"],
+        stop["actionId"],
+        stop["sourceDeviceId"],
+        stop["sourceDeviceGeneration"],
+        stop["executorGeneration"],
+        stop["bootId"],
+        stop["processId"],
+        stop["processStart"],
+        stop["lockId"],
+        stop["observationBootId"],
+        stop["observation"],
+        children,
+        stop["observedAt"],
+        stop["journalDigest"]
+    ])
+}
+
+async fn commit(f: &TaskFixture, p: &Prepared) -> Result<Envelope> {
+    f.commit(&p.task, &p.action, p.commit.clone(), &p.token)
+        .await?
+        .expect_ok()
+}
+
+async fn reconcile(f: &TaskFixture, p: &Prepared, body: Value) -> Result<Envelope> {
+    f.task_op("reconcile", &p.task, body, &p.token).await
+}
+
+fn report(p: &Prepared, state: &str, effect: &str, sequence: i64) -> Value {
+    json!({"requestId": new_id(), "actionId": p.action, "ownership": p.ownership, "payloadDigest": p.payload_digest,
+        "state": state, "effectStatus": effect, "journalSequence": sequence})
+}
+
+#[tokio::test]
+async fn reassign_denies_unresolved_effects_revoked_initiators_and_invalid_successor_provenance_atomically(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    let recipient = new_id();
+    f.human(
+        minarbot_testkit::http::Method::POST,
+        "/api/agents",
+        Some(agent_body(&recipient, "Recipient", &f)),
+        &f.owner,
+    )
+    .await?
+    .expect_ok()?;
+    let committed = commit(&f, &p).await?;
+    let paused = f
+        .control(&f.owner, &p.task, json!({"requestId": new_id(), "expectedRevision": committed.receipt()["recordRevision"], "operation": "pause"}))
+        .await?
+        .expect_ok()?;
+    let mut reassign = json!({"requestId": new_id(), "expectedRevision": paused.receipt()["recordRevision"], "operation": "reassign", "recipientAgentId": recipient});
+    f.control(&f.owner, &p.task, reassign.clone())
+        .await?
+        .expect_code("outcome_unresolved")?;
+    ensure!(
+        lookup_data(&f, &f.owner, &p.task).await?["currentTaskId"] == p.task.as_str(),
+        "unresolved task transferred"
+    );
+    let content = json!({"text": "Reconciled"});
+    let (digest, reference) = result_ref(&p.task, &p.action, &content);
+    let mut body = report(&p, "acknowledged", "known", 2);
+    body["resultContent"] = content;
+    body["resultDigest"] = json!(digest);
+    body["resultRef"] = reference;
+    let published = reconcile(&f, &p, body).await?.expect_ok()?;
+    reassign["expectedRevision"] = published.receipt()["recordRevision"].clone();
+    let transferred = f
+        .control(&f.owner, &p.task, reassign.clone())
+        .await?
+        .expect_ok()?;
+    let next = transferred.data()["taskId"]
+        .as_str()
+        .ok_or("successor")?
+        .to_owned();
+    f.task_op("context", &p.task, json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": reassign["expectedRevision"]}), &p.token)
+        .await?
+        .expect_code("ownership_conflict")?;
+    let original = one(&f, "SELECT * FROM tasks WHERE id=?", [&next])?;
+    let unused = f.command(json!({}));
+    f.admit(&f.owner, &unused).await?.expect_ok()?;
+    let unused_id = unused["requestId"].as_str().ok_or("unused")?.to_owned();
+    f.db().execute(
+        "UPDATE tasks SET state='transferred' WHERE id=?",
+        [&unused_id],
+    )?;
+    let columns: Vec<String> = original
+        .as_object()
+        .ok_or("task row")?
+        .keys()
+        .cloned()
+        .collect();
+    // Copy the row through JSON so every column keeps its SQLite type.
+    let insert = format!(
+        "INSERT INTO tasks({}) SELECT {}",
+        columns.join(","),
+        columns
+            .iter()
+            .map(|column| format!("json_extract(?1,'$.\"{column}\"')"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let mut base = original.clone();
+    base["id"] = json!(new_id());
+    base["logical_turn"] = json!(unused_id);
+    base["predecessor_task"] = json!(unused_id);
+    let run = |row: &Value| f.db().execute(&insert, [row.to_string()]);
+    let mut invalid = base.clone();
+    invalid["initiator_account"] = json!(f.member.account_id);
+    ensure!(
+        run(&invalid).is_err_and(|error| error
+            .to_string()
+            .contains("invalid task successor provenance")),
+        "foreign initiator accepted"
+    );
+    for key in ["capability_snapshot_json", "capability_digest"] {
+        let mut forged = base.clone();
+        forged[key] = if key == "capability_snapshot_json" {
+            json!("{}")
+        } else {
+            json!("0".repeat(64))
+        };
+        ensure!(
+            run(&forged).is_err_and(|error| error
+                .to_string()
+                .contains("invalid task successor provenance")),
+            "forged {key} accepted"
+        );
+    }
+    run(&base)?;
+    f.db().execute(
+        "UPDATE project_members SET deleted=1 WHERE project=? AND account=?",
+        [&f.project, &f.owner.account_id],
+    )?;
+    let mut proof = p.lock_proof.clone();
+    proof["lockId"] = json!(new_id());
+    f.acquire(json!({"requestId": new_id(), "taskId": next, "previousExecutorGeneration": 0, "executorTokenHash": sha256_hex(&p.token), "lockProof": proof}), &p.token)
+        .await?
+        .expect_code("execution_denied")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn committed_result_survives_lost_ack_revocation_and_offline_history_without_granting_dispatch(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    commit(&f, &p).await?;
+    let content = json!({"text": "Saved answer"});
+    let (digest, reference) = result_ref(&p.task, &p.action, &content);
+    let mut body = report(&p, "acknowledged", "known", 2);
+    body["resultDigest"] = json!(digest);
+    body["resultRef"] = reference;
+    body["resultContent"] = content.clone();
+    f.db().execute(
+        "UPDATE project_members SET deleted=1 WHERE project=? AND account=?",
+        [&f.project, &f.owner.account_id],
+    )?;
+    let saved = reconcile(&f, &p, body.clone()).await?.expect_ok()?;
+    ensure!(
+        saved.data()["actionState"] == "acknowledged",
+        "action state: {}",
+        saved.body
+    );
+    ensure!(
+        saved.data()["dispatchable"] == false,
+        "dispatchable: {}",
+        saved.body
+    );
+    ensure!(
+        reconcile(&f, &p, body.clone()).await?.body == saved.body,
+        "reconcile receipt"
+    );
+    let mut changed = body.clone();
+    changed["resultContent"] = json!({"text": "Changed"});
+    reconcile(&f, &p, changed)
+        .await?
+        .expect_code("result_digest_mismatch")?;
+    f.lookup(&f.owner, &p.task)
+        .await?
+        .expect_code("resource_not_found")?;
+    f.db().execute(
+        "UPDATE project_members SET deleted=0 WHERE project=? AND account=?",
+        [&f.project, &f.owner.account_id],
+    )?;
+    let detail = lookup_data(&f, &f.owner, &p.task).await?;
+    ensure!(
+        detail["results"][0]["content"] == content,
+        "result: {detail}"
+    );
+    let context = f
+        .task_op("context", &p.task, json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": saved.receipt()["recordRevision"]}), &p.token)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        context.data()["snapshot"]["toolJournal"]
+            .as_array()
+            .map(Vec::len)
+            == Some(1),
+        "tool journal: {}",
+        context.body
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn not_sent_and_uncertain_reports_require_verifiable_evidence_and_cannot_resurrect_cancelled_work(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    commit(&f, &p).await?;
+    let base = report(&p, "not_sent", "none", 2);
+    reconcile(&f, &p, base.clone())
+        .await?
+        .expect_code("stop_evidence_required")?;
+    reconcile(
+        &f,
+        &p,
+        with(
+            base.clone(),
+            json!({"noMarkerEvidence": {}, "stopEvidence": {}}),
+        ),
+    )
+    .await?
+    .expect_code("invalid_stop_evidence")?;
+    reconcile(
+        &f,
+        &p,
+        with(
+            base.clone(),
+            json!({"state": "uncertain", "effectStatus": "unknown"}),
+        ),
+    )
+    .await?
+    .expect_code("uncertain_reason_required")?;
+    f.db().execute(
+        "UPDATE tasks SET state='cancelled',revision=revision+1 WHERE id=?",
+        [&p.task],
+    )?;
+    let saved = reconcile(&f, &p, with(base, json!({"state": "uncertain", "effectStatus": "unknown", "uncertainReason": "Provider response lost"})))
+        .await?
+        .expect_ok()?;
+    ensure!(
+        saved.data()["taskState"] == "cancelled",
+        "task state: {}",
+        saved.body
+    );
+    ensure!(
+        saved.data()["actionState"] == "uncertain",
+        "action state: {}",
+        saved.body
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn signed_no_marker_evidence_reconciles_original_owner_before_acquire_and_altered_proofs_fail_closed(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    commit(&f, &p).await?;
+    let entry = json!({"taskId": p.task, "actionId": p.action, "sequence": 0, "executorGeneration": 1, "actionKind": "read",
+        "payloadDigest": p.payload_digest, "intentDigest": p.commit["intentDigest"], "grantRevision": 1, "state": "not_sent",
+        "effectStatus": "none", "journalSequence": 2});
+    let entry_bytes =
+        journal_entry_body(&p.ownership["authorityGeneration"], &f.home, 1, &entry).to_string();
+    let no_marker = json!({"entry": entry, "signature": f.signing.sign(entry_bytes.as_bytes())});
+    let stop = json!({"v": 1, "sourceAuthority": p.ownership["authorityGeneration"], "taskId": p.task, "actionId": p.action,
+        "sourceDeviceId": f.home, "sourceDeviceGeneration": 1, "executorGeneration": 1, "bootId": p.lock_proof["bootId"],
+        "processId": p.lock_proof["processId"], "processStart": p.lock_proof["processStart"], "lockId": p.lock_proof["lockId"],
+        "observationBootId": p.lock_proof["bootId"], "observation": "process_exited", "children": [], "observedAt": now_millis()?,
+        "journalDigest": sha256_hex(&entry_bytes)});
+    let stop_evidence = with(
+        stop.clone(),
+        json!({"signature": f.signing.sign_json(&stop_evidence_body(&stop))}),
+    );
+    let body = with(
+        report(&p, "not_sent", "none", 2),
+        json!({"noMarkerEvidence": no_marker, "stopEvidence": stop_evidence}),
+    );
+    reconcile(
+        &f,
+        &p,
+        with(
+            body.clone(),
+            json!({"stopEvidence": with(stop_evidence.clone(), json!({"processStart": "1000"}))}),
+        ),
+    )
+    .await?
+    .expect_code("stop_evidence_invalid")?;
+    let altered = with(
+        no_marker.clone(),
+        json!({"entry": with(entry.clone(), json!({"intentDigest": "0".repeat(64)}))}),
+    );
+    reconcile(
+        &f,
+        &p,
+        with(body.clone(), json!({"noMarkerEvidence": altered})),
+    )
+    .await?
+    .expect_code("stop_evidence_invalid")?;
+    let accepted = reconcile(&f, &p, body.clone()).await?.expect_ok()?;
+    ensure!(
+        accepted.data()["actionState"] == "not_sent",
+        "action state: {}",
+        accepted.body
+    );
+    ensure!(
+        reconcile(&f, &p, body.clone()).await?.body == accepted.body,
+        "evidence receipt"
+    );
+    reconcile(&f, &p, with(body, json!({"stopEvidence": with(stop_evidence, json!({"observedAt": now_millis()? + 1_000_000}))})))
+        .await?
+        .expect_code("payload_conflict")?;
+    let acquire = json!({"requestId": new_id(), "taskId": p.task, "previousExecutorGeneration": 1, "executorTokenHash": sha256_hex(&p.token),
+        "lockProof": with(p.lock_proof.clone(), json!({"lockId": new_id(), "reconciledThrough": 3}))});
+    f.acquire(acquire.clone(), &p.token)
+        .await?
+        .expect_code("ownership_conflict")?;
+    let mut next = acquire.clone();
+    next["lockProof"]["reconciledThrough"] = json!(2);
+    let next = f.acquire(next, &p.token).await?.expect_ok()?;
+    ensure!(
+        next.data()["ownership"]["executorGeneration"] == 2,
+        "generation: {}",
+        next.body
+    );
+    f.task_op("context", &p.task, json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": next.receipt()["recordRevision"]}), &p.token)
+        .await?
+        .expect_code("ownership_conflict")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn progress_reports_advance_monotonically_immutable_result_publishes_once_and_prepare_sees_changed_context(
+) -> Result<()> {
+    {
+        let f = TaskFixture::new(&["transfer_task"], None).await?;
+        let p = prepared(&f).await?;
+        f.edit_agent_rules(&f.owner, &f.project, &f.agent, json!({"requestId": new_id(), "expectedParticipationRevision": 1, "rules": "New rules"}))
+            .await?
+            .expect_ok()?;
+        f.commit(&p.task, &p.action, p.commit.clone(), &p.token)
+            .await?
+            .expect_code("context_stale")?;
+    }
+    let g = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&g).await?;
+    commit(&g, &p).await?;
+    let progress = report(&p, "in_flight", "unknown", 2);
+    let saved = reconcile(&g, &p, progress.clone()).await?.expect_ok()?;
+    ensure!(
+        saved.data()["actionState"] == "in_flight",
+        "progress: {}",
+        saved.body
+    );
+    let content = json!({"text": "Done"});
+    let (digest, reference) = result_ref(&p.task, &p.action, &content);
+    let published_body = with(
+        progress.clone(),
+        json!({"requestId": new_id(), "state": "reported", "effectStatus": "known",
+        "journalSequence": 3, "resultContent": content, "resultDigest": digest, "resultRef": reference}),
+    );
+    let published = reconcile(&g, &p, published_body.clone())
+        .await?
+        .expect_ok()?;
+    ensure!(
+        reconcile(&g, &p, progress.clone()).await?.body == saved.body,
+        "progress receipt"
+    );
+    ensure!(
+        reconcile(&g, &p, published_body.clone()).await?.body == published.body,
+        "result receipt"
+    );
+    let acknowledged = reconcile(
+        &g,
+        &p,
+        with(
+            published_body.clone(),
+            json!({"requestId": new_id(), "state": "acknowledged", "journalSequence": 4}),
+        ),
+    )
+    .await?
+    .expect_ok()?;
+    ensure!(
+        acknowledged.data()["actionState"] == "acknowledged",
+        "ack: {}",
+        acknowledged.body
+    );
+    reconcile(
+        &g,
+        &p,
+        with(
+            published_body,
+            json!({"requestId": new_id(), "journalSequence": 5}),
+        ),
+    )
+    .await?
+    .expect_code("action_conflict")?;
+    reconcile(
+        &g,
+        &p,
+        with(
+            progress,
+            json!({"requestId": new_id(), "journalSequence": 5}),
+        ),
+    )
+    .await?
+    .expect_code("payload_conflict")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_controls_use_current_scope_and_revisions_keep_cancellation_terminal_and_resolve_no_effects_implicitly(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    let pause = json!({"requestId": new_id(), "expectedRevision": p.commit["expectedTaskRevision"], "operation": "pause"});
+    let paused = f
+        .control(&f.owner, &p.task, pause.clone())
+        .await?
+        .expect_ok()?;
+    ensure!(paused.data()["state"] == "paused", "pause: {}", paused.body);
+    ensure!(
+        f.control(&f.owner, &p.task, pause.clone())
+            .await?
+            .expect_ok()?
+            .data()
+            == paused.data(),
+        "pause receipt"
+    );
+    f.commit(&p.task, &p.action, p.commit.clone(), &p.token)
+        .await?
+        .expect_code("task_not_runnable")?;
+    f.control(
+        &f.foreign,
+        &p.task,
+        with(pause, json!({"requestId": new_id()})),
+    )
+    .await?
+    .expect_code("resource_not_found")?;
+    let cancelled = f
+        .control(&f.owner, &p.task, json!({"requestId": new_id(), "expectedRevision": paused.receipt()["recordRevision"], "operation": "cancel"}))
+        .await?
+        .expect_ok()?;
+    ensure!(
+        cancelled.data()["state"] == "cancelled",
+        "cancel: {}",
+        cancelled.body
+    );
+    f.control(&f.owner, &p.task, json!({"requestId": new_id(), "expectedRevision": cancelled.receipt()["recordRevision"], "operation": "resume"}))
+        .await?
+        .expect_code("task_terminal")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn owner_risk_resolution_reserves_one_replacement_and_cannot_erase_unknown_original_effect(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    commit(&f, &p).await?;
+    let uncertain = reconcile(
+        &f,
+        &p,
+        with(
+            report(&p, "uncertain", "unknown", 2),
+            json!({"uncertainReason": "Response lost"}),
+        ),
+    )
+    .await?
+    .expect_ok()?;
+    let decision = json!({"requestId": new_id(), "expectedRevision": uncertain.receipt()["recordRevision"], "operation": "resolve_uncertain",
+        "decision": {"kind": "retry_with_risk", "actionId": p.action, "acknowledgement": "effect_may_have_happened", "reason": "Owner checked service"}});
+    let resolved = f
+        .control(&f.owner, &p.task, decision.clone())
+        .await?
+        .expect_ok()?;
+    ensure!(
+        resolved.data()["replacementActionId"] == decision["requestId"],
+        "replacement: {}",
+        resolved.body
+    );
+    ensure!(
+        f.control(&f.owner, &p.task, decision.clone())
+            .await?
+            .expect_ok()?
+            .data()
+            == resolved.data(),
+        "resolution receipt"
+    );
+    f.control(
+        &f.owner,
+        &p.task,
+        with(decision.clone(), json!({"requestId": new_id()})),
+    )
+    .await?
+    .expect_code("resolution_conflict")?;
+    ensure!(
+        field(
+            &f,
+            "SELECT state FROM task_actions WHERE id=?",
+            [&p.action],
+            "state"
+        )? == "uncertain",
+        "original effect erased"
+    );
+    let deleted = f.db().execute(
+        "DELETE FROM task_action_resolutions WHERE action=?",
+        [&p.action],
+    );
+    ensure!(
+        deleted.is_err_and(|error| error.to_string().contains("immutable task resolution")),
+        "resolution deletable"
+    );
+    let acquired = f
+        .acquire(json!({"requestId": new_id(), "taskId": p.task, "previousExecutorGeneration": 1, "executorTokenHash": sha256_hex(&p.token),
+            "lockProof": with(p.lock_proof.clone(), json!({"lockId": new_id(), "reconciledThrough": 2}))}), &p.token)
+        .await?
+        .expect_ok()?;
+    let ownership = acquired.data()["ownership"].clone();
+    let revision = lookup_data(&f, &f.owner, &p.task).await?["revision"].clone();
+    let context = f
+        .task_op("context", &p.task, json!({"requestId": new_id(), "ownership": ownership, "expectedTaskRevision": revision}), &p.token)
+        .await?
+        .expect_ok()?;
+    let reference = context.data()["snapshotRef"].clone();
+    let action = decision["requestId"].as_str().ok_or("action")?.to_owned();
+    let payload_digest = sha256_hex("new attempt");
+    let intent = digest_command(&json!([
+        p.task,
+        action,
+        1,
+        ownership,
+        payload_digest,
+        "read",
+        reference["snapshotId"],
+        reference["digest"],
+        null,
+        null,
+        1,
+        null,
+        null,
+        decision["requestId"]
+    ]));
+    let prepared_action = f
+        .prepare(&p.task, &action, json!({"requestId": new_id(), "sequence": 1, "ownership": ownership, "payloadDigest": payload_digest,
+            "actionKind": "read", "contextSnapshotId": reference["snapshotId"], "contextDigest": reference["digest"], "grantRevision": 1,
+            "expectedTaskRevision": revision, "journalSequence": 3, "resolutionRequestId": decision["requestId"], "intentDigest": intent}), &p.token)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        prepared_action.data()["state"] == "prepared",
+        "replacement prepare: {}",
+        prepared_action.body
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn late_known_result_rejects_risk_retry_and_historical_accepted_receipt_stays_valid_after_a_later_ack(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    commit(&f, &p).await?;
+    reconcile(
+        &f,
+        &p,
+        with(
+            report(&p, "uncertain", "unknown", 2),
+            json!({"uncertainReason": "Response lost"}),
+        ),
+    )
+    .await?
+    .expect_ok()?;
+    let content = json!({"text": "Late known output"});
+    let (digest, reference) = result_ref(&p.task, &p.action, &content);
+    let body = with(
+        report(&p, "reported", "known", 3),
+        json!({"resultContent": content, "resultDigest": digest, "resultRef": reference}),
+    );
+    let accepted = reconcile(&f, &p, body.clone()).await?.expect_ok()?;
+    let acknowledged = reconcile(
+        &f,
+        &p,
+        with(
+            body,
+            json!({"requestId": new_id(), "state": "acknowledged", "journalSequence": 4}),
+        ),
+    )
+    .await?
+    .expect_ok()?;
+    f.control(&f.owner, &p.task, json!({"requestId": new_id(), "expectedRevision": acknowledged.receipt()["recordRevision"], "operation": "resolve_uncertain",
+        "decision": {"kind": "retry_with_risk", "actionId": p.action, "acknowledgement": "effect_may_have_happened", "reason": "Should not replay known output"}}))
+        .await?
+        .expect_code("resolution_conflict")?;
+    let resolved = f
+        .control(&f.owner, &p.task, json!({"requestId": new_id(), "expectedRevision": acknowledged.receipt()["recordRevision"], "operation": "resolve_uncertain",
+            "decision": {"kind": "known_result", "actionId": p.action, "evidenceRequestId": accepted.receipt()["requestId"], "resultRef": reference}}))
+        .await?
+        .expect_ok()?;
+    ensure!(
+        resolved.data()["state"] == "running",
+        "resolution: {}",
+        resolved.body
+    );
+    ensure!(
+        resolved
+            .data()
+            .get("replacementActionId")
+            .is_none_or(Value::is_null),
+        "replacement reserved: {}",
+        resolved.body
+    );
+    Ok(())
+}
