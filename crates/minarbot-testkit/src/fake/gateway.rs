@@ -493,6 +493,13 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
             }
             messages.push(Value::Object(assistant));
             for call in &tool_calls {
+                // Codex rejects provider tool calls without a function name.
+                if !call["function"]["name"]
+                    .as_str()
+                    .is_some_and(|name| !name.is_empty())
+                {
+                    return Err("Gateway provider returned a malformed tool call".into());
+                }
                 let raw = call["function"]["arguments"]
                     .as_str()
                     .filter(|raw| !raw.is_empty())

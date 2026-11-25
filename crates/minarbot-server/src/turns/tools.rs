@@ -63,7 +63,12 @@ pub fn workspace(
             {
                 return data::agent_folders::effective(state, db, string(turn, "agent")).map(Some);
             }
-            return Ok(None);
+            return Ok(Some(crate::config::WorkspaceConfig {
+                agent: string(turn, "agent").to_owned(),
+                directory: data::agent_folders::ensure_project(state, project)?,
+                write: false,
+                managed: true,
+            }));
         };
         let directory = context["folder"]
             .as_str()

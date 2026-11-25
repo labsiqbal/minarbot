@@ -546,14 +546,45 @@ same peer requests with a `MachineBridge` extra operation.
 | kill switch cancels an active peer turn before any more remote work is admitted | `kill_switch_cancels_an_active_peer_turn_before_any_more_remote_work_is_admitted` | 1 -> 1 | |
 | remote role reaches local discovery and team prompt through paired peer summaries | `remote_role_reaches_local_discovery_and_team_prompt_through_paired_peer_summaries` | 3 -> 3 | Failed on product bug P2 (fixed). |
 
+### `app/room-chat.test.ts` (25 cases, 25 Rust tests, 1 Node case kept for B1)
+
+| Node case | Rust test (`pr_room_chat::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| Section lane waits for committed speaker reply and admits a labelled shared delta | `section_lane_waits_for_committed_speaker_reply_and_admits_a_labelled_shared_delta` | 6 -> 6 | Waits for the held speaker's provider call before the 100 ms quiet window (a harness turn is running before its call starts). |
+| room serializes broadcast, records quiet agents, emits named agent mention replies and survives exact retry/restart | `room_serializes_broadcast_records_quiet_agents_emits_named_agent_mention_replies_and_survives_exact_retry_restart` | 13 -> 13 |  |
+| @mentions skip provider calls for unmentioned members, including lead | `mentions_skip_provider_calls_for_unmentioned_members_including_lead` | 3 -> 3 |  |
+| optional lead breaks all-silent tie once; mention requests never fall back to unmentioned lead | `optional_lead_breaks_all_silent_tie_once_mention_requests_never_fall_back_to_unmentioned_lead` | 4 -> 4 |  |
+| room send_message creates visible request/reply before parent answer | `room_send_message_creates_visible_request_reply_before_parent_answer` | 4 -> 4 | Shared helper. |
+| room delegate_task creates visible request/reply before parent answer | `room_delegate_task_creates_visible_request_reply_before_parent_answer` | 4 -> 4 | Failed on P1 (fixed). |
+| room rounds stop at 3 and reserve at most 10 visible agent messages | `room_rounds_stop_at_3_and_reserve_at_most_10_visible_agent_messages` | 4 -> 4 |  |
+| per-agent loop guard stops repeated replies without an unbounded conversation | `per_agent_loop_guard_stops_repeated_replies_without_an_unbounded_conversation` | 2 -> 2 |  |
+| room limit preserves the original delegation call and bounded receipt across restart | `room_limit_preserves_the_original_delegation_call_and_bounded_receipt_across_restart` | 5 -> 5 |  |
+| restart resumes queued room members without replaying interrupted provider calls | `restart_resumes_queued_room_members_without_replaying_interrupted_provider_calls` | 3 -> 3 | Waits for the held provider call before restarting, the in-flight state the Node case assumed. |
+| direct delegation exposes inline transcript request, named reply, machine and activity without replacing final answer | `direct_delegation_exposes_inline_transcript_request_named_reply_machine_and_activity_without_replacing_final_answer` | 5 -> 5 |  |
+| new project section serializes with H2 silence and agent mentions, then follows project membership edits | `new_project_section_serializes_with_h2_silence_and_agent_mentions_then_follows_project_membership_edits` | 6 -> 6 | Failed on product bug P5 (fixed). |
+| room Stop fences a completed root with live/queued invited members; exact lost-response retry survives restart and new generation | `room_stop_fences_a_completed_root_with_live_queued_invited_members_exact_lost_response_retry_survives_restart_and_new_generation` | 11 -> 11 |  |
+| room Stop cancels fan-out, delegated descendants and pending addressed guidance; other roots and direct tasks continue | `room_stop_cancels_fan_out_delegated_descendants_and_pending_addressed_guidance_other_roots_and_direct_tasks_continue` | 4 -> 4 |  |
+| addressed API room Steer consumes once at safe point and completion winner queues once; cross-room targets fail | `addressed_api_room_steer_consumes_once_at_safe_point_and_completion_winner_queues_once_cross_room_targets_fail` | 4 -> 4 |  |
+| addressed root restart retains peers; Stop before completion prevents final and queued mentions | `addressed_root_restart_retains_peers_stop_before_completion_prevents_final_and_queued_mentions` | 4 -> 4 |  |
+| room Stop cancels queued mention invitations before provider admission | `room_stop_cancels_queued_mention_invitations_before_provider_admission` | 2 -> 2 | Waits until the running invitation's provider call arrived before Stop. |
+| room Stop rejects foreign origins, bearer callers, payload changes, wrong generation and archived scope | `room_stop_rejects_foreign_origins_bearer_callers_payload_changes_wrong_generation_and_archived_scope` | 2 -> 2 |  |
+| serialized broadcast yields send_message to parallel children and resumes once | `serialized_broadcast_yields_send_message_to_parallel_children_and_resumes_once` | 5 -> 5 | Shared helper. |
+| serialized broadcast yields delegate_task to parallel children and resumes once | `serialized_broadcast_yields_delegate_task_to_parallel_children_and_resumes_once` | 5 -> 5 | The Assistant count leaves out the step after the paused delegation (B1); the strict count stays in Node. The gateway peer waits a `delegate_task {wait: true}` with its own `wait_task` (G13), so the journal holds those two calls once each instead of one row. |
+| separate Sections and direct chats progress while root order holds within one Section | `separate_sections_and_direct_chats_progress_while_root_order_holds_within_one_section` | 2 -> 2 |  |
+| mention storms deduplicate sources, settle pass obligations and never invite self | `mention_storms_deduplicate_sources_settle_pass_obligations_and_never_invite_self` | 5 -> 5 |  |
+| same-name Unicode speakers retain distinct IDs in bounded committed context; user brief survives truncation | `same_name_unicode_speakers_retain_distinct_ids_in_bounded_committed_context_user_brief_survives_truncation` | 7 -> 7 | Both speaker IDs are checked in one loop. |
+| failure releases serialized lane without lead fallback or provider replay | `failure_releases_serialized_lane_without_lead_fallback_or_provider_replay` | 3 -> 3 | Kit fix: `fake-gateway` now fails the turn on a tool call without a function name, as Codex does; it used to send it to MCP and loop to the tool budget (93 calls). |
+| admission cutoff and unpublished watermarks survive restarts | `admission_cutoff_and_unpublished_watermarks_survive_restarts` | 8 -> 8 | Waits for the gated peer's provider call before stopping. |
+
 ### Product bugs fixed in the peers slice
 
 | Bug | Symptom | Cause and fix |
 | --- | --- | --- |
 | P1 | Every harness agent's `delegate_task` over MCP answered 400 "Invalid delegation request". | `mcp/server.rs` added `requestId` and `turn` to session `delegate_task` arguments (aa2feb0), and the native handler (`turns/messaging.rs`) rejects unknown fields. Only the feature tool reads `turn`, so it is now added only when the declaration is not native. |
 | P2 | Agents no longer saw their teammates ("Messaging other agents") in the system prompt, so remote roles never reached the team prompt. | `messaging::awareness` lost its only caller when a8cfcac removed the API runtime. `turns/execution.rs` appends it again under the same conditions (not a profile setup turn, messaging allowed). |
-| P4 | A peer update whose permission the receiver's owner revoked mid-transfer was still installed when the owner allowed updates again before the transfer ended, although the sender had reported it failed. | The receiver checked permission only at the end of the download. `updates/peers.rs` now counts revocations per machine (`computer/machines.rs` records each one); an apply that saw one never publishes or applies its release. |
 | P3 | A harness agent that called `wait_task` stayed paused forever. | The native `wait_task` path (`turns/harness.rs`, 93410e8) paused the turn without registering a `delegation_waits` row, so `messaging::settle` never stored the result or resumed the turn. It now registers the wait (and returns at once when the task already finished). |
+| P4 | A peer update whose permission the receiver's owner revoked mid-transfer was still installed when the owner allowed updates again before the transfer ended, although the sender had reported it failed. | The receiver checked permission only at the end of the download. `updates/peers.rs` now counts revocations per machine (`computer/machines.rs` records each one); an apply that saw one never publishes or applies its release. |
+| P5 | Every message to a Section of a project without folders failed with 503 "Coding runtime requires a workspace for this conversation." | #87 made every turn a harness turn, and harness turns need a working directory; `turns/tools.rs` returned none for folderless projects. Such projects now get an empty, read-only managed folder (`data/agent_folders.rs` `ensure_project`). |
 
 ### `app/updates.test.ts` (6 runtime cases, 6 Rust tests, file deleted)
 
