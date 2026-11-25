@@ -139,6 +139,20 @@ pub fn mint(state: &AppState, agent: &str, turn: &str) -> Result<(String, String
     db.connection.execute("INSERT INTO mcp_server_tokens(id,token_hash,kind,name,agent,turn,scopes,created,request_digest) VALUES(?,?,'session','',?,?,?,?,'')",params![id,hash(&token),agent,turn,json!(["agents:read","agents:profile","agents:message","history:read","conversations:read","conversations:write","projects:read","projects:write","routines:read","routines:write","workflows:read","workflows:run","machines:read","settings:read","usage:read","skills:read","computer:read","computer:run","orchestration"]).to_string(),state.config.now()])?;
     Ok((id, token))
 }
+fn register_external_db(
+    db: &Connection,
+    id: &str,
+    token: &str,
+    agent: &str,
+    turn: &str,
+    created: i64,
+) -> Result<()> {
+    db.execute(
+        "INSERT INTO mcp_server_tokens(id,token_hash,kind,name,agent,turn,scopes,created,request_digest) VALUES(?,?,'session','',?,?,?,?,'') ON CONFLICT(token_hash) DO UPDATE SET id=excluded.id,agent=excluded.agent,turn=excluded.turn,revoked=NULL,created=excluded.created",
+        params![id, hash(token), agent, turn, json!(["agents:read","agents:profile","agents:message","history:read","conversations:read","conversations:write","projects:read","projects:write","routines:read","routines:write","workflows:read","workflows:run","machines:read","settings:read","usage:read","skills:read","computer:read","computer:run","orchestration"]).to_string(), created],
+    )?;
+    Ok(())
+}
 pub fn register_external(
     state: &AppState,
     id: &str,
@@ -147,11 +161,14 @@ pub fn register_external(
     turn: &str,
 ) -> Result<()> {
     let db = state.database.lock().map_err(|_| Failure::storage())?;
-    db.connection.execute(
-        "INSERT INTO mcp_server_tokens(id,token_hash,kind,name,agent,turn,scopes,created,request_digest) VALUES(?,?,'session','',?,?,?,?,'') ON CONFLICT(token_hash) DO UPDATE SET id=excluded.id,agent=excluded.agent,turn=excluded.turn,revoked=NULL,created=excluded.created",
-        params![id, hash(token), agent, turn, json!(["agents:read","agents:profile","agents:message","history:read","conversations:read","conversations:write","projects:read","projects:write","routines:read","routines:write","workflows:read","workflows:run","machines:read","settings:read","usage:read","skills:read","computer:read","computer:run","orchestration"]).to_string(), state.config.now()],
-    )?;
-    Ok(())
+    register_external_db(&db.connection, id, token, agent, turn, state.config.now())
+}
+fn session_turn_live(db: &Connection, turn: &str, agent: &str) -> Result<bool> {
+    data::exists(
+        db,
+        "SELECT 1 FROM turns WHERE id=? AND agent=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))))",
+        params![turn, agent],
+    )
 }
 pub fn verify(state: &AppState, token: &str) -> Result<Value> {
     if token.is_empty()
@@ -167,13 +184,10 @@ pub fn verify(state: &AppState, token: &str) -> Result<Value> {
     let row=one(db,"SELECT * FROM mcp_server_tokens WHERE token_hash=? AND revoked IS NULL AND (expires IS NULL OR expires>?)",params![hash(token),state.config.now()])?.ok_or_else(||error(401,"MCP authorization failed."))?;
     if row["kind"] == "session"
         && row["turn"].is_string()
-        && !data::exists(
+        && !session_turn_live(
             db,
-            // Native harnesses pause their turn while a blocking MCP call is
-            // outstanding. Keep its session lease valid until that call has
-            // produced a durable result, then revoke it when the turn settles.
-            "SELECT 1 FROM turns WHERE id=? AND agent=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))))",
-            params![row["turn"].as_str(), row["agent"].as_str()],
+            row["turn"].as_str().unwrap_or_default(),
+            row["agent"].as_str().unwrap_or_default(),
         )?
     {
         db.execute(
@@ -191,4 +205,31 @@ pub fn verify(state: &AppState, token: &str) -> Result<Value> {
 
 pub fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paused_session_stays_live_until_turn_settles() -> Result<()> {
+        let db = Connection::open_in_memory()?;
+        db.execute_batch(
+            "CREATE TABLE turns(id TEXT PRIMARY KEY,agent TEXT,status TEXT,paused INTEGER,waiting_for TEXT);
+             CREATE TABLE provider_calls(turn TEXT,status TEXT);
+             CREATE TABLE mcp_server_tokens(id TEXT PRIMARY KEY,token_hash TEXT UNIQUE,kind TEXT,name TEXT,agent TEXT,turn TEXT,scopes TEXT,created INTEGER,request_digest TEXT,revoked INTEGER,last_used INTEGER,expires INTEGER);",
+        )?;
+        db.execute(
+            "INSERT INTO turns VALUES('turn','agent','queued',1,NULL)",
+            [],
+        )?;
+        register_external_db(&db, "session", "resume-token", "agent", "turn", 1)?;
+        assert!(session_turn_live(&db, "turn", "agent")?);
+        db.execute(
+            "UPDATE turns SET status='done',paused=0 WHERE id='turn'",
+            [],
+        )?;
+        assert!(!session_turn_live(&db, "turn", "agent")?);
+        Ok(())
+    }
 }
