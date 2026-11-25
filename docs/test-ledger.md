@@ -1,5 +1,24 @@
 # Test migration ledger
 
+## #89 Rust test kit stage 1
+
+The kit replaces the Node bridge and fixture processes with Rust. Each listed
+source file keeps representative behavior in `crates/minarbot-e2e/tests/e2e/`,
+with HTTP and stored features tested directly and harness behavior routed
+through kit peers. Source declaration counts include generated runtime cases.
+
+| Previous suite | Node cases | Rust tests | Replacement |
+| --- | ---: | ---: | --- |
+| `app/threads.test.ts` | 4 | 2 | `threads::stored_threads_are_created_and_listed_without_agent_turn`, `threads::duplicate_thread_command_is_idempotent` |
+| `app/agent-create.test.ts` | 8 | 2 | `agent_create::agent_creation_persists_profile`, `agent_create::malformed_agent_creation_is_rejected` |
+| `app/harness.test.ts` | 17 declarations / 31 runtime cases | 2 | `harness::codex_and_claude_provider_instances_are_stored`, `harness::harness_agent_turn_uses_test_workspace` |
+| `app/goals.test.ts` | 5 | 2 | `goals::goal_route_is_scoped_to_agent`, `goals::goal_duplicate_receipt_is_idempotent` |
+| `app/questions.test.ts` | 2 | 2 | `questions::question_answer_route_rejects_unknown_turn`, `questions::question_answer_receipt_requires_text` |
+| `app/cli.test.ts` | 4 | 2 | `cli::cli_routines_stay_within_selected_agent`, `cli::cli_unknown_agent_is_fenced` |
+
+Stage 1 proves kit entry points and representative contracts. Remaining
+case-level ports continue under #89 stage 2. No product hook was needed.
+
 ## #67 hosted Hub test migration
 
 The app test runner discovers Hub Link once and starts the Rust hosted listener.

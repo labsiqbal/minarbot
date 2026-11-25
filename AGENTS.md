@@ -11,7 +11,14 @@ npm run build --prefix app
 cargo xtask leptos
 ```
 
-Run app tests with `npm test` from `app/` after building the workspace and Leptos. The TypeScript check leaves the built app output intact.
+Run Rust integration tests after building the server binary. The e2e crate uses `minarbot-testkit` and `MINARBOT_SERVER_BINARY`.
+
+```sh
+cargo build -p minarbot-server
+MINARBOT_SERVER_BINARY=$PWD/target/debug/minarbot-server cargo test -p minarbot-e2e
+```
+
+The remaining Node suite is legacy coverage during #89 migration.
 
 ## Rust
 
