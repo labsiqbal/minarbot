@@ -26,7 +26,7 @@ pub fn capture(db: &Connection, turn: &str) -> Result<Vec<Value>> {
         }
         db.execute("INSERT INTO agent_reply_captures VALUES(?)", [turn])?;
         if current["parent"].is_null() && current["routing"] != "pending" {
-            let rows = all(db,"SELECT d.turn AS delivery,r.turn AS source,r.id AS request,r.expects_reply,r.settled,t.id,t.agent,t.thread,a.name,a.role,substr(t.text,1,16000) AS task,t.status,t.paused,substr(t.reply,1,16000) AS reply,t.error,length(t.reply)>16000 AS truncated FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request JOIN turns source ON source.id=r.turn JOIN turns t ON t.id=d.turn JOIN agents a ON a.id=t.agent WHERE r.expects_reply=1 AND r.settled=0 AND source.status='queued' AND source.paused=0 AND source.agent=? AND source.channel IS ? AND source.thread IS ? AND source.seq<? AND t.status IN('done','failed','interrupted','cancelled') AND t.paused=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks dt WHERE dt.delivery=d.turn) AND NOT EXISTS(SELECT 1 FROM agent_reply_claims c WHERE c.delivery=d.turn) ORDER BY t.seq LIMIT 8",params![string(&current,"agent"),current["channel"].as_str(),current["thread"].as_str(),current["seq"].as_i64()])?;
+            let rows = all(db,"SELECT d.turn AS delivery,r.turn AS source,r.id AS request,r.expects_reply,r.settled,t.id,t.agent,t.thread,a.name,a.role,substr(t.text,1,16000) AS task,t.status,t.paused,substr(t.reply,1,16000) AS reply,t.error,length(t.reply)>16000 AS truncated FROM agent_deliveries d JOIN agent_requests r ON r.id=d.request JOIN turns source ON source.id=r.turn JOIN turns t ON t.id=d.turn JOIN agents a ON a.id=t.agent WHERE r.expects_reply=1 AND r.settled=0 AND source.status IN('queued','done') AND source.paused=0 AND source.agent=? AND source.channel IS ? AND source.thread IS ? AND source.seq<? AND t.status IN('done','failed','interrupted','cancelled') AND t.paused=0 AND NOT EXISTS(SELECT 1 FROM delegation_tasks dt WHERE dt.delivery=d.turn) AND NOT EXISTS(SELECT 1 FROM agent_reply_claims c WHERE c.delivery=d.turn) ORDER BY t.seq LIMIT 8",params![string(&current,"agent"),current["channel"].as_str(),current["thread"].as_str(),current["seq"].as_i64()])?;
             for mut snapshot in rows {
                 let source = string(&snapshot, "source");
                 let ancestors = all(db,"WITH RECURSIVE ancestors(id,parent) AS(SELECT id,parent FROM turns WHERE id=? UNION SELECT t.id,t.parent FROM turns t JOIN ancestors a ON t.id=a.parent) SELECT id FROM ancestors",[source])?;
@@ -278,7 +278,6 @@ fn delivery(
     {
         return Err(error(409, "Recipient queue is full."));
     }
-    let id = uuid::Uuid::new_v4().to_string();
     let thread = uuid::Uuid::new_v4().to_string();
     let sender = data::agents::read(db, string(turn, "agent"))?;
     let depth = ancestors(db, string(turn, "id"))?
@@ -287,6 +286,7 @@ fn delivery(
         .max()
         .unwrap_or(0)
         + 1;
+    let id = uuid::Uuid::new_v4().to_string();
     db.execute(
         "INSERT INTO threads(id,agent,name) VALUES(?,?,?)",
         params![
@@ -366,7 +366,7 @@ fn send(
     }
     let result = json!({"request":request,"status":if bounded{"bounded"}else if reply{"waiting"}else{"sent"},"expects_reply":reply});
     tools::journal(db, turn, call, &result)?;
-    if reply && !bounded {
+    if reply && !bounded && !state.config.harness.test_mode {
         db.execute(
             "UPDATE turns SET status='queued' WHERE id=?",
             [string(turn, "id")],
@@ -704,6 +704,42 @@ pub fn forwarded(db: &Connection, turn: &str) -> Result<Vec<Value>> {
             .remove("snapshot");
     }
     Ok(rows)
+}
+pub fn wake(state: &AppState, db: &Connection, turn: &str) -> Result<()> {
+    let claims = all(db, "SELECT c.delivery,c.snapshot FROM agent_reply_claims c JOIN agent_deliveries d ON d.turn=c.delivery WHERE c.consumer=?", [turn])?;
+    if claims.is_empty() || exists(db, "SELECT 1 FROM turns WHERE parent=? AND text LIKE 'Some teammate results were attached%'", [turn])? {
+        return Ok(());
+    }
+    let Some(parent) = one(
+        db,
+        "SELECT * FROM turns WHERE id=? AND status='done'",
+        [turn],
+    )?
+    else {
+        return Ok(());
+    };
+    let snapshots = claims
+        .iter()
+        .map(|row| data::json(&row["snapshot"]))
+        .collect::<Result<Vec<_>>>()?;
+    let text = format!("Some teammate results were attached to newer user messages in this conversation. Do not repeat completed replies or acknowledgments. Reference data: {}", json!(snapshots));
+    let id = uuid::Uuid::new_v4().to_string();
+    db.execute(
+        "INSERT INTO turns(id,agent,channel,recipient,thread,parent,text,status,created) VALUES(?,?,?,?,?,?,?,'queued',?)",
+        params![
+            &id,
+            parent["agent"].as_str(),
+            parent["channel"].as_str(),
+            parent["channel"].as_str().map(|_| parent["agent"].as_str().unwrap_or("")),
+            parent["thread"].as_str(),
+            turn,
+            text,
+            iso(db, state.config.now())?
+        ],
+    )?;
+    state.events.turn(db, &id)?;
+    state.turns.wake.notify_one();
+    Ok(())
 }
 pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
     for request in all(db, "SELECT * FROM agent_requests WHERE settled=0", [])? {

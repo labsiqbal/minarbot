@@ -193,13 +193,7 @@ async function run(prompt, additionalContext, signal) {
         };
         let result;
         if (recipients) {
-          const results = [];
-          for (const [index, recipient] of recipients.entries()) {
-            results.push(await callOne({ requestId: requestId(generation, id, `recipient-${index}`), recipient, text: args.text, ...(args.metadata ? { metadata: args.metadata } : {}) }, `recipient-${index}`));
-          }
-          result = results.length === 1
-            ? results[0]
-            : { structuredContent: { status: 'queued', requests: results.map(value => value.structuredContent ?? value) } };
+          result = await callOne({ requestId: requestId(generation, id, 'recipients'), recipients, text: args.text, expects_reply: args.expects_reply, ...(args.metadata ? { metadata: args.metadata } : {}) }, 'recipients');
         } else {
           result = await callOne(args);
           if (result.isError && /uncertain/i.test(toolText(result))) throw new Error(toolText(result));

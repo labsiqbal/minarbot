@@ -279,13 +279,23 @@ pub fn message(state: &AppState, db: &Connection, caller: &Value, args: &Value) 
     )?
     .ok_or_else(|| error(403, "MCP authorization failed."))?;
     let call = json!({"id":format!("mcp:{}:{}",string(caller,"id"),string(args,"requestId")),"function":{"name":"send_message"}});
+    let recipients = args["recipients"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| vec![args["recipient"].clone()]);
     let result = messaging::run(
         state,
         db,
         &turn,
         &call,
-        &json!({"recipients":[args["recipient"]],"text":args["text"],"expects_reply":false}),
+        &json!({"recipients":recipients,"text":args["text"],"expects_reply":false}),
     )?;
+    if args["expects_reply"] == true {
+        db.execute(
+            "UPDATE agent_requests SET expects_reply=1 WHERE id=?",
+            [string(&result, "request")],
+        )?;
+    }
     one(db,"SELECT t.id,t.thread FROM agent_deliveries d JOIN turns t ON t.id=d.turn WHERE d.request=?",[string(&result,"request")])?.ok_or_else(||error(409,"Recipient is unavailable or message is invalid."))
 }
 

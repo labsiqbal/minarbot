@@ -11,7 +11,7 @@ static REQUESTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
 fn tools() -> Value {
     json!([
     {"name":"list_agents","description":"List available local agents, ten per page. Continue with next_after.","inputSchema":{"type":"object","properties":{"after":{"type":"string","maxLength":400}},"additionalProperties":false}},
-    {"name":"send_message","description":"Queue an isolated message. Retry only with the same requestId.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"},"recipient":{"type":"string","minLength":1,"maxLength":400},"text":{"type":"string","minLength":1,"maxLength":16000,"pattern":"\\S"},"metadata":{"type":"object","properties":{"depth":{"type":"integer","minimum":0,"maximum":100}},"required":["depth"],"additionalProperties":false}},"required":["requestId","recipient","text"],"additionalProperties":false}},
+    {"name":"send_message","description":"Queue an isolated message. Retry only with the same requestId.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"},"recipient":{"type":"string","minLength":1,"maxLength":400},"recipients":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":400}},"text":{"type":"string","minLength":1,"maxLength":16000,"pattern":"\\S"},"expects_reply":{"type":"boolean"},"metadata":{"type":"object","properties":{"depth":{"type":"integer","minimum":0,"maximum":100}},"required":["depth"],"additionalProperties":false}},"required":["requestId","text"],"additionalProperties":false}},
     {"name":"get_message_status","description":"Read status and up to 8000 characters of reply from a delivery created by this caller. Use read_history for paginated message summaries.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"}},"required":["requestId"],"additionalProperties":false}},
     {"name":"cancel_message","description":"Best-effort cancellation of a delivery created by this peer.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"}},"required":["requestId"],"additionalProperties":false}},
     {"name":"read_history","description":"Read bounded history, newest first. Peers see only deliveries they created; sessions see only their current conversation before the bound turn.","inputSchema":{"type":"object","properties":{"before":{"type":"integer","minimum":1,"maximum":9007199254740991i64},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}}
@@ -383,7 +383,11 @@ fn reply(id: &Value, result: Result<Value>) -> Response {
     crate::json_response(200, json!({"jsonrpc":"2.0","id":id,"result":value}))
 }
 fn send_digest(args: &Value) -> Value {
-    let mut value = json!({"recipient":args["recipient"],"text":args["text"]});
+    let mut value =
+        json!({"recipient":args["recipient"],"recipients":args["recipients"],"text":args["text"]});
+    if let Some(expects_reply) = args.get("expects_reply") {
+        value["expects_reply"] = expects_reply.clone();
+    }
     if let Some(metadata) = args.get("metadata") {
         value["metadata"] = metadata.clone();
     }
@@ -414,8 +418,16 @@ fn send(state: &AppState, db: &Connection, caller: &Value, args: &Value) -> Resu
         }
         return data::json(&row["result"]);
     }
-    let recipient = field(args, "recipient", 400)?;
     let text = field(args, "text", 16000)?;
+    let recipients = args["recipients"]
+        .as_array()
+        .filter(|v| !v.is_empty() && v.len() <= 8);
+    let recipient = args["recipient"]
+        .as_str()
+        .filter(|v| !v.is_empty() && v.len() <= 400);
+    if recipients.is_none() && recipient.is_none() {
+        return Err(error(400, "Invalid message recipient."));
+    }
     if caller["kind"] == "peer" {
         crate::computer::remote::enforce_peer_rate(
             db,
@@ -441,8 +453,9 @@ fn send(state: &AppState, db: &Connection, caller: &Value, args: &Value) -> Resu
             Ok(result)
         });
     }
-    data::agents::read(db, &recipient)?;
-    if data::agents::hidden(db, &recipient)? {
+    let recipient = recipient.ok_or_else(|| error(400, "Invalid message recipient."))?;
+    data::agents::read(db, recipient)?;
+    if data::agents::hidden(db, recipient)? {
         return Err(error(
             409,
             "Recipient is unavailable or message is invalid.",
@@ -481,7 +494,7 @@ fn send(state: &AppState, db: &Connection, caller: &Value, args: &Value) -> Resu
     transaction(db, || {
         db.execute(
             "INSERT INTO threads(id,agent,name) VALUES(?,?,?)",
-            [&thread, &recipient, &title],
+            params![thread, recipient, title],
         )?;
         db.execute(
             "INSERT INTO delivery_conversations(thread,sender,machine,activity) VALUES(?,?,?,?)",

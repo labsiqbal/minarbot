@@ -461,6 +461,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                         return Ok(());
                     }
                     room::finish(db, id, &text)?;
+                    super::messaging::wake(state, db, id)?;
                     if let Some(judgment) = judgment {
                         goals::finish(state, db, &turn, judgment)?;
                     }
