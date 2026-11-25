@@ -101,7 +101,7 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
         &turn,
         "--wait",
         "--timeout",
-        "3",
+        WAIT_SECONDS,
     ];
     let done = cli.run(&args).await?;
     code(&done, 0, "run")?;
@@ -228,7 +228,7 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
             &lost_id,
             "--wait",
             "--timeout",
-            "3",
+            WAIT_SECONDS,
         ])
         .await?;
     code(&recovered, 0, "retry after lost reply")?;
@@ -444,7 +444,7 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
             &side,
             "--wait",
             "--timeout",
-            "3",
+            WAIT_SECONDS,
         ])
         .await?;
     code(&side_reply, 0, "side run")?;
@@ -670,7 +670,7 @@ async fn cli_routine_lists_and_histories_stay_within_the_selected_granted_agent(
         &request_id,
         "--wait",
         "--timeout",
-        "5",
+        WAIT_SECONDS,
     ];
     let mut foreign = command;
     foreign[1] = &b;
@@ -799,7 +799,7 @@ async fn cli_routine_lists_and_histories_stay_within_the_selected_granted_agent(
             &new_id(),
             "--wait",
             "--timeout",
-            "5",
+            WAIT_SECONDS,
         ])
         .await?;
     code(&failed, 1, "failing workflow condition")?;
@@ -1280,7 +1280,7 @@ async fn cli_workflow_discovery_paginates_and_explicit_approvals_retain_identity
         new_id(),
         "--wait",
         "--timeout",
-        "5"
+        WAIT_SECONDS
     ];
     let mut uppercase = start.clone();
     uppercase[6] = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into();
@@ -1715,7 +1715,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
             new_id().to_uppercase(),
             "--wait",
             "--timeout",
-            "5"
+            WAIT_SECONDS
         ])
         .await?;
     code(&next, 3, "second question")?;
@@ -1735,7 +1735,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
                 new_id(),
                 "--wait",
                 "--timeout",
-                "5"
+                WAIT_SECONDS
             ],
             b"No",
         )
@@ -1818,7 +1818,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
             lower_id,
             "--wait",
             "--timeout",
-            "5"
+            WAIT_SECONDS
         ])
         .await?,
         3,
@@ -1833,7 +1833,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
             upper_id,
             "--wait",
             "--timeout",
-            "5"
+            WAIT_SECONDS
         ])
         .await?,
         3,
@@ -1909,7 +1909,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
         new_id().to_uppercase(),
         "--wait",
         "--timeout",
-        "5"
+        WAIT_SECONDS
     ];
     let before_side = model.calls();
     let thread_turns = format!("/threads/{side_id}/turns");
@@ -2008,7 +2008,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
             side_id,
             "--wait",
             "--timeout",
-            "5"
+            WAIT_SECONDS
         ])
         .await?;
     code(&side_next, 3, "next side question")?;
