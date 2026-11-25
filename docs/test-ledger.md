@@ -121,6 +121,7 @@ each iteration as a case.
 | `app/queue-order.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/agent-delete.test.ts` | 6 | 6 | 0 | 0 (deleted) |
 | `app/agent-visibility.test.ts` | 1 | 1 | 0 | 1 (B1, TS module) |
+| `app/script-discovery.test.ts` | 3 | 3 | 0 | 1 (B2) |
 
 <!-- fixture-summary -->
 
@@ -154,6 +155,14 @@ each iteration as a case.
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
 | hidden agents finish active work, hold queue across restart, reject new work and skip missed schedules | `fx_agents::hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_work_and_skip_missed_schedules` | 33 -> 27 | Kept in Node for B1: `wait_for_event` returns `null` and the harness takes one more model step, so the Rust test fails that step at once and leaves it out of `calls.length === 6`. The 7 `visibilityCommand` asserts test `app/shared/agent-visibility.ts`, a TS module with no importer besides this case, and stay in Node. |
+
+### `app/script-discovery.test.ts` (kept: B2)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| duplicate discovery startup cannot interrupt the owning server task | `fx_scripts::duplicate_discovery_startup_cannot_interrupt_the_owning_server_task` | 4 -> 2 | Full: the duplicate start fails and the owning turn keeps running. The duplicate start shares the running server's slot (`TestRoot::start_error_beside`). |
+| private script discovery follows live grants, rotates on restart and preserves foreign files | `fx_scripts::private_script_discovery_follows_live_grants_rotates_on_restart_and_preserves_foreign_files` | 27 -> 22 | Kept in Node for B2: the fresh token is proven on `/api/scripts/agents/{id}/turns`, because `/api/scripts/agents/{id}/provider` deadlocks the server. The stale-token 403 on `/provider` is asserted. |
+| discovery rejects unsafe directories and symlink destinations without changing targets | `fx_scripts::discovery_rejects_unsafe_directories_and_symlink_destinations_without_changing_targets` | 7 -> 6 | Full. |
 
 <!-- fixture-cases -->
 
