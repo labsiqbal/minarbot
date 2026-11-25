@@ -413,7 +413,14 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
         } else {
             "answer"
         };
-        let reply = provider::call(state, id, &model, &messages, if exhausted { &[] } else { &tools }, phase)
+        let reply = provider::call(
+            state,
+            id,
+            &model,
+            &messages,
+            if exhausted { &[] } else { &tools },
+            phase,
+        )
         .await
         .map_err(|failure| {
             if exhausted {

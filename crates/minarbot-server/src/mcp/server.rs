@@ -312,14 +312,8 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
             map.entry("expects_reply").or_insert(json!(false));
         }
         let call_id = uuid::Uuid::new_v4().to_string();
-        let mut result = harness::tool(
-            state,
-            string(&caller, "turn"),
-            name,
-            &native,
-            &call_id,
-        )
-        .await?;
+        let mut result =
+            harness::tool(state, string(&caller, "turn"), name, &native, &call_id).await?;
         if native["expects_reply"] == true && result["status"] == "waiting" {
             for _ in 0..1500 {
                 let completed = {
@@ -355,19 +349,17 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
         let effect = crate::computer::hub::before_effect(state, turn, "tool", call).await?;
         let result = crate::computer::hub::run_effect(
             &effect,
-            harness::tool(
-                state,
-                turn,
-                name,
-                &args,
-                &uuid::Uuid::new_v4().to_string(),
-            ),
+            harness::tool(state, turn, name, &args, &uuid::Uuid::new_v4().to_string()),
         )
         .await;
         crate::computer::hub::finish_effect(
             state,
             effect,
-            if result.is_ok() { "succeeded" } else { "unknown" },
+            if result.is_ok() {
+                "succeeded"
+            } else {
+                "unknown"
+            },
         )
         .await?;
         let result = result.and_then(|v| {
@@ -464,7 +456,9 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
                         .find(|row| row["status"] == "done")
                         .map(|row| row["reply"].clone())
                         .unwrap_or(Value::Null);
-                    return Ok(json!({"requestId":request_id,"status":if active {"waiting"} else {"done"},"reply":reply,"error":Value::Null}));
+                    return Ok(
+                        json!({"requestId":request_id,"status":if active {"waiting"} else {"done"},"reply":reply,"error":Value::Null}),
+                    );
                 }
                 let row=one(db,"SELECT t.* FROM mcp_server_messages m JOIN turns t ON t.id=m.turn WHERE m.caller=? AND m.request_id=?",[caller["id"].as_str().unwrap_or(""),string(&args,"requestId")])?.ok_or_else(||error(404,"Message not found."))?;
                 json!({"requestId":args["requestId"],"status":row["status"],"reply":row["reply"],"error":row["error"]})
