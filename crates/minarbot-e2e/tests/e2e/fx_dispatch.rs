@@ -16,21 +16,56 @@ use std::collections::HashMap;
 /// assistant text (the Node fixture's `source`).
 fn source(request: &ModelRequest) -> Option<String> {
     let messages = request.messages();
-    messages.iter().enumerate().find_map(|(index, message)| {
+    messages
+        .iter()
+        .enumerate()
+        .find_map(|(index, message)| {
+            let content = message["content"].as_str()?;
+            let tagged = ["LOOP:", "HOLD:", "PARTIAL:"]
+                .iter()
+                .any(|prefix| content.starts_with(prefix));
+            // A streamed tool step folds to `content: ""` (the Node API runtime
+            // sent `null`), which is not an answer.
+            let answered = messages.get(index + 1).is_some_and(|next| {
+                next["role"] == "assistant"
+                    && next["content"]
+                        .as_str()
+                        .is_some_and(|text| !text.is_empty())
+            });
+            (message["role"] == "user" && tagged && !answered).then(|| content.to_owned())
+        })
+        .or_else(|| restarted(request))
+}
+
+/// B7: a steer on a harness runtime is a linked restart, which continues its
+/// interrupted source. A restart request carries the source's `LOOP:` or
+/// `PARTIAL:` tag in its interrupted-task context; the restart counts as that
+/// source until its own request is answered.
+fn restarted(request: &ModelRequest) -> Option<String> {
+    let messages = request.messages();
+    let context = messages.iter().find_map(|message| {
         let content = message["content"].as_str()?;
-        let tagged = ["LOOP:", "HOLD:", "PARTIAL:"]
-            .iter()
-            .any(|prefix| content.starts_with(prefix));
-        // A streamed tool step folds to `content: ""` (the Node API runtime
-        // sent `null`), which is not an answer.
-        let answered = messages.get(index + 1).is_some_and(|next| {
-            next["role"] == "assistant"
-                && next["content"]
-                    .as_str()
-                    .is_some_and(|text| !text.is_empty())
-        });
-        (message["role"] == "user" && tagged && !answered).then(|| content.to_owned())
-    })
+        let (_, data) = content.split_once("Interrupted task context")?;
+        let (_, data) = data.split_once('\n')?;
+        serde_json::Deserializer::from_str(data)
+            .into_iter::<Value>()
+            .next()?
+            .ok()
+    })?;
+    let text = context["source"]["text"].as_str()?;
+    let tagged = ["LOOP:", "PARTIAL:"]
+        .iter()
+        .any(|prefix| text.starts_with(prefix));
+    let own = messages
+        .iter()
+        .rposition(|message| message["role"] == "user")?;
+    let answered = messages[own + 1..].iter().any(|message| {
+        message["role"] == "assistant"
+            && message["content"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+    });
+    (tagged && !answered).then(|| text.to_owned())
 }
 
 fn last(request: &ModelRequest) -> String {
@@ -58,6 +93,10 @@ fn responder(request: &ModelRequest) -> Answer {
         .as_deref()
         .is_some_and(|text| text.starts_with("LOOP:"))
     {
+        // H2: the done check's reminder is answered with the final text.
+        if last.starts_with("One verification reminder") {
+            return Answer::text("Steered loop finished");
+        }
         return match tools {
             0 => Answer::Park,
             1 => Answer::tool("read_provider_settings", json!({})),
@@ -200,6 +239,9 @@ async fn startup_failure_reports_child_output_and_releases_the_provider_and_dire
     Ok(())
 }
 
+/// B7: harness runtimes cannot steer, so the steer is a linked restart. It
+/// cancels the running loop at once and runs the loop itself, at the source's
+/// queue position, with the guidance as its request.
 #[tokio::test]
 async fn steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempotent() -> Result<()>
 {
@@ -209,10 +251,18 @@ async fn steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempot
     f.app
         .post(&f.path, json!({"id": root, "text": text}))
         .await?;
-    let held = f.held(&text).await?;
+    let _root_call = f.held(&text).await?;
     let guidance = json!({"id": new_id(), "text": "Use the new constraints", "dispatchMode": "steer", "targetTurn": root});
+    let steer = id(&guidance)?.to_owned();
     let receipt = f.app.post(&f.path, guidance.clone()).await?;
-    ensure!(receipt["dispatch_mode"] == "steer", "receipt {receipt}");
+    ensure!(
+        receipt["dispatch_mode"] == "restart"
+            && receipt["dispatch_target"] == root.as_str()
+            && receipt["dispatch_label"]
+                .as_str()
+                .is_some_and(|label| label.contains("cannot steer")),
+        "receipt {receipt}"
+    );
     ensure!(
         f.app.post(&f.path, guidance.clone()).await? == receipt,
         "steer replay"
@@ -220,39 +270,111 @@ async fn steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempot
     let mut restart = guidance.clone();
     restart["dispatchMode"] = json!("restart");
     f.app.post_expect(&f.path, restart, 409).await?;
+    // The restart continues the loop from the interrupted root.
+    let held = f.held(&text).await?;
     f.app
         .post_expect(
-            &format!("{}/{}/edit", f.path, id(&guidance)?),
+            &format!("{}/{steer}/edit", f.path),
             json!({"id": new_id(), "editor": new_id(), "action": "hold", "revision": 1}),
             409,
         )
         .await?;
     ensure!(
-        f.calls().len() == 1,
+        f.calls().len() == 2,
         "calls before release {}",
         f.calls().len()
+    );
+    let cancelled = f.turn(&root, |row| row["status"] == "cancelled").await?;
+    ensure!(
+        cancelled["error"]
+            .as_str()
+            .is_some_and(|error| error.starts_with("Stopped for restart.")),
+        "root {}",
+        cancelled["error"]
     );
     held.answer(Answer::tool(
         "create_text_file",
         json!({"name": "saved.txt", "text": "Saved once"}),
     ));
-    let done = f.turn(&root, |row| row["status"] == "done").await?;
+    let done = f.turn(&steer, |row| row["status"] == "done").await?;
     ensure!(
         done["reply"] == "Steered loop finished",
         "reply {}",
         done["reply"]
     );
-    // B7: harness turns cannot take a steer, so the guidance is never
-    // delivered ("Delivered" label, one copy per later request, history and
-    // fork context); those assertions stay in the Node case.
+    ensure!(
+        done["dispatch_label"]
+            .as_str()
+            .is_some_and(|label| label.contains("cannot steer")),
+        "label {}",
+        done["dispatch_label"]
+    );
+    ensure!(
+        done["activity"]["dispatch"][0]["source_turn"] == root.as_str(),
+        "dispatch link {}",
+        done["activity"]["dispatch"]
+    );
     ensure!(
         done["generatedFiles"].as_array().map(Vec::len) == Some(1),
-        "files"
+        "files {}",
+        done["generatedFiles"]
     );
+    let calls = f.calls();
+    ensure!(
+        calls.len() == 5,
+        "calls {:?}",
+        calls.iter().map(last).collect::<Vec<_>>()
+    );
+    ensure!(
+        last(&calls[4]).starts_with("One verification reminder"),
+        "last call {}",
+        last(&calls[4])
+    );
+    for (index, request) in calls.iter().enumerate().skip(1) {
+        let copies = request
+            .messages()
+            .iter()
+            .filter(|message| message["role"] == "user" && message["content"] == guidance["text"])
+            .count();
+        ensure!(copies == 1, "call {index} carries {copies} guidance copies");
+    }
     let before = f.calls().len();
     f.app.restart().await?;
-    f.app.post(&f.path, guidance.clone()).await?;
+    ensure!(
+        f.app.post(&f.path, guidance.clone()).await? == receipt,
+        "receipt after restart"
+    );
     ensure!(f.calls().len() == before, "replay ran the model");
+    let after = new_id();
+    f.app
+        .post(&f.path, json!({"id": after, "text": "Next request"}))
+        .await?;
+    f.turn(&after, |row| row["status"] == "done").await?;
+    ensure!(
+        mentions(f.calls().last(), "Use the new constraints"),
+        "next request lost the guidance"
+    );
+    let fork = f
+        .app
+        .post(&format!("{}/{steer}/fork", f.path), json!({"id": new_id()}))
+        .await?;
+    let side = format!("/api/threads/{}/turns", id(&fork)?);
+    let follow = new_id();
+    f.app
+        .post(
+            &side,
+            json!({"id": follow, "text": "Continue steered answer"}),
+        )
+        .await?;
+    f.app.wait_status(&side, &follow, "done").await?;
+    ensure!(
+        mentions(f.calls().last(), "Use the new constraints"),
+        "fork lost the guidance"
+    );
+    ensure!(
+        !mentions(f.calls().last(), "Next request"),
+        "fork saw a later request"
+    );
     Ok(())
 }
 
@@ -312,6 +434,9 @@ async fn steer_before_final_answer_and_steer_after_completion_each_become_one_qu
     Ok(())
 }
 
+/// B7: the steer restarts the partial turn at once, so the steer's own
+/// restart run is the turn that saves a result and streams partial text
+/// before the explicit restart interrupts it.
 #[tokio::test]
 async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_results_no_effect_replay(
 ) -> Result<()> {
@@ -321,19 +446,29 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
     f.app
         .post(&f.path, json!({"id": root, "text": text}))
         .await?;
-    let held = f.held(&text).await?;
+    let _root_call = f.held(&text).await?;
     let guidance = json!({"id": new_id(), "text": "Keep the delivered constraint", "dispatchMode": "steer", "targetTurn": root});
-    f.app.post(&f.path, guidance).await?;
+    let steer = id(&guidance)?.to_owned();
+    let steered = f.app.post(&f.path, guidance).await?;
+    ensure!(
+        steered["dispatch_mode"] == "restart" && steered["dispatch_target"] == root.as_str(),
+        "steer receipt {steered}"
+    );
+    let held = f.held(&text).await?;
     held.answer(Answer::tool(
         "create_text_file",
         json!({"name": "effect.txt", "text": "Do not repeat"}),
     ));
-    f.turn(&root, |row| {
+    f.turn(&steer, |row| {
         row["partial"]["text"]
             .as_str()
             .is_some_and(|text| !text.is_empty())
     })
     .await?;
+    ensure!(
+        f.turn(&root, |row| row["status"] == "cancelled").await?["generatedFiles"] == json!([]),
+        "the interrupted root saved a file"
+    );
     let queued = new_id();
     f.app
         .post(
@@ -341,10 +476,10 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
             json!({"id": queued, "text": "Ordinary queued message"}),
         )
         .await?;
-    let command = json!({"id": new_id(), "text": format!("NEW:{root}"), "dispatchMode": "restart", "targetTurn": root});
+    let command = json!({"id": new_id(), "text": format!("NEW:{steer}"), "dispatchMode": "restart", "targetTurn": steer});
     let receipt = f.app.post(&f.path, command.clone()).await?;
     ensure!(
-        receipt["dispatch_target"] == root.as_str(),
+        receipt["dispatch_target"] == steer.as_str(),
         "receipt mode {} target {} label {}",
         receipt["dispatch_mode"],
         receipt["dispatch_target"],
@@ -359,11 +494,11 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
         done["reply"]
     );
     ensure!(
-        done["activity"]["dispatch"][0]["source_turn"] == root.as_str(),
+        done["activity"]["dispatch"][0]["source_turn"] == steer.as_str(),
         "dispatch link {}",
         done["activity"]["dispatch"]
     );
-    let cancelled = f.turn(&root, |row| row["status"] == "cancelled").await?;
+    let cancelled = f.turn(&steer, |row| row["status"] == "cancelled").await?;
     ensure!(
         cancelled["generatedFiles"].as_array().map(Vec::len) == Some(1),
         "files {}",
@@ -390,8 +525,10 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
         transcript.contains("Do not repeat"),
         "saved result not carried"
     );
-    // B7: the steer is stored but never delivered to a harness turn, so the
-    // restart context cannot carry it; that assertion stays in Node.
+    ensure!(
+        transcript.contains("Keep the delivered constraint"),
+        "steer text not carried"
+    );
     ensure!(
         transcript.contains("Never replay uncertain operations"),
         "no replay warning"
@@ -435,7 +572,14 @@ async fn server_restart_mid_steer_releases_guidance_once_and_never_replays_uncer
     f.app.restart().await?;
     f.turn(&id(&command)?, |row| row["status"] == "done")
         .await?;
-    f.turn(&root, |row| row["status"] == "interrupted").await?;
+    // B7: the steer restarted the held source before the server stopped.
+    f.turn(&root, |row| {
+        row["status"] == "cancelled"
+            && row["error"]
+                .as_str()
+                .is_some_and(|error| error.starts_with("Stopped for restart."))
+    })
+    .await?;
     f.app.post(&f.path, command).await?;
     f.app.restart().await?;
     ensure!(

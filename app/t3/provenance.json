@@ -317,7 +317,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Compact queue stack with Edit, Steer, Remove and Restart overflow; Minarbot durable APIs and held editor retained.",
-      "compatibilityCheck": "app/dispatch.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/fx_dispatch.rs; app/test-support/ui-smoke/run-controls-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/ComposerPrimaryActions.tsx",
@@ -335,7 +335,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Primary Stop while running; queued Send with content and Stop fixed at right; Minarbot CSS and API retained.",
-      "compatibilityCheck": "app/dispatch.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/fx_dispatch.rs; app/test-support/ui-smoke/run-controls-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/ComposerPrimaryActions.tsx",
@@ -351,7 +351,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Generation-scoped Stop targets captured Minarbot turn ID, with exact retry identity.",
-      "compatibilityCheck": "app/dispatch.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/fx_dispatch.rs; app/test-support/ui-smoke/run-controls-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/VoiceInputPill.tsx",
@@ -369,7 +369,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Inline recording pill with elapsed timer and Stop/Cancel; existing native capture and upload to attachment chip retained.",
-      "compatibilityCheck": "app/dispatch.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/fx_dispatch.rs; app/test-support/ui-smoke/run-controls-smoke.mjs"
     }
   ],
   "machineSourceEntries": [
@@ -1060,7 +1060,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Translate message dispatch admission, stable target selection, journal-before-effect ordering, late-steer queue fallback and restart links to SQLite/Node.",
-      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/fx_dispatch.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
       "sourcePath": "apps/server/src/orchestration-v2/CommandPolicy.ts",
@@ -1074,7 +1074,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Translate capability-driven active steering versus interrupt_restart policy into plain TypeScript; API tool-loop safe points and conservative fresh harness sessions.",
-      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/fx_dispatch.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
       "sourcePath": "apps/server/src/orchestration-v2/ThreadForkService.ts",
@@ -1090,7 +1090,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt same-agent fork lineage and ContextTransfer source cutoff to an immutable bounded portable transcript, native SQLite transaction and idempotent request receipt. Minarbot requires a completed text answer.",
-      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/fx_dispatch.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/TimelineAssistantRows.tsx",
@@ -1104,7 +1104,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt response-level fork action and in-flight guard to Minarbot Radix Button, durable browser request identity and same-agent side-thread navigation.",
-      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/fx_dispatch.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/composerCommandKey.ts",
@@ -1118,7 +1118,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt per-submission keyboard intent and capability-aware steer shortcut to existing textarea: Enter queues, Ctrl/Cmd+Enter steers when supported; button follows visible dispatch mode.",
-      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/fx_dispatch.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     }
   ],
   "serverUpdateSourceEntries": [
