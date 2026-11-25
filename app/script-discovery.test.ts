@@ -1,37 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
-
-test('duplicate discovery startup cannot interrupt the owning server task', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'minarbot-discovery-owner-'));
-  let called!: () => void;
-  const started = new Promise<void>(resolve => { called = resolve; });
-  const provider = createServer(async (req, _res) => { for await (const _chunk of req) {} called(); });
-  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
-  const address = provider.address(); assert(address && typeof address !== 'string');
-  const options = { database: join(root, 'db.sqlite'), scriptDirectory: join(root, 'scripts'), baseURL: `http://127.0.0.1:${address.port}/v1` };
-  const app = await startApp(options, { directory: root, servers: [provider] });
-  async function request(path: string, body?: unknown) {
-    const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
-    const value = await res.json(); assert(res.ok, JSON.stringify(value)); return value;
-  }
-  try {
-    const agent = await request('/api/agents', { runtime: 'api', id: randomUUID(), name: 'A', model: 'test', instructions: 'Help' });
-    const path = `/api/agents/${agent.id}/turns`, id = randomUUID();
-    await request(path, { id, text: 'Hold' }); await started;
-    await assert.rejects(startApp(options));
-    assert.equal((await request(path))[0].status, 'running');
-    await request(`${path}/${id}/cancel`, { id: randomUUID() });
-  } finally {
-    await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve()));
-    rmSync(root, { recursive: true, force: true });
-  }
-});
 
 test('private script discovery follows live grants, rotates on restart and preserves foreign files', async () => {
   const root = mkdtempSync(join(tmpdir(), 'minarbot-discovery-'));
@@ -83,30 +56,4 @@ test('private script discovery follows live grants, rotates on restart and prese
     closed = false;
     assert.equal(read().url, app.origin);
   } finally { if (!closed) await app.close(); rmSync(root, { recursive: true, force: true }); }
-});
-
-test('discovery rejects unsafe directories and symlink destinations without changing targets', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'minarbot-discovery-boundary-'));
-  const database = join(root, 'db.sqlite');
-  const start = (scriptDirectory: string) => startApp({ database, scriptDirectory });
-  try {
-    const unsafe = join(root, 'unsafe'); mkdirSync(unsafe, { mode: 0o755 });
-    await assert.rejects(start(unsafe), /must be private/);
-    const link = join(root, 'link'); symlinkSync(unsafe, link);
-    await assert.rejects(start(link), /must be private/);
-    const directory = join(root, 'private'), target = join(root, 'target');
-    const app = await start(directory);
-    try {
-      writeFileSync(target, 'preserve');
-      symlinkSync(target, join(directory, 'connection.json'));
-      const send = (path: string, body: unknown) => fetch(app.origin + path, {
-        method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      const agent = randomUUID();
-      assert((await send('/api/agents', { id: agent, runtime: 'api', name: 'Fixture', model: 'test', instructions: 'Help' })).ok);
-      assert.equal((await send(`/api/agents/${agent}/scripts`, { id: randomUUID(), revision: 0, enabled: true })).status, 500);
-      assert.equal(readFileSync(target, 'utf8'), 'preserve');
-    } finally { await app.close(); }
-    assert(lstatSync(join(directory, 'connection.json')).isSymbolicLink());
-  } finally { rmSync(root, { recursive: true, force: true }); }
 });

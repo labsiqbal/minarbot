@@ -230,6 +230,271 @@ process before releasing its root.
   hex>/proxy.sock`). Tests use short directories; the product fails with
   "outcome is uncertain" or a storage error on such hosts.
 
+## #89 fixture slice
+
+Twenty-one Node suites that drove agent turns through the removed direct API
+runtime, ported case by case to `crates/minarbot-e2e/tests/e2e/fx_*.rs`.
+Agent replies come from `minarbot_testkit::gated::GatedModel` behind the
+gateway peer (`runtime: "api"` in test mode). Assertion counts are
+`assert*` calls plus explicit status checks in the Node case, and `ensure!`,
+`*_expect` and status checks in the Rust test; parameterized Node loops count
+each iteration as a case.
+
+| Node file | Node runtime cases | Rust tests | Dropped | Node cases kept |
+| --- | ---: | ---: | ---: | --- |
+| `app/queue-edits.test.ts` | 3 | 3 | 0 | 0 (deleted) |
+| `app/queue-order.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/agent-delete.test.ts` | 6 | 6 | 0 | 0 (deleted) |
+| `app/agent-visibility.test.ts` | 1 | 1 | 0 | 1 (B1, TS module) |
+| `app/script-discovery.test.ts` | 3 | 3 | 0 | 1 (B2) |
+| `app/script-messages.test.ts` | 1 | 1 | 0 | 1 (B1) |
+| `app/flow-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/routine-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/artifacts.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/avatar-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/site-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/base-instructions-scenario.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/turn-waits.test.ts` | 5 | 5 | 0 | 2 (B1) |
+| `app/acp-harness.test.ts` | 17 | 17 | 0 | 0 (deleted) |
+| `app/agent-delegation.test.ts` | 19 | 19 | 0 | 1 (B1) |
+| `app/composio.test.ts` | 3 | 3 | 0 | 1 (TS module, split out) |
+| `app/dispatch.test.ts` | 11 | 10 | 0 | 3 (B7 x2, TS module) |
+| `app/turn-stream.test.ts` | 2 | 1 | 0 | 1 (TS module) |
+| `app/connector-task-files.test.ts` | 6 | 6 | 0 | 0 (deleted) |
+| `app/workflow-files.test.ts` | 8 | 8 | 0 | 0 (deleted) |
+| `app/rust-connectors.test.ts` | 13 | 13 | 0 | 2 (B1) |
+| Total | 105 | 103 | 0 | 13 (B1 x7, B2, B7 x2; 3 TS-module cases) |
+
+"Dropped" counts whole cases; assertions dropped for removed behaviour are
+named per case below. Partly dropped behaviour: the malformed-JSON tool
+arguments iteration (routine-tools), the per-request system prompt roster
+refresh and capability epoch (team awareness), and turn failure on refused or
+failed MCP tool calls (several cases), all removed with the #87 API runtime.
+
+### `app/queue-edits.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| queue edit holds survive restart, preserve order and original receipt, reject competing editors and completed cancellations | `fx_queues::queue_edit_holds_survive_restart_preserve_order_and_original_receipt_reject_competing_editors_and_completed_cancellations` | 37 -> 32 | Full. The Node count includes three helper asserts. |
+| abandoned edit lease expires and drains its message and following queue in order | `fx_queues::abandoned_edit_lease_expires_and_drains_its_message_and_following_queue_in_order` | 7 -> 4 | Full; the Node count includes the request helper. |
+| Rust expires migrated permanent queue holds and fences the prior revision once | `fx_queues::rust_expires_migrated_permanent_queue_holds_and_fences_the_prior_revision_once` | 7 -> 7 | Full. Lease deadlines use SQLite's wall clock, so the seeded deadline does too. |
+
+### `app/queue-order.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| queue order survives restart, preserves transcript order, blocks edits and scopes, supplies reordered context | `fx_queues::queue_order_survives_restart_preserves_transcript_order_blocks_edits_and_scopes_supplies_reordered_context` | 30 -> 24 | Full. The two provider-side Node asserts (summary before `EARLY LAST`, `SECOND` before `FIRST`) fail the model step instead, which fails the turn the test waits on. The Node count includes three helper asserts. |
+
+### `app/agent-delete.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| delete cascades every agent FK, scoped data, workflows, desktop and journals, preserving room history and shared resources | `fx_agents::delete_cascades_every_agent_fk_scoped_data_workflows_desktop_and_journals_preserving_room_history_and_shared_resources` | 21 -> 21 | Full. |
+| delete guards last agent, active/paused/queued work, unknown IDs, cross origin, bearer/peer/script views and hub grant ownership | `fx_agents::delete_guards_last_agent_active_paused_queued_work_unknown_ids_cross_origin_bearer_peer_script_views_and_hub_grant_ownership` | 10 -> 10 | Full. |
+| delete preserves coordination journals until another agent finishes its dependent work | `fx_agents::delete_preserves_coordination_journals_until_another_agent_finishes_its_dependent_work` | 5 -> 5 | Full. |
+| running provider work must settle before delete; transactional failure preserves agent and desktop for retry | `fx_agents::running_provider_work_must_settle_before_delete_transactional_failure_preserves_agent_and_desktop_for_retry` | 11 -> 8 | Full; `assert(started)` is the parked model request, the Node count includes helper asserts. |
+| paired peer cannot delete owner agents; deletion on owner refreshes peer roster | `fx_agents::paired_peer_cannot_delete_owner_agents_deletion_on_owner_refreshes_peer_roster` | 6 -> 4 | Full: issued token, 403, 404, refreshed roster. Both servers use `peer::PeerBridge` (token issuer and loopback `peer-http`) and start through `server::start_pair`. |
+| owned Git checkpoint refs clean up durably without removing project files; failed cleanup retries | `fx_agents::owned_git_checkpoint_refs_clean_up_durably_without_removing_project_files_failed_cleanup_retries` | 6 -> 6 | Full. |
+
+### `app/agent-visibility.test.ts` (kept: B1)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| hidden agents finish active work, hold queue across restart, reject new work and skip missed schedules | `fx_agents::hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_work_and_skip_missed_schedules` | 33 -> 27 | Kept in Node for B1: `wait_for_event` returns `null` and the harness takes one more model step, so the Rust test fails that step at once and leaves it out of `calls.length === 6`. The 7 `visibilityCommand` asserts test `app/shared/agent-visibility.ts`, a TS module with no importer besides this case, and stay in Node. |
+
+### `app/script-discovery.test.ts` (kept: B2)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| duplicate discovery startup cannot interrupt the owning server task | `fx_scripts::duplicate_discovery_startup_cannot_interrupt_the_owning_server_task` | 4 -> 2 | Full: the duplicate start fails and the owning turn keeps running. The duplicate start shares the running server's slot (`TestRoot::start_error_beside`). |
+| private script discovery follows live grants, rotates on restart and preserves foreign files | `fx_scripts::private_script_discovery_follows_live_grants_rotates_on_restart_and_preserves_foreign_files` | 27 -> 22 | Kept in Node for B2: the fresh token is proven on `/api/scripts/agents/{id}/turns`, because `/api/scripts/agents/{id}/provider` deadlocks the server. The stale-token 403 on `/provider` is asserted. |
+| discovery rejects unsafe directories and symlink destinations without changing targets | `fx_scripts::discovery_rejects_unsafe_directories_and_symlink_destinations_without_changing_targets` | 7 -> 6 | Full. |
+
+### `app/script-messages.test.ts` (kept: B1)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| script messages and answers share grants, scope, receipts, redaction and rate admission | `fx_scripts::script_messages_and_answers_share_grants_scope_receipts_redaction_and_rate_admission` | 45 -> 50 | Kept in Node for B1 (`assert.equal(calls, 2)` counts the step after `ask_user`). The fixed clock replaces the mocked `Date`. The 58 admitted messages each run one harness turn, so the drain before the restart waits 2 s per queued turn. |
+
+### `app/flow-tools.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| agent flow edits preserve ownership, revisions and ordered receipts across restart | `fx_tools::agent_flow_edits_preserve_ownership_revisions_and_ordered_receipts_across_restart` | 16 -> 13 | Full. The server's done check asks once more ("One verification reminder"); the Node API runtime kept the tool results in that request, so the model answers it with the final text. The Node count includes two helper asserts. |
+
+### `app/routine-tools.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| routine tools recover from invalid arguments, preserve owner scope and keep runtime faults fatal | `fx_tools::routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_keep_runtime_faults_fatal` | 28 -> 22 | Found F1 (fixed): channel turns were offered `list_routines` and `read_routine` again through MCP feature tools. Changed by #87: the malformed-JSON iteration `{` is dropped, because the harness rejects arguments that are not JSON before Minarbot sees the call (the API runtime parsed them itself); `null`, `[]` and `"cursor"` still reach Minarbot and get the 400. An unoffered `set_routine_flow` in a channel is refused over MCP (403) instead of failing the turn, and the model stops after the refusal. MCP refusals carry `status`, so the foreign-routine result is `{error, status: 400}`. |
+
+### `app/artifacts.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| generated text artifacts persist across interruption without duplicate creation | `fx_tools::generated_text_artifacts_persist_across_interruption_without_duplicate_creation` | 23 -> 20 | Full. Held provider responses are parked `GatedModel` requests; the Node count includes helper asserts. |
+
+### `app/avatar-tools.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| avatar tool scopes files, journals atomic changes and preserves user changes on restart | `fx_tools::avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_changes_on_restart` | 33 -> 27 | Found F2 (fixed): the refused (409) `set_avatar` call was not journaled. Changed by #87: an unoffered `set_avatar` in a channel and the journal-trigger storage failure no longer fail the turn; over MCP the harness gets the refusal (403) or the error (500) and the turn ends `done`. The test asserts those results and that the avatar is unchanged. The 512x512 generated image is `noise::noise_png`. |
+
+### `app/site-tools.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| site tools bind sent files and owner, journal results and never replay old mutation on restart | `fx_tools::site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_old_mutation_on_restart` | 44 -> 33 | Changed by #87: an unoffered `publish_site` in a channel is refused over MCP (403) and the turn ends `done`; the test asserts the refusal. Everything else is full; the Node count includes three helper asserts. |
+
+### `app/base-instructions-scenario.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| synthetic scenarios record panel without duplicate writes, inline links, workspace context and approved shell | `fx_tools::synthetic_scenarios_record_panel_without_duplicate_writes_inline_links_workspace_context_and_approved_shell` | 29 -> 27 | Changed by #87: `<runtime_info>` names the Codex instance (`through the codex runtime, model fixture`) instead of `api`. The agent session for the native MCP call is minted by inserting a hashed token, as the Node MCP facade did. |
+
+### `app/turn-waits.test.ts` (kept: B1)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| agent event waits release workers, survive restart, honor pause and accept once | `fx_waits::agent_event_waits_release_workers_survive_restart_honor_pause_and_accept_once` | 37 -> 25 | Kept in Node for B1 (`wait_for_event`): the harness takes one model step after the tool returns `null`; the test ends that step with text (a failed step would fail the waiting turn) and keeps it out of counts. While that step finishes, an immediate resume answers "Previous request has not stopped yet"; the test retries only on that message. Changed by #87: `timeoutSeconds: 0` returns the 400 to the model instead of failing the turn. The backup restore runs `minarbot-server restore workspace` into a second root. Signatures use `signing::hmac_sha256_hex` and the fixed clock. |
+| routine waits preserve artifacts and reject events cancelled before upload completes | `fx_waits::routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upload_completes` | 26 -> 19 | Kept in Node for B1: Node counts two continuations (the event and the one-time verification reminder); with B1 the reminder can follow the extra step instead, so the Rust test answers reminders without counting them and asserts one. Everything else is full, including the half-sent event cancelled mid-upload (`SplitRequest`). |
+| workflow cancellation closes waiting descendants of completed steps | `fx_waits::workflow_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full (shared helper `cancellation_closes_waiting_descendants`). |
+| channel cancellation closes waiting descendants of completed steps | `fx_waits::channel_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full. |
+| thread cancellation closes waiting descendants of completed steps | `fx_waits::thread_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full. |
+
+### `app/acp-harness.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| hermes: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::hermes_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| antigravity: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::antigravity_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| grok: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::grok_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| opencode: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::opencode_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| gemini: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::gemini_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| kiro: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::kiro_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| ACP resume suppresses replay and keeps cwd and credentials scoped | `fx_acp::acp_resume_suppresses_replay_and_keeps_cwd_and_credentials_scoped` | 6 -> 6 | Full. |
+| ACP file requests reject outside paths and symlinks, require write approval | `fx_acp::acp_file_requests_reject_outside_paths_and_symlinks_require_write_approval` | 5 -> 5 | Full. |
+| ACP read-only workspace rejects file writes without approval | `fx_acp::acp_read_only_workspace_rejects_file_writes_without_approval` | 3 -> 3 | Full. |
+| Pi RPC streams, requests tool approval, selects model, and cancels | `fx_acp::pi_rpc_streams_requests_tool_approval_selects_model_and_cancels` | 7 -> 7 | Full. |
+| ACP denied permission never grants persistent option | `fx_acp::acp_denied_permission_never_grants_persistent_option` | 3 -> 3 | Full. |
+| ACP CRASH: fail bounded, no replay | `fx_acp::acp_crash_fail_bounded_no_replay` | 3 -> 3 | Full (shared helper `bounded_failure`). |
+| ACP INVALID: fail bounded, no replay | `fx_acp::acp_invalid_fail_bounded_no_replay` | 3 -> 3 | Full. |
+| ACP WAIT: fail bounded, no replay | `fx_acp::acp_wait_fail_bounded_no_replay` | 3 -> 3 | Full. |
+| ACP cancel reaches child, kills detached tool process and preserves inspect diagnostics | `fx_acp::acp_cancel_reaches_child_kills_detached_tool_process_and_preserves_inspect_diagnostics` | 13 -> 12 | Full; the Node `assert(start)` is the `ok_or` on the process start time. |
+| ACP runtimes work through server: approvals, segments and runtime picker | `fx_acp::acp_runtimes_work_through_server_approvals_segments_and_runtime_picker` | 6 -> 4 | Full; the Node count includes two helper asserts. |
+| ACP room queue, checkpoints and stop preserve peer approvals | `fx_acp::acp_room_queue_checkpoints_and_stop_preserve_peer_approvals` | 6 -> 4 | Full; project folders must sit in the server's home, so the Git workspace is under `home/`. The Node count includes two helper asserts. |
+
+### `app/agent-delegation.test.ts` (kept: B1, restart-wait)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| delegation isolates child context and durably wakes idle parent exactly once | `fx_delegation::delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly_once` | 12 -> 6 | Full; found F3 (fixed). The Node count includes four fixture helper asserts. |
+| durable task wait: complete | `fx_delegation::durable_task_wait_complete` | 7 -> 7 | Full; found F4 (fixed). |
+| durable task wait: timeout | `fx_delegation::durable_task_wait_timeout` | 7 -> 7 | Full. |
+| durable task wait: restart-wait | `fx_delegation::durable_task_wait_restart_wait` | 7 -> 7 | Kept in Node for B1: `childCalls === 2` leaves out the model step after `ask_user`; the Rust count excludes it. |
+| durable task wait: restart-child | `fx_delegation::durable_task_wait_restart_child` | 7 -> 7 | Full; the restart waits for the child's model request (the harness sends it just after the turn starts). |
+| durable task wait: delegate-wait | `fx_delegation::durable_task_wait_delegate_wait` | 7 -> 7 | Full. |
+| backend delegation limit: depth | `fx_delegation::backend_delegation_limit_depth` | 6 -> 6 | Full. |
+| backend delegation limit: children | `fx_delegation::backend_delegation_limit_children` | 6 -> 6 | Changed by #87: the 409 returns to the model and the turn ends `done` with it instead of `failed`. |
+| backend delegation limit: size | `fx_delegation::backend_delegation_limit_size` | 6 -> 6 | Full. |
+| delegated task authority denies unrelated caller; cancel stops entire mixed-message tree | `fx_delegation::delegated_task_authority_denies_unrelated_caller_cancel_stops_entire_mixed_message_tree` | 5 -> 4 | Full; the Node count includes a helper assert. |
+| team awareness refreshes role and bounded roster on next provider request | `fx_delegation::team_awareness_refreshes_role_and_bounded_roster_on_next_provider_request` | 5 -> 4 | Changed by #87: the provider client that rebuilt the system prompt (roster and capability epoch) before each request was removed; harness turns read the roster with `list_agents`. The test asserts the refreshed role and the bound through two `list_agents` calls in one turn; the epoch assertion is dropped. |
+| delegate_task receives actionable rate error across conversations, restart and cooldown | `fx_delegation::delegate_task_receives_actionable_rate_error_across_conversations_restart_and_cooldown` | 3 -> 3 | Full. |
+| send_message receives actionable rate error across conversations, restart and cooldown | `fx_delegation::send_message_receives_actionable_rate_error_across_conversations_restart_and_cooldown` | 3 -> 3 | Full. |
+| nested async children: wait includes completion follow-up | `fx_delegation::nested_async_children_wait_includes_completion_follow_up` | 6 -> 6 | Full. |
+| nested async children: cancel completed root with running descendants | `fx_delegation::nested_async_children_cancel_completed_root_with_running_descendants` | 6 -> 6 | Full. |
+| owner later turns can inspect and wait without a duplicate completion wake | `fx_delegation::owner_later_turns_can_inspect_and_wait_without_a_duplicate_completion_wake` | 3 -> 3 | Full. |
+| completion wakes a parent waiting for user input and preserves its pending question | `fx_delegation::completion_wakes_a_parent_waiting_for_user_input_and_preserves_its_pending_question` | 3 -> 3 | Full. |
+| concurrent child limit counts tasks still waiting on their async descendants | `fx_delegation::concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descendants` | 4 -> 4 | Full. |
+| Rust counts active children of an owner completion turn against its inherited budget | `fx_delegation::rust_counts_active_children_of_an_owner_completion_turn_against_its_inherited_budget` | 3 -> 3 | Changed by #87: the limit refusal returns to the model, which ends the continuation `done` with it instead of `failed`. |
+
+### `app/composio.test.ts` (kept: TS module)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| connected apps end to end: catalog, accounts, grants, tools, approvals, receipts and no secrets | `fx_composio::connected_apps_end_to_end_catalog_accounts_grants_tools_approvals_receipts_and_no_secrets` | 70 -> 61 | Changed by #87: the unconfigured and ungranted turns no longer fail; the unoffered call is refused over MCP (403) and the turn ends `done`. The test asserts the refusal and that no Composio tool was offered. The `COMPOSIO_API_KEY` environment variable is the kit's key bridge (`Bridge::composio_key_cell`); server output replaces captured console logs. |
+| installation API key: validation, encrypted persistence, receipts, runtime precedence and restart | `fx_composio::installation_api_key_validation_encrypted_persistence_receipts_runtime_precedence_and_restart` | 39 -> 38 | Full; the environment key changes through the key cell between requests, as `process.env` did. |
+| Rust key replacement and removal reset identity, grants, policies and pending calls atomically | `fx_composio::rust_key_replacement_and_removal_reset_identity_grants_policies_and_pending_calls_atomically` | 21 -> 21 (+6 TS) | Changed by #87: the Node API runtime kept the tool list of the turn's start, so the call held across the reset was refused ("was not offered or access was revoked"). A harness call resolves tools again over MCP, so after the reset and the new grant the write waits for approval; the test denies it and asserts nothing was sent. Every pending-call and reset assertion is full. The 6 `restoreConnectedAppCommand` asserts test `app/src/connected-app-command.ts` and stay in Node as their own TS-module case. |
+
+### `app/dispatch.test.ts` (kept: B7, TS module)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| startup failure reports child output and releases the provider and directory | `fx_dispatch::startup_failure_reports_child_output_and_releases_the_provider_and_directory` | 3 -> 4 | Ported to the kit's startup error: exit status, stdout and stderr tails, no provider call, and the test root is removed when it drops. |
+| steer is injected once at next tool-loop safe point, durable and idempotent | `fx_dispatch::steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempotent` | 15 -> 8 | Kept in Node for B7: the steer is stored but never delivered to a harness turn, so the "Delivered" label, one copy per later request, history and fork assertions stay in Node. Receipt, replay, conflicting mode, held editor, call count before release, final reply, saved file and receipt replay without a model call are ported. |
+| steer before final answer and steer after completion each become one queued turn | `fx_dispatch::steer_before_final_answer_and_steer_after_completion_each_become_one_queued_turn` | 5 -> 5 | Full. |
+| restart cancels and links a new turn, carries partial text and saved results, no effect replay | `fx_dispatch::restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_results_no_effect_replay` | 12 -> 11 | Kept in Node for B7: the undelivered steer cannot reach the restart context (`Keep the delivered constraint`). Partial text, saved result, replay warning, no tool replay, ordering and receipt are ported; the partial arrives through the gateway's live stream forwarding. |
+| server restart mid-steer releases guidance once and never replays uncertain source | `fx_dispatch::server_restart_mid_steer_releases_guidance_once_and_never_replays_uncertain_source` | 2 -> 2 | Full. |
+| fork stores bounded immutable cutoff, same agent, idempotency and channel lineage | `fx_dispatch::fork_stores_bounded_immutable_cutoff_same_agent_idempotency_and_channel_lineage` | 25 -> 25 | Full. |
+| composer recovery validates dispatch mode and target | Kept in Node | 3 -> 0 | Tests `app/src/conversation-command.ts`. |
+| restart during uncertain MCP effect keeps its receipt and never replays external call | `fx_dispatch::restart_during_uncertain_mcp_effect_keeps_its_receipt_and_never_replays_external_call` | 6 -> 4 | Full; the external MCP server is `fx_mcp::LosingMcp`. The provider-side check counts as the last assert. |
+| queued dispatch rejects stale revision, held editor, cross-conversation target and started message | `fx_dispatch::queued_dispatch_rejects_stale_revision_held_editor_cross_conversation_target_and_started_message` | 5 -> 5 | Full. |
+| queued restart cancels captured generation; late steering stays queued without duplicate turn | `fx_dispatch::queued_restart_cancels_captured_generation_late_steering_stays_queued_without_duplicate_turn` | 4 -> 4 | Full. |
+| terminal forks preserve partial answers; untitled chats name from first text and keep manual names | `fx_dispatch::terminal_forks_preserve_partial_answers_untitled_chats_name_from_first_text_and_keep_manual_names` | 3 -> 3 | Full. |
+
+### `app/turn-stream.test.ts` (kept: TS module)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| snapshot merge rejects stale calls, duplicate reconnects and late polling regressions | Kept in Node | 14 -> 0 | Tests `app/shared/turn-stream.ts`. |
+| room polling retains active members beyond full history and orders prose/tool/final by attempt | `fx_stream::room_polling_retains_active_members_beyond_full_history_and_orders_prose_tool_final_by_attempt` | 31 -> 29 | Changed by #87: a harness turn is one provider call record, so the second model step is a new stream segment of the same `seq` (ordinals 0-3) instead of a new attempt with its own `seq`, and its revision grows instead of restarting at 0. `streamWork` is reimplemented in the test. Needs the gateway's live stream forwarding (G4). |
+
+### `app/connector-task-files.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| slack ordinary chat collects only requested teammate files (reply) | `fx_connectors::slack_ordinary_chat_collects_only_requested_teammate_files_reply` | 24 -> 23 | Full (shared helper `task_files`). The connector fixture is `platform::ConnectorFixture` (fake Slack API with Socket Mode, fault-injecting script proxy, `minarbot-server --connector-config`). |
+| slack ordinary chat collects only requested teammate files (notice) | `fx_connectors::slack_ordinary_chat_collects_only_requested_teammate_files_notice` | 24 -> 23 | Full. |
+| slack ordinary chat collects only requested teammate files (nested) | `fx_connectors::slack_ordinary_chat_collects_only_requested_teammate_files_nested` | 24 -> 23 | Full. |
+| telegram ordinary chat collects only requested teammate files (reply) | `fx_connectors::telegram_ordinary_chat_collects_only_requested_teammate_files_reply` | 24 -> 23 | Full. |
+| telegram ordinary chat collects only requested teammate files (notice) | `fx_connectors::telegram_ordinary_chat_collects_only_requested_teammate_files_notice` | 24 -> 23 | Full. |
+| telegram ordinary chat collects only requested teammate files (nested) | `fx_connectors::telegram_ordinary_chat_collects_only_requested_teammate_files_nested` | 24 -> 23 | Full. |
+
+### `app/workflow-files.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| slack step workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::slack_step_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| slack reply workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::slack_reply_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| slack notice workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::slack_notice_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| slack nested workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::slack_nested_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| telegram step workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_step_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| telegram reply workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_reply_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| telegram notice workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_notice_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| telegram nested workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_nested_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+
+### `app/rust-connectors.test.ts` (kept: B1, question runs)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced | `fx_composio::rust_composio_approval_recovery_revocation_schema_checks_and_uncertain_writes_remain_fenced` | 21 -> 19 | Full; the remote that accepts and holds or drops the write is a `stub::Stub` (`Hang`, `Drop`). |
+| Rust slack offline recovery preserves confirmed delivery and requires confirmation | `fx_connectors::rust_slack_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation` | 10 -> 11 | Full; journal commands run through `connector::journal`. |
+| Rust telegram offline recovery preserves confirmed delivery and requires confirmation | `fx_connectors::rust_telegram_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation` | 10 -> 11 | Full; journal commands run through `connector::journal`. |
+| Rust telegram runner reply through native turns | `fx_connectors::rust_telegram_runner_reply_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust telegram runner question through native turns | `fx_connectors::rust_telegram_runner_question_through_native_turns` | 20 -> 22 | Kept in Node for B1: `calls === 2` leaves out the model step after `ask_user`; the Rust count excludes it. Everything else is full. |
+| Rust telegram runner file through native turns | `fx_connectors::rust_telegram_runner_file_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust telegram runner workflow through native turns | `fx_connectors::rust_telegram_runner_workflow_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust telegram runner media through native turns | `fx_connectors::rust_telegram_runner_media_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust slack runner reply through native turns | `fx_connectors::rust_slack_runner_reply_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust slack runner question through native turns | `fx_connectors::rust_slack_runner_question_through_native_turns` | 20 -> 22 | Kept in Node for B1: `calls === 2` leaves out the model step after `ask_user`; the Rust count excludes it. Everything else is full. |
+| Rust slack runner file through native turns | `fx_connectors::rust_slack_runner_file_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust slack runner workflow through native turns | `fx_connectors::rust_slack_runner_workflow_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust slack runner media through native turns | `fx_connectors::rust_slack_runner_media_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+
+
+### Product bugs found and fixed in the fixture slice
+
+| Bug | Fix | Found by |
+| --- | --- | --- |
+| F1 | MCP feature tools re-offered private-only tools (`list_routines`, `read_routine`, `list_skills`) to shared-room turns after the native filter withheld them. `turns::tools::PRIVATE_TOOLS` now drives both filters. | `fx_tools::routine_tools...` |
+| F2 | Refused (4xx) native tool calls over MCP were not journaled, unlike the agent loop in `turns/execution.rs`; `harness::journal_refusal` records them. | `fx_tools::avatar_tool...` |
+| F3 | MCP added `requestId` and `turn` to every session `delegate_task`; the native handler rejects unknown fields, so every harness delegation failed with 400. Only the feature tool gets them now. | `fx_delegation::*` |
+| F4 | Harness sessions got the native `wait_task`, which marks the turn paused and waiting but is never resumed. Sessions now use the blocking feature tool, which records a durable delegation wait. | `fx_delegation::durable_task_wait_*` |
+
+B1 also covers `wait_for_event`: it returns `null` at once and the harness takes one more model step. Rust tests end that step with text (a failed step would fail the waiting turn) and leave it out of counts; `fx_support::after_pause` and `pause_reply_for` implement this.
+
+Open finding (not fixed, #87 behaviour change): a Composio call held across a key reset is offered again for the new installation over MCP, because harness calls resolve tools per request; the Node API runtime refused it with its turn-start tool list. The Rust test asserts that the call waits for approval and is never dispatched.
+
 ## #67 hosted Hub test migration
 
 The app test runner discovers Hub Link once and starts the Rust hosted listener.

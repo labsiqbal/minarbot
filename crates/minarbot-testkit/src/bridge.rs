@@ -71,6 +71,9 @@ enum Kind {
     PdfAsync(Arc<PdfAsync>),
     OperationsAsync(Arc<OperationsAsync>),
     Key(String),
+    /// A key the test can change while the server runs (an environment
+    /// variable that is set or unset between requests).
+    KeyCell(Arc<std::sync::Mutex<String>>),
 }
 
 struct Shared {
@@ -185,6 +188,10 @@ async fn key(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response 
     }
     match &shared.kind {
         Kind::Key(key) => Json(json!({"key": key})).into_response(),
+        Kind::KeyCell(key) => {
+            Json(json!({"key": key.lock().map(|key| key.clone()).unwrap_or_default()}))
+                .into_response()
+        }
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -253,6 +260,11 @@ impl Bridge {
     /// Composio key bridge that serves `key`.
     pub async fn composio_key(key: impl Into<String>) -> Result<Self> {
         Self::start(Kind::Key(key.into())).await
+    }
+
+    /// Composio key bridge that serves the current value of `key`.
+    pub async fn composio_key_cell(key: Arc<std::sync::Mutex<String>>) -> Result<Self> {
+        Self::start(Kind::KeyCell(key)).await
     }
 
     pub fn origin(&self) -> &str {

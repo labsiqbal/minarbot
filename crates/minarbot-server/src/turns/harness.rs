@@ -216,6 +216,9 @@ pub async fn tool(
     let clock = super::diagnostics::Clock::start(state, turn, call_id);
     let result = tools::run(state, &row, &call).await;
     drop(clock);
+    if let Err(refusal) = &result {
+        journal_refusal(state, &row, &call, refusal)?;
+    }
     let mut result = result?;
     if let Some(mut running) = running {
         // The question is stored. Hold the reply until the worker has stopped its harness.
@@ -327,6 +330,40 @@ pub fn message(state: &AppState, db: &Connection, caller: &Value, args: &Value) 
     one(db,"SELECT t.id,t.thread FROM agent_deliveries d JOIN turns t ON t.id=d.turn WHERE d.request=?",[string(&result,"request")])?.ok_or_else(||error(409,"Recipient is unavailable or message is invalid."))
 }
 
+/// Journal a refused native call (4xx) the way the agent loop does in
+/// `execution.rs`, so a resumed transcript shows the refusal instead of a
+/// gap the model would fill by retrying the mutation.
+fn journal_refusal(state: &AppState, turn: &Value, call: &Value, refusal: &Failure) -> Result<()> {
+    let name = string(&call["function"], "name");
+    if refusal.status >= 500
+        || [
+            "interrupt_agent",
+            "ask_user",
+            "wait_for_event",
+            "call_mcp_tool",
+            "list_mcp_tools",
+        ]
+        .contains(&name)
+        || (name == "send_message" && refusal.status != 429)
+        || turn["agent"] == crate::mcp::guide::ID
+    {
+        return Ok(());
+    }
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    if !exists(
+        &guard.connection,
+        "SELECT 1 FROM turns WHERE id=? AND status='running'",
+        [string(turn, "id")],
+    )? {
+        return Ok(());
+    }
+    let value = json!({"error":refusal.message,"status":refusal.status});
+    if crate::connectors::mailbox::is_tool(name) {
+        crate::connectors::mailbox::journal(state, &guard.connection, turn, call, &value)
+    } else {
+        tools::journal(&guard.connection, turn, call, &value)
+    }
+}
 pub fn journal(db: &Connection, turn: &Value, call: &Value, result: &Value) -> Result<()> {
     tools::journal(db, turn, call, result)
 }

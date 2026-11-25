@@ -31,7 +31,7 @@ one module per area.
 
 | Module | Use it for |
 | --- | --- |
-| `server` | `TestRoot` (one temp dir and database). `ServerConfig` takes every option `app/rust-test-server.ts` accepted (unknown names fail with `not ported: option X`). Builders: `fixed_clock` (on by default), `real_clock`, `model`, `gateway`, `executable`, `issuer`, `workspace`, `script_directory`, `concurrency`, `path_prefix`, `sync_key`, `computer_bridge`, `canonical_bridge`, `pdf_bridge` and `composio`. `Server` has `get`, `post`, `post_expect`, `get_expect`, `call`, `wait_get`, `wait_row`, `wait_status`, `restart`, `restart_with`, `shutdown`, `crash`, `start_stopped`, `edit_database`, `refresh_machines` and `output`. |
+| `server` | `TestRoot` (one temp dir and database). `ServerConfig` takes every option `app/rust-test-server.ts` accepted (unknown names fail with `not ported: option X`). Builders: `fixed_clock` (on by default), `real_clock`, `model`, `gateway`, `executable`, `issuer`, `workspace`, `script_directory`, `concurrency`, `path_prefix`, `sync_key`, `computer_bridge`, `canonical_bridge`, `pdf_bridge` and `composio`. `Server` has `get`, `post`, `post_expect`, `get_expect`, `call`, `wait_get`, `wait_row`, `wait_status`, `restart`, `restart_with`, `shutdown`, `crash`, `start_stopped`, `edit_database`, `refresh_machines` and `output`. `TestRoot::start_error_beside` runs a failing start on the caller's slot; `server::start_pair` starts two servers on both slots at once. |
 | `http` | `Reply` (status and JSON), `SseReader`, and `SplitRequest` for a request whose last body bytes are held back. |
 | `wait` | `until`, `until_within`, `until_value` (the timeout shows the last value) and `never`. |
 | `db` | `Inspector` (read-only, works while the server runs) and `Fixture` (writable, only for seeding the API cannot do and for fault triggers). |
@@ -52,6 +52,11 @@ one module per area.
 | `desktop`, `vnc` | `DesktopFixture` for `desktop.testRuntime` (launches, commands, failures, held commands); `VncClient`, a WebSocket + RFB 3.8 client. |
 | `fake::stdio_mcp` | `StdioServer`: one stdio MCP request per process, for `minarbot-server --mcp-stdio` or extra harness servers. |
 | `reap` | Dropping the last `TestRoot` kills every process whose executable or working directory is inside it (peers left behind by a killed server). |
+| `gated` | `GatedModel`: an OpenAI-compatible model whose `Answer` can wait for a `Gate`, park the request for the test (`Answer::Park`, `parked`), hang, or stream chunks with gates between them. Extra JSON routes (`route`) serve, for example, image generation. |
+| `stub` | `Stub`: a raw HTTP/1.1 fake for third-party APIs (sync or async handlers, `StubReply::Hang` and `Drop` for lost results, WebSocket upgrades through `with_socket`). |
+| `platform`, `connector` | `ConnectorFixture` (fake Slack and Telegram with Socket Mode, a fault-injecting script proxy and the connector process); `Connector` runs `--connector-config`, `journal` runs `--connector-journal-config`. |
+| `peer` | `PeerBridge`: a computer bridge with a recording peer token issuer and loopback `peer-http`; pair two servers with `server::start_pair` on a multi-thread test runtime. |
+| `signing`, `noise` | `hmac_sha256_hex` for signed event deliveries; `noise_png` for large generated images. |
 
 Configuring a model (`ServerConfig::model` or `gateway`) makes `fake-gateway`
 the Codex executable, as the Node bridge did, so native Codex tests configure
@@ -169,7 +174,7 @@ name) and, where listed, end to end by an e2e module.
 | G1 | `--version`. | - |
 | G2 | `thread/start` and `thread/resume` take the MCP URL, token variable, cwd, thread ID and model. | threads, cli |
 | G3 | `tools/list` becomes OpenAI tools; text answers -> deltas, `item/completed`, usage and `turn/completed`. | threads |
-| G4 | With `MINARBOT_GATEWAY_STREAM=true`, SSE content and tool-call deltas are folded and the content deltas forwarded. | - |
+| G4 | With `MINARBOT_GATEWAY_STREAM=true`, SSE content and tool-call deltas are folded; each content delta is forwarded as it arrives, and streamed text before tool calls becomes its own `agentMessage` item. | `fx_stream`, `fx_dispatch::restart_cancels...` |
 | G5 | Tool calls -> `mcpToolCall` items and MCP `tools/call`, with a stable `requestId` filled in when the schema requires one. | questions, agent_create |
 | G6 | MCP HTTP 4xx -> tool error to the model; 5xx -> turn error. | agent_create (`escape`) |
 | G7 | An "uncertain" MCP error fails the turn. | - |
@@ -178,7 +183,7 @@ name) and, where listed, end to end by an e2e module.
 | G10 | Provider HTTP errors -> `error` notification. | - |
 | G11 | `turn/interrupt` aborts the turn with no further output. | threads |
 | G12 | `Initial name:` turns offer only `ask_user` and `edit_profile`. | agent_create |
-| G13 | `wait_task` timeouts are clamped to 1-30 s; `delegate_task {wait: true}` waits with `wait_task`; `send_message` fans out to recipients. | - |
+| G13 | `wait_task` timeouts are clamped to 1-30 s; `delegate_task {wait: true}` waits with `wait_task` unless Minarbot answered `status: waiting` (it then resumes the turn itself); `send_message` fans out to recipients. | - |
 | G14 | Image tool results are forwarded as an `image_url` user message. | - |
 | G15 | Without an MCP session (goal judges), no tools are offered. The Node fixture crashed here. | goals |
 | G16 | `model/list` returns the provider's `GET /models` as one page. The Node fixture had none. | cli |

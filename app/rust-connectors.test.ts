@@ -2,125 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { testDatabase } from './test-support/database.ts';
-import { startRustServer } from './rust-test-server.ts';
 import { startApp } from './test-bridge.ts';
-import { runRustConnector, runRustConnectorJournal } from './rust-connectors-runner.ts';
-import { composioToolName } from './test-support/composio-tool-name.ts';
+import { runRustConnector } from './rust-connectors-runner.ts';
 
-test('Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-composio-')), database = join(root, 'db');
-  const key = 'FIXTURE_COMPOSIO_KEY_93', agent = randomUUID(), responses: string[] = [], effects: unknown[] = [];
-  let mode = 'read', disconnected = false, reachedUpstream!: () => void;
-  const upstreamAccepted = new Promise<void>(resolve => { reachedUpstream = resolve; });
-  const remote = createServer(async (request, response) => {
-    assert.equal(request.headers['x-api-key'], key);
-    let raw = ''; for await (const part of request) raw += part;
-    const path = new URL(request.url!, 'http://fixture').pathname;
-    if (path.endsWith('/toolkits') || path.endsWith('/toolkits/categories')) { response.end(JSON.stringify({ items: [] })); return; }
-    if (path.endsWith('/connected_accounts')) { response.end(JSON.stringify({ items: [{ id: 'ca_fixture', toolkit: { slug: 'gmail' }, status: 'ACTIVE' }] })); return; }
-    if (path.endsWith('/tools')) {
-      response.end(JSON.stringify({ items: ['READ', 'WRITE'].map(kind => ({ slug: `GMAIL_${kind}`, name: kind, description: key, toolkit: { slug: 'gmail' }, version: 'fixture', tags: [kind === 'READ' ? 'readOnlyHint' : 'createHint'], input_parameters: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'], additionalProperties: false } })) })); return;
-    }
-    effects.push(JSON.parse(raw));
-    if (mode === 'crash') { reachedUpstream(); return; }
-    if (mode === 'uncertain') { disconnected = true; request.socket.destroy(); return; }
-    response.end(JSON.stringify({ successful: true, data: { result: key } }));
-  });
-  const provider = createServer(async (request, response) => {
-    let raw = ''; for await (const part of request) raw += part;
-    assert(!raw.includes(key));
-    const body = JSON.parse(raw), result = body.messages.findLast((message: any) => message.role === 'tool');
-    const message = result ? { content: result.content } : { tool_calls: [{ id: 'fixture-call', type: 'function', function: { name: composioToolName(mode === 'read' ? 'GMAIL_READ' : 'GMAIL_WRITE'), arguments: JSON.stringify(mode === 'invalid' ? { unexpected: true } : { target: 'fixture@example.test' }) } }] };
-    response.end(JSON.stringify({ choices: [{ finish_reason: result ? 'stop' : 'tool_calls', message }] }));
-  });
-  const options = { database, composio: { baseURL: await listen(remote) + '/api/v3.1' }, baseURL: await listen(provider) + '/v1' };
-  let app = await startApp(options, { directory: root, servers: [remote, provider] });
-  const request = async (path: string, body?: unknown, status = 200): Promise<any> => {
-    const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
-    const raw = await response.text(); responses.push(raw); assert.equal(response.status, status, raw); return JSON.parse(raw);
-  };
-  const turns = `/api/agents/${agent}/turns`, grant = `/api/agents/${agent}/connected-apps/gmail`;
-  const settled = async (id: string, predicate: (row: any) => boolean) => {
-    for (let i = 0; i < 500; i++) {
-      const row = (await request(turns)).find((item: any) => item.id === id);
-      if (row && predicate(row)) return row;
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
-    assert.fail(`Turn ${id} did not settle`);
-  };
-  try {
-    await request('/api/agents', { id: agent, runtime: 'api', name: 'Fixture', model: 'fixture', instructions: 'Help' }, 201);
-    await request('/api/connected-apps/key', { id: randomUUID(), revision: 0, key });
-    await request(grant, { id: randomUUID(), revision: 0, enabled: true });
-    const run = async () => { const id = randomUUID(); await request(turns, { id, text: mode }, 202); return id; };
-    const read = await run(); await settled(read, row => row.status === 'done'); assert.equal(effects.length, 1);
-    mode = 'write'; const write = await run(), approval = (await settled(write, row => row.approvals?.some((item: any) => item.state === 'approval'))).approvals[0];
-    await app.close(); app = await startRustServer(options);
-    const path = `${turns}/${write}/app-approvals/${approval.id}`, decision = { id: randomUUID(), revision: approval.revision, decision: 'allow' };
-    await request(path, { ...decision, revision: 999 }, 409); await request(path, decision); await request(path, decision);
-    await settled(write, row => row.status === 'done'); assert.equal(effects.length, 2);
-    const revoke = await run(), pending = (await settled(revoke, row => row.approvals?.some((item: any) => item.state === 'approval'))).approvals[0];
-    await request(grant, { id: randomUUID(), revision: 1, enabled: false });
-    await request(`${turns}/${revoke}/app-approvals/${pending.id}`, { id: randomUUID(), revision: pending.revision, decision: 'allow' }, 409);
-    await request(`${turns}/${revoke}/app-approvals/${pending.id}`, { id: randomUUID(), revision: pending.revision, decision: 'deny' });
-    await settled(revoke, row => row.status === 'done'); assert.equal(effects.length, 2);
-    await request(grant, { id: randomUUID(), revision: 2, enabled: true });
-    mode = 'invalid'; const invalid = await run(); await settled(invalid, row => row.status === 'done' || row.status === 'failed'); assert.equal(effects.length, 2);
-    mode = 'uncertain'; const uncertain = await run(), last = (await settled(uncertain, row => row.approvals?.some((item: any) => item.state === 'approval'))).approvals[0];
-    await request(`${turns}/${uncertain}/app-approvals/${last.id}`, { id: randomUUID(), revision: last.revision, decision: 'allow' });
-    await settled(uncertain, row => row.approvals?.some((item: any) => item.state === 'uncertain')); assert(disconnected); assert.equal(effects.length, 3);
-    await app.close(); app = await startRustServer(options); assert.equal(effects.length, 3);
-    mode = 'crash';
-    const killed = await run();
-    const beforeCrash = (await settled(killed, row => row.approvals?.some((item: any) => item.state === 'approval'))).approvals[0];
-    await request(`${turns}/${killed}/app-approvals/${beforeCrash.id}`, { id: randomUUID(), revision: beforeCrash.revision, decision: 'allow' });
-    let crashDeadline: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([upstreamAccepted, new Promise<never>((_, reject) => {
-        crashDeadline = setTimeout(() => reject(new Error('Composio fixture never accepted the pending write.')), 5000);
-      })]);
-    } finally { clearTimeout(crashDeadline); }
-    const dispatched = testDatabase(database);
-    try { assert.equal(dispatched.prepare('SELECT state FROM composio_calls WHERE turn=?').get(killed)!.state, 'running'); }
-    finally { dispatched.close(); }
-    await app.crash();
-    app = await startRustServer(options);
-    const crash = await settled(killed, row => row.status === 'interrupted');
-    assert.equal(crash.approvals[0].state, 'uncertain');
-    await request(`${turns}/${killed}/resume`, { id: randomUUID(), revision: crash.revision, acknowledgeUncertain: true });
-    const failed = await settled(killed, row => row.status === 'failed');
-    assert.match(failed.error, /uncertain/);
-    assert.equal(effects.length, 4, 'Acknowledging uncertainty must never send the write again.');
-    assert(!responses.join('').includes(key)); assert(!readFileSync(database).includes(Buffer.from(key)));
-  } finally { await app.close(); await Promise.all([close(remote), close(provider)]); rmSync(root, { recursive: true, force: true }); }
-});
-for (const platform of ['slack', 'telegram']) test(`Rust ${platform} offline recovery preserves confirmed delivery and requires confirmation`, async () => {
-  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-journal-')), directory = join(root, 'state'), id = randomUUID();
-  const command = (command: string, extra = {}) => runRustConnectorJournal({ directory, platform, command, ...extra });
-  try {
-    const initial = await command('status'); assert.deepEqual(initial.inbox, []); assert.deepEqual(initial.outbox, []);
-    const db = testDatabase(join(directory, `${platform}.sqlite`));
-    try {
-      if (platform === 'slack') db.prepare("INSERT INTO slack_outbox(id,channel,sender,root,text,status,part,timestamps) VALUES(?,'DCHAT','UUSER','1700000000.000001','Exact output','uncertain',1,'[\"1700000001.000001\"]')").run(id);
-      else db.prepare("INSERT INTO telegram_outbox(id,chat,reply_to,text,status,part,message_ids,error) VALUES(?,4,1,'Exact output','uncertain',1,'[42]','Lost response')").run(id);
-      const original = (await command('inspect', { id })).reply;
-      await assert.rejects(command('recover', { id, revision: 0, action: 'retry' }), /confirmation/);
-      assert.deepEqual((await command('inspect', { id })).reply, original);
-      assert.deepEqual(await command('recover', { id, revision: 0, action: 'retry', confirmation: '--accept-duplicate-risk' }), { id, status: 'queued', revision: 1 });
-      const retry = await command('inspect', { id }); assert.equal(retry.reply.part, 1); assert.equal(retry.reply.text, 'Exact output'); assert.equal(retry.decisions[0].status, 'uncertain');
-      assert.equal(retry.reply[platform === 'slack' ? 'timestamps' : 'message_ids'], original[platform === 'slack' ? 'timestamps' : 'message_ids']);
-      await assert.rejects(command('recover', { id, revision: 0, action: 'retry', confirmation: '--accept-duplicate-risk' }), /changed/);
-      db.prepare(`UPDATE ${platform}_outbox SET status='failed' WHERE id=?`).run(id);
-      assert.deepEqual(await command('recover', { id, revision: 1, action: 'discard', confirmation: '--confirm' }), { id, status: 'discarded', revision: 2 });
-      assert.equal((await command('status')).outbox[0].revision, 2);
-    } finally { db.close(); }
-    assert(!existsSync(join(directory, 'owner.lock')));
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
+// Other cases moved to crates/minarbot-e2e/tests/e2e/fx_connectors.rs and
+// fx_composio.rs (#89). The question runs stay here for B1: their model call
+// count leaves out the step the harness takes after ask_user.
 async function listen(server: Server) {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert(address && typeof address !== 'string');
@@ -129,17 +20,13 @@ async function listen(server: Server) {
 async function close(server: Server) {
   server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
 }
-async function wait(condition: () => boolean) {
-  for (let i = 0; i < 500; i++) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
-  assert(condition(), 'Fixture condition timed out.');
-}
 function frame(value: unknown) {
   const bytes = Buffer.from(JSON.stringify(value));
   const head = bytes.length < 126 ? Buffer.from([0x81, bytes.length]) : Buffer.from([0x81, 126, bytes.length >> 8, bytes.length & 255]);
   return Buffer.concat([head, bytes]);
 }
 
-for (const platform of ['telegram', 'slack'] as const) for (const mode of ['reply', 'question', 'file', 'workflow', 'media']) {
+for (const platform of ['telegram', 'slack'] as const) for (const mode of ['question']) {
   const question = mode === 'question', file = mode === 'file', workflow = mode === 'workflow', media = mode === 'media';
   test(`Rust ${platform} runner ${mode} through native turns`, async () => {
     const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-connector-')), agent = randomUUID(), controller = new AbortController();
