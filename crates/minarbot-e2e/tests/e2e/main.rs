@@ -10,6 +10,7 @@ mod harness;
 mod kit;
 mod pd_files;
 mod pd_flows_http;
+mod pd_history_tools;
 mod pd_image_generation;
 mod pd_pdf_text;
 mod pd_shared_data_http;
