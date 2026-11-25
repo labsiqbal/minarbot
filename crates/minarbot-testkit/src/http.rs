@@ -1,69 +1,92 @@
-use crate::{server::Result, Server};
-use reqwest::{header, RequestBuilder, Response, StatusCode};
-use serde::de::DeserializeOwned;
+//! HTTP replies and Server-Sent Events.
+
+use crate::{Error, Result, Server};
+pub use reqwest::Method;
+use reqwest::{header, Response};
 use serde_json::Value;
+use std::time::Duration;
 
-pub async fn expect_status(response: Response, expected: u16) -> Result<Response> {
-    let actual = response.status().as_u16();
-    if actual != expected {
-        let url = response.url().clone();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|error| format!("<body read failed: {error}>"));
-        return Err(format!("{url}: expected HTTP {expected}, got {actual}: {body}").into());
+/// Status and decoded body of one HTTP exchange. Non-JSON bodies become a
+/// JSON string so assertions and error messages always have the payload.
+#[derive(Clone, Debug)]
+pub struct Reply {
+    pub method: String,
+    pub path: String,
+    pub status: u16,
+    pub body: Value,
+}
+
+impl Reply {
+    pub async fn read(method: &Method, path: &str, response: Response) -> Result<Self> {
+        let status = response.status().as_u16();
+        let text = response.text().await?;
+        let body = if text.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&text).unwrap_or(Value::String(text))
+        };
+        Ok(Self {
+            method: method.to_string(),
+            path: path.to_owned(),
+            status,
+            body,
+        })
     }
-    Ok(response)
+
+    fn failure(&self, expected: &str) -> Error {
+        format!(
+            "{} {}: expected HTTP {expected}, got {}: {}",
+            self.method, self.path, self.status, self.body
+        )
+        .into()
+    }
+
+    /// Body of a 2xx reply, or an error carrying status and body.
+    pub fn ok(self) -> Result<Value> {
+        if (200..300).contains(&self.status) {
+            Ok(self.body)
+        } else {
+            Err(self.failure("2xx"))
+        }
+    }
+
+    /// Body when the status is exactly `status`.
+    pub fn expect(self, status: u16) -> Result<Value> {
+        if self.status == status {
+            Ok(self.body)
+        } else {
+            Err(self.failure(&status.to_string()))
+        }
+    }
 }
 
-pub async fn json<T: DeserializeOwned>(request: RequestBuilder, expected: u16) -> Result<T> {
-    let response = expect_status(request.send().await?, expected).await?;
-    Ok(response.json().await?)
-}
-
-pub async fn value(request: RequestBuilder, expected: u16) -> Result<Value> {
-    json(request, expected).await
-}
-
-pub async fn get_json<T: DeserializeOwned>(server: &Server, path: &str) -> Result<T> {
-    json(server.get(path), 200).await
-}
-
-pub async fn post_json<T: DeserializeOwned>(
-    server: &Server,
-    path: &str,
-    body: &Value,
-    expected: u16,
-) -> Result<T> {
-    json(
-        server
-            .post(path)
-            .header(header::CONTENT_TYPE, "application/json")
-            .json(body),
-        expected,
-    )
-    .await
-}
-
+/// Reader for `text/event-stream` responses. Each `next` returns the JSON of
+/// one `data:` frame; comment and keep-alive frames are skipped.
 pub struct SseReader {
-    stream: reqwest::Response,
+    response: Response,
     pending: Vec<u8>,
 }
 
 impl SseReader {
     pub async fn connect(server: &Server, path: &str) -> Result<Self> {
         let response = server
-            .get(path)
+            .request(Method::GET, path)?
             .header(header::ACCEPT, "text/event-stream")
+            .timeout(Duration::from_secs(3600))
             .send()
             .await?;
-        let response = expect_status(response, StatusCode::OK.as_u16()).await?;
+        if response.status().as_u16() != 200 {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("GET {path}: expected event stream, got {status}: {body}").into());
+        }
         Ok(Self {
-            stream: response,
+            response,
             pending: Vec::new(),
         })
     }
 
+    /// Next JSON frame, or `None` when the stream ends.
     pub async fn next(&mut self) -> Result<Option<Value>> {
         loop {
             if let Some(index) = self.pending.windows(2).position(|pair| pair == b"\n\n") {
@@ -71,7 +94,10 @@ impl SseReader {
                 let text = String::from_utf8(frame)?;
                 let data = text
                     .lines()
-                    .filter_map(|line| line.strip_prefix("data: "))
+                    .filter_map(|line| {
+                        line.strip_prefix("data: ")
+                            .or_else(|| line.strip_prefix("data:"))
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
                 if data.is_empty() {
@@ -79,10 +105,76 @@ impl SseReader {
                 }
                 return Ok(Some(serde_json::from_str(&data)?));
             }
-            match self.stream.chunk().await? {
+            match self.response.chunk().await? {
                 Some(chunk) => self.pending.extend_from_slice(&chunk),
                 None => return Ok(None),
             }
         }
+    }
+
+    /// Next frame within `limit`.
+    pub async fn next_within(&mut self, limit: Duration) -> Result<Value> {
+        tokio::time::timeout(limit, self.next())
+            .await
+            .map_err(|_| -> Error { format!("no event within {limit:?}").into() })??
+            .ok_or_else(|| "event stream ended".into())
+    }
+}
+
+/// An HTTP/1.1 request whose last body bytes are held back, so a test can
+/// change server state between "request started" and "request finished".
+pub struct SplitRequest {
+    stream: tokio::net::TcpStream,
+    rest: Vec<u8>,
+}
+
+impl SplitRequest {
+    /// Send `method path` with `headers` and all but the last `held_back`
+    /// bytes of `body` to `origin` (`http://127.0.0.1:<port>`).
+    pub async fn start(
+        origin: &str,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        held_back: usize,
+    ) -> Result<Self> {
+        use tokio::io::AsyncWriteExt;
+        let address = origin
+            .strip_prefix("http://")
+            .ok_or("SplitRequest needs an http:// origin")?;
+        let mut stream = tokio::net::TcpStream::connect(address).await?;
+        let mut head = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Length: {}\r\nConnection: close\r\n",
+            body.len()
+        );
+        for (name, value) in headers {
+            head.push_str(&format!("{name}: {value}\r\n"));
+        }
+        head.push_str("\r\n");
+        let split = body.len().saturating_sub(held_back);
+        stream.write_all(head.as_bytes()).await?;
+        stream.write_all(&body[..split]).await?;
+        stream.flush().await?;
+        Ok(Self {
+            stream,
+            rest: body[split..].to_vec(),
+        })
+    }
+
+    /// Send the held-back bytes and return the response status.
+    pub async fn finish(mut self) -> Result<u16> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        self.stream.write_all(&self.rest).await?;
+        self.stream.flush().await?;
+        let mut response = Vec::new();
+        self.stream.read_to_end(&mut response).await?;
+        let text = String::from_utf8_lossy(&response);
+        let status = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|status| status.parse().ok())
+            .ok_or_else(|| format!("no HTTP status in response: {text}"))?;
+        Ok(status)
     }
 }
