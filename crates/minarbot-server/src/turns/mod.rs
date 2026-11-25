@@ -82,6 +82,10 @@ impl Runtime {
             }
         }
     }
+    fn running(&self, turn: &str) -> Result<Option<watch::Receiver<bool>>> {
+        let active = self.active.lock().map_err(|_| Failure::storage())?;
+        Ok(active.get(turn).map(|turn| turn.cancel.subscribe()))
+    }
     pub(crate) fn mark_started(&self, turn: &str) {
         if let Ok(active) = self.active.lock() {
             if let Some(active) = active.get(turn) {

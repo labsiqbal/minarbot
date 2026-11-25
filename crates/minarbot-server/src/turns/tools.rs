@@ -433,7 +433,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
         {
             journal(db, turn, call, &result)?;
         }
-        let wait = if name == "ask_user" && result.is_null() {
+        let wait = if name == "ask_user" {
             crate::harness::config::CardWait::checkpoint(state, db, string(turn, "id"))?
         } else {
             None
@@ -442,6 +442,8 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     }).map(|(result, wait)| {
         if let Some(wait) = wait {
             wait.keep_paused();
+        }
+        if name == "ask_user" {
             state.turns.cancel(string(turn, "id"));
         }
         result
@@ -548,7 +550,7 @@ pub(super) fn dispatch(
             }
             db.execute("INSERT INTO questions VALUES (?,?,?,?,?,?,NULL,(SELECT count(*) FROM generated_files WHERE turn=?),(SELECT count(*) FROM coordination WHERE turn=?))",params![uuid::Uuid::new_v4().to_string(),turn["id"].as_str(),call["id"].as_str(),call.to_string(),prompt,json!(clean).to_string(),turn["id"].as_str(),turn["id"].as_str()])?;
             db.execute("UPDATE turns SET status='queued',paused=1,revision=revision+1,error=NULL WHERE id=?",[string(turn,"id")])?;
-            Ok(Value::Null)
+            Ok(json!({"paused": true}))
         }
         "transfer_task" => super::coordination::execute(state, db, turn, call, args),
         "delegate_task" if args.get("agent").is_none() && !turn["channel"].is_null() => {

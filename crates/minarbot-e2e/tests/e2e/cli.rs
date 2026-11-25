@@ -2,7 +2,7 @@
 //! stable identity across lost replies and restarts, waits, routines,
 //! workflows, approvals and answers (port of `app/cli.test.ts`).
 
-use crate::support::{after_question, after_question_reply, work_calls};
+use crate::support::{after_question, after_question_reply};
 use minarbot_testkit::{
     cli::{Run, Script},
     http::{Method, SplitRequest},
@@ -114,9 +114,9 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
     );
     code(&cli.run(&args).await?, 0, "run replay")?;
     ensure!(
-        work_calls(&model) == 1,
+        model.calls() == 1,
         "run replay called the model again ({})",
-        work_calls(&model)
+        model.calls()
     );
     ensure!(
         cli.run(&["status", &a, &turn]).await?["turn"]["id"] == json!(turn),
@@ -128,7 +128,7 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
         2,
         "ambiguous name",
     )?;
-    ensure!(work_calls(&model) == 1, "ambiguous run reached the model");
+    ensure!(model.calls() == 1, "ambiguous run reached the model");
     let ask = cli
         .run(&["run", &a, "ASK", "--wait", "--timeout", WAIT_SECONDS])
         .await?;
@@ -240,16 +240,16 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
         recovered.json
     );
     ensure!(
-        work_calls(&model) == 5,
+        model.calls() == 5,
         "model calls after lost reply: {}",
-        work_calls(&model)
+        model.calls()
     );
     let pending = cli.run(&["run", &a, "HOLD"]).await?;
     code(&pending, 0, "pending run")?;
     let pending_id = id(&pending.json)?;
     // Cancel an in-flight provider request, as the Node case assumed.
     until("pending turn reaches the model", || async {
-        Ok((work_calls(&model) == 6).then_some(()))
+        Ok((model.calls() == 6).then_some(()))
     })
     .await?;
     proxy.drop_next(|request| request.method == "POST");
@@ -299,7 +299,7 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
     // The held turn must be in flight at the model before the restart, so
     // the final count proves the interrupted turn is not replayed.
     until("held turn reaches the model", || async {
-        Ok((work_calls(&model) == 7).then_some(()))
+        Ok((model.calls() == 7).then_some(()))
     })
     .await?;
     // Make the server unreachable before stopping it, so no poll can land
@@ -323,9 +323,9 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
         interrupted.json
     );
     ensure!(
-        work_calls(&model) == 7,
+        model.calls() == 7,
         "model calls after restart wait: {}",
-        work_calls(&model)
+        model.calls()
     );
     drop(proxy);
 
@@ -346,7 +346,7 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
         cli.run(&["status", &a, &turn]).await?["turn"]["reply"] == "Answer",
         "status after restart"
     );
-    ensure!(work_calls(&model) == 7, "status replayed work");
+    ensure!(model.calls() == 7, "status replayed work");
     scripts(&app, &a, 1, false).await?;
     code(&cli.run(&["status", &a, &turn]).await?, 5, "revoked status")?;
     code(
@@ -563,7 +563,6 @@ fn lossy_post(request: &minarbot_testkit::proxy::Proxied, suffixes: &[&str]) -> 
 #[tokio::test]
 async fn cli_routine_lists_and_histories_stay_within_the_selected_granted_agent() -> Result<()> {
     let model = ScriptedModel::start().await?;
-    model.catalog(["fixture", "fixture-alt"]);
     let answer = std::sync::Arc::new(std::sync::Mutex::new("Routine result".to_owned()));
     let current = answer.clone();
     model
@@ -611,20 +610,23 @@ async fn cli_routine_lists_and_histories_stay_within_the_selected_granted_agent(
     for agent in [&a_id, &b] {
         scripts(&app, agent, 0, true).await?;
     }
-    // `script provider <agent>` deadlocks the server (bug B2 in
-    // docs/test-ledger.md); its read assertions stay in the Node case.
-    // The argument check runs before any request.
+    let settings = cli.run(&["provider", &a_id]).await?;
+    code(&settings, 0, "provider")?;
+    ensure!(
+        settings["provider"]["model"] == json!("fixture")
+            && settings["provider"]["providerInstance"] == "codex-test-gateway"
+            && settings["provider"]["providers"][0]["id"] == "codex-test-gateway"
+            && settings["provider"]["providers"][0]["enabled"] == true,
+        "incorrect provider settings"
+    );
+    ensure!(
+        !settings.stdout.contains(&model.base_url()) && !settings.stdout.contains(&api_key),
+        "provider settings exposed connection details"
+    );
     code(
         &cli.run(&["provider", &a_id, "--wait"]).await?,
         2,
         "provider --wait",
-    )?;
-    // `script models` always fails (bug B3); its catalog assertions stay in
-    // the Node case.
-    code(
-        &cli.run(&["models", &a_id, "--wait"]).await?,
-        2,
-        "models --wait",
     )?;
     let clock = app.config().clock().ok_or("fixed clock")?;
     let routine = app
@@ -850,12 +852,9 @@ async fn cli_routine_lists_and_histories_stay_within_the_selected_granted_agent(
         "retry replay changed the request"
     );
     ensure!(model.calls() == calls, "retry replay reran the workflow");
-    let agents = app.get("/api/agents").await?;
-    let before = agents["agents"]
-        .as_array()
-        .and_then(|rows| rows.iter().find(|row| row["id"] == json!(a_id)))
-        .ok_or("agent missing")?
-        .clone();
+    let settings = cli.run(&["provider", &a_id]).await?;
+    code(&settings, 0, "provider after restart")?;
+    let before = &settings["provider"];
     let payload = json!({"revision": before["revision"], "model": "fixture-alt", "backupModel": "", "providerAccount": ""}).to_string();
     let save_id = new_id();
     let save = ["provider-save", &a_id, &payload, "--id", &save_id];
@@ -913,8 +912,36 @@ async fn cli_routine_lists_and_histories_stay_within_the_selected_granted_agent(
     )?;
     code(&cli.run(&command).await?, 5, "revoked routine-run")?;
     code(&cli.run(&retry).await?, 5, "revoked workflow-retry")?;
-    code(&cli.run(&["models", &a_id]).await?, 5, "revoked models")?;
+    code(&cli.run(&["provider", &a_id]).await?, 5, "revoked provider")?;
     code(&cli.run(&save).await?, 5, "revoked provider-save")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn cli_models_reads_the_granted_provider_instance_catalog() -> Result<()> {
+    let model = ScriptedModel::start().await?;
+    model.catalog(["fixture", "fixture-alt"]);
+    let (root, cli, config) = setup(Some(&model))?;
+    let app = root.start(config).await?;
+    let agent = id(&agent(&app, "Owner", "fixture").await?)?;
+    scripts(&app, &agent, 0, true).await?;
+    let models = cli.run(&["models", &agent]).await?;
+    code(&models, 0, "models")?;
+    ensure!(
+        models["models"] == json!(["fixture", "fixture-alt"]),
+        "models: {}",
+        models.json
+    );
+    code(
+        &cli.run(&["models", &agent, "--wait"]).await?,
+        2,
+        "models --wait",
+    )?;
+    model.fail_catalog(true);
+    code(&cli.run(&["models", &agent]).await?, 1, "catalog failure")?;
+    model.fail_catalog(false);
+    scripts(&app, &agent, 1, false).await?;
+    code(&cli.run(&["models", &agent]).await?, 5, "revoked models")?;
     Ok(())
 }
 
@@ -1636,10 +1663,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
         1,
         "foreign answer",
     )?;
-    ensure!(
-        work_calls(&model) == 1,
-        "rejected answers reached the model"
-    );
+    ensure!(model.calls() == 1, "rejected answers reached the model");
     drop_answer(&proxy);
     let lost = cli.run(&answer).await?;
     code(&lost, 5, "lost answer reply")?;
@@ -1665,17 +1689,17 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
         "answer retry changed the request"
     );
     ensure!(
-        answered(&answers) == ["Yes"] && work_calls(&model) == 2,
+        answered(&answers) == ["Yes"] && model.calls() == 2,
         "answers {:?}, calls {}",
         answered(&answers),
-        work_calls(&model)
+        model.calls()
     );
     app.restart().await?;
     use_proxy(&app)?;
     let replay = cli.run(&answer).await?;
     code(&replay, 0, "answer replay after restart")?;
     ensure!(
-        replay["answer"]["answer"] == "Yes" && work_calls(&model) == 2,
+        replay["answer"]["answer"] == "Yes" && model.calls() == 2,
         "replay: {}",
         replay.json
     );
@@ -1756,14 +1780,14 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
         "--id",
         new_id()
     ];
-    let before = work_calls(&model);
+    let before = model.calls();
     code(
         &cli.run(&uncertain_answer).await?,
         1,
         "answer to interrupted turn",
     )?;
     ensure!(
-        work_calls(&model) == before,
+        model.calls() == before,
         "interrupted answer reached the model"
     );
     code(
@@ -1784,9 +1808,9 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
         "acknowledged answer",
     )?;
     ensure!(
-        work_calls(&model) == before + 1,
+        model.calls() == before + 1,
         "acknowledged answer calls: {}",
-        work_calls(&model)
+        model.calls()
     );
     let lower_id = "abcdef12-3456-4789-abcd-0123456789ab";
     let upper_id = lower_id.to_uppercase();
@@ -1842,9 +1866,9 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
     scripts(&app, &a, 1, false).await?;
     code(&cli.run(&answer).await?, 5, "revoked answer")?;
     ensure!(
-        work_calls(&model) == before + 3,
+        model.calls() == before + 3,
         "calls after id-case checks: {}",
-        work_calls(&model)
+        model.calls()
     );
 
     let side_id = new_id();
@@ -1892,7 +1916,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
         "--timeout",
         "5"
     ];
-    let before_side = work_calls(&model);
+    let before_side = model.calls();
     let thread_turns = format!("/threads/{side_id}/turns");
     proxy.drop_next(move |request| {
         request.method == "POST" && request.path.ends_with(&thread_turns)
@@ -1911,13 +1935,13 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
         "side ask: {}",
         side_ask.json
     );
-    let side_calls = work_calls(&model);
+    let side_calls = model.calls();
     ensure!(
         side_calls == before_side + 1,
         "side send calls: {side_calls}"
     );
     ensure!(
-        cli.run(&side_args).await?["id"] == side_ask["id"] && work_calls(&model) == side_calls,
+        cli.run(&side_args).await?["id"] == side_ask["id"] && model.calls() == side_calls,
         "side replay"
     );
     let side_ask_id = id(&side_ask.json)?;
@@ -1969,7 +1993,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
         .await?;
     code(&side_done, 0, "side answer retry")?;
     ensure!(
-        side_done["turn"]["thread"] == json!(side_id) && work_calls(&model) == side_calls + 1,
+        side_done["turn"]["thread"] == json!(side_id) && model.calls() == side_calls + 1,
         "side done: {}",
         side_done.json
     );
@@ -1977,7 +2001,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
     use_proxy(&app)?;
     code(&cli.run(&side_answer).await?, 0, "side answer replay")?;
     ensure!(
-        work_calls(&model) == side_calls + 1,
+        model.calls() == side_calls + 1,
         "side answer replay reached the model"
     );
     let side_next = cli
