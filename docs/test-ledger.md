@@ -399,7 +399,7 @@ One parent case with 34 subtests; each subtest is its own Rust test against the 
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | ---: | --- |
-| script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts | `sb_script_provider::script_provider_settings_keep_identity_and_credentials_isolated_reject_busy_revoked_changes_and_preserve_receipts` | 30 -> 24 | Kept in Node for B2 (the provider GET after the grant) and B3 (the three `script models` steps and the catalog held across a revocation). Rust covers every other step. Dropped (#87): the `providerAccount: 'missing'` refusal and `provider_account` in the result. |
+| script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts | `sb_script_provider::script_provider_settings_keep_identity_and_credentials_isolated_reject_busy_revoked_changes_and_preserve_receipts` | 40 -> 23 | Kept in Node for B2 (the provider GET after the grant) and B3 (the three `script models` steps and the catalog held across a revocation). Rust covers every other step. Dropped (#87): the `providerAccount: 'missing'` refusal and `provider_account` in the result. |
 
 <!-- stale-b files -->
 
