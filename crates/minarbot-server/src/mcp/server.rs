@@ -651,7 +651,7 @@ mod tests {
         let send = definitions
             .as_array()
             .and_then(|items| items.iter().find(|item| item["name"] == "send_message"))
-            .ok_or_else(|| Failure::storage())?;
+            .ok_or_else(Failure::storage)?;
         assert_eq!(
             send["inputSchema"]["properties"]["recipients"]["maxItems"],
             8
