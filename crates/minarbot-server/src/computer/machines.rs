@@ -1021,11 +1021,18 @@ async fn peer_agents(
     if probe {
         return Ok(json!({"reachable":true}));
     }
+    // Read provider metadata before opening the roster connection. Calling the
+    // provider-instance list helper inside this database closure re-enters the
+    // non-reentrant database mutex and stalls every request on this machine.
+    let provider_metadata = if report_providers {
+        Some(crate::data::provider_instances::list(s)?["providers"].clone())
+    } else {
+        None
+    };
     let mut result = with_db(s, |db| {
         let mut roster = rows(db,"SELECT id,name,role,model,provider_instance,CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.agent=agents.id AND t.status IN('queued','running') AND t.paused=0) THEN 'working' ELSE 'idle' END AS status FROM agents WHERE id<>? ORDER BY rowid",[crate::mcp::guide::ID])?;
         let mut result = json!({});
-        if report_providers {
-            let metadata = crate::data::provider_instances::list(s)?["providers"].clone();
+        if let Some(metadata) = &provider_metadata {
             let mut bindings = serde_json::Map::new();
             for agent in &roster {
                 let binding = text(agent, "provider_instance");
@@ -1038,7 +1045,7 @@ async fn peer_agents(
                     bindings.insert(text(agent, "id").to_owned(), json!(binding));
                 }
             }
-            result["providerInstances"] = metadata;
+            result["providerInstances"] = metadata.clone();
             result["agentProviderInstances"] = json!(bindings);
         }
         for agent in &mut roster {

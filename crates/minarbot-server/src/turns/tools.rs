@@ -209,6 +209,10 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     if !args.is_object() {
         return Err(error(400, "Tool arguments must be a JSON object."));
     }
+    if name.starts_with("composio__") {
+        let tools = crate::connectors::composio::tools(state, turn).await?;
+        return crate::connectors::composio::call(state, turn, call, &tools).await;
+    }
     if turn["agent"] == crate::mcp::guide::ID {
         return crate::mcp::guide::call(state, turn, name, &args).await;
     }

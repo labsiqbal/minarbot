@@ -853,6 +853,7 @@ fn cancel(state: &AppState, turn: &str) -> Result<()> {
         db.execute("UPDATE turns SET status='interrupted',paused=0,error='Hub authority ended. Check prior effects before retrying.' WHERE id=? AND status IN('queued','running')",[turn])?;
         Ok(())
     })?;
+    state.turns.cancel(turn);
     Ok(())
 }
 fn disconnect(state: &AppState) -> Result<()> {

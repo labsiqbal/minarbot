@@ -75,7 +75,7 @@ impl Runtime {
             stopping: Default::default(),
         })
     }
-    fn cancel(&self, turn: &str) {
+    pub(crate) fn cancel(&self, turn: &str) {
         if let Ok(active) = self.active.lock() {
             if let Some(cancel) = active.get(turn) {
                 cancel.cancel.send_replace(true);
@@ -124,6 +124,7 @@ pub fn initialize(db: &Connection) -> Result<()> {
     waits::initialize(db)?;
     db.execute_batch("UPDATE compaction_attempts SET status='interrupted' WHERE status='pending';UPDATE harness_approvals SET state='expired',revision=revision+1 WHERE state='approval';UPDATE transcriptions SET status='uncertain' WHERE status='pending';")?;
     db.execute("UPDATE turns SET status='interrupted',error='Server stopped during this turn. Check the result before resuming.',revision=revision+1 WHERE status='running'", [])?;
+    db.execute("UPDATE turns SET status='queued',paused=0,error=NULL WHERE status='interrupted' AND (EXISTS(SELECT 1 FROM agent_requests WHERE turn=turns.id AND expects_reply=1 AND settled=1) OR EXISTS(SELECT 1 FROM delegation_tasks d JOIN turns child ON child.id=d.delivery WHERE d.creator_turn=turns.id AND child.status='done' AND d.wake_delivered=0))", [])?;
     db.execute("UPDATE provider_calls SET status='interrupted',finished=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='pending'", [])?;
     goals::initialize(db)?;
     Ok(())

@@ -455,6 +455,12 @@ pub(super) fn accept(db: &Connection, principal: &Value, f: &Value) -> Result<Va
     if (row["state"] == "pending") != (kind == "turn.admitted") {
         return Err(denied());
     }
+    if !db
+        .prepare("SELECT 1 FROM participations WHERE project_id=? AND id=? AND state='active'")?
+        .exists(params![project, text(&request, "participationId")])?
+    {
+        return Err(stale());
+    }
     if kind == "turn.admitted" {
         let (active, owned): (i64, i64) = db.query_row(
             "SELECT count(*),coalesce(sum(payer_account_id=?),0) FROM turns WHERE state='admitted'",
