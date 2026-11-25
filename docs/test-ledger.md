@@ -167,6 +167,9 @@ Product bugs fixed in this slice:
 | `app/schema.test.ts` | 4 | 4 (1 server unit test) | 0 | 0 |
 | `app/restore-fence.test.ts` | 7 | 7 | 0 | 0 |
 | `app/telegram.test.ts` | 6 | 6 | 0 | 0 |
+| `app/telegram-output.test.ts` | 1 | 1 | 0 | 0 |
+| `app/transcription.test.ts` | 6 | 6 | 0 | 0 |
+| `app/mcp.test.ts` | 1 | 1 | 0 | 0 |
 
 ### `app/memory.test.ts`
 
@@ -283,6 +286,32 @@ left out of counts).
 | Rust Telegram runner rejects a mismatched bot identity and releases its journal lock | `sa_telegram::rust_telegram_runner_rejects_a_mismatched_bot_identity_and_releases_its_journal_lock` | 3 -> 2 | Full. |
 | Telegram runner replies directly and releases owned journal on shutdown | `sa_telegram::telegram_runner_replies_directly_and_releases_owned_journal_on_shutdown` | 9 -> 6 (shared helper) | Full; the fake's own checks are collected and asserted. |
 | Telegram runner answers a question and releases owned journal on shutdown | `sa_telegram::telegram_runner_answers_a_question_and_releases_owned_journal_on_shutdown` | 9 -> 6 (shared helper) | Same helper; model calls exclude the B1 step (the Node case saw 4). |
+
+### `app/telegram-output.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Telegram sends exact generated artifacts, retains uncertain delivery and rechecks grant before recovery | `sa_telegram_output::telegram_sends_exact_generated_artifacts_retains_uncertain_delivery_and_rechecks_grant_before_recovery` | 22 -> 20 | Full. The three model steps are the file, the answer and the done-check reminder (H2); the B1 step is left out of the count (the Node case saw 4). |
+
+### `app/transcription.test.ts`
+
+Transcription is a direct HTTP integration (`transcriptionProvider`), not a
+harness, so these cases port one to one; the provider is `sa_support::RawProvider`.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| HTTP transcription requires consent, isolates files and never silently replays uncertain requests | `sa_transcription::http_transcription_requires_consent_isolates_files_and_never_silently_replays_uncertain_requests` | 35 -> 29 | Full; the provider's own checks are collected and asserted once. |
+| in-flight transcription deduplicates and cannot publish after archive or shutdown | `sa_transcription::in_flight_transcription_deduplicates_and_cannot_publish_after_archive_or_shutdown` | 11 -> 8 | Full. |
+| transcription is opt-in and validates request bodies | `sa_transcription::transcription_is_opt_in_and_validates_request_bodies` | 5 -> 5 | Full. |
+| transcription rejects redirects and oversized output, and script grants cannot replace consent | `sa_transcription::transcription_rejects_redirects_and_oversized_output_and_script_grants_cannot_replace_consent` | 18 -> 17 | Full. |
+| Rust upgrades legacy transcription operations and reports unknown and duration usage | `sa_transcription::rust_upgrades_legacy_transcription_operations_and_reports_unknown_and_duration_usage` | 6 -> 6 | Full. |
+| cancelling streamed transcription persists without publication or replay | `sa_transcription::cancelling_streamed_transcription_persists_without_publication_or_replay` | 17 -> 16 | Full. |
+
+### `app/mcp.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| MCP tests before save, protects credentials/grants and journals success or uncertainty without replay | `sa_mcp::mcp_tests_before_save_protects_credentials_grants_and_journals_success_or_uncertainty_without_replay` | 43 -> 47 | H1: the ungranted, other-agent, channel, drifted-schema, revoked and missing-host-key calls reach the model as MCP errors and the turn finishes (the Node case expected failed turns); each still asserts the server was not called. Lost and invalid-output calls still fail the turn as uncertain. The backup is restored with `restore workspace` through `minarbot_testkit::restore`. |
 <!-- stale-a end -->
 
 ## #67 hosted Hub test migration
