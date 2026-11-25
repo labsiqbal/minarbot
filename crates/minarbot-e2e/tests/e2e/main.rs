@@ -12,6 +12,7 @@ mod pd_agent_reply_capture;
 mod pd_channel_context;
 mod pd_files;
 mod pd_flows_http;
+mod pd_guide_infra;
 mod pd_history_tools;
 mod pd_image_generation;
 mod pd_mcp_isolation;
