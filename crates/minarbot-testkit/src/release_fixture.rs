@@ -2,7 +2,7 @@
 //!
 //! [`native_server`] compiles the launcher's contract fixture
 //! (`crates/minarbot-launcher/tests/fixtures/contract.rs`) for a version and
-//! mode, as `app/test-support/native-release-fixture.ts` did. [`publish`]
+//! mode, as the former `app/test-support/native-release-fixture.ts` did. [`publish`]
 //! writes an immutable release directory with its `release.json` and the
 //! `feed/latest.json` pointer, hashing files with the launcher's own
 //! manifest code. [`MockLauncher`] answers the launcher control socket with

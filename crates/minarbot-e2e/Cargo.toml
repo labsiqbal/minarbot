@@ -6,8 +6,9 @@ license.workspace = true
 publish = false
 description = "End-to-end tests that drive the real minarbot-server binary through minarbot-testkit."
 
-# The tests spawn target/<profile>/minarbot-server and the kit's fake peers.
-# Build them first: `cargo build -p minarbot-server -p minarbot-testkit`.
+# The tests spawn target/<profile>/minarbot-server, the kit's fake peers and
+# minarbot-launcher. Build them first:
+# `cargo build -p minarbot-server -p minarbot-testkit -p minarbot-launcher`.
 [dev-dependencies]
 minarbot-testkit = { path = "../minarbot-testkit" }
 ring = "0.17"

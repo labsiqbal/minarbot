@@ -30,6 +30,7 @@ pub mod hosted_hub;
 pub mod http;
 pub mod image;
 pub mod issuer;
+pub mod launcher_process;
 pub mod machine_bridge;
 pub mod model;
 pub mod noise_image;

@@ -9,6 +9,7 @@ mod goals;
 mod harness;
 mod kit;
 mod pr_fanout;
+mod pr_github;
 mod pr_hub;
 mod pr_machines;
 mod pr_peer_transfer;

@@ -785,6 +785,36 @@ suite and is deleted with it.
 | canonical routine webhook settings require current owner while assigned collaborator can edit | `webhooks::canonical_routine_webhook_settings_require_current_owner_while_assigned_collaborator_can_edit` | 15 -> 15 |  |
 | canonical routine webhook keyring and DB failures leave no active reference or partial admission and exclude secrets | `webhooks::canonical_routine_webhook_keyring_and_db_failures_leave_no_active_reference_or_partial_admission_and_exclude_secrets` | 23 -> 23 |  |
 
+### `app/github-updates.test.ts` (1 test and 2 loops, 14 runtime cases, 14 Rust tests, file deleted)
+
+The machine under test runs the real `minarbot-launcher`
+(`launcher_process::LauncherProcess`, stopped with SIGTERM) on a current
+release whose server is a wrapper around `minarbot-server --test-config`;
+targets are the launcher's native contract fixture. The fake GitHub origin
+and its CDN are `relay::Relay`s serving an ed25519-signed manifest (`ring`).
+Counts include the shared `waitForTrial`/`trial` checks and the CDN path
+check of `github`/`Publisher`; `api` status checks are not counted on either
+side. `rust-test-launcher.ts` and `test-support/native-release-fixture.ts`
+had no other user and are deleted with the suite. The launcher binary must
+be built (`cargo build -p minarbot-launcher`, or `MINARBOT_LAUNCHER_BINARY`).
+
+| Node case | Rust test (`pr_github::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| signed GitHub release resumes through the CDN and completes a real launcher trial | `signed_github_release_resumes_through_the_cdn_and_completes_a_real_launcher_trial` | 12 -> 12 | The CDN declares the full length, sends 64 bytes and cuts on a signal (`relay::cut_on`). |
+| GitHub signature fixture is rejected while current release keeps running | `github_signature_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub missing-signature fixture is rejected while current release keeps running | `github_missing_signature_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub unknown fixture is rejected while current release keeps running | `github_unknown_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub commit fixture is rejected while current release keeps running | `github_commit_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub version fixture is rejected while current release keeps running | `github_version_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub archive-commit fixture is rejected while current release keeps running | `github_archive_commit_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at apply. |
+| GitHub hash fixture is rejected while current release keeps running | `github_hash_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at apply. |
+| GitHub truncated fixture is rejected while current release keeps running | `github_truncated_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at apply. |
+| GitHub redirect fixture is rejected while current release keeps running | `github_redirect_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at apply. |
+| GitHub peer fan-out uses direct transfer policy | `github_peer_fan_out_uses_direct_transfer_policy` | 19 -> 19 | Loop iteration; shared helper `github_peer_fan_out`. |
+| GitHub peer fan-out uses late-reply transfer policy | `github_peer_fan_out_uses_late_reply_transfer_policy` | 19 -> 19 | Loop iteration; shared helper `github_peer_fan_out`. |
+| GitHub peer fan-out uses fallback transfer policy | `github_peer_fan_out_uses_fallback_transfer_policy` | 19 -> 19 | Loop iteration; shared helper `github_peer_fan_out`. |
+| GitHub peer fan-out uses invalid transfer policy | `github_peer_fan_out_uses_invalid_transfer_policy` | 19 -> 19 | Loop iteration; shared helper `github_peer_fan_out`. |
+
 ### Product bugs fixed in the peers slice
 
 | Bug | Symptom | Cause and fix |

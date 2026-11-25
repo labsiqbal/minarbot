@@ -281,6 +281,16 @@ pub fn then_cut(part: Option<Bytes>, pause: Duration) -> BoxStream<'static, Resu
         .boxed()
 }
 
+/// Yield `part` (if any), wait for `signal`, then cut the connection.
+pub fn cut_on(part: Option<Bytes>, signal: Arc<tokio::sync::Notify>) -> BoxStream<'static, Result<Bytes>> {
+    futures_util::stream::iter(part.map(Ok))
+        .chain(futures_util::stream::once(async move {
+            signal.notified().await;
+            Err::<Bytes, crate::Error>("cut by relay".into())
+        }))
+        .boxed()
+}
+
 /// Yield `part` (if any) and then hang until the client goes away.
 pub fn then_hang(part: Option<Bytes>) -> BoxStream<'static, Result<Bytes>> {
     futures_util::stream::iter(part.map(Ok))
