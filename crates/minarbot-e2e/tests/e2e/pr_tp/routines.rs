@@ -90,13 +90,26 @@ async fn raw(
     headers: &[(&str, &str)],
     body: Option<String>,
 ) -> Result<(u16, String)> {
+    let (status, _, text) = raw_as(w, "user_owner", method, path, headers, body).await?;
+    Ok((status, text))
+}
+
+/// `raw` as `subject`, with the response headers.
+async fn raw_as(
+    w: &WorkflowHome,
+    subject: &str,
+    method: Method,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Option<String>,
+) -> Result<(u16, std::collections::HashMap<String, String>, String)> {
     let mut request = w
         .tp
         .app
         .server
         .client()?
         .request(method, format!("{}{path}", w.tp.origin()))
-        .header("Authorization", format!("Bearer {}", w.tp.jwt("user_owner")?))
+        .header("Authorization", format!("Bearer {}", w.tp.jwt(subject)?))
         .header("Origin", w.tp.origin())
         .header("Content-Type", "application/json")
         .header("X-Minarbot-Protocol", "1");
@@ -108,7 +121,12 @@ async fn raw(
     }
     let response = request.send().await?;
     let status = response.status().as_u16();
-    Ok((status, response.text().await?))
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap_or_default().to_owned()))
+        .collect();
+    Ok((status, headers, response.text().await?))
 }
 
 #[tokio::test]
@@ -1358,6 +1376,254 @@ async fn canonical_routines_recheck_assignments_private_mappings_flow_agents_and
         short_edit["revision"] = json!(3);
         short_edit["intervalSeconds"] = json!(60);
         ensure!(w.tp.send(&format!("{detail}/edit"), Some(short_edit)).await?.0 == 400, "short interval");
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+async fn calendar(
+    w: &WorkflowHome,
+    path: &str,
+    subject: &str,
+    suffix: String,
+    extra: Vec<(&'static str, String)>,
+) -> Result<(u16, std::collections::HashMap<String, String>, String)> {
+    let request = new_id();
+    let mut headers: Vec<(&str, &str)> = vec![("Connection", "close"), ("X-Minarbot-Request-Id", &request)];
+    headers.extend(extra.iter().map(|(name, value)| (*name, value.as_str())));
+    raw_as(w, subject, Method::GET, &format!("{path}{suffix}"), &headers, None).await
+}
+
+/// The wall-clock case runs its server and home in a fixed zone without
+/// daylight saving (Node used the ambient `TZ` and `onceCandidate`).
+const WALL_ZONE: &str = "Asia/Jakarta";
+
+/// `onceCandidate` in `WALL_ZONE` (UTC+07:00).
+fn wall_candidate(date: &str, time: &str) -> Result<i64> {
+    let utc = chrono_like_parse(date, time)?;
+    Ok(utc - 7 * 3_600_000)
+}
+
+/// Milliseconds of `<date>T<time>:00Z`.
+fn chrono_like_parse(date: &str, time: &str) -> Result<i64> {
+    let parts: Vec<i64> = date
+        .split('-')
+        .chain(time.split(':'))
+        .map(str::parse)
+        .collect::<std::result::Result<_, _>>()?;
+    let [year, month, day, hour, minute] = parts[..] else {
+        return Err("bad wall time".into());
+    };
+    // Days from civil (Howard Hinnant).
+    let (y, m) = if month <= 2 { (year - 1, month + 9) } else { (year, month - 3) };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * m + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Ok(((days * 24 + hour) * 60 + minute) * 60_000)
+}
+
+#[tokio::test]
+async fn canonical_routine_wall_clock_http_keeps_exact_retries_and_pending_identities_across_restart_and_catch_up_admission(
+) -> Result<()> {
+    let servers = minarbot_testkit::Servers::reserve(1).await?;
+    let zone = [("TZ", WALL_ZONE)];
+    let mut w = WorkflowHome::start_env(super::fixture::Tp::start_env(&servers, &zone).await?, &zone).await?;
+    let result = async {
+        ensure!(w.home["zone"] == WALL_ZONE, "home zone: {}", w.home);
+        let list = routines_of(&w);
+        let (once, cron) = (new_id(), new_id());
+        let (once_path, cron_path) = (routine_path(&w, &once), routine_path(&w, &cron));
+        let schedule = json!({"kind": "once", "date": "2024-03-10", "time": "02:30"});
+        let command = json!({"requestId": once, "id": once, "revision": 0, "name": "Once",
+            "prompt": "PRIVATE_WALL_CLOCK_PROMPT", "schedule": schedule, "enabled": true});
+        for extra in [json!({"nextAt": 0}), json!({"intervalSeconds": null}), json!({"nextAt": 0, "intervalSeconds": 300})] {
+            let mut body = command.clone();
+            for (key, value) in extra.as_object().into_iter().flatten() {
+                body[key] = value.clone();
+            }
+            ensure!(w.tp.send(&list, Some(body)).await?.0 == 400, "legacy timing {extra}");
+        }
+        // The first reply is lost after the server accepted it.
+        let (status, lost) = w.tp.send(&list, Some(command.clone())).await?;
+        ensure!(status == 201, "lost create: {status} {lost}");
+        let (status, saved) = w.tp.send(&list, Some(command.clone())).await?;
+        ensure!(status == 200, "retry: {status}");
+        ensure!(saved["data"]["schedule"] == schedule, "schedule");
+        ensure!(saved["data"]["next_at"] == wall_candidate("2024-03-10", "02:30")?, "next_at: {saved}");
+        let mut cron_command = command.clone();
+        cron_command["requestId"] = json!(cron);
+        cron_command["id"] = json!(cron);
+        cron_command["name"] = json!("Daily cron");
+        cron_command["schedule"] = json!({"kind": "cron", "expression": "0 9 * * *"});
+        ensure!(w.tp.send(&list, Some(cron_command)).await?.0 == 201, "cron routine");
+        // A durable due time retained while the canonical process was down.
+        w.tp.write()?.execute(
+            "UPDATE routines SET next_at=? WHERE id=?",
+            minarbot_testkit::hosted::params![wall_candidate("2024-01-01", "09:00")?, cron],
+        )?;
+        let (pending_once, pending_cron) = minarbot_testkit::wait::until_within("pending", SETTLE, || async {
+            let once = first_run(&w, &once_path).await?;
+            let cron = first_run(&w, &cron_path).await?;
+            Ok((once["state"] == "pending" && cron["state"] == "pending").then_some((once, cron)))
+        })
+        .await?;
+        ensure!(pending_once["scheduleKind"] == "once", "once kind");
+        ensure!(pending_cron["scheduleKind"] == "cron", "cron kind");
+        ensure!(pending_cron["missedCount"].as_i64().unwrap_or(0) > 1, "missed");
+        let tuple = json!([cron, 1, w.home["zone_revision"], pending_cron["dueAt"], 0]).to_string();
+        let digest = ring::digest::digest(&ring::digest::SHA256, tuple.as_bytes());
+        use minarbot_testkit::base64::Engine;
+        ensure!(
+            pending_cron["id"] == minarbot_testkit::base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest.as_ref()).as_str(),
+            "cron identity"
+        );
+        let (status, calendar) = raw(
+            &w,
+            Method::GET,
+            &format!("{list}/calendar.ics"),
+            &[("Connection", "close"), ("X-Minarbot-Request-Id", &new_id())],
+            None,
+        )
+        .await?;
+        let calendar = calendar.replace("\r\n ", "");
+        ensure!(status == 200, "calendar: {status}");
+        ensure!(calendar.contains(&format!("UID:{once}@minarbot.local")), "once in calendar");
+        ensure!(!calendar.contains(&format!("UID:{cron}@minarbot.local")), "cron in calendar");
+        ensure!(calendar.contains("Omitted cron routine \"Daily cron\""), "omitted note");
+        ensure!(!calendar.contains("PRIVATE_WALL_CLOCK_PROMPT"), "prompt in calendar");
+        let snapshot = w.tp.data(&format!("/api/sync?projectId={}", w.project)).await?;
+        let observed: Vec<&Value> = events(&snapshot, |kind| kind.starts_with("routine")).collect();
+        ensure!(
+            observed.iter().all(|event| event["body"]["scheduleKind"] == "once" || event["body"]["scheduleKind"] == "cron"),
+            "schedule kinds"
+        );
+        ensure!(!json!(observed).to_string().contains("PRIVATE_"), "private text synced");
+        w.tp.restart().await?;
+        ensure!(w.tp.send(&list, Some(command.clone())).await?.1["receipt"] == saved["receipt"], "receipt replay");
+        ensure!(w.tp.data(&format!("{once_path}/runs")).await?["items"] == json!([pending_once]), "once runs");
+        ensure!(w.tp.data(&format!("{cron_path}/runs")).await?["items"] == json!([pending_cron]), "cron runs");
+        let connection = w.connect()?;
+        connected(&connection).await?;
+        let (admitted_once, admitted_cron) = minarbot_testkit::wait::until_within("admitted", SETTLE, || async {
+            let once = first_run(&w, &once_path).await?;
+            let cron = first_run(&w, &cron_path).await?;
+            Ok((once["state"] == "admitted" && cron["state"] == "admitted").then_some((once, cron)))
+        })
+        .await?;
+        ensure!(admitted_once["id"] == pending_once["id"], "once identity");
+        ensure!(admitted_cron["id"] == pending_cron["id"], "cron identity");
+        ensure!(w.tp.data(&once_path).await?["enabled"] == 0, "once disabled");
+        ensure!(w.tp.data(&cron_path).await?["next_at"].as_i64().unwrap_or(0) > wall_ms(), "cron advanced");
+        let enable = new_id();
+        let mut again = command.clone();
+        again["requestId"] = json!(enable);
+        again["id"] = json!(enable);
+        again["revision"] = json!(2);
+        let (status, rejected) = w.tp.send(&format!("{once_path}/edit"), Some(again)).await?;
+        ensure!(status == 409, "re-enable: {status}");
+        ensure!(rejected["error"]["code"] == "schedule_processed", "code");
+        w.tp.restart().await?;
+        ensure!(w.tp.send(&list, Some(command)).await?.1["receipt"] == saved["receipt"], "receipt after restart");
+        ensure!(first_run(&w, &once_path).await?["taskId"] == admitted_once["taskId"], "once task");
+        ensure!(first_run(&w, &cron_path).await?["taskId"] == admitted_cron["taskId"], "cron task");
+        let db = w.tp.inspect()?;
+        ensure!(db.count("routine_occurrences")? == 2, "occurrences");
+        ensure!(db.count("tasks")? == 2, "tasks");
+        ensure!(db.rows("PRAGMA foreign_key_check", [])?.is_empty(), "foreign keys");
+        drop(connection);
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+#[tokio::test]
+async fn canonical_routine_calendar_exports_only_current_project_and_reader_schedules_without_prompts(
+) -> Result<()> {
+    let mut w = WorkflowHome::start().await?;
+    let result = async {
+        let list = routines_of(&w);
+        let path = format!("{list}/calendar.ics");
+        let at = chrono_like_parse("2027-01-01", "09:00")?;
+        let collaborator = account(&w.tp, "user_collaborator").await?;
+        let db = w.tp.write()?;
+        db.execute("INSERT INTO project_members VALUES (?,?,'member',1,0)", [&w.project, &collaborator])?;
+        let mut entries = std::collections::HashMap::new();
+        for name in ["shared", "private", "disabled", "webhook", "foreign"] {
+            let id = new_id();
+            entries.insert(name, id.clone());
+            let body = json!({"requestId": id, "id": id, "revision": 0, "name": name,
+                "prompt": "CALENDAR_PRIVATE_PROMPT", "nextAt": at,
+                "intervalSeconds": if name == "shared" { json!(300) } else { Value::Null },
+                "enabled": name != "disabled",
+                "trigger": if name == "webhook" { "webhook" } else { "schedule" }});
+            ensure!(w.tp.send(&list, Some(body)).await?.0 == 201, "routine {name}");
+        }
+        db.execute(
+            "UPDATE record_scopes SET visibility='owner' WHERE table_name='routines' AND key_json=?",
+            [&json!([entries["private"]]).to_string()],
+        )?;
+        db.execute(
+            "UPDATE record_scopes SET project=? WHERE table_name='routines' AND key_json=?",
+            [&w.other, &json!([entries["foreign"]]).to_string()],
+        )?;
+        let (status, headers, owned) = calendar(&w, &path, "user_owner", String::new(), vec![]).await?;
+        ensure!(status == 200, "owner calendar: {status}");
+        ensure!(headers.get("content-type").map(String::as_str) == Some("text/calendar; charset=utf-8"), "content type");
+        ensure!(headers.get("x-minarbot-protocol").map(String::as_str) == Some("1"), "protocol header");
+        ensure!(headers.get("cache-control").map(String::as_str) == Some("no-store"), "cache control");
+        ensure!(owned.contains(&format!("UID:{}@minarbot.local", entries["shared"])), "shared entry");
+        ensure!(owned.contains(&format!("UID:{}@minarbot.local", entries["private"])), "private entry");
+        for name in ["disabled", "webhook", "foreign"] {
+            ensure!(!owned.contains(&entries[name]), "{name}");
+        }
+        ensure!(!owned.contains("CALENDAR_PRIVATE_PROMPT"), "prompt");
+        ensure!(owned.contains("DTSTART:20270101T090000Z"), "start");
+        ensure!(owned.contains("RRULE:FREQ=SECONDLY;INTERVAL=300"), "rule");
+        ensure!(calendar(&w, &path, "user_collaborator", String::new(), vec![]).await?.0 == 404, "unassigned reader");
+        db.execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&w.project, &collaborator, &w.agent])?;
+        db.execute("INSERT INTO response_policies VALUES (?,?,?,0,1)", [&w.project, &collaborator, &w.agent])?;
+        let (status, _, shared) = calendar(&w, &path, "user_collaborator", String::new(), vec![]).await?;
+        ensure!(status == 200, "collaborator calendar: {status}");
+        ensure!(shared.contains(&entries["shared"]), "shared for collaborator");
+        ensure!(!shared.contains(&entries["private"]), "private for collaborator");
+        db.execute(
+            "UPDATE devices SET zone='Pacific/Honolulu',zone_revision=zone_revision+1 WHERE id=?",
+            [&text(&w.home["id"])],
+        )?;
+        drop(db);
+        w.tp.restart().await?;
+        ensure!(
+            calendar(&w, &path, "user_collaborator", String::new(), vec![]).await?.2.contains("DTSTART:20270101T090000Z"),
+            "Viewer/home-zone changes cannot rewrite absolute timing"
+        );
+        for suffix in [format!("?projectId={}", w.project), format!("?after={}", entries["shared"])] {
+            ensure!(calendar(&w, &path, "user_collaborator", suffix.clone(), vec![]).await?.0 == 404, "{suffix}");
+        }
+        ensure!(
+            calendar(&w, &path, "user_collaborator", String::new(), vec![("X-Minarbot-Project-Id", w.project.clone())]).await?.0 == 404,
+            "project selector header"
+        );
+        w.tp.write()?.execute(
+            "UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=?",
+            [&w.project, &collaborator],
+        )?;
+        let (status, _, denied) = calendar(&w, &path, "user_collaborator", String::new(), vec![]).await?;
+        ensure!(status == 404, "revoked: {status}");
+        ensure!(!denied.contains(&entries["shared"]), "revoked text");
+        ensure!(
+            w.tp.send(&format!("/api/agents/{}/routines/calendar.ics", w.agent), None).await?.0 == 404,
+            "unscoped calendar"
+        );
+        ensure!(
+            w.tp.inspect()?.scalar::<i64>("SELECT enabled FROM routines WHERE id=?", [&entries["shared"]])? == 1,
+            "Export cannot mutate a schedule"
+        );
         Ok(())
     }
     .await;
