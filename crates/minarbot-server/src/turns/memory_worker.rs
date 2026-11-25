@@ -29,7 +29,7 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
 }
 
 async fn step(state: &AppState) -> Result<bool> {
-    let (work, secrets) = {
+    let (work, secrets, model) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let store = Store::new(db);
@@ -46,6 +46,13 @@ async fn step(state: &AppState) -> Result<bool> {
             return Ok(false);
         };
         let turn = string(work.source(), "id");
+        let model = one(
+            db,
+            "SELECT model FROM memory_learning_candidates WHERE id=?",
+            [turn],
+        )?
+        .map(|row| string(&row, "model").to_owned())
+        .unwrap_or_default();
         if !exists(
             db,
             "SELECT 1 FROM memory_learning_ready WHERE id=? AND agent=?",
@@ -57,7 +64,7 @@ async fn step(state: &AppState) -> Result<bool> {
                 .map_err(|_| Failure::storage());
         };
         let secrets = crate::mcp::secrets::project(state, db, None)?;
-        (work, secrets)
+        (work, secrets, model)
     };
     let (system, input) = work.prompt();
     let messages = [
@@ -73,7 +80,7 @@ async fn step(state: &AppState) -> Result<bool> {
     let result = provider::call(
         state,
         string(work.source(), "id"),
-        "",
+        &model,
         &messages,
         &[],
         phase,

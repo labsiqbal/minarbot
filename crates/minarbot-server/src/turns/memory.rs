@@ -201,7 +201,12 @@ fn evidence(
         let source = &unit.source;
         if history {
             let id = string(source, "id");
-            if id == turn || super::messaging::channel(db, id)?.as_deref() != bank.strip_prefix("channels:")
+            let channel_bank = bank.strip_prefix("channels:");
+            if id == turn
+                || match channel_bank {
+                    Some(channel) => super::messaging::channel(db, id)?.as_deref() != Some(channel),
+                    None => super::messaging::channel(db, id)?.is_some(),
+                }
                 || !exists(
                     db,
                     "SELECT 1 FROM turns WHERE id=? AND status='done' AND parent IS NULL AND agent<>id",
@@ -246,6 +251,14 @@ pub(super) async fn reflect(
     budget: usize,
     phase: &str,
 ) -> Result<Reflection> {
+    let model = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        string(
+            &completion_agent(&guard.connection, turn, phase)?,
+            "learning_model",
+        )
+        .to_owned()
+    };
     let secrets = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         crate::mcp::secrets::project(state, &guard.connection, None)?
@@ -263,11 +276,12 @@ pub(super) async fn reflect(
         |system, input| {
             let input = crate::mcp::secrets::redact(&input.to_string(), &secrets, false);
             let secrets = &secrets;
+            let model = model.clone();
             async move {
                 match provider::call(
                     state,
                     turn,
-                    "",
+                    &model,
                     &[
                         json!({"role":"system","content":system}),
                         json!({"role":"user","content":input}),
