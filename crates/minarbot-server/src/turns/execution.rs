@@ -368,6 +368,7 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             string(&profile, "model").to_owned()
         }
     };
+    goals::allowance(state, id, &messages)?;
     let mut used_ids = std::collections::HashSet::new();
     let mut image_ids = serde_json::from_str::<Vec<String>>(string(&turn, "attachments"))
         .map_err(|_| Failure::storage())?

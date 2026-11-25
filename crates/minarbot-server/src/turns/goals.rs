@@ -543,8 +543,11 @@ pub async fn judge(
         (result, messages, evidence, selected.to_owned(), secrets)
     };
     match provider::call(state, id, &model, &messages, &[], JUDGE).await {
-        Ok(provider::Answer::Text(raw)) => result.verdict = Verdict::parse(&raw, &evidence),
-        _ => {
+        Ok(provider::Answer::Text(raw)) => {
+            let parsed = Verdict::parse(&raw, &evidence);
+            result.verdict = parsed;
+        }
+        Err(_) => {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
             let db = &guard.connection;
             db.execute(
@@ -552,6 +555,7 @@ pub async fn judge(
                 params![iso(db,state.config.now())?,id,JUDGE],
             )?;
         }
+        Ok(provider::Answer::Tool(_)) => {}
     }
     if let Some(verdict) = &mut result.verdict {
         verdict.reason = super::diagnostics::text(&verdict.reason, &secrets);
