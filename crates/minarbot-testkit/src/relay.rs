@@ -282,7 +282,10 @@ pub fn then_cut(part: Option<Bytes>, pause: Duration) -> BoxStream<'static, Resu
 }
 
 /// Yield `part` (if any), wait for `signal`, then cut the connection.
-pub fn cut_on(part: Option<Bytes>, signal: Arc<tokio::sync::Notify>) -> BoxStream<'static, Result<Bytes>> {
+pub fn cut_on(
+    part: Option<Bytes>,
+    signal: Arc<tokio::sync::Notify>,
+) -> BoxStream<'static, Result<Bytes>> {
     futures_util::stream::iter(part.map(Ok))
         .chain(futures_util::stream::once(async move {
             signal.notified().await;

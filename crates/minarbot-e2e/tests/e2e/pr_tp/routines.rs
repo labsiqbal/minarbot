@@ -33,7 +33,14 @@ pub fn routine_path(w: &WorkflowHome, routine: &str) -> String {
     format!("/api/projects/{}/routines/{routine}", w.project)
 }
 
-pub fn routine_command(routine: &str, name: &str, prompt: &str, next_at: i64, interval: Option<i64>, enabled: bool) -> Value {
+pub fn routine_command(
+    routine: &str,
+    name: &str,
+    prompt: &str,
+    next_at: i64,
+    interval: Option<i64>,
+    enabled: bool,
+) -> Value {
     json!({"requestId": routine, "id": routine, "revision": 0, "name": name, "prompt": prompt,
         "nextAt": next_at, "intervalSeconds": interval, "enabled": enabled})
 }
@@ -54,8 +61,12 @@ pub fn bind(w: &WorkflowHome, device: &str, agent: &str, owner: &str, model: &st
 }
 
 pub async fn sync_after(w: &WorkflowHome, cursor: &Value) -> Result<Value> {
-    w.tp.data(&format!("/api/sync?projectId={}&cursor={}", w.project, encode(&text(cursor))))
-        .await
+    w.tp.data(&format!(
+        "/api/sync?projectId={}&cursor={}",
+        w.project,
+        encode(&text(cursor))
+    ))
+    .await
 }
 
 pub async fn first_run(w: &WorkflowHome, detail: &str) -> Result<Value> {
@@ -74,7 +85,10 @@ pub async fn wait_first_run(
     .await
 }
 
-pub fn events<'a>(page: &'a Value, kind: impl Fn(&str) -> bool + 'a) -> impl Iterator<Item = &'a Value> + 'a {
+pub fn events<'a>(
+    page: &'a Value,
+    kind: impl Fn(&str) -> bool + 'a,
+) -> impl Iterator<Item = &'a Value> + 'a {
     page["page"]["events"]
         .as_array()
         .into_iter()
@@ -123,7 +137,12 @@ pub async fn raw_as(
     let headers = response
         .headers()
         .iter()
-        .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap_or_default().to_owned()))
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                value.to_str().unwrap_or_default().to_owned(),
+            )
+        })
         .collect();
     Ok((status, headers, response.text().await?))
 }
@@ -138,15 +157,31 @@ async fn canonical_routine_manual_run_waits_for_its_home_and_recovers_lost_repli
         let other = w.tp.device("manual-other-home.sqlite")?;
         other.enroll(&w.tp.jwt("user_owner")?, "new").await?;
         let other_connection = other.connect().await?;
-        until("other home", SETTLE, || async { Ok(other_connection.phase() == "connected") }).await?;
-        let command = routine_command(&routine, "Manual", "PRIVATE_MANUAL_PROMPT", wall_ms() + 600_000, Some(300), false);
+        until("other home", SETTLE, || async {
+            Ok(other_connection.phase() == "connected")
+        })
+        .await?;
+        let command = routine_command(
+            &routine,
+            "Manual",
+            "PRIVATE_MANUAL_PROMPT",
+            wall_ms() + 600_000,
+            Some(300),
+            false,
+        );
         let request = json!({"requestId": new_id()});
         let owner = account(&w.tp, "user_owner").await?;
         let home = text(&w.home["id"]);
         bind(&w, &home, &w.agent, &owner, "manual-fixture")?;
-        ensure!(w.tp.send(&routines_of(&w), Some(command.clone())).await?.0 == 201, "routine");
+        ensure!(
+            w.tp.send(&routines_of(&w), Some(command.clone())).await?.0 == 201,
+            "routine"
+        );
         let before = w.tp.data(&detail).await?;
-        let cursor = w.tp.data(&format!("/api/sync?projectId={}", w.project)).await?["nextCursor"].clone();
+        let cursor =
+            w.tp.data(&format!("/api/sync?projectId={}", w.project))
+                .await?["nextCursor"]
+                .clone();
         let run_path = format!("{detail}/run");
         // The first reply is lost after the server accepted it.
         let (status, lost) = w.tp.send(&run_path, Some(request.clone())).await?;
@@ -155,28 +190,40 @@ async fn canonical_routine_manual_run_waits_for_its_home_and_recovers_lost_repli
         ensure!(status == 200, "retry: {status} {accepted}");
         let run = first_run(&w, &detail).await?;
         ensure!(run["source"] == "manual", "source");
-        ensure!(run["id"] == accepted["data"]["occurrenceId"], "occurrence id");
+        ensure!(
+            run["id"] == accepted["data"]["occurrenceId"],
+            "occurrence id"
+        );
         ensure!(run["taskId"] == accepted["data"]["taskId"], "task id");
         ensure!(run["state"] == "admitted", "state");
         let task = text(&run["taskId"]);
-        ensure!(w.tp.task_detail(&task).await?["state"] == "waiting_device", "task waits for home");
+        ensure!(
+            w.tp.task_detail(&task).await?["state"] == "waiting_device",
+            "task waits for home"
+        );
         ensure!(accepted["data"]["homeDeviceId"] == home.as_str(), "home");
         ensure!(
-            w.tp.data("/api/devices").await?.as_array().is_some_and(|devices| devices
-                .iter()
-                .any(|device| device["id"] != home.as_str() && device["status"] == "ready")),
+            w.tp.data("/api/devices")
+                .await?
+                .as_array()
+                .is_some_and(|devices| devices
+                    .iter()
+                    .any(|device| device["id"] != home.as_str() && device["status"] == "ready")),
             "Another ready device never takes the offline home task"
         );
         ensure!(
             w.tp.data(&detail).await? == before,
             "Manual admission never changes configuration or catch-up"
         );
-        let (status, overlap) = w.tp.send(&run_path, Some(json!({"requestId": new_id()}))).await?;
+        let (status, overlap) =
+            w.tp.send(&run_path, Some(json!({"requestId": new_id()})))
+                .await?;
         ensure!(status == 409, "overlap: {status}");
         let message = text(&overlap["error"]["message"]);
         ensure!(
             message.contains("active run")
-                && message[message.find("active run").unwrap_or(0)..].contains("Complete or cancel"),
+                && message[message.find("active run").unwrap_or(0)..]
+                    .contains("Complete or cancel"),
             "overlap message: {message}"
         );
         let observations = sync_after(&w, &cursor).await?;
@@ -184,14 +231,24 @@ async fn canonical_routine_manual_run_waits_for_its_home_and_recovers_lost_repli
             .map(|event| event["body"]["source"].clone())
             .collect();
         ensure!(sources == vec![json!("manual")], "sources: {sources:?}");
-        ensure!(!observations.to_string().contains("PRIVATE_"), "private text synced");
+        ensure!(
+            !observations.to_string().contains("PRIVATE_"),
+            "private text synced"
+        );
         w.tp.restart().await?;
-        ensure!(w.tp.send(&run_path, Some(request.clone())).await?.1 == accepted, "replay after restart");
+        ensure!(
+            w.tp.send(&run_path, Some(request.clone())).await?.1 == accepted,
+            "replay after restart"
+        );
         let connection = w.host.connect().await?;
-        until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+        until("home", SETTLE, || async {
+            Ok(connection.phase() == "connected")
+        })
+        .await?;
         let calls = Arc::new(AtomicUsize::new(0));
         let checks = Checks::new();
-        let (counter, failures, prompt) = (calls.clone(), checks.handle(), command["prompt"].clone());
+        let (counter, failures, prompt) =
+            (calls.clone(), checks.handle(), command["prompt"].clone());
         let ran = w
             .host
             .run_task(&task, move |context| {
@@ -208,17 +265,31 @@ async fn canonical_routine_manual_run_waits_for_its_home_and_recovers_lost_repli
         checks.result()?;
         wait_first_run(&w, &detail, |run| run["state"] == "done").await?;
         ensure!(calls.load(Ordering::SeqCst) == 1, "provider calls");
-        ensure!(w.tp.send(&run_path, Some(request)).await?.1 == accepted, "replay after done");
-        let snapshot = w.tp.data(&format!("/api/sync?projectId={}", w.project)).await?;
+        ensure!(
+            w.tp.send(&run_path, Some(request)).await?.1 == accepted,
+            "replay after done"
+        );
+        let snapshot =
+            w.tp.data(&format!("/api/sync?projectId={}", w.project))
+                .await?;
         ensure!(
             events(&snapshot, |kind| kind == "routine_occurrence")
                 .next()
                 .is_some_and(|event| event["body"]["source"] == "manual"),
             "snapshot source"
         );
-        ensure!(!snapshot.to_string().contains("PRIVATE_"), "private text in snapshot");
-        ensure!(w.tp.data(&detail).await?["next_at"] == command["nextAt"], "schedule moved");
-        ensure!(w.tp.inspect()?.count("routine_occurrences")? == 1, "occurrences");
+        ensure!(
+            !snapshot.to_string().contains("PRIVATE_"),
+            "private text in snapshot"
+        );
+        ensure!(
+            w.tp.data(&detail).await?["next_at"] == command["nextAt"],
+            "schedule moved"
+        );
+        ensure!(
+            w.tp.inspect()?.count("routine_occurrences")? == 1,
+            "occurrences"
+        );
         connection.stop().await?;
         other_connection.stop().await?;
         Ok(())
@@ -347,38 +418,73 @@ async fn canonical_routine_configuration_and_flow_stay_scoped_across_projects_re
         let list = routines_of(&w);
         let routine = new_id();
         let detail = routine_path(&w, &routine);
-        let command = routine_command(&routine, "Routine", "Private prompt\nCheck work", wall_ms() + 600_000, Some(300), true);
+        let command = routine_command(
+            &routine,
+            "Routine",
+            "Private prompt\nCheck work",
+            wall_ms() + 600_000,
+            Some(300),
+            true,
+        );
         let (status, created) = w.tp.send(&list, Some(command.clone())).await?;
         ensure!(status == 201, "create: {status} {created}");
         ensure!(created["data"]["homeDeviceId"] == w.home["id"], "home");
-        ensure!(created["data"]["projectId"] == w.project.as_str(), "project");
-        ensure!(w.tp.data(&detail).await?["prompt"] == command["prompt"], "prompt");
+        ensure!(
+            created["data"]["projectId"] == w.project.as_str(),
+            "project"
+        );
+        ensure!(
+            w.tp.data(&detail).await?["prompt"] == command["prompt"],
+            "prompt"
+        );
         let (status, calendar) = raw(
             &w,
             Method::GET,
             &format!("{list}/calendar.ics"),
-            &[("Connection", "close"), ("X-Minarbot-Request-Id", &new_id())],
+            &[
+                ("Connection", "close"),
+                ("X-Minarbot-Request-Id", &new_id()),
+            ],
             None,
         )
         .await?;
         ensure!(status == 200, "calendar: {status}");
-        ensure!(calendar.contains(&format!("UID:{routine}@minarbot.local")), "calendar uid");
-        ensure!(calendar.contains("RRULE:FREQ=SECONDLY;INTERVAL=300"), "calendar rule");
-        ensure!(!calendar.contains(command["prompt"].as_str().unwrap_or_default()), "calendar prompt");
         ensure!(
-            w.tp.send(&format!("/api/projects/{}/agents/{}/routines/calendar.ics", w.other, w.agent), None)
-                .await?
-                .0
-                == 404,
+            calendar.contains(&format!("UID:{routine}@minarbot.local")),
+            "calendar uid"
+        );
+        ensure!(
+            calendar.contains("RRULE:FREQ=SECONDLY;INTERVAL=300"),
+            "calendar rule"
+        );
+        ensure!(
+            !calendar.contains(command["prompt"].as_str().unwrap_or_default()),
+            "calendar prompt"
+        );
+        ensure!(
+            w.tp.send(
+                &format!(
+                    "/api/projects/{}/agents/{}/routines/calendar.ics",
+                    w.other, w.agent
+                ),
+                None
+            )
+            .await?
+            .0 == 404,
             "foreign calendar"
         );
-        ensure!(w.tp.send(&list, Some(command.clone())).await?.1["receipt"] == created["receipt"], "create replay");
+        ensure!(
+            w.tp.send(&list, Some(command.clone())).await?.1["receipt"] == created["receipt"],
+            "create replay"
+        );
         let mut renamed = command.clone();
         renamed["name"] = json!("Other");
-        ensure!(w.tp.send(&list, Some(renamed)).await?.0 == 409, "changed create");
-        let (status, _) = w
-            .tp
-            .send_as(
+        ensure!(
+            w.tp.send(&list, Some(renamed)).await?.0 == 409,
+            "changed create"
+        );
+        let (status, _) =
+            w.tp.send_as(
                 &format!("/api/projects/{}/agents/{}", w.other, w.agent),
                 Some(json!({"requestId": new_id(), "expectedProjectRevision": 1,
                     "expectedAgentRevision": 1, "expectedAuthorityRevision": 1,
@@ -390,12 +496,21 @@ async fn canonical_routine_configuration_and_flow_stay_scoped_across_projects_re
             .await?;
         ensure!(status == 201, "participation: {status}");
         ensure!(
-            w.tp.data(&format!("/api/projects/{}/agents/{}/routines", w.other, w.agent)).await?["items"]
+            w.tp.data(&format!(
+                "/api/projects/{}/agents/{}/routines",
+                w.other, w.agent
+            ))
+            .await?["items"]
                 == json!([]),
             "other project list"
         );
         ensure!(
-            w.tp.send(&format!("/api/projects/{}/routines/{routine}", w.other), None).await?.0 == 404,
+            w.tp.send(
+                &format!("/api/projects/{}/routines/{routine}", w.other),
+                None
+            )
+            .await?
+            .0 == 404,
             "other project read"
         );
         let next = new_id();
@@ -404,7 +519,9 @@ async fn canonical_routine_configuration_and_flow_stay_scoped_across_projects_re
         edited["id"] = json!(next);
         edited["revision"] = json!(1);
         edited["name"] = json!("Edited");
-        let (status, saved) = w.tp.send(&format!("{detail}/edit"), Some(edited.clone())).await?;
+        let (status, saved) =
+            w.tp.send(&format!("{detail}/edit"), Some(edited.clone()))
+                .await?;
         ensure!(status == 200, "edit: {status} {saved}");
         ensure!(
             w.tp.send(&list, Some(command.clone())).await?.1["data"]["name"] == "Routine",
@@ -413,26 +530,39 @@ async fn canonical_routine_configuration_and_flow_stay_scoped_across_projects_re
         ensure!(w.tp.data(&detail).await?["name"] == "Edited", "edited name");
         let flow_id = new_id();
         let flow = json!({"requestId": flow_id, "id": flow_id, "revision": 0, "links": []});
-        let (status, flow_saved) = w.tp.send(&format!("{detail}/flow"), Some(flow.clone())).await?;
+        let (status, flow_saved) =
+            w.tp.send(&format!("{detail}/flow"), Some(flow.clone()))
+                .await?;
         ensure!(status == 200, "flow: {status} {flow_saved}");
         ensure!(
-            flow_saved["data"]["graph"] == json!({"root": w.agent, "nodes": [w.agent], "links": []}),
+            flow_saved["data"]["graph"]
+                == json!({"root": w.agent, "nodes": [w.agent], "links": []}),
             "flow graph: {flow_saved}"
         );
         w.tp.restart().await?;
         ensure!(
-            w.tp.send(&format!("{detail}/edit"), Some(edited.clone())).await?.1["receipt"] == saved["receipt"],
+            w.tp.send(&format!("{detail}/edit"), Some(edited.clone()))
+                .await?
+                .1["receipt"]
+                == saved["receipt"],
             "edit replay"
         );
         ensure!(
-            w.tp.send(&format!("{detail}/flow"), Some(flow)).await?.1["receipt"] == flow_saved["receipt"],
+            w.tp.send(&format!("{detail}/flow"), Some(flow)).await?.1["receipt"]
+                == flow_saved["receipt"],
             "flow replay"
         );
-        ensure!(w.tp.data(&format!("{detail}/flow")).await?["revision"] == 1, "flow revision");
+        ensure!(
+            w.tp.data(&format!("{detail}/flow")).await?["revision"] == 1,
+            "flow revision"
+        );
         let mut stale = edited.clone();
         stale["requestId"] = json!(new_id());
         stale["id"] = json!(new_id());
-        ensure!(w.tp.send(&format!("{detail}/edit"), Some(stale)).await?.0 == 400, "mismatched ids");
+        ensure!(
+            w.tp.send(&format!("{detail}/edit"), Some(stale)).await?.0 == 400,
+            "mismatched ids"
+        );
         for path in [
             format!("/api/routines/{routine}"),
             format!("/api/agents/{}/routines?after={routine}", w.agent),
@@ -445,13 +575,23 @@ async fn canonical_routine_configuration_and_flow_stay_scoped_across_projects_re
         }
         let mut selector = edited.clone();
         selector["projectId"] = json!(w.project);
-        ensure!(w.tp.send(&format!("{detail}/edit"), Some(selector)).await?.0 == 404, "projectId body");
+        ensure!(
+            w.tp.send(&format!("{detail}/edit"), Some(selector))
+                .await?
+                .0
+                == 404,
+            "projectId body"
+        );
         let db = w.tp.inspect()?;
         ensure!(
-            db.rows("SELECT 1 FROM sqlite_schema WHERE name='routine_runs'", [])?.is_empty(),
+            db.rows("SELECT 1 FROM sqlite_schema WHERE name='routine_runs'", [])?
+                .is_empty(),
             "Configuration never starts legacy dispatch"
         );
-        ensure!(db.rows("PRAGMA foreign_key_check", [])?.is_empty(), "foreign keys");
+        ensure!(
+            db.rows("PRAGMA foreign_key_check", [])?.is_empty(),
+            "foreign keys"
+        );
         Ok(())
     }
     .await;
@@ -480,8 +620,17 @@ async fn canonical_routine_runtime_coalesces_offline_intervals_once_and_retains_
         let routine = new_id();
         let (list, detail) = (routines_of(&w), routine_path(&w, &routine));
         let due = wall_ms() - 960_000;
-        let command = routine_command(&routine, "Catch-up", "Scheduled isolated input", due, Some(300), true);
-        let before = w.tp.data(&format!("/api/sync?projectId={}", w.project)).await?;
+        let command = routine_command(
+            &routine,
+            "Catch-up",
+            "Scheduled isolated input",
+            due,
+            Some(300),
+            true,
+        );
+        let before =
+            w.tp.data(&format!("/api/sync?projectId={}", w.project))
+                .await?;
         let (status, saved) = w.tp.send(&list, Some(command.clone())).await?;
         ensure!(status == 201, "routine: {status} {saved}");
         let runs_path = format!("{detail}/runs");
@@ -498,17 +647,28 @@ async fn canonical_routine_runtime_coalesces_offline_intervals_once_and_retains_
         let observations = sync_after(&w, &before["nextCursor"]).await?;
         ensure!(
             routine_revisions(&observations)
-                == vec![(json!("routine"), json!(1)), (json!("routine_occurrence"), json!(1))],
+                == vec![
+                    (json!("routine"), json!(1)),
+                    (json!("routine_occurrence"), json!(1))
+                ],
             "observations: {:?}",
             routine_revisions(&observations)
         );
-        ensure!(!observations.to_string().contains("Scheduled isolated input"), "prompt synced");
+        ensure!(
+            !observations
+                .to_string()
+                .contains("Scheduled isolated input"),
+            "prompt synced"
+        );
         ensure!(
             pending["id"] == occurrence_id(&routine, due).as_str(),
             "Elapsed occurrence identity follows approved schedule tuple"
         );
         w.tp.restart().await?;
-        ensure!(w.tp.data(&runs_path).await? == runs, "runs changed across restart");
+        ensure!(
+            w.tp.data(&runs_path).await? == runs,
+            "runs changed across restart"
+        );
         let connection = w.connect()?;
         connected(&connection).await?;
         let runs = minarbot_testkit::wait::until_within("admitted run", SETTLE, || async {
@@ -523,19 +683,34 @@ async fn canonical_routine_runtime_coalesces_offline_intervals_once_and_retains_
         let admitted = sync_after(&w, &observations["nextCursor"]).await?;
         ensure!(
             routine_revisions(&admitted)
-                == vec![(json!("routine"), json!(2)), (json!("routine_occurrence"), json!(2))],
+                == vec![
+                    (json!("routine"), json!(2)),
+                    (json!("routine_occurrence"), json!(2))
+                ],
             "admitted observations: {:?}",
             routine_revisions(&admitted)
         );
         ensure!(task["data"]["homeDeviceId"] == w.home["id"], "task home");
         ensure!(task["data"]["agentId"] == w.agent.as_str(), "task agent");
-        ensure!(task["receipt"]["requestId"] == task_id.as_str(), "task receipt");
+        ensure!(
+            task["receipt"]["requestId"] == task_id.as_str(),
+            "task receipt"
+        );
         let current = w.tp.data(&detail).await?;
-        ensure!(current["next_at"].as_i64().unwrap_or(0) > wall_ms(), "next_at advanced");
+        ensure!(
+            current["next_at"].as_i64().unwrap_or(0) > wall_ms(),
+            "next_at advanced"
+        );
         ensure!(current["revision"] == 2, "revision");
-        ensure!(w.tp.send(&list, Some(command.clone())).await?.1["receipt"] == saved["receipt"], "create replay");
+        ensure!(
+            w.tp.send(&list, Some(command.clone())).await?.1["receipt"] == saved["receipt"],
+            "create replay"
+        );
         w.tp.restart().await?;
-        ensure!(w.tp.data(&runs_path).await?["items"][0]["taskId"] == task_id.as_str(), "task after restart");
+        ensure!(
+            w.tp.data(&runs_path).await?["items"][0]["taskId"] == task_id.as_str(),
+            "task after restart"
+        );
         let edit = |revision: i64| {
             let mut edit = command.clone();
             let id = new_id();
@@ -544,23 +719,55 @@ async fn canonical_routine_runtime_coalesces_offline_intervals_once_and_retains_
             edit["revision"] = json!(revision);
             edit
         };
-        ensure!(w.tp.send(&format!("{detail}/edit"), Some(edit(1))).await?.0 == 409, "stale edit");
         ensure!(
-            w.tp.send(&format!("{detail}/edit"), Some(edit(2))).await?.1["error"]["code"] == "schedule_processed",
+            w.tp.send(&format!("{detail}/edit"), Some(edit(1))).await?.0 == 409,
+            "stale edit"
+        );
+        ensure!(
+            w.tp.send(&format!("{detail}/edit"), Some(edit(2))).await?.1["error"]["code"]
+                == "schedule_processed",
             "processed schedule"
         );
         ensure!(
-            w.tp.send(&format!("/api/projects/{}/routines/{routine}/runs", w.other), None).await?.0 == 404,
+            w.tp.send(
+                &format!("/api/projects/{}/routines/{routine}/runs", w.other),
+                None
+            )
+            .await?
+            .0 == 404,
             "foreign runs"
         );
-        for suffix in ["?before=0".to_owned(), "?before=1&before=2".to_owned(), format!("?projectId={}", w.project)] {
-            ensure!(w.tp.send(&format!("{runs_path}{suffix}"), None).await?.0 == 404, "runs{suffix}");
+        for suffix in [
+            "?before=0".to_owned(),
+            "?before=1&before=2".to_owned(),
+            format!("?projectId={}", w.project),
+        ] {
+            ensure!(
+                w.tp.send(&format!("{runs_path}{suffix}"), None).await?.0 == 404,
+                "runs{suffix}"
+            );
         }
-        ensure!(w.tp.send(&runs_path, Some(json!({"requestId": new_id()}))).await?.0 == 404, "POST runs");
+        ensure!(
+            w.tp.send(&runs_path, Some(json!({"requestId": new_id()})))
+                .await?
+                .0
+                == 404,
+            "POST runs"
+        );
         let db = w.tp.inspect()?;
-        ensure!(db.rows("SELECT 1 FROM sqlite_schema WHERE name='routine_runs'", [])?.is_empty(), "legacy table");
-        ensure!(db.scalar::<i64>("SELECT count(*) FROM tasks WHERE id=?", [&task_id])? == 1, "task row");
-        ensure!(db.rows("PRAGMA foreign_key_check", [])?.is_empty(), "foreign keys");
+        ensure!(
+            db.rows("SELECT 1 FROM sqlite_schema WHERE name='routine_runs'", [])?
+                .is_empty(),
+            "legacy table"
+        );
+        ensure!(
+            db.scalar::<i64>("SELECT count(*) FROM tasks WHERE id=?", [&task_id])? == 1,
+            "task row"
+        );
+        ensure!(
+            db.rows("PRAGMA foreign_key_check", [])?.is_empty(),
+            "foreign keys"
+        );
         drop(connection);
         Ok(())
     }
@@ -577,9 +784,14 @@ async fn canonical_routine_runtime_snapshots_flows_and_hands_off_once_using_curr
         let routine = new_id();
         let detail = routine_path(&w, &routine);
         let second_runtime = w.tp.device("routine-second-home.sqlite")?;
-        second_runtime.enroll(&w.tp.jwt("user_owner")?, "new").await?;
+        second_runtime
+            .enroll(&w.tp.jwt("user_owner")?, "new")
+            .await?;
         let connection = w.host.connect().await?;
-        until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+        until("home", SETTLE, || async {
+            Ok(connection.phase() == "connected")
+        })
+        .await?;
         let homes = w.tp.data("/api/devices").await?;
         let home = text(&w.home["id"]);
         let second_home = homes
@@ -588,15 +800,39 @@ async fn canonical_routine_runtime_snapshots_flows_and_hands_off_once_using_curr
             .ok_or("second home missing")?;
         let second = new_id();
         let owner = account(&w.tp, "user_owner").await?;
-        let (status, body) = w
-            .tp
-            .send("/api/agents", Some(agent_body(&second, "Next", "Help", &w.project, &second_home)))
+        let (status, body) =
+            w.tp.send(
+                "/api/agents",
+                Some(agent_body(
+                    &second,
+                    "Next",
+                    "Help",
+                    &w.project,
+                    &second_home,
+                )),
+            )
             .await?;
         ensure!(status == 201, "second agent: {status} {body}");
         bind(&w, &home, &w.agent, &owner, "routine-fixture")?;
-        bind(&w, &text(&second_home["id"]), &second, &owner, "routine-fixture")?;
-        let create = routine_command(&routine, "Flow run", "Root work", wall_ms() + 600_000, None, true);
-        ensure!(w.tp.send(&routines_of(&w), Some(create.clone())).await?.0 == 201, "routine");
+        bind(
+            &w,
+            &text(&second_home["id"]),
+            &second,
+            &owner,
+            "routine-fixture",
+        )?;
+        let create = routine_command(
+            &routine,
+            "Flow run",
+            "Root work",
+            wall_ms() + 600_000,
+            None,
+            true,
+        );
+        ensure!(
+            w.tp.send(&routines_of(&w), Some(create.clone())).await?.0 == 201,
+            "routine"
+        );
         let flow = new_id();
         ensure!(
             w.tp.send(
@@ -614,10 +850,19 @@ async fn canonical_routine_runtime_snapshots_flows_and_hands_off_once_using_curr
         edited["id"] = json!(edit);
         edited["revision"] = json!(1);
         edited["nextAt"] = json!(wall_ms() - 1000);
-        ensure!(w.tp.send(&format!("{detail}/edit"), Some(edited)).await?.0 == 200, "edit");
+        ensure!(
+            w.tp.send(&format!("{detail}/edit"), Some(edited)).await?.0 == 200,
+            "edit"
+        );
         let run = wait_first_run(&w, &detail, |run| run["state"] == "admitted").await?;
-        ensure!(run["steps"].as_array().map(Vec::len) == Some(2), "steps: {run}");
-        ensure!(w.tp.data(&detail).await?["enabled"] == 0, "one-shot disabled");
+        ensure!(
+            run["steps"].as_array().map(Vec::len) == Some(2),
+            "steps: {run}"
+        );
+        ensure!(
+            w.tp.data(&detail).await?["enabled"] == 0,
+            "one-shot disabled"
+        );
         let root = text(&run["taskId"]);
         let change = new_id();
         ensure!(
@@ -635,8 +880,16 @@ async fn canonical_routine_runtime_snapshots_flows_and_hands_off_once_using_curr
             .host
             .run_task(&root, move |context| {
                 let conversation = &context["snapshot"]["conversation"];
-                check(&failures, conversation["history"].as_array().map(Vec::len) == Some(0), "root history");
-                check(&failures, conversation["message"]["text"] == "Root work", "root message");
+                check(
+                    &failures,
+                    conversation["history"].as_array().map(Vec::len) == Some(0),
+                    "root history",
+                );
+                check(
+                    &failures,
+                    conversation["message"]["text"] == "Root work",
+                    "root message",
+                );
                 async { Ok(json!({"text": "Original root result"})) }
             })
             .await?;
@@ -660,17 +913,29 @@ async fn canonical_routine_runtime_snapshots_flows_and_hands_off_once_using_curr
             Ok(connection.phase() == "connected" && connection.generation() > generation)
         })
         .await?;
-        ensure!(step_task(&first_run(&w, &detail).await?) == Some(next.clone()), "next task after restart");
+        ensure!(
+            step_task(&first_run(&w, &detail).await?) == Some(next.clone()),
+            "next task after restart"
+        );
         let second_connection = second_runtime.connect().await?;
-        until("second home", SETTLE, || async { Ok(second_connection.phase() == "connected") }).await?;
+        until("second home", SETTLE, || async {
+            Ok(second_connection.phase() == "connected")
+        })
+        .await?;
         let failures = checks.handle();
         let ran = second_runtime
             .run_task(&next, move |context| {
                 let conversation = &context["snapshot"]["conversation"];
-                check(&failures, conversation["history"].as_array().map(Vec::len) == Some(0), "next history");
                 check(
                     &failures,
-                    conversation["message"]["text"].as_str().is_some_and(|text| text.contains("Original root result")),
+                    conversation["history"].as_array().map(Vec::len) == Some(0),
+                    "next history",
+                );
+                check(
+                    &failures,
+                    conversation["message"]["text"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("Original root result")),
                     "next message",
                 );
                 async { Ok(json!({"text": "Next result"})) }
@@ -679,14 +944,28 @@ async fn canonical_routine_runtime_snapshots_flows_and_hands_off_once_using_curr
         ensure!(ran["state"] == "completed", "next: {ran}");
         checks.result()?;
         let run = wait_first_run(&w, &detail, |run| run["state"] == "done").await?;
-        let states: Vec<Value> = run["steps"].as_array().into_iter().flatten().map(|step| step["state"].clone()).collect();
-        ensure!(states == vec![json!("done"), json!("done")], "step states: {states:?}");
+        let states: Vec<Value> = run["steps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|step| step["state"].clone())
+            .collect();
         ensure!(
-            w.tp.data(&format!("{detail}/runs")).await?["items"].as_array().map(Vec::len) == Some(1),
+            states == vec![json!("done"), json!("done")],
+            "step states: {states:?}"
+        );
+        ensure!(
+            w.tp.data(&format!("{detail}/runs")).await?["items"]
+                .as_array()
+                .map(Vec::len)
+                == Some(1),
             "one run"
         );
         ensure!(
-            w.tp.inspect()?.scalar::<i64>("SELECT count(*) FROM routine_steps WHERE occurrence=?", [&text(&run["id"])])? == 2,
+            w.tp.inspect()?.scalar::<i64>(
+                "SELECT count(*) FROM routine_steps WHERE occurrence=?",
+                [&text(&run["id"])]
+            )? == 2,
             "routine steps"
         );
         connection.stop().await?;
@@ -725,8 +1004,10 @@ async fn current_home(w: &WorkflowHome) -> Result<Value> {
 }
 
 fn binding_of(w: &WorkflowHome, agent: &str) -> Result<String> {
-    w.tp.inspect()?
-        .scalar("SELECT provider_binding FROM agent_authority WHERE agent=?", [agent])
+    w.tp.inspect()?.scalar(
+        "SELECT provider_binding FROM agent_authority WHERE agent=?",
+        [agent],
+    )
 }
 
 /// Make the routine's schedule due now (an edit to revision 1).
@@ -737,7 +1018,10 @@ async fn due_now(w: &WorkflowHome, detail: &str, create: &Value) -> Result<()> {
     edited["id"] = json!(edit);
     edited["revision"] = json!(1);
     edited["nextAt"] = json!(wall_ms() - 1000);
-    ensure!(w.tp.send(&format!("{detail}/edit"), Some(edited)).await?.0 == 200, "due edit");
+    ensure!(
+        w.tp.send(&format!("{detail}/edit"), Some(edited)).await?.0 == 200,
+        "due edit"
+    );
     Ok(())
 }
 
@@ -1133,11 +1417,18 @@ async fn canonical_routine_runtime_rechecks_grants_and_rolls_back_failed_task_ad
     result
 }
 
-async fn admitted_routine(w: &WorkflowHome, name: &str, prompt: &str) -> Result<(String, String, Value, Value)> {
+async fn admitted_routine(
+    w: &WorkflowHome,
+    name: &str,
+    prompt: &str,
+) -> Result<(String, String, Value, Value)> {
     let routine = new_id();
     let detail = routine_path(w, &routine);
     let command = routine_command(&routine, name, prompt, wall_ms() - 1000, Some(300), true);
-    ensure!(w.tp.send(&routines_of(w), Some(command.clone())).await?.0 == 201, "routine");
+    ensure!(
+        w.tp.send(&routines_of(w), Some(command.clone())).await?.0 == 201,
+        "routine"
+    );
     let run = wait_first_run(w, &detail, |run| run["state"] == "admitted").await?;
     Ok((routine, detail, command, run))
 }
@@ -1162,7 +1453,8 @@ async fn canonical_routine_edit_cancels_unstarted_scheduled_work_and_retains_acc
     let result = async {
         let connection = w.connect()?;
         connected(&connection).await?;
-        let (_, detail, command, run) = admitted_routine(&w, "Disable queued", "Never start after disable").await?;
+        let (_, detail, command, run) =
+            admitted_routine(&w, "Disable queued", "Never start after disable").await?;
         let task_path = format!("/api/tasks/{}", text(&run["taskId"]));
         let (_, task) = w.tp.send(&task_path, None).await?;
         ensure!(task["data"]["state"] == "queued", "queued: {task}");
@@ -1172,7 +1464,10 @@ async fn canonical_routine_edit_cancels_unstarted_scheduled_work_and_retains_acc
         ensure!(after["data"]["state"] == "cancelled", "cancelled");
         ensure!(after["receipt"] == task["receipt"], "receipt kept");
         w.tp.restart().await?;
-        ensure!(w.tp.data(&task_path).await?["state"] == "cancelled", "cancelled after restart");
+        ensure!(
+            w.tp.data(&task_path).await?["state"] == "cancelled",
+            "cancelled after restart"
+        );
         drop(connection);
         Ok(())
     }
@@ -1187,8 +1482,12 @@ async fn canonical_routine_runtime_preserves_started_snapshots_through_edits_and
     let mut w = WorkflowHome::start().await?;
     let result = async {
         let connection = w.host.connect().await?;
-        until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
-        let (routine, detail, command, run) = admitted_routine(&w, "Started", "Retain started work").await?;
+        until("home", SETTLE, || async {
+            Ok(connection.phase() == "connected")
+        })
+        .await?;
+        let (routine, detail, command, run) =
+            admitted_routine(&w, "Started", "Retain started work").await?;
         let task = text(&run["taskId"]);
         let owned = w.host.start_task(&task).await?;
         ensure!(disable(&w, &detail, &command).await?.0 == 200, "disable");
@@ -1201,13 +1500,25 @@ async fn canonical_routine_runtime_preserves_started_snapshots_through_edits_and
         w.tp.restore_from(&backup).await?;
         let check_restored = || -> Result<()> {
             let db = minarbot_testkit::db::Inspector::open(w.tp.database())?;
-            let row = db.row("SELECT * FROM routine_occurrences WHERE id=?", [&text(&run["id"])])?;
+            let row = db.row(
+                "SELECT * FROM routine_occurrences WHERE id=?",
+                [&text(&run["id"])],
+            )?;
             ensure!(row["state"] == "blocked", "occurrence state: {row}");
             ensure!(row["task"] == task.as_str(), "occurrence task");
             ensure!(row["due_at"] == run["dueAt"], "due");
-            ensure!(row["schedule_revision"] == run["scheduleRevision"], "schedule revision");
-            ensure!(db.scalar::<i64>("SELECT enabled FROM routines WHERE id=?", [&routine])? == 0, "routine enabled");
-            ensure!(db.scalar::<String>("SELECT state FROM tasks WHERE id=?", [&task])? == "uncertain", "task state");
+            ensure!(
+                row["schedule_revision"] == run["scheduleRevision"],
+                "schedule revision"
+            );
+            ensure!(
+                db.scalar::<i64>("SELECT enabled FROM routines WHERE id=?", [&routine])? == 0,
+                "routine enabled"
+            );
+            ensure!(
+                db.scalar::<String>("SELECT state FROM tasks WHERE id=?", [&task])? == "uncertain",
+                "task state"
+            );
             Ok(())
         };
         check_restored()?;
@@ -1215,12 +1526,21 @@ async fn canonical_routine_runtime_preserves_started_snapshots_through_edits_and
         let db = w.tp.inspect()?;
         ensure!(db.count("routine_occurrences")? == 1, "occurrences");
         ensure!(
-            db.scalar::<String>("SELECT state FROM routine_occurrences WHERE id=?", [&text(&run["id"])])? == "blocked",
+            db.scalar::<String>(
+                "SELECT state FROM routine_occurrences WHERE id=?",
+                [&text(&run["id"])]
+            )? == "blocked",
             "blocked after restart"
         );
-        ensure!(db.rows("PRAGMA foreign_key_check", [])?.is_empty(), "foreign keys");
         ensure!(
-            w.host.context(&task, &owned["ownership"], &owned["revision"]).await.is_err(),
+            db.rows("PRAGMA foreign_key_check", [])?.is_empty(),
+            "foreign keys"
+        );
+        ensure!(
+            w.host
+                .context(&task, &owned["ownership"], &owned["revision"])
+                .await
+                .is_err(),
             "restored task context"
         );
         Ok(())
@@ -1231,7 +1551,8 @@ async fn canonical_routine_runtime_preserves_started_snapshots_through_edits_and
 }
 
 #[tokio::test]
-async fn canonical_routine_cancellation_settles_terminal_occurrence_after_task_cancel() -> Result<()> {
+async fn canonical_routine_cancellation_settles_terminal_occurrence_after_task_cancel() -> Result<()>
+{
     let mut w = WorkflowHome::start().await?;
     let result = async {
         let connection = w.connect()?;
@@ -1239,24 +1560,33 @@ async fn canonical_routine_cancellation_settles_terminal_occurrence_after_task_c
         let (_, detail, _, run) = admitted_routine(&w, "Cancel", "Cancel me").await?;
         let task = text(&run["taskId"]);
         let current = w.tp.task_detail(&task).await?;
-        let (status, _) = w
-            .tp
-            .send(
+        let (status, _) =
+            w.tp.send(
                 &format!("/api/tasks/{task}/control"),
-                Some(json!({"requestId": new_id(), "expectedRevision": current["revision"],
-                    "operation": "cancel"})),
+                Some(
+                    json!({"requestId": new_id(), "expectedRevision": current["revision"],
+                    "operation": "cancel"}),
+                ),
             )
             .await?;
         ensure!(status == 200, "cancel: {status}");
         let run = wait_first_run(&w, &detail, |run| run["state"] == "failed").await?;
-        ensure!(w.tp.task_detail(&task).await?["state"] == "cancelled", "task cancelled");
         ensure!(
-            w.tp.inspect()?.scalar::<String>("SELECT state FROM routine_steps WHERE occurrence=?", [&text(&run["id"])])?
-                == "failed",
+            w.tp.task_detail(&task).await?["state"] == "cancelled",
+            "task cancelled"
+        );
+        ensure!(
+            w.tp.inspect()?.scalar::<String>(
+                "SELECT state FROM routine_steps WHERE occurrence=?",
+                [&text(&run["id"])]
+            )? == "failed",
             "step failed"
         );
         w.tp.restart().await?;
-        ensure!(first_run(&w, &detail).await?["state"] == "failed", "failed after restart");
+        ensure!(
+            first_run(&w, &detail).await?["state"] == "failed",
+            "failed after restart"
+        );
         drop(connection);
         Ok(())
     }
@@ -1390,9 +1720,18 @@ async fn calendar(
     extra: Vec<(&'static str, String)>,
 ) -> Result<(u16, std::collections::HashMap<String, String>, String)> {
     let request = new_id();
-    let mut headers: Vec<(&str, &str)> = vec![("Connection", "close"), ("X-Minarbot-Request-Id", &request)];
+    let mut headers: Vec<(&str, &str)> =
+        vec![("Connection", "close"), ("X-Minarbot-Request-Id", &request)];
     headers.extend(extra.iter().map(|(name, value)| (*name, value.as_str())));
-    raw_as(&w.tp, subject, Method::GET, &format!("{path}{suffix}"), &headers, None).await
+    raw_as(
+        &w.tp,
+        subject,
+        Method::GET,
+        &format!("{path}{suffix}"),
+        &headers,
+        None,
+    )
+    .await
 }
 
 /// The wall-clock case runs its server and home in a fixed zone without
@@ -1416,7 +1755,11 @@ fn chrono_like_parse(date: &str, time: &str) -> Result<i64> {
         return Err("bad wall time".into());
     };
     // Days from civil (Howard Hinnant).
-    let (y, m) = if month <= 2 { (year - 1, month + 9) } else { (year, month - 3) };
+    let (y, m) = if month <= 2 {
+        (year - 1, month + 9)
+    } else {
+        (year, month - 3)
+    };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
     let doy = (153 * m + 2) / 5 + day - 1;
@@ -1430,7 +1773,9 @@ async fn canonical_routine_wall_clock_http_keeps_exact_retries_and_pending_ident
 ) -> Result<()> {
     let servers = minarbot_testkit::Servers::reserve(1).await?;
     let zone = [("TZ", WALL_ZONE)];
-    let mut w = WorkflowHome::start_env(super::fixture::Tp::start_env(&servers, &zone).await?, &zone).await?;
+    let mut w =
+        WorkflowHome::start_env(super::fixture::Tp::start_env(&servers, &zone).await?, &zone)
+            .await?;
     let result = async {
         ensure!(w.home["zone"] == WALL_ZONE, "home zone: {}", w.home);
         let list = routines_of(&w);
@@ -1439,12 +1784,19 @@ async fn canonical_routine_wall_clock_http_keeps_exact_retries_and_pending_ident
         let schedule = json!({"kind": "once", "date": "2024-03-10", "time": "02:30"});
         let command = json!({"requestId": once, "id": once, "revision": 0, "name": "Once",
             "prompt": "PRIVATE_WALL_CLOCK_PROMPT", "schedule": schedule, "enabled": true});
-        for extra in [json!({"nextAt": 0}), json!({"intervalSeconds": null}), json!({"nextAt": 0, "intervalSeconds": 300})] {
+        for extra in [
+            json!({"nextAt": 0}),
+            json!({"intervalSeconds": null}),
+            json!({"nextAt": 0, "intervalSeconds": 300}),
+        ] {
             let mut body = command.clone();
             for (key, value) in extra.as_object().into_iter().flatten() {
                 body[key] = value.clone();
             }
-            ensure!(w.tp.send(&list, Some(body)).await?.0 == 400, "legacy timing {extra}");
+            ensure!(
+                w.tp.send(&list, Some(body)).await?.0 == 400,
+                "legacy timing {extra}"
+            );
         }
         // The first reply is lost after the server accepted it.
         let (status, lost) = w.tp.send(&list, Some(command.clone())).await?;
@@ -1452,71 +1804,128 @@ async fn canonical_routine_wall_clock_http_keeps_exact_retries_and_pending_ident
         let (status, saved) = w.tp.send(&list, Some(command.clone())).await?;
         ensure!(status == 200, "retry: {status}");
         ensure!(saved["data"]["schedule"] == schedule, "schedule");
-        ensure!(saved["data"]["next_at"] == wall_candidate("2024-03-10", "02:30")?, "next_at: {saved}");
+        ensure!(
+            saved["data"]["next_at"] == wall_candidate("2024-03-10", "02:30")?,
+            "next_at: {saved}"
+        );
         let mut cron_command = command.clone();
         cron_command["requestId"] = json!(cron);
         cron_command["id"] = json!(cron);
         cron_command["name"] = json!("Daily cron");
         cron_command["schedule"] = json!({"kind": "cron", "expression": "0 9 * * *"});
-        ensure!(w.tp.send(&list, Some(cron_command)).await?.0 == 201, "cron routine");
+        ensure!(
+            w.tp.send(&list, Some(cron_command)).await?.0 == 201,
+            "cron routine"
+        );
         // A durable due time retained while the canonical process was down.
         w.tp.write()?.execute(
             "UPDATE routines SET next_at=? WHERE id=?",
             minarbot_testkit::hosted::params![wall_candidate("2024-01-01", "09:00")?, cron],
         )?;
-        let (pending_once, pending_cron) = minarbot_testkit::wait::until_within("pending", SETTLE, || async {
-            let once = first_run(&w, &once_path).await?;
-            let cron = first_run(&w, &cron_path).await?;
-            Ok((once["state"] == "pending" && cron["state"] == "pending").then_some((once, cron)))
-        })
-        .await?;
+        let (pending_once, pending_cron) =
+            minarbot_testkit::wait::until_within("pending", SETTLE, || async {
+                let once = first_run(&w, &once_path).await?;
+                let cron = first_run(&w, &cron_path).await?;
+                Ok((once["state"] == "pending" && cron["state"] == "pending")
+                    .then_some((once, cron)))
+            })
+            .await?;
         ensure!(pending_once["scheduleKind"] == "once", "once kind");
         ensure!(pending_cron["scheduleKind"] == "cron", "cron kind");
-        ensure!(pending_cron["missedCount"].as_i64().unwrap_or(0) > 1, "missed");
+        ensure!(
+            pending_cron["missedCount"].as_i64().unwrap_or(0) > 1,
+            "missed"
+        );
         let tuple = json!([cron, 1, w.home["zone_revision"], pending_cron["dueAt"], 0]).to_string();
         let digest = ring::digest::digest(&ring::digest::SHA256, tuple.as_bytes());
         use minarbot_testkit::base64::Engine;
         ensure!(
-            pending_cron["id"] == minarbot_testkit::base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest.as_ref()).as_str(),
+            pending_cron["id"]
+                == minarbot_testkit::base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(digest.as_ref())
+                    .as_str(),
             "cron identity"
         );
         let (status, calendar) = raw(
             &w,
             Method::GET,
             &format!("{list}/calendar.ics"),
-            &[("Connection", "close"), ("X-Minarbot-Request-Id", &new_id())],
+            &[
+                ("Connection", "close"),
+                ("X-Minarbot-Request-Id", &new_id()),
+            ],
             None,
         )
         .await?;
         let calendar = calendar.replace("\r\n ", "");
         ensure!(status == 200, "calendar: {status}");
-        ensure!(calendar.contains(&format!("UID:{once}@minarbot.local")), "once in calendar");
-        ensure!(!calendar.contains(&format!("UID:{cron}@minarbot.local")), "cron in calendar");
-        ensure!(calendar.contains("Omitted cron routine \"Daily cron\""), "omitted note");
-        ensure!(!calendar.contains("PRIVATE_WALL_CLOCK_PROMPT"), "prompt in calendar");
-        let snapshot = w.tp.data(&format!("/api/sync?projectId={}", w.project)).await?;
+        ensure!(
+            calendar.contains(&format!("UID:{once}@minarbot.local")),
+            "once in calendar"
+        );
+        ensure!(
+            !calendar.contains(&format!("UID:{cron}@minarbot.local")),
+            "cron in calendar"
+        );
+        ensure!(
+            calendar.contains("Omitted cron routine \"Daily cron\""),
+            "omitted note"
+        );
+        ensure!(
+            !calendar.contains("PRIVATE_WALL_CLOCK_PROMPT"),
+            "prompt in calendar"
+        );
+        let snapshot =
+            w.tp.data(&format!("/api/sync?projectId={}", w.project))
+                .await?;
         let observed: Vec<&Value> = events(&snapshot, |kind| kind.starts_with("routine")).collect();
         ensure!(
-            observed.iter().all(|event| event["body"]["scheduleKind"] == "once" || event["body"]["scheduleKind"] == "cron"),
+            observed
+                .iter()
+                .all(|event| event["body"]["scheduleKind"] == "once"
+                    || event["body"]["scheduleKind"] == "cron"),
             "schedule kinds"
         );
-        ensure!(!json!(observed).to_string().contains("PRIVATE_"), "private text synced");
+        ensure!(
+            !json!(observed).to_string().contains("PRIVATE_"),
+            "private text synced"
+        );
         w.tp.restart().await?;
-        ensure!(w.tp.send(&list, Some(command.clone())).await?.1["receipt"] == saved["receipt"], "receipt replay");
-        ensure!(w.tp.data(&format!("{once_path}/runs")).await?["items"] == json!([pending_once]), "once runs");
-        ensure!(w.tp.data(&format!("{cron_path}/runs")).await?["items"] == json!([pending_cron]), "cron runs");
+        ensure!(
+            w.tp.send(&list, Some(command.clone())).await?.1["receipt"] == saved["receipt"],
+            "receipt replay"
+        );
+        ensure!(
+            w.tp.data(&format!("{once_path}/runs")).await?["items"] == json!([pending_once]),
+            "once runs"
+        );
+        ensure!(
+            w.tp.data(&format!("{cron_path}/runs")).await?["items"] == json!([pending_cron]),
+            "cron runs"
+        );
         let connection = w.connect()?;
         connected(&connection).await?;
-        let (admitted_once, admitted_cron) = minarbot_testkit::wait::until_within("admitted", SETTLE, || async {
-            let once = first_run(&w, &once_path).await?;
-            let cron = first_run(&w, &cron_path).await?;
-            Ok((once["state"] == "admitted" && cron["state"] == "admitted").then_some((once, cron)))
-        })
-        .await?;
+        let (admitted_once, admitted_cron) =
+            minarbot_testkit::wait::until_within("admitted", SETTLE, || async {
+                let once = first_run(&w, &once_path).await?;
+                let cron = first_run(&w, &cron_path).await?;
+                Ok((once["state"] == "admitted" && cron["state"] == "admitted")
+                    .then_some((once, cron)))
+            })
+            .await?;
         ensure!(admitted_once["id"] == pending_once["id"], "once identity");
         ensure!(admitted_cron["id"] == pending_cron["id"], "cron identity");
-        ensure!(w.tp.data(&once_path).await?["enabled"] == 0, "once disabled");
-        ensure!(w.tp.data(&cron_path).await?["next_at"].as_i64().unwrap_or(0) > wall_ms(), "cron advanced");
+        ensure!(
+            w.tp.data(&once_path).await?["enabled"] == 0,
+            "once disabled"
+        );
+        ensure!(
+            w.tp.data(&cron_path).await?["next_at"]
+                .as_i64()
+                .unwrap_or(0)
+                > wall_ms(),
+            "cron advanced"
+        );
         let enable = new_id();
         let mut again = command.clone();
         again["requestId"] = json!(enable);
@@ -1526,13 +1935,25 @@ async fn canonical_routine_wall_clock_http_keeps_exact_retries_and_pending_ident
         ensure!(status == 409, "re-enable: {status}");
         ensure!(rejected["error"]["code"] == "schedule_processed", "code");
         w.tp.restart().await?;
-        ensure!(w.tp.send(&list, Some(command)).await?.1["receipt"] == saved["receipt"], "receipt after restart");
-        ensure!(first_run(&w, &once_path).await?["taskId"] == admitted_once["taskId"], "once task");
-        ensure!(first_run(&w, &cron_path).await?["taskId"] == admitted_cron["taskId"], "cron task");
+        ensure!(
+            w.tp.send(&list, Some(command)).await?.1["receipt"] == saved["receipt"],
+            "receipt after restart"
+        );
+        ensure!(
+            first_run(&w, &once_path).await?["taskId"] == admitted_once["taskId"],
+            "once task"
+        );
+        ensure!(
+            first_run(&w, &cron_path).await?["taskId"] == admitted_cron["taskId"],
+            "cron task"
+        );
         let db = w.tp.inspect()?;
         ensure!(db.count("routine_occurrences")? == 2, "occurrences");
         ensure!(db.count("tasks")? == 2, "tasks");
-        ensure!(db.rows("PRAGMA foreign_key_check", [])?.is_empty(), "foreign keys");
+        ensure!(
+            db.rows("PRAGMA foreign_key_check", [])?.is_empty(),
+            "foreign keys"
+        );
         drop(connection);
         Ok(())
     }

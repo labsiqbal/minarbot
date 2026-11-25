@@ -29,10 +29,19 @@ fn ids(items: &Value, field: &str) -> Vec<Value> {
 async fn assigned_collaborator(w: &WorkflowHome, response_off: bool) -> Result<String> {
     let collaborator = account(&w.tp, "user_collaborator").await?;
     let db = w.tp.write()?;
-    db.execute("INSERT INTO project_members VALUES (?,?,'member',1,0)", [&w.project, &collaborator])?;
-    db.execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&w.project, &collaborator, &w.agent])?;
+    db.execute(
+        "INSERT INTO project_members VALUES (?,?,'member',1,0)",
+        [&w.project, &collaborator],
+    )?;
+    db.execute(
+        "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+        [&w.project, &collaborator, &w.agent],
+    )?;
     if response_off {
-        db.execute("INSERT INTO response_policies VALUES (?,?,?,0,1)", [&w.project, &collaborator, &w.agent])?;
+        db.execute(
+            "INSERT INTO response_policies VALUES (?,?,?,0,1)",
+            [&w.project, &collaborator, &w.agent],
+        )?;
     }
     Ok(collaborator)
 }
@@ -47,19 +56,27 @@ async fn canonical_workflow_configuration_stays_project_scoped_with_immutable_ve
             "name": "Original", "graph": graph});
         let (status, created) = w.tp.send(&w.list, Some(command.clone())).await?;
         ensure!(status == 201, "create: {status} {created}");
-        ensure!(created["data"]["projectId"] == w.project.as_str(), "project");
+        ensure!(
+            created["data"]["projectId"] == w.project.as_str(),
+            "project"
+        );
         ensure!(created["data"]["homeDeviceId"] == w.home["id"], "home");
         let (status, replay) = w.tp.send(&w.list, Some(command.clone())).await?;
         ensure!(status == 200, "replay: {status}");
         ensure!(replay["receipt"] == created["receipt"], "replay receipt");
         ensure!(w.tp.data(&w.detail).await?["graph"] == graph, "graph");
         let other_list = format!("/api/projects/{}/workflows", w.other);
-        ensure!(w.tp.data(&other_list).await?["items"] == json!([]), "other list");
+        ensure!(
+            w.tp.data(&other_list).await?["items"] == json!([]),
+            "other list"
+        );
         let other_detail = format!("/api/projects/{}/workflows/{}", w.other, w.workflow);
-        ensure!(w.tp.send(&other_detail, None).await?.0 == 404, "other detail");
-        let (status, _) = w
-            .tp
-            .send_as(
+        ensure!(
+            w.tp.send(&other_detail, None).await?.0 == 404,
+            "other detail"
+        );
+        let (status, _) =
+            w.tp.send_as(
                 &format!("/api/projects/{}/agents/{}", w.other, w.agent),
                 Some(json!({"requestId": new_id(), "expectedProjectRevision": 1,
                     "expectedAgentRevision": 1, "expectedAuthorityRevision": 1,
@@ -74,8 +91,11 @@ async fn canonical_workflow_configuration_stays_project_scoped_with_immutable_ve
         ensure!(
             w.tp.send(
                 &format!("/api/projects/{}/agents/{}/workflows", w.other, w.agent),
-                Some(with(&command, json!({"requestId": other_workflow, "id": other_workflow,
-                    "name": "Other project"})))
+                Some(with(
+                    &command,
+                    json!({"requestId": other_workflow, "id": other_workflow,
+                    "name": "Other project"})
+                ))
             )
             .await?
             .0 == 201,
@@ -89,7 +109,13 @@ async fn canonical_workflow_configuration_stays_project_scoped_with_immutable_ve
             w.tp.send(&other_detail, None).await?.0 == 404,
             "Same agent participation cannot transfer workflows"
         );
-        ensure!(w.tp.send(&format!("/api/workflows/{}", w.workflow), None).await?.0 == 404, "unscoped");
+        ensure!(
+            w.tp.send(&format!("/api/workflows/{}", w.workflow), None)
+                .await?
+                .0
+                == 404,
+            "unscoped"
+        );
         for path in [
             "/api/workflows?deleted=1".to_owned(),
             format!("/api/agents/{}/workflows?after={}", w.agent, w.workflow),
@@ -103,15 +129,23 @@ async fn canonical_workflow_configuration_stays_project_scoped_with_immutable_ve
         changed["maxSteps"] = json!(2);
         let edited = json!({"requestId": edit_id, "id": edit_id, "revision": 1, "name": "Edited",
             "graph": changed});
-        let (status, saved) = w.tp.send(&format!("{}/edit", w.detail), Some(edited.clone())).await?;
+        let (status, saved) =
+            w.tp.send(&format!("{}/edit", w.detail), Some(edited.clone()))
+                .await?;
         ensure!(status == 200, "edit: {status} {saved}");
         w.tp.restart().await?;
         ensure!(
-            w.tp.send(&format!("{}/edit", w.detail), Some(edited)).await?.1["receipt"] == saved["receipt"],
+            w.tp.send(&format!("{}/edit", w.detail), Some(edited))
+                .await?
+                .1["receipt"]
+                == saved["receipt"],
             "edit replay"
         );
         let versions = w.tp.data(&format!("{}/versions", w.detail)).await?["items"].clone();
-        ensure!(ids(&versions, "revision") == vec![json!(2), json!(1)], "versions: {versions}");
+        ensure!(
+            ids(&versions, "revision") == vec![json!(2), json!(1)],
+            "versions: {versions}"
+        );
         ensure!(versions[1]["graph"] == graph, "old graph");
         let restore = new_id();
         ensure!(
@@ -126,14 +160,22 @@ async fn canonical_workflow_configuration_stays_project_scoped_with_immutable_ve
         );
         let deletion = new_id();
         let delete = json!({"requestId": deletion, "id": deletion, "revision": 3});
-        let (status, deleted) = w.tp.send(&format!("{}/delete", w.detail), Some(delete.clone())).await?;
+        let (status, deleted) =
+            w.tp.send(&format!("{}/delete", w.detail), Some(delete.clone()))
+                .await?;
         ensure!(status == 200, "delete: {status}");
         ensure!(
-            w.tp.send(&format!("{}/delete", w.detail), Some(delete)).await?.1["receipt"] == deleted["receipt"],
+            w.tp.send(&format!("{}/delete", w.detail), Some(delete))
+                .await?
+                .1["receipt"]
+                == deleted["receipt"],
             "delete replay"
         );
         let list = format!("/api/projects/{}/workflows", w.project);
-        ensure!(w.tp.data(&list).await?["items"] == json!([]), "deleted listed");
+        ensure!(
+            w.tp.data(&list).await?["items"] == json!([]),
+            "deleted listed"
+        );
         ensure!(
             w.tp.data(&format!("{list}?deleted=1")).await?["items"][0]["id"] == w.workflow.as_str(),
             "deleted list"
@@ -142,7 +184,9 @@ async fn canonical_workflow_configuration_stays_project_scoped_with_immutable_ve
         ensure!(
             w.tp.send(
                 &format!("{}/run", w.detail),
-                Some(json!({"requestId": run, "id": run, "revision": 3, "input": "Must not execute"}))
+                Some(
+                    json!({"requestId": run, "id": run, "revision": 3, "input": "Must not execute"})
+                )
             )
             .await?
             .0 == 404,
@@ -412,7 +456,11 @@ fn inbox(w: &WorkflowHome) -> String {
 
 async fn sync_from(w: &WorkflowHome, subject: &str, cursor: &Value) -> Result<(u16, Value)> {
     w.tp.send_as(
-        &format!("/api/sync?projectId={}&cursor={}", w.project, encode(&text(cursor))),
+        &format!(
+            "/api/sync?projectId={}&cursor={}",
+            w.project,
+            encode(&text(cursor))
+        ),
         None,
         subject,
         None,
@@ -422,7 +470,12 @@ async fn sync_from(w: &WorkflowHome, subject: &str, cursor: &Value) -> Result<(u
 
 async fn sync_cursor(w: &WorkflowHome, subject: &str) -> Result<Value> {
     Ok(w.tp
-        .send_as(&format!("/api/sync?projectId={}", w.project), None, subject, None)
+        .send_as(
+            &format!("/api/sync?projectId={}", w.project),
+            None,
+            subject,
+            None,
+        )
         .await?
         .1["data"]["nextCursor"]
         .clone())
@@ -433,9 +486,11 @@ async fn done_run(w: &WorkflowHome, name: &str, input: &str) -> Result<(String, 
     create(w, name, &w.graph).await?;
     let run = new_id();
     let path = format!("/api/projects/{}/workflow-runs/{run}", w.project);
-    let (status, _) = w
-        .tp
-        .send(&format!("{}/run", w.detail), Some(json!({"requestId": run, "id": run, "revision": 1, "input": input})))
+    let (status, _) =
+        w.tp.send(
+            &format!("{}/run", w.detail),
+            Some(json!({"requestId": run, "id": run, "revision": 1, "input": input})),
+        )
         .await?;
     ensure!(status == 201, "run: {status}");
     wait_run(w, &path, |run| run["status"] == "done").await?;

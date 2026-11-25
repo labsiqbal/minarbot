@@ -47,8 +47,8 @@ async fn collaborator(w: &WorkflowHome) -> Result<String> {
 }
 
 #[tokio::test]
-async fn canonical_workflow_capacity_retries_leave_no_empty_threads_before_admission(
-) -> Result<()> {
+async fn canonical_workflow_capacity_retries_leave_no_empty_threads_before_admission() -> Result<()>
+{
     let w = WorkflowHome::start().await?;
     let result = async {
         let home = id_of(&w.home["id"]);
@@ -210,16 +210,18 @@ async fn canonical_workflow_wait_reserves_once_offline_and_activates_only_after_
             )? == 1)
         })
         .await?;
-        let reservation = w
-            .tp
-            .inspect()?
-            .row("SELECT * FROM wait_provisions WHERE target_key=?", [&target])?;
+        let reservation = w.tp.inspect()?.row(
+            "SELECT * FROM wait_provisions WHERE target_key=?",
+            [&target],
+        )?;
         ensure!(status_of(&w, &path).await? == "ready", "offline status");
         ensure!(w.tp.data(&path).await?["stepCount"] == 0, "offline steps");
         w.tp.restart().await?;
         ensure!(
-            w.tp.inspect()?.row("SELECT * FROM wait_provisions WHERE id=?", [id_of(&reservation["id"])])?
-                == reservation,
+            w.tp.inspect()?.row(
+                "SELECT * FROM wait_provisions WHERE id=?",
+                [id_of(&reservation["id"])]
+            )? == reservation,
             "reservation changed across restart"
         );
         let connection = w.connect()?;
@@ -250,21 +252,30 @@ async fn canonical_workflow_wait_reserves_once_offline_and_activates_only_after_
         w.tp.restart().await?;
         until("reconnected", SETTLE, || async {
             let state = connection.state();
-            Ok(state["phase"] == "connected" && state["generation"].as_i64().unwrap_or(0) > generation)
+            Ok(state["phase"] == "connected"
+                && state["generation"].as_i64().unwrap_or(0) > generation)
         })
         .await?;
-        ensure!(w.tp.data(&path).await?["stepCount"] == 1, "steps after restart");
-        ensure!(w.tp.data(&wait_path).await? == wait, "wait changed across restart");
+        ensure!(
+            w.tp.data(&path).await?["stepCount"] == 1,
+            "steps after restart"
+        );
+        ensure!(
+            w.tp.data(&wait_path).await? == wait,
+            "wait changed across restart"
+        );
         let cancel = new_id();
-        let (status, _) = w
-            .tp
-            .send(
+        let (status, _) =
+            w.tp.send(
                 &format!("{path}/cancel"),
                 Some(json!({"requestId": cancel, "id": cancel, "revision": current["revision"]})),
             )
             .await?;
         ensure!(status == 200, "cancel: {status}");
-        ensure!(w.tp.data(&wait_path).await?["status"] == "closed", "wait closed");
+        ensure!(
+            w.tp.data(&wait_path).await?["status"] == "closed",
+            "wait closed"
+        );
         drop(connection);
         Ok(())
     }
@@ -291,17 +302,25 @@ async fn canonical_workflow_timeout_fails_offline_reservation_without_generating
         ensure!(provisions[0]["state"] == "closed", "provision state");
         let connection = w.connect()?;
         connected(&connection).await?;
-        ensure!(status_of(&w, &path).await? == "failed", "status after connect");
+        ensure!(
+            status_of(&w, &path).await? == "failed",
+            "status after connect"
+        );
         ensure!(
             w.tp.inspect()?.rows("SELECT * FROM wait_provisions", [])? == provisions,
             "second wait generated"
         );
         ensure!(
-            w.tp.send(&format!("/api/workflow-waits/{run}/1"), None).await?.0 == 404,
+            w.tp.send(&format!("/api/workflow-waits/{run}/1"), None)
+                .await?
+                .0
+                == 404,
             "wait readable"
         );
         let cursor = id_of(&before["nextCursor"]);
-        let page = w.tp.data(&format!("{sync}&cursor={}", encode(&cursor))).await?;
+        let page =
+            w.tp.data(&format!("{sync}&cursor={}", encode(&cursor)))
+                .await?;
         let observations: Vec<(Value, Value)> = page["page"]["events"]
             .as_array()
             .into_iter()
@@ -396,12 +415,13 @@ async fn canonical_workflow_run_admission_keeps_its_graph_and_receipt_across_res
         let edit = new_id();
         let mut changed = graph.clone();
         changed["maxSteps"] = json!(2);
-        let (status, _) = w
-            .tp
-            .send(
+        let (status, _) =
+            w.tp.send(
                 &format!("{}/edit", w.detail),
-                Some(json!({"requestId": edit, "id": edit, "revision": 1, "name": "Changed",
-                    "graph": changed})),
+                Some(
+                    json!({"requestId": edit, "id": edit, "revision": 1, "name": "Changed",
+                    "graph": changed}),
+                ),
             )
             .await?;
         ensure!(status == 200, "edit: {status}");
@@ -409,13 +429,18 @@ async fn canonical_workflow_run_admission_keeps_its_graph_and_receipt_across_res
         let (status, replay) = w.tp.send(&run, Some(command.clone())).await?;
         ensure!(status == 200, "replay: {status}");
         ensure!(replay["receipt"] == accepted["receipt"], "replay receipt");
-        ensure!(w.tp.data(&path).await?["graph"] == graph, "graph after edit");
+        ensure!(
+            w.tp.data(&path).await?["graph"] == graph,
+            "graph after edit"
+        );
         ensure!(w.tp.data(&path).await?["version"] == 1, "version");
         ensure!(
-            w.tp.send(&format!("/api/projects/{}/workflow-runs/{request}", w.other), None)
-                .await?
-                .0
-                == 404,
+            w.tp.send(
+                &format!("/api/projects/{}/workflow-runs/{request}", w.other),
+                None
+            )
+            .await?
+            .0 == 404,
             "foreign project read"
         );
         let listed = w.tp.data(&format!("{}/runs", w.detail)).await?;
@@ -429,28 +454,46 @@ async fn canonical_workflow_run_admission_keeps_its_graph_and_receipt_across_res
         ensure!(listed["nextCursor"].is_null(), "next cursor");
         let mut changed_payload = command.clone();
         changed_payload["input"] = json!("Changed payload");
-        ensure!(w.tp.send(&run, Some(changed_payload)).await?.0 == 409, "changed payload");
+        ensure!(
+            w.tp.send(&run, Some(changed_payload)).await?.0 == 409,
+            "changed payload"
+        );
         let stale = new_id();
         let mut stale_command = command.clone();
         stale_command["requestId"] = json!(stale);
         stale_command["id"] = json!(stale);
-        ensure!(w.tp.send(&run, Some(stale_command)).await?.0 == 409, "stale revision");
+        ensure!(
+            w.tp.send(&run, Some(stale_command)).await?.0 == 409,
+            "stale revision"
+        );
         let cancel_id = new_id();
-        let cancel = json!({"requestId": cancel_id, "id": cancel_id, "revision": read["data"]["revision"]});
-        let (status, cancelled) = w.tp.send(&format!("{path}/cancel"), Some(cancel.clone())).await?;
+        let cancel =
+            json!({"requestId": cancel_id, "id": cancel_id, "revision": read["data"]["revision"]});
+        let (status, cancelled) =
+            w.tp.send(&format!("{path}/cancel"), Some(cancel.clone()))
+                .await?;
         ensure!(status == 200, "cancel: {status} {cancelled}");
         ensure!(status_of(&w, &path).await? == "cancelled", "cancelled");
         ensure!(
-            w.tp.send(&format!("{path}/cancel"), Some(cancel.clone())).await?.1 == cancelled,
+            w.tp.send(&format!("{path}/cancel"), Some(cancel.clone()))
+                .await?
+                .1
+                == cancelled,
             "cancel replay"
         );
         let next = new_id();
         let mut again = cancel.clone();
         again["requestId"] = json!(next);
         again["id"] = json!(next);
-        ensure!(w.tp.send(&format!("{path}/cancel"), Some(again)).await?.0 == 409, "second cancel");
         ensure!(
-            w.tp.send(&format!("/api/workflow-runs/{request}?before=1"), None).await?.0 == 404,
+            w.tp.send(&format!("{path}/cancel"), Some(again)).await?.0 == 409,
+            "second cancel"
+        );
+        ensure!(
+            w.tp.send(&format!("/api/workflow-runs/{request}?before=1"), None)
+                .await?
+                .0
+                == 404,
             "unscoped run path"
         );
         Ok(())

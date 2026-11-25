@@ -83,10 +83,17 @@ impl LauncherProcess {
 
     /// SIGTERM, then SIGKILL after 10 s.
     pub async fn stop(&mut self) -> Result<()> {
-        if let Some(pid) = self.child.id().and_then(|pid| rustix::process::Pid::from_raw(pid as i32)) {
+        if let Some(pid) = self
+            .child
+            .id()
+            .and_then(|pid| rustix::process::Pid::from_raw(pid as i32))
+        {
             let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
         }
-        if tokio::time::timeout(Duration::from_secs(10), self.child.wait()).await.is_err() {
+        if tokio::time::timeout(Duration::from_secs(10), self.child.wait())
+            .await
+            .is_err()
+        {
             let _ = self.child.start_kill();
             let _ = self.child.wait().await;
         }

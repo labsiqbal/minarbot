@@ -40,12 +40,21 @@ fn sha256(bytes: &[u8]) -> String {
 }
 
 fn current_version() -> Result<String> {
-    let package: Value = serde_json::from_slice(&fs::read(release_fixture::repository().join("app/package.json"))?)?;
-    Ok(package["version"].as_str().ok_or("package version")?.to_owned())
+    let package: Value = serde_json::from_slice(&fs::read(
+        release_fixture::repository().join("app/package.json"),
+    )?)?;
+    Ok(package["version"]
+        .as_str()
+        .ok_or("package version")?
+        .to_owned())
 }
 
 fn free_port() -> Result<u16> {
-    Ok(std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?.local_addr()?.port())
+    Ok(
+        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?
+            .local_addr()?
+            .port(),
+    )
 }
 
 fn private_file(path: &Path, contents: &[u8]) -> Result<()> {
@@ -68,7 +77,10 @@ fn release(root: &Path, version: &str, binary: Option<&str>) -> Result<Value> {
         }
         None => release_fixture::install_native(&directory, version, "healthy")?,
     }
-    fs::write(directory.join("package.json"), json!({"version": version}).to_string())?;
+    fs::write(
+        directory.join("package.json"),
+        json!({"version": version}).to_string(),
+    )?;
     let info = json!({"id": id, "version": version, "commit": COMMIT, "created": CREATED,
         "notes": "Signed fixture", "node": "rust", "files": release_fixture::manifest(&directory)?});
     fs::write(directory.join("release.json"), info.to_string())?;
@@ -100,7 +112,12 @@ struct Publisher {
 }
 
 impl Publisher {
-    async fn start(root: &Path, target: &Value, fault: Option<Fault>, resume: bool) -> Result<Self> {
+    async fn start(
+        root: &Path,
+        target: &Value,
+        fault: Option<Fault>,
+        resume: bool,
+    ) -> Result<Self> {
         let archive = archive();
         let file = root.join(&archive);
         let id = target["id"].as_str().unwrap_or_default();
@@ -114,8 +131,10 @@ impl Publisher {
         ensure!(status.success(), "tar failed");
         let bytes = Bytes::from(fs::read(&file)?);
         let random = ring::rand::SystemRandom::new();
-        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&random).map_err(|_| "ed25519 key")?;
-        let key = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).map_err(|_| "ed25519 key")?;
+        let pkcs8 =
+            ring::signature::Ed25519KeyPair::generate_pkcs8(&random).map_err(|_| "ed25519 key")?;
+        let key = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
+            .map_err(|_| "ed25519 key")?;
         let digest = sha256(&bytes);
         let mut manifest = json!({"id": id,
             "version": if fault == Some(Fault::Version) { "9.1.3" } else { VERSION },
@@ -134,14 +153,24 @@ impl Publisher {
             manifest["extra"] = json!(true);
         }
         let manifest = Bytes::from(format!("{}\n", serde_json::to_string_pretty(&manifest)?));
-        let signed = if fault == Some(Fault::Signature) { &manifest[..manifest.len() - 1] } else { &manifest[..] };
+        let signed = if fault == Some(Fault::Signature) {
+            &manifest[..manifest.len() - 1]
+        } else {
+            &manifest[..]
+        };
         let signature = STANDARD.encode(key.sign(signed).as_ref());
         let ranges: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
         let interrupt = Arc::new(tokio::sync::Notify::new());
         let wrong_path = Arc::new(AtomicUsize::new(0));
-        let (seen, cut, wrong, body) = (ranges.clone(), interrupt.clone(), wrong_path.clone(), bytes.clone());
+        let (seen, cut, wrong, body) = (
+            ranges.clone(),
+            interrupt.clone(),
+            wrong_path.clone(),
+            bytes.clone(),
+        );
         let cdn = Relay::start(move |exchange| {
-            let (seen, cut, wrong, bytes) = (seen.clone(), cut.clone(), wrong.clone(), body.clone());
+            let (seen, cut, wrong, bytes) =
+                (seen.clone(), cut.clone(), wrong.clone(), body.clone());
             async move {
                 if exchange.path != "/asset" {
                     wrong.fetch_add(1, Ordering::SeqCst);
@@ -153,7 +182,11 @@ impl Publisher {
                     ranges.len()
                 };
                 if fault == Some(Fault::Truncated) {
-                    return Ok(Answer::bytes(200, Vec::new(), bytes.slice(..bytes.len() - 1).to_vec()));
+                    return Ok(Answer::bytes(
+                        200,
+                        Vec::new(),
+                        bytes.slice(..bytes.len() - 1).to_vec(),
+                    ));
                 }
                 if resume && count == 1 {
                     return Ok(Answer::stream(
@@ -171,7 +204,10 @@ impl Publisher {
                 if offset > 0 {
                     return Ok(Answer::bytes(
                         206,
-                        vec![("content-range".into(), format!("bytes {offset}-{}/{}", bytes.len() - 1, bytes.len()))],
+                        vec![(
+                            "content-range".into(),
+                            format!("bytes {offset}-{}/{}", bytes.len() - 1, bytes.len()),
+                        )],
                         bytes.slice(offset..).to_vec(),
                     ));
                 }
@@ -183,14 +219,20 @@ impl Publisher {
         let download = format!("{BASE}/download/v{VERSION}/{archive}");
         let (manifest_body, signature_body) = (manifest.clone(), signature.clone());
         let origin = Relay::start(move |exchange| {
-            let (manifest, signature, cdn, download) =
-                (manifest_body.clone(), signature_body.clone(), cdn_origin.clone(), download.clone());
+            let (manifest, signature, cdn, download) = (
+                manifest_body.clone(),
+                signature_body.clone(),
+                cdn_origin.clone(),
+                download.clone(),
+            );
             async move {
                 let path = exchange.path.as_str();
                 if path == format!("{BASE}/latest/download/latest.json") {
                     return Ok(Answer::bytes(200, Vec::new(), manifest.to_vec()));
                 }
-                if path == format!("{BASE}/latest/download/latest.json.sig") && fault != Some(Fault::MissingSignature) {
+                if path == format!("{BASE}/latest/download/latest.json.sig")
+                    && fault != Some(Fault::MissingSignature)
+                {
                     return Ok(Answer::bytes(200, Vec::new(), signature.into_bytes()));
                 }
                 if path == download {
@@ -199,7 +241,11 @@ impl Publisher {
                     } else {
                         format!("{cdn}/asset")
                     };
-                    return Ok(Answer::bytes(302, vec![("location".into(), location)], Vec::new()));
+                    return Ok(Answer::bytes(
+                        302,
+                        vec![("location".into(), location)],
+                        Vec::new(),
+                    ));
                 }
                 Ok(Answer::empty(404, Vec::new()))
             }
@@ -226,7 +272,10 @@ impl Publisher {
     }
 
     fn check(&self) -> Result<()> {
-        ensure!(self.wrong_path.load(Ordering::SeqCst) == 0, "CDN asked for another path");
+        ensure!(
+            self.wrong_path.load(Ordering::SeqCst) == 0,
+            "CDN asked for another path"
+        );
         Ok(())
     }
 }
@@ -253,11 +302,24 @@ impl Managed {
         let mut options = updates.clone();
         options["releasesDir"] = json!(releases);
         options["launcherSocket"] = json!(socket);
-        private_file(&config, json!({"database": database, "port": port, "updates": options}).to_string().as_bytes())?;
+        private_file(
+            &config,
+            json!({"database": database, "port": port, "updates": options})
+                .to_string()
+                .as_bytes(),
+        )?;
         let binary = minarbot_testkit::server::server_binary(None)?;
-        let wrapper = format!("#!/bin/sh\nexec '{}' --test-config < '{}'\n", binary.display(), config.display());
+        let wrapper = format!(
+            "#!/bin/sh\nexec '{}' --test-config < '{}'\n",
+            binary.display(),
+            config.display()
+        );
         let current = release(&releases, &current_version()?, Some(&wrapper))?;
-        release_fixture::select(&releases, "current", current["id"].as_str().unwrap_or_default())?;
+        release_fixture::select(
+            &releases,
+            "current",
+            current["id"].as_str().unwrap_or_default(),
+        )?;
         let launcher_config = path.join("launcher.json");
         private_file(
             &launcher_config,
@@ -285,7 +347,13 @@ impl Managed {
             }
             tokio::time::sleep(Duration::from_millis(70)).await;
         }
-        Ok(Self { origin, releases, data, current, launcher })
+        Ok(Self {
+            origin,
+            releases,
+            data,
+            current,
+            launcher,
+        })
     }
 
     fn attempt(&self) -> Value {
@@ -312,14 +380,25 @@ impl Managed {
             Ok((attempt["status"] == "done").then_some(()))
         })
         .await?;
-        ensure!(self.selected()?.as_deref() == target.as_str(), "selected release");
+        ensure!(
+            self.selected()?.as_deref() == target.as_str(),
+            "selected release"
+        );
         Ok(())
     }
 }
 
 /// Plain JSON request; `body` makes it a POST with an `Origin`.
-async fn api(origin: &str, path: &str, body: Option<Value>, status: u16, timeout: Duration) -> Result<Value> {
-    let client = minarbot_testkit::relay::HttpClient::builder().timeout(timeout).build()?;
+async fn api(
+    origin: &str,
+    path: &str,
+    body: Option<Value>,
+    status: u16,
+    timeout: Duration,
+) -> Result<Value> {
+    let client = minarbot_testkit::relay::HttpClient::builder()
+        .timeout(timeout)
+        .build()?;
     let request = match body {
         Some(body) => client
             .post(format!("{origin}{path}"))
@@ -341,36 +420,71 @@ const APPLY: &str = "/api/updates/apply";
 
 fn matches(text: &Value, alternatives: &[&str]) -> bool {
     let text = text.as_str().unwrap_or_default().to_lowercase();
-    alternatives.iter().any(|needle| text.contains(&needle.to_lowercase()))
+    alternatives
+        .iter()
+        .any(|needle| text.contains(&needle.to_lowercase()))
 }
 
 #[tokio::test]
-async fn signed_github_release_resumes_through_the_cdn_and_completes_a_real_launcher_trial() -> Result<()> {
+async fn signed_github_release_resumes_through_the_cdn_and_completes_a_real_launcher_trial(
+) -> Result<()> {
     let _slots = Servers::reserve(1).await?;
     let dir = TestRoot::new()?;
     let staged = dir.dir("publish")?;
-    let publisher = Publisher::start(&staged, &release(&staged, VERSION, None)?, None, true).await?;
+    let publisher =
+        Publisher::start(&staged, &release(&staged, VERSION, None)?, None, true).await?;
     let mut app = Managed::start(&dir.dir("machine")?, &publisher.options).await?;
     let result = async {
         let state = api(&app.origin, CHECK, None, 200, SHORT).await?;
-        ensure!(state["available"]["version"] == VERSION, "available: {state}");
+        ensure!(
+            state["available"]["version"] == VERSION,
+            "available: {state}"
+        );
         ensure!(state["available"]["source"] == "GitHub", "source");
         let id = new_id();
         let command = json!({"id": id, "version": VERSION, "source": "GitHub"});
-        ensure!(api(&app.origin, APPLY, Some(command.clone()), 202, SHORT).await?["id"] == id.as_str(), "apply");
-        ensure!(api(&app.origin, APPLY, Some(command), 202, SHORT).await?["id"] == id.as_str(), "apply replay");
-        let progress = minarbot_testkit::wait::until_within("partial download", Duration::from_secs(30), || async {
-            let attempt = api(&app.origin, CHECK, None, 200, SHORT).await?["lastAttempt"].clone();
-            Ok((attempt["id"] == id.as_str() && attempt["bytesTransferred"] == 64).then_some(attempt))
-        })
+        ensure!(
+            api(&app.origin, APPLY, Some(command.clone()), 202, SHORT).await?["id"] == id.as_str(),
+            "apply"
+        );
+        ensure!(
+            api(&app.origin, APPLY, Some(command), 202, SHORT).await?["id"] == id.as_str(),
+            "apply replay"
+        );
+        let progress = minarbot_testkit::wait::until_within(
+            "partial download",
+            Duration::from_secs(30),
+            || async {
+                let attempt =
+                    api(&app.origin, CHECK, None, 200, SHORT).await?["lastAttempt"].clone();
+                Ok(
+                    (attempt["id"] == id.as_str() && attempt["bytesTransferred"] == 64)
+                        .then_some(attempt),
+                )
+            },
+        )
         .await?;
         ensure!(progress["totalBytes"] == publisher.size, "total bytes");
         ensure!(progress["source"] == "GitHub", "progress source");
         publisher.interrupt.notify_one();
         app.trial(&json!(id), &state["available"]["id"]).await?;
-        ensure!(publisher.ranges() == vec![None, Some("bytes=64-".to_owned())], "ranges: {:?}", publisher.ranges());
-        ensure!(api(&app.origin, "/api/environment", None, 200, SHORT).await?["version"] == VERSION, "running version");
-        ensure!(app.data.join(".updates").join(&id).join("minarbot.sqlite").exists(), "trial database backup");
+        ensure!(
+            publisher.ranges() == vec![None, Some("bytes=64-".to_owned())],
+            "ranges: {:?}",
+            publisher.ranges()
+        );
+        ensure!(
+            api(&app.origin, "/api/environment", None, 200, SHORT).await?["version"] == VERSION,
+            "running version"
+        );
+        ensure!(
+            app.data
+                .join(".updates")
+                .join(&id)
+                .join("minarbot.sqlite")
+                .exists(),
+            "trial database backup"
+        );
         publisher.check()
     }
     .await;
@@ -389,24 +503,59 @@ async fn github_fault_rejected(fault: Fault, message: &[&str], at_check: bool) -
         let state = api(&app.origin, CHECK, None, 200, SHORT).await?;
         if at_check {
             ensure!(state["available"].is_null(), "{fault:?} available: {state}");
-            ensure!(matches(&state["githubError"], message), "{fault:?} error: {}", state["githubError"]);
+            ensure!(
+                matches(&state["githubError"], message),
+                "{fault:?} error: {}",
+                state["githubError"]
+            );
         } else {
-            ensure!(state["available"]["version"] == VERSION, "{fault:?} available: {state}");
+            ensure!(
+                state["available"]["version"] == VERSION,
+                "{fault:?} available: {state}"
+            );
             let id = new_id();
-            api(&app.origin, APPLY, Some(json!({"id": id, "version": VERSION, "source": "GitHub"})), 202, SHORT).await?;
-            let failure = minarbot_testkit::wait::until_within("failed attempt", Duration::from_secs(30), || async {
-                let status = api(&app.origin, CHECK, None, 200, SHORT).await?["lastAttempt"].clone();
-                Ok((status["id"] == id.as_str() && status["status"] == "failed").then_some(status))
-            })
+            api(
+                &app.origin,
+                APPLY,
+                Some(json!({"id": id, "version": VERSION, "source": "GitHub"})),
+                202,
+                SHORT,
+            )
             .await?;
-            ensure!(matches(&failure["reason"], message), "{fault:?} reason: {}", failure["reason"]);
+            let failure = minarbot_testkit::wait::until_within(
+                "failed attempt",
+                Duration::from_secs(30),
+                || async {
+                    let status =
+                        api(&app.origin, CHECK, None, 200, SHORT).await?["lastAttempt"].clone();
+                    Ok(
+                        (status["id"] == id.as_str() && status["status"] == "failed")
+                            .then_some(status),
+                    )
+                },
+            )
+            .await?;
+            ensure!(
+                matches(&failure["reason"], message),
+                "{fault:?} reason: {}",
+                failure["reason"]
+            );
         }
         ensure!(
-            api(&app.origin, "/api/environment", None, 200, SHORT).await?["version"] == app.current["version"],
+            api(&app.origin, "/api/environment", None, 200, SHORT).await?["version"]
+                == app.current["version"],
             "current release replaced"
         );
-        ensure!(app.selected()?.as_deref() == app.current["id"].as_str(), "selection changed");
-        ensure!(!app.releases.join(target["id"].as_str().unwrap_or_default()).exists(), "target installed");
+        ensure!(
+            app.selected()?.as_deref() == app.current["id"].as_str(),
+            "selection changed"
+        );
+        ensure!(
+            !app.releases
+                .join(target["id"].as_str().unwrap_or_default())
+                .exists(),
+            "target installed"
+        );
         if fault == Fault::Redirect {
             ensure!(publisher.ranges().is_empty(), "redirect reached the CDN");
         }
@@ -423,7 +572,8 @@ async fn github_signature_fixture_is_rejected_while_current_release_keeps_runnin
 }
 
 #[tokio::test]
-async fn github_missing_signature_fixture_is_rejected_while_current_release_keeps_running() -> Result<()> {
+async fn github_missing_signature_fixture_is_rejected_while_current_release_keeps_running(
+) -> Result<()> {
     github_fault_rejected(Fault::MissingSignature, &["signature is missing"], true).await
 }
 
@@ -443,7 +593,8 @@ async fn github_version_fixture_is_rejected_while_current_release_keeps_running(
 }
 
 #[tokio::test]
-async fn github_archive_commit_fixture_is_rejected_while_current_release_keeps_running() -> Result<()> {
+async fn github_archive_commit_fixture_is_rejected_while_current_release_keeps_running(
+) -> Result<()> {
     github_fault_rejected(Fault::ArchiveCommit, &["does not match the archive"], false).await
 }
 
@@ -480,7 +631,11 @@ async fn late_replies(receiver: &Managed) -> Result<Relay> {
                 let status = upstream.status;
                 let body = String::from_utf8_lossy(&upstream.bytes().await?).into_owned();
                 let rewritten = body.replace(&json!(target).to_string(), &json!(me).to_string());
-                return Ok(Answer::bytes(status, vec![("content-type".into(), "application/json".into())], rewritten.into_bytes()));
+                return Ok(Answer::bytes(
+                    status,
+                    vec![("content-type".into(), "application/json".into())],
+                    rewritten.into_bytes(),
+                ));
             }
             let committed = fs::read(data.join("update-state.json"))
                 .ok()
@@ -515,18 +670,30 @@ async fn github_peer_fan_out(route: Route) -> Result<()> {
     let mut separate = match route {
         Route::Direct | Route::LateReply => None,
         Route::Fallback => Some(Publisher::start(&staged, &target, None, false).await?),
-        Route::Invalid => Some(Publisher::start(&staged, &target, Some(Fault::Signature), false).await?),
+        Route::Invalid => {
+            Some(Publisher::start(&staged, &target, Some(Fault::Signature), false).await?)
+        }
     };
     if route == Route::Fallback {
         if let Some(publisher) = separate.as_mut() {
             publisher.close();
         }
     }
-    let receiver_options = separate.as_ref().map_or(&publisher.options, |publisher| &publisher.options).clone();
+    let receiver_options = separate
+        .as_ref()
+        .map_or(&publisher.options, |publisher| &publisher.options)
+        .clone();
     let mut receiver = Managed::start(&dir.dir("receiver")?, &receiver_options).await?;
     let result = async {
-        let late = if route == Route::LateReply { Some(late_replies(&receiver).await?) } else { None };
-        let receiver_origin = late.as_ref().map_or_else(|| receiver.origin.clone(), |relay| relay.origin().to_owned());
+        let late = if route == Route::LateReply {
+            Some(late_replies(&receiver).await?)
+        } else {
+            None
+        };
+        let receiver_origin = late.as_ref().map_or_else(
+            || receiver.origin.clone(),
+            |relay| relay.origin().to_owned(),
+        );
         let releases = dir.dir("sender")?;
         let mut updates = publisher.options.clone();
         updates["releasesDir"] = json!(releases);
@@ -534,20 +701,59 @@ async fn github_peer_fan_out(route: Route) -> Result<()> {
         let sender_root = TestRoot::new()?;
         let mut initial = sender_root.start_in(&servers, config.clone()).await?;
         let initial_origin = initial.origin().to_owned();
-        let code = api(&receiver.origin, "/api/pairing-codes", Some(json!({"id": new_id()})), 200, SHORT).await?["code"].clone();
-        let machine = api(&initial_origin, "/api/machines", Some(json!({"id": new_id(), "origin": receiver_origin, "code": code})), 200, SHORT).await?;
-        let sender = api(&receiver.origin, "/api/machines", None, 200, SHORT).await?["machines"][0].clone();
-        api(&initial_origin, "/api/machines/updates", Some(json!({"id": new_id(), "environmentId": machine["id"], "allowed": true})), 200, SHORT).await?;
-        api(&receiver.origin, "/api/machines/updates", Some(json!({"id": new_id(), "environmentId": sender["id"], "allowed": true})), 200, SHORT).await?;
+        let code = api(
+            &receiver.origin,
+            "/api/pairing-codes",
+            Some(json!({"id": new_id()})),
+            200,
+            SHORT,
+        )
+        .await?["code"]
+            .clone();
+        let machine = api(
+            &initial_origin,
+            "/api/machines",
+            Some(json!({"id": new_id(), "origin": receiver_origin, "code": code})),
+            200,
+            SHORT,
+        )
+        .await?;
+        let sender =
+            api(&receiver.origin, "/api/machines", None, 200, SHORT).await?["machines"][0].clone();
+        api(
+            &initial_origin,
+            "/api/machines/updates",
+            Some(json!({"id": new_id(), "environmentId": machine["id"], "allowed": true})),
+            200,
+            SHORT,
+        )
+        .await?;
+        api(
+            &receiver.origin,
+            "/api/machines/updates",
+            Some(json!({"id": new_id(), "environmentId": sender["id"], "allowed": true})),
+            200,
+            SHORT,
+        )
+        .await?;
         initial.shutdown().await?;
         drop(initial);
-        let (archive_requests, archive_bytes) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let (archive_requests, archive_bytes) =
+            (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
         let backend: Arc<Mutex<String>> = Arc::default();
-        let (requests, bytes_seen, upstream_origin, advertised) =
-            (archive_requests.clone(), archive_bytes.clone(), backend.clone(), initial_origin.clone());
+        let (requests, bytes_seen, upstream_origin, advertised) = (
+            archive_requests.clone(),
+            archive_bytes.clone(),
+            backend.clone(),
+            initial_origin.clone(),
+        );
         let _front = Relay::bind(relay::port(&initial_origin)?, move |exchange| {
-            let (requests, bytes_seen, backend, advertised) =
-                (requests.clone(), bytes_seen.clone(), locked(&upstream_origin).clone(), advertised.clone());
+            let (requests, bytes_seen, backend, advertised) = (
+                requests.clone(),
+                bytes_seen.clone(),
+                locked(&upstream_origin).clone(),
+                advertised.clone(),
+            );
             async move {
                 let upstream = match exchange.forward(&backend).await {
                     Ok(upstream) => upstream,
@@ -557,7 +763,11 @@ async fn github_peer_fan_out(route: Route) -> Result<()> {
                     let status = upstream.status;
                     let mut value: Value = serde_json::from_slice(&upstream.bytes().await?)?;
                     value["origin"] = json!(advertised);
-                    return Ok(Answer::bytes(status, vec![("content-type".into(), "application/json".into())], value.to_string().into_bytes()));
+                    return Ok(Answer::bytes(
+                        status,
+                        vec![("content-type".into(), "application/json".into())],
+                        value.to_string().into_bytes(),
+                    ));
                 }
                 if exchange.path.starts_with("/api/updates/releases/") {
                     requests.fetch_add(1, Ordering::SeqCst);
@@ -577,43 +787,101 @@ async fn github_peer_fan_out(route: Route) -> Result<()> {
         if route == Route::Fallback {
             let feed = receiver.releases.join("feed");
             fs::create_dir(&feed)?;
-            fs::write(feed.join("latest.json"), release(&receiver.releases, "8.0.0", None)?.to_string())?;
+            fs::write(
+                feed.join("latest.json"),
+                release(&receiver.releases, "8.0.0", None)?.to_string(),
+            )?;
             let state = api(&receiver.origin, CHECK, None, 200, SHORT).await?;
-            ensure!(matches(&state["githubError"], &["github is unreachable"]), "github error: {}", state["githubError"]);
+            ensure!(
+                matches(&state["githubError"], &["github is unreachable"]),
+                "github error: {}",
+                state["githubError"]
+            );
             ensure!(state["available"]["source"] == "Local feed", "feed source");
             ensure!(state["available"]["version"] == "8.0.0", "feed version");
         }
         let id = new_id();
-        let command = json!({"id": id, "machines": [machine["id"]], "version": VERSION, "source": "GitHub"});
+        let command =
+            json!({"id": id, "machines": [machine["id"]], "version": VERSION, "source": "GitHub"});
         let path = "/api/updates/fan-out";
         // The fan-out reply waits for the peer's transfer and apply, which can
         // exceed 15 s under suite load.
-        let result = api(&origin, path, Some(command.clone()), 202, Duration::from_secs(60)).await?["machines"][0].clone();
-        let last = api(&origin, "/api/updates/machines", None, 200, SHORT).await?["machines"][0]["fanOutAttempt"].clone();
+        let result = api(
+            &origin,
+            path,
+            Some(command.clone()),
+            202,
+            Duration::from_secs(60),
+        )
+        .await?["machines"][0]
+            .clone();
+        let last = api(&origin, "/api/updates/machines", None, 200, SHORT).await?["machines"][0]
+            ["fanOutAttempt"]
+            .clone();
         if route == Route::Invalid {
             ensure!(result["status"] == "failed", "invalid status: {result}");
-            ensure!(matches(&result["reason"], &["github release signature"]), "invalid reason: {}", result["reason"]);
-            ensure!(receiver.selected()?.as_deref() == receiver.current["id"].as_str(), "receiver selection");
-            ensure!(archive_requests.load(Ordering::SeqCst) == 0, "archive requests");
+            ensure!(
+                matches(&result["reason"], &["github release signature"]),
+                "invalid reason: {}",
+                result["reason"]
+            );
+            ensure!(
+                receiver.selected()?.as_deref() == receiver.current["id"].as_str(),
+                "receiver selection"
+            );
+            ensure!(
+                archive_requests.load(Ordering::SeqCst) == 0,
+                "archive requests"
+            );
             ensure!(archive_bytes.load(Ordering::SeqCst) == 0, "archive bytes");
             return Ok(());
         }
         ensure!(result["status"] == "accepted", "result: {result}");
-        ensure!(last["source"] == if route == Route::Fallback { "Local feed" } else { "GitHub" }, "attempt source: {last}");
-        ensure!(last["bytesTransferred"] == last["totalBytes"], "bytes transferred: {last}");
         ensure!(
-            api(&origin, path, Some(command), 202, SHORT).await?["machines"][0]["id"] == result["id"],
+            last["source"]
+                == if route == Route::Fallback {
+                    "Local feed"
+                } else {
+                    "GitHub"
+                },
+            "attempt source: {last}"
+        );
+        ensure!(
+            last["bytesTransferred"] == last["totalBytes"],
+            "bytes transferred: {last}"
+        );
+        ensure!(
+            api(&origin, path, Some(command), 202, SHORT).await?["machines"][0]["id"]
+                == result["id"],
             "fan-out replay"
         );
         receiver.trial(&result["id"], &target["id"]).await?;
-        ensure!(publisher.ranges() == vec![None], "ranges: {:?}", publisher.ranges());
-        let fallback = route == Route::Fallback;
-        ensure!(archive_requests.load(Ordering::SeqCst) == usize::from(fallback), "archive requests");
         ensure!(
-            archive_bytes.load(Ordering::SeqCst) == if fallback { last["totalBytes"].as_u64().unwrap_or(0) as usize } else { 0 },
+            publisher.ranges() == vec![None],
+            "ranges: {:?}",
+            publisher.ranges()
+        );
+        let fallback = route == Route::Fallback;
+        ensure!(
+            archive_requests.load(Ordering::SeqCst) == usize::from(fallback),
+            "archive requests"
+        );
+        ensure!(
+            archive_bytes.load(Ordering::SeqCst)
+                == if fallback {
+                    last["totalBytes"].as_u64().unwrap_or(0) as usize
+                } else {
+                    0
+                },
             "archive bytes"
         );
-        ensure!(releases.join(target["id"].as_str().unwrap_or_default()).exists() == fallback, "sender release copy");
+        ensure!(
+            releases
+                .join(target["id"].as_str().unwrap_or_default())
+                .exists()
+                == fallback,
+            "sender release copy"
+        );
         publisher.check()
     }
     .await;

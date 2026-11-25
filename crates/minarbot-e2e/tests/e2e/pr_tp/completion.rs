@@ -14,7 +14,13 @@ use std::sync::{
 };
 
 /// Project, bound agent and (unless `setup`) one admitted task on `home`.
-async fn bound_task(tp: &Tp, home: &Value, name: &str, model: &str, setup: bool) -> Result<(String, String, String, String)> {
+async fn bound_task(
+    tp: &Tp,
+    home: &Value,
+    name: &str,
+    model: &str,
+    setup: bool,
+) -> Result<(String, String, String, String)> {
     let (project, agent, binding) = (new_id(), new_id(), new_id());
     tp.project(&project, name).await?;
     let db = tp.write()?;
@@ -36,7 +42,16 @@ async fn bound_task(tp: &Tp, home: &Value, name: &str, model: &str, setup: bool)
     let task = if setup { agent.clone() } else { new_id() };
     if !setup {
         let (status, admitted) = tp
-            .send("/api/tasks", Some(task_body(&task, &project, &agent, &device, &direct("Answer once"))))
+            .send(
+                "/api/tasks",
+                Some(task_body(
+                    &task,
+                    &project,
+                    &agent,
+                    &device,
+                    &direct("Answer once"),
+                )),
+            )
             .await?;
         ensure!(status == 202, "task: {status} {admitted}");
     }
@@ -45,7 +60,10 @@ async fn bound_task(tp: &Tp, home: &Value, name: &str, model: &str, setup: bool)
 
 async fn connect(host: &Arc<DeviceHost>) -> Result<Connection> {
     let connection = host.connect().await?;
-    until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+    until("home", SETTLE, || async {
+        Ok(connection.phase() == "connected")
+    })
+    .await?;
     Ok(connection)
 }
 
@@ -218,7 +236,8 @@ async fn completion_recovery(lost: Lost) -> Result<()> {
 }
 
 #[tokio::test]
-async fn canonical_completion_recovery_handles_request_without_another_provider_call() -> Result<()> {
+async fn canonical_completion_recovery_handles_request_without_another_provider_call() -> Result<()>
+{
     completion_recovery(Lost::Request).await
 }
 
@@ -228,17 +247,20 @@ async fn canonical_completion_recovery_handles_reply_without_another_provider_ca
 }
 
 #[tokio::test]
-async fn canonical_completion_recovery_handles_receipt_without_another_provider_call() -> Result<()> {
+async fn canonical_completion_recovery_handles_receipt_without_another_provider_call() -> Result<()>
+{
     completion_recovery(Lost::Receipt).await
 }
 
 #[tokio::test]
-async fn canonical_completion_recovery_handles_revoked_without_another_provider_call() -> Result<()> {
+async fn canonical_completion_recovery_handles_revoked_without_another_provider_call() -> Result<()>
+{
     completion_recovery(Lost::Revoked).await
 }
 
 #[tokio::test]
-async fn canonical_completion_recovery_handles_storage_without_another_provider_call() -> Result<()> {
+async fn canonical_completion_recovery_handles_storage_without_another_provider_call() -> Result<()>
+{
     completion_recovery(Lost::Storage).await
 }
 

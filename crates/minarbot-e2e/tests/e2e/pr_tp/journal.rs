@@ -3,11 +3,17 @@
 
 use super::{
     execution::{act_on, loop_task, Binding},
-    fixture::{agent_body, digest, direct, fresh_revisions, locked, task_body, until, workspace_snapshot, Fault, Tp, DEVICE_RECONNECT, SETTLE},
+    fixture::{
+        agent_body, digest, direct, fresh_revisions, locked, task_body, until, workspace_snapshot,
+        Fault, Tp, DEVICE_RECONNECT, SETTLE,
+    },
     routines::text,
 };
 use minarbot_testkit::{
-    device_host::{crash_task, enroll, export_recovery, is_code, provider, run_task_process, ConnectionProcess, DeviceHost, HostOptions},
+    device_host::{
+        crash_task, enroll, export_recovery, is_code, provider, run_task_process,
+        ConnectionProcess, DeviceHost, HostOptions,
+    },
     prelude::*,
 };
 use std::{
@@ -19,11 +25,17 @@ use std::{
     time::Duration,
 };
 
-async fn connected_home(tp: &Tp, name: &str) -> Result<(Arc<DeviceHost>, minarbot_testkit::device_host::Connection)> {
+async fn connected_home(
+    tp: &Tp,
+    name: &str,
+) -> Result<(Arc<DeviceHost>, minarbot_testkit::device_host::Connection)> {
     let runtime = tp.device(name)?;
     runtime.enroll(&tp.jwt("user_owner")?, "new").await?;
     let connection = runtime.connect().await?;
-    until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+    until("home", SETTLE, || async {
+        Ok(connection.phase() == "connected")
+    })
+    .await?;
     Ok((runtime, connection))
 }
 
@@ -32,20 +44,46 @@ async fn project_agent(tp: &Tp, name: &str, instructions: &str) -> Result<(Value
     let home = tp.data("/api/devices").await?[0].clone();
     let (project, agent) = (new_id(), new_id());
     tp.project(&project, name).await?;
-    ensure!(tp.send("/api/agents", Some(agent_body(&agent, "Agent", instructions, &project, &home))).await?.0 == 201, "agent");
+    ensure!(
+        tp.send(
+            "/api/agents",
+            Some(agent_body(&agent, "Agent", instructions, &project, &home))
+        )
+        .await?
+        .0 == 201,
+        "agent"
+    );
     Ok((home, project, agent))
 }
 
-async fn admit(tp: &Tp, home: &Value, project: &str, agent: &str, text_body: &str) -> Result<String> {
+async fn admit(
+    tp: &Tp,
+    home: &Value,
+    project: &str,
+    agent: &str,
+    text_body: &str,
+) -> Result<String> {
     let task = new_id();
     let (status, body) = tp
-        .send("/api/tasks", Some(task_body(&task, project, agent, &text(&home["id"]), &direct(text_body))))
+        .send(
+            "/api/tasks",
+            Some(task_body(
+                &task,
+                project,
+                agent,
+                &text(&home["id"]),
+                &direct(text_body),
+            )),
+        )
         .await?;
     ensure!(status == 202, "task: {status} {body}");
     Ok(task)
 }
 
-fn counted(calls: &Arc<AtomicUsize>, answer: &'static str) -> impl Fn(Value) -> std::future::Ready<Result<Value>> + Send + Sync + 'static {
+fn counted(
+    calls: &Arc<AtomicUsize>,
+    answer: &'static str,
+) -> impl Fn(Value) -> std::future::Ready<Result<Value>> + Send + Sync + 'static {
     let calls = calls.clone();
     move |_| {
         calls.fetch_add(1, Ordering::SeqCst);
@@ -74,37 +112,68 @@ async fn journal_backed_host_dispatches_once_retries_publication_only_and_refuse
         let (home, project, agent) = project_agent(&tp, "Executor", "Research").await?;
         let calls = Arc::new(AtomicUsize::new(0));
         let action = |lose_acquire: bool| {
-            let (tp, runtime, home, project, agent) = (&tp, runtime.clone(), home.clone(), project.clone(), agent.clone());
+            let (tp, runtime, home, project, agent) = (
+                &tp,
+                runtime.clone(),
+                home.clone(),
+                project.clone(),
+                agent.clone(),
+            );
             async move {
                 let task = admit(tp, &home, &project, &agent, "Run once").await?;
                 if lose_acquire {
                     tp.lose_next("/acquire");
-                    ensure!(runtime.start_task(&task).await.is_err(), "lost acquire accepted");
+                    ensure!(
+                        runtime.start_task(&task).await.is_err(),
+                        "lost acquire accepted"
+                    );
                     tp.fault(None);
                 }
                 let acquired = runtime.start_task(&task).await?;
-                let context = runtime.context(&task, &acquired["ownership"], &acquired["revision"]).await?;
-                Ok::<Value, minarbot_testkit::Error>(json!({"taskId": task, "actionId": new_id(), "sequence": 0,
+                let context = runtime
+                    .context(&task, &acquired["ownership"], &acquired["revision"])
+                    .await?;
+                Ok::<Value, minarbot_testkit::Error>(
+                    json!({"taskId": task, "actionId": new_id(), "sequence": 0,
                     "actionKind": "read", "ownership": acquired["ownership"],
-                    "payload": {"operation": "synthetic"}, "context": context, "grantRevision": 1}))
+                    "payload": {"operation": "synthetic"}, "context": context, "grantRevision": 1}),
+                )
             }
         };
         let first = action(true).await?;
         tp.lose_next("/reconcile");
-        ensure!(act_on(&runtime, &first, counted(&calls, "Durable result")).await.is_err(), "lost result ACK accepted");
+        ensure!(
+            act_on(&runtime, &first, counted(&calls, "Durable result"))
+                .await
+                .is_err(),
+            "lost result ACK accepted"
+        );
         ensure!(calls.load(Ordering::SeqCst) == 1, "calls after lost ACK");
         tp.fault(None);
         for attempt in 0..2 {
             ensure!(
-                act_on(&runtime, &first, counted(&calls, "Durable result")).await?["state"] == "acknowledged",
+                act_on(&runtime, &first, counted(&calls, "Durable result")).await?["state"]
+                    == "acknowledged",
                 "republish {attempt}"
             );
         }
         ensure!(calls.load(Ordering::SeqCst) == 1, "calls after republish");
         let device = minarbot_testkit::db::Inspector::open(&runtime.options.database)?;
         let action_id = text(&first["actionId"]);
-        ensure!(device.scalar::<String>("SELECT state FROM device_outbox WHERE action_id=?", [&action_id])? == "acknowledged", "outbox");
-        ensure!(device.scalar::<i64>("SELECT send_marker FROM device_journal WHERE action_id=?", [&action_id])? == 1, "send marker");
+        ensure!(
+            device.scalar::<String>(
+                "SELECT state FROM device_outbox WHERE action_id=?",
+                [&action_id]
+            )? == "acknowledged",
+            "outbox"
+        );
+        ensure!(
+            device.scalar::<i64>(
+                "SELECT send_marker FROM device_journal WHERE action_id=?",
+                [&action_id]
+            )? == 1,
+            "send marker"
+        );
         for mode in ["lost", "late"] {
             let input = action(false).await?;
             if mode == "lost" {
@@ -118,10 +187,20 @@ async fn journal_backed_host_dispatches_once_retries_publication_only_and_refuse
                     }
                 })));
             }
-            ensure!(act_on(&runtime, &input, counted(&calls, "Durable result")).await.is_err(), "{mode} commit accepted");
+            ensure!(
+                act_on(&runtime, &input, counted(&calls, "Durable result"))
+                    .await
+                    .is_err(),
+                "{mode} commit accepted"
+            );
             tp.fault(None);
             let retry = act_on(&runtime, &input, counted(&calls, "Durable result")).await;
-            ensure!(retry.as_ref().is_err_and(|error| is_code(error, "recovery_required")), "{mode} retry: {retry:?}");
+            ensure!(
+                retry
+                    .as_ref()
+                    .is_err_and(|error| is_code(error, "recovery_required")),
+                "{mode} retry: {retry:?}"
+            );
             ensure!(calls.load(Ordering::SeqCst) == 1, "{mode} calls");
         }
         let failed = action(false).await?;
@@ -132,12 +211,20 @@ async fn journal_backed_host_dispatches_once_retries_publication_only_and_refuse
         })
         .await;
         ensure!(
-            unavailable.as_ref().is_err_and(|error| error.to_string().contains("Provider response unavailable")),
+            unavailable
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("Provider response unavailable")),
             "unavailable: {unavailable:?}"
         );
         let (task, failed_action) = (text(&failed["taskId"]), text(&failed["actionId"]));
         ensure!(
-            runtime.call("recover-action", json!({"taskId": task, "actionId": failed_action})).await?["state"] == "uncertain",
+            runtime
+                .call(
+                    "recover-action",
+                    json!({"taskId": task, "actionId": failed_action})
+                )
+                .await?["state"]
+                == "uncertain",
             "recover action"
         );
         let detail = tp.task_detail(&task).await?;
@@ -145,21 +232,29 @@ async fn journal_backed_host_dispatches_once_retries_publication_only_and_refuse
         let (status, _) = tp
             .send(
                 &format!("/api/tasks/{task}/control"),
-                Some(json!({"requestId": decision, "expectedRevision": detail["revision"],
+                Some(
+                    json!({"requestId": decision, "expectedRevision": detail["revision"],
                     "operation": "resolve_uncertain", "decision": {"kind": "retry_with_risk",
                         "actionId": failed_action, "acknowledgement": "effect_may_have_happened",
-                        "reason": "Synthetic test with explicit owner decision"}})),
+                        "reason": "Synthetic test with explicit owner decision"}}),
+                ),
             )
             .await?;
         ensure!(status == 200, "decision: {status}");
         let resolved = tp.task_detail(&task).await?;
-        let context = runtime.context(&task, &failed["ownership"], &resolved["revision"]).await?;
+        let context = runtime
+            .context(&task, &failed["ownership"], &resolved["revision"])
+            .await?;
         let mut retry = failed.clone();
         retry["actionId"] = json!(decision);
         retry["sequence"] = json!(1);
         retry["resolutionRequestId"] = json!(decision);
         retry["context"] = context;
-        ensure!(act_on(&runtime, &retry, counted(&calls, "Durable result")).await?["state"] == "acknowledged", "retry");
+        ensure!(
+            act_on(&runtime, &retry, counted(&calls, "Durable result")).await?["state"]
+                == "acknowledged",
+            "retry"
+        );
         ensure!(calls.load(Ordering::SeqCst) == 3, "calls after retry");
         Ok(())
     }
@@ -253,8 +348,10 @@ async fn sigkill_recovery_proves_no_send_before_marker_and_never_repeats_marked_
 }
 
 #[tokio::test]
-async fn rust_exports_prepared_in_flight_and_reported_device_journal_evidence_offline() -> Result<()> {
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../minarbot-testkit/fixtures/device-journal-v3");
+async fn rust_exports_prepared_in_flight_and_reported_device_journal_evidence_offline() -> Result<()>
+{
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../minarbot-testkit/fixtures/device-journal-v3");
     let synthetic: Value = serde_json::from_slice(&std::fs::read(source.join("synthetic.json"))?)?;
     let root = TestRoot::new()?;
     let database = root.path().join("home.sqlite");
@@ -268,20 +365,36 @@ async fn rust_exports_prepared_in_flight_and_reported_device_journal_evidence_of
     let metadata = root.path().join("home.sqlite.host");
     std::fs::create_dir(&metadata)?;
     std::fs::set_permissions(&metadata, std::fs::Permissions::from_mode(0o700))?;
-    std::fs::write(metadata.join("identity.json"), synthetic["identity"].to_string())?;
-    std::fs::set_permissions(metadata.join("identity.json"), std::fs::Permissions::from_mode(0o600))?;
-    let mut options = HostOptions::new(&database, synthetic["identity"]["server"].as_str().unwrap_or_default())?;
+    std::fs::write(
+        metadata.join("identity.json"),
+        synthetic["identity"].to_string(),
+    )?;
+    std::fs::set_permissions(
+        metadata.join("identity.json"),
+        std::fs::Permissions::from_mode(0o600),
+    )?;
+    let mut options = HostOptions::new(
+        &database,
+        synthetic["identity"]["server"].as_str().unwrap_or_default(),
+    )?;
     options.keyring = root.path().join("keys.json");
     std::fs::write(&options.keyring, synthetic["keyring"].to_string())?;
     std::fs::set_permissions(&options.keyring, std::fs::Permissions::from_mode(0o600))?;
     let generation = new_id();
     for sample in synthetic["samples"].as_array().into_iter().flatten() {
-        let (task, action, state) = (text(&sample["taskId"]), text(&sample["actionId"]), text(&sample["recoveryState"]));
+        let (task, action, state) = (
+            text(&sample["taskId"]),
+            text(&sample["actionId"]),
+            text(&sample["recoveryState"]),
+        );
         let with_content = state == "reported";
         let input = json!({"taskId": task, "actionIds": [action], "requestId": new_id(),
             "recoveryGeneration": generation, "withContent": with_content});
         let evidence = export_recovery(&options, &input).await?;
-        let entries = evidence["envelope"]["entries"].as_array().cloned().unwrap_or_default();
+        let entries = evidence["envelope"]["entries"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         ensure!(entries.len() == 1, "{state} entries");
         let entry = &entries[0];
         ensure!(entry["actionId"] == action.as_str(), "{state} action");
@@ -294,10 +407,14 @@ async fn rust_exports_prepared_in_flight_and_reported_device_journal_evidence_of
         };
         ensure!(entry["effectStatus"] == effect, "{state} effect");
         ensure!(
-            evidence.get("resultContent").cloned() == with_content.then(|| json!({"text": "Saved effect"})),
+            evidence.get("resultContent").cloned()
+                == with_content.then(|| json!({"text": "Saved effect"})),
             "{state} content: {evidence}"
         );
-        ensure!(export_recovery(&options, &input).await? == evidence, "{state} export stable");
+        ensure!(
+            export_recovery(&options, &input).await? == evidence,
+            "{state} export stable"
+        );
     }
     Ok(())
 }
@@ -477,7 +594,10 @@ async fn recovery_send(
         .app
         .server
         .client()?
-        .post(format!("{}/api/tasks/{task}/recovery-{operation}", tp.origin()))
+        .post(format!(
+            "{}/api/tasks/{task}/recovery-{operation}",
+            tp.origin()
+        ))
         .header("Authorization", format!("Bearer {}", tp.jwt(subject)?))
         .header("Origin", origin)
         .header("Content-Type", "application/json")
@@ -498,9 +618,18 @@ fn export_input(task: &str, action: &str, generation: &Value, with_content: bool
 }
 
 /// One `read` action whose result report never reaches the server.
-async fn unreported_read(tp: &Tp, runtime: &DeviceHost, task: &str, operation: &str, answer: &'static str, calls: &Arc<AtomicUsize>) -> Result<(Value, String)> {
+async fn unreported_read(
+    tp: &Tp,
+    runtime: &DeviceHost,
+    task: &str,
+    operation: &str,
+    answer: &'static str,
+    calls: &Arc<AtomicUsize>,
+) -> Result<(Value, String)> {
     let owned = runtime.start_task(task).await?;
-    let context = runtime.context(task, &owned["ownership"], &owned["revision"]).await?;
+    let context = runtime
+        .context(task, &owned["ownership"], &owned["revision"])
+        .await?;
     let action = new_id();
     drop_requests(tp, "/reconcile");
     let reported = act_on(
@@ -616,43 +745,152 @@ async fn disaster_recovery_imports_original_host_result_without_original_server_
         let (home, project, agent) = project_agent(&tp, "Disaster recovery", "Recover").await?;
         let task = admit(&tp, &home, &project, &agent, "Original action").await?;
         let calls = Arc::new(AtomicUsize::new(0));
-        let (owned, action) = unreported_read(&tp, &runtime, &task, "one call", "Saved on original host", &calls).await?;
+        let (owned, action) = unreported_read(
+            &tp,
+            &runtime,
+            &task,
+            "one call",
+            "Saved on original host",
+            &calls,
+        )
+        .await?;
         connection.stop().await?;
         let offline = runtime.start_task(&task).await;
-        ensure!(offline.as_ref().is_err_and(|error| is_code(error, "device_offline")), "offline start: {offline:?}");
+        ensure!(
+            offline
+                .as_ref()
+                .is_err_and(|error| is_code(error, "device_offline")),
+            "offline start: {offline:?}"
+        );
         runtime.close().await?;
         tp.fault(None);
         let backup = workspace_snapshot(&tp, None)?;
         let proof = tp.restore_from(&backup).await?;
-        ensure!(proof["recoveryGeneration"] != owned["ownership"]["authorityGeneration"], "recovery generation");
+        ensure!(
+            proof["recoveryGeneration"] != owned["ownership"]["authorityGeneration"],
+            "recovery generation"
+        );
         let generation = proof["recoveryGeneration"].clone();
         let session = text(&proof["session"]);
         let origin = tp.origin();
         let bogus = "A".repeat(43);
-        let metadata = export_recovery(&options, &export_input(&task, &action, &generation, false)).await?;
-        ensure!(recovery_send(&tp, &task, "import", &metadata, &bogus, &origin, "user_owner").await?.0 == 403, "bogus session");
-        ensure!(recovery_send(&tp, &task, "import", &metadata, &session, &origin, "user_other").await?.0 == 403, "other user");
-        let (status, imported) = recovery_send(&tp, &task, "import", &metadata, &session, &origin, "user_owner").await?;
-        ensure!(status == 200, "import: {status} {imported}");
-        ensure!(imported["data"]["state"] == "result_missing", "import state");
-        tp.restart().await?;
-        let content = export_recovery(&options, &export_input(&task, &action, &generation, true)).await?;
-        let (status, published) = recovery_send(&tp, &task, "results", &content, &session, &origin, "user_owner").await?;
-        ensure!(status == 200, "results: {status} {published}");
-        ensure!(recovery_send(&tp, &task, "results", &content, &session, &origin, "user_owner").await?.0 == 200, "results replay");
-        ensure!(tp.send(&format!("/api/tasks/{task}"), None).await?.0 == 503, "read-only task read");
-        let restored = tp.write()?;
-        ensure!(restored.scalar::<String>("SELECT serving_state FROM authority_state", [])? == "read_only_recovery", "serving state");
+        let metadata =
+            export_recovery(&options, &export_input(&task, &action, &generation, false)).await?;
         ensure!(
-            serde_json::from_str::<Value>(&restored.scalar::<String>("SELECT content_json FROM task_results WHERE action=?", [&action])?)?
-                == json!({"text": "Saved on original host"}),
+            recovery_send(
+                &tp,
+                &task,
+                "import",
+                &metadata,
+                &bogus,
+                &origin,
+                "user_owner"
+            )
+            .await?
+            .0 == 403,
+            "bogus session"
+        );
+        ensure!(
+            recovery_send(
+                &tp,
+                &task,
+                "import",
+                &metadata,
+                &session,
+                &origin,
+                "user_other"
+            )
+            .await?
+            .0 == 403,
+            "other user"
+        );
+        let (status, imported) = recovery_send(
+            &tp,
+            &task,
+            "import",
+            &metadata,
+            &session,
+            &origin,
+            "user_owner",
+        )
+        .await?;
+        ensure!(status == 200, "import: {status} {imported}");
+        ensure!(
+            imported["data"]["state"] == "result_missing",
+            "import state"
+        );
+        tp.restart().await?;
+        let content =
+            export_recovery(&options, &export_input(&task, &action, &generation, true)).await?;
+        let (status, published) = recovery_send(
+            &tp,
+            &task,
+            "results",
+            &content,
+            &session,
+            &origin,
+            "user_owner",
+        )
+        .await?;
+        ensure!(status == 200, "results: {status} {published}");
+        ensure!(
+            recovery_send(
+                &tp,
+                &task,
+                "results",
+                &content,
+                &session,
+                &origin,
+                "user_owner"
+            )
+            .await?
+            .0 == 200,
+            "results replay"
+        );
+        ensure!(
+            tp.send(&format!("/api/tasks/{task}"), None).await?.0 == 503,
+            "read-only task read"
+        );
+        let restored = tp.write()?;
+        ensure!(
+            restored.scalar::<String>("SELECT serving_state FROM authority_state", [])?
+                == "read_only_recovery",
+            "serving state"
+        );
+        ensure!(
+            serde_json::from_str::<Value>(&restored.scalar::<String>(
+                "SELECT content_json FROM task_results WHERE action=?",
+                [&action]
+            )?)? == json!({"text": "Saved on original host"}),
             "imported result"
         );
-        ensure!(restored.scalar::<i64>("SELECT count(*) FROM task_results", [])? == 1, "task results");
-        ensure!(restored.scalar::<i64>("SELECT stopped FROM execution_owners", [])? == 1, "owner stopped");
-        ensure!(restored.scalar::<String>("SELECT status FROM devices", [])? == "revoked", "device revoked");
+        ensure!(
+            restored.scalar::<i64>("SELECT count(*) FROM task_results", [])? == 1,
+            "task results"
+        );
+        ensure!(
+            restored.scalar::<i64>("SELECT stopped FROM execution_owners", [])? == 1,
+            "owner stopped"
+        );
+        ensure!(
+            restored.scalar::<String>("SELECT status FROM devices", [])? == "revoked",
+            "device revoked"
+        );
         restored.execute_batch("UPDATE authority_state SET recovery_expires_at=0")?;
-        ensure!(recovery_send(&tp, &task, "results", &content, &session, &origin, "user_owner").await?.0 == 403, "expired session");
+        ensure!(
+            recovery_send(
+                &tp,
+                &task,
+                "results",
+                &content,
+                &session,
+                &origin,
+                "user_owner"
+            )
+            .await?
+            .0 == 403,
+            "expired session"
+        );
         ensure!(calls.load(Ordering::SeqCst) == 1, "calls");
         Ok(())
     }
@@ -676,28 +914,105 @@ async fn disaster_recovery_quarantines_signed_post_backup_actions_and_tasks_with
         let calls = Arc::new(AtomicUsize::new(0));
         let mut actions = Vec::new();
         for task in [&known, &unknown] {
-            let (_, action) = unreported_read(&tp, &runtime, task, "one call", "Keep result on original host", &calls).await?;
+            let (_, action) = unreported_read(
+                &tp,
+                &runtime,
+                task,
+                "one call",
+                "Keep result on original host",
+                &calls,
+            )
+            .await?;
             actions.push((task.clone(), action));
         }
         connection.stop().await?;
         runtime.close().await?;
         tp.fault(None);
         let proof = tp.restore_from(&backup).await?;
-        let (generation, session, origin) = (proof["recoveryGeneration"].clone(), text(&proof["session"]), tp.origin());
+        let (generation, session, origin) = (
+            proof["recoveryGeneration"].clone(),
+            text(&proof["session"]),
+            tp.origin(),
+        );
         for (task, action) in &actions {
-            let metadata = export_recovery(&options, &export_input(task, action, &generation, false)).await?;
-            ensure!(recovery_send(&tp, task, "import", &metadata, &"A".repeat(43), &origin, "user_owner").await?.0 == 403, "bogus session");
-            ensure!(recovery_send(&tp, task, "import", &metadata, &session, &origin, "user_other").await?.0 == 403, "other user");
+            let metadata =
+                export_recovery(&options, &export_input(task, action, &generation, false)).await?;
+            ensure!(
+                recovery_send(
+                    &tp,
+                    task,
+                    "import",
+                    &metadata,
+                    &"A".repeat(43),
+                    &origin,
+                    "user_owner"
+                )
+                .await?
+                .0 == 403,
+                "bogus session"
+            );
+            ensure!(
+                recovery_send(
+                    &tp,
+                    task,
+                    "import",
+                    &metadata,
+                    &session,
+                    &origin,
+                    "user_other"
+                )
+                .await?
+                .0 == 403,
+                "other user"
+            );
             let mut altered = metadata.clone();
             altered["signature"] = json!("A".repeat(86));
-            ensure!(recovery_send(&tp, task, "import", &altered, &session, &origin, "user_owner").await?.0 == 403, "altered signature");
-            let (status, imported) = recovery_send(&tp, task, "import", &metadata, &session, &origin, "user_owner").await?;
+            ensure!(
+                recovery_send(
+                    &tp,
+                    task,
+                    "import",
+                    &altered,
+                    &session,
+                    &origin,
+                    "user_owner"
+                )
+                .await?
+                .0 == 403,
+                "altered signature"
+            );
+            let (status, imported) = recovery_send(
+                &tp,
+                task,
+                "import",
+                &metadata,
+                &session,
+                &origin,
+                "user_owner",
+            )
+            .await?;
             ensure!(status == 200, "import: {status} {imported}");
-            ensure!(imported["data"]["quarantinedActionIds"] == json!([action]), "quarantined");
-            ensure!(imported["data"]["importedActionIds"] == json!([]), "imported");
+            ensure!(
+                imported["data"]["quarantinedActionIds"] == json!([action]),
+                "quarantined"
+            );
+            ensure!(
+                imported["data"]["importedActionIds"] == json!([]),
+                "imported"
+            );
             ensure!(imported["data"]["dispatchable"] == false, "dispatchable");
             ensure!(
-                recovery_send(&tp, task, "import", &metadata, &session, &origin, "user_owner").await?.1["receipt"]["requestId"]
+                recovery_send(
+                    &tp,
+                    task,
+                    "import",
+                    &metadata,
+                    &session,
+                    &origin,
+                    "user_owner"
+                )
+                .await?
+                .1["receipt"]["requestId"]
                     == imported["receipt"]["requestId"],
                 "import replay"
             );
@@ -708,15 +1023,27 @@ async fn disaster_recovery_quarantines_signed_post_backup_actions_and_tasks_with
         ensure!(restored.count("task_actions")? == 0, "actions");
         ensure!(restored.count("task_results")? == 0, "results");
         ensure!(restored.count("recovery_imports")? == 2, "imports");
-        let private = restored.row("SELECT project,result_json FROM receipts WHERE scope=?", [format!("tasks:recovery-import:{unknown}")])?;
+        let private = restored.row(
+            "SELECT project,result_json FROM receipts WHERE scope=?",
+            [format!("tasks:recovery-import:{unknown}")],
+        )?;
         ensure!(private["project"].is_null(), "private receipt project");
         ensure!(
-            serde_json::from_str::<Value>(&text(&private["result_json"]))?["receipt"].get("projectId").is_none(),
+            serde_json::from_str::<Value>(&text(&private["result_json"]))?["receipt"]
+                .get("projectId")
+                .is_none(),
             "private receipt projectId"
         );
-        ensure!(restored.scalar::<String>("SELECT serving_state FROM authority_state", [])? == "read_only_recovery", "serving state");
+        ensure!(
+            restored.scalar::<String>("SELECT serving_state FROM authority_state", [])?
+                == "read_only_recovery",
+            "serving state"
+        );
         ensure!(calls.load(Ordering::SeqCst) == 2, "calls");
-        ensure!(tp.send(&format!("/api/tasks/{unknown}"), None).await?.0 == 404, "unknown task");
+        ensure!(
+            tp.send(&format!("/api/tasks/{unknown}"), None).await?.0 == 404,
+            "unknown task"
+        );
         Ok(())
     }
     .await;

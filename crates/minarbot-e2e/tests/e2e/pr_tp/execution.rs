@@ -2,11 +2,17 @@
 //! completion recovery through signed canonical HTTP.
 
 use super::{
-    fixture::{digest, direct, fresh_revisions, locked, task_body, until, Fault, Tp, DEVICE_RECONNECT, SETTLE},
+    fixture::{
+        digest, direct, fresh_revisions, locked, task_body, until, Fault, Tp, DEVICE_RECONNECT,
+        SETTLE,
+    },
     routines::{raw_as, text},
 };
 use minarbot_testkit::{
-    device_host::{crash_task, enroll, export_recovery, is_code, provider, run_task_process, DeviceHost, HostOptions},
+    device_host::{
+        crash_task, enroll, export_recovery, is_code, provider, run_task_process, DeviceHost,
+        HostOptions,
+    },
     http::Method,
     prelude::*,
     protocol::{canonical_json, sha256_hex},
@@ -48,7 +54,8 @@ pub async fn loop_task(tp: &Tp, device: &str, setup: bool, binding: Binding) -> 
         Binding::New => {
             let binding = new_id();
             let seed = tp.write()?;
-            let account: String = seed.scalar("SELECT account FROM devices WHERE id=?", [device])?;
+            let account: String =
+                seed.scalar("SELECT account FROM devices WHERE id=?", [device])?;
             seed.execute(
                 "INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible',?,'Synthetic','ready',1)",
                 [binding.as_str(), device, &account, &binding],
@@ -82,14 +89,24 @@ pub async fn loop_task(tp: &Tp, device: &str, setup: bool, binding: Binding) -> 
             .await?;
         ensure!(status == 202, "loop task: {status} {admitted}");
     }
-    Ok(LoopTask { task, agent, project, binding })
+    Ok(LoopTask {
+        task,
+        agent,
+        project,
+        binding,
+    })
 }
 
 type Provided = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>;
 
 /// Wrap a provider so a provider failure fails the run with its own error,
 /// as `withDeviceProvider` rethrew the provider's exception.
-fn guard<F, Fut>(provide: F) -> (impl Fn(Value) -> Provided + Send + Sync + 'static, Arc<Mutex<Option<String>>>)
+fn guard<F, Fut>(
+    provide: F,
+) -> (
+    impl Fn(Value) -> Provided + Send + Sync + 'static,
+    Arc<Mutex<Option<String>>>,
+)
 where
     F: Fn(Value) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = Result<Value>> + Send + 'static,
@@ -179,7 +196,12 @@ impl RustTask {
 }
 
 fn contents(detail: &Value) -> Vec<Value> {
-    detail["results"].as_array().into_iter().flatten().map(|row| row["content"].clone()).collect()
+    detail["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|row| row["content"].clone())
+        .collect()
 }
 
 fn failed(label: &str) -> Result<Value> {
@@ -187,20 +209,32 @@ fn failed(label: &str) -> Result<Value> {
 }
 
 #[tokio::test]
-async fn home_execution_loop_publishes_one_provider_answer_through_signed_canonical_http() -> Result<()> {
+async fn home_execution_loop_publishes_one_provider_answer_through_signed_canonical_http(
+) -> Result<()> {
     let tp = Tp::start().await?;
     let result = async {
         let runtime = RustTask::start(&tp, "loop.sqlite", &tp.origin()).await?;
-        let task = loop_task(&tp, &runtime.device, false, Binding::New).await?.task;
+        let task = loop_task(&tp, &runtime.device, false, Binding::New)
+            .await?
+            .task;
         let calls = Arc::new(AtomicUsize::new(0));
         let provide = |calls: Arc<AtomicUsize>| {
             move |context: Value| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 let digest = sha256_hex(canonical_json(&context["snapshot"]));
-                let forbidden = context["snapshot"]["tools"].as_array().into_iter().flatten().any(|tool| {
-                    ["read_attachment", "create_text_file", "publish_site", "delegate_task"]
+                let forbidden = context["snapshot"]["tools"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|tool| {
+                        [
+                            "read_attachment",
+                            "create_text_file",
+                            "publish_site",
+                            "delegate_task",
+                        ]
                         .contains(&tool["function"]["name"].as_str().unwrap_or_default())
-                });
+                    });
                 async move {
                     if context["snapshotRef"]["digest"] != digest.as_str() {
                         return failed("snapshot digest");
@@ -212,11 +246,20 @@ async fn home_execution_loop_publishes_one_provider_answer_through_signed_canoni
                 }
             }
         };
-        ensure!(runtime.run_task(&task, provide(calls.clone())).await?["state"] == "completed", "first run");
-        ensure!(runtime.run_task(&task, provide(calls.clone())).await?["state"] == "completed", "second run");
+        ensure!(
+            runtime.run_task(&task, provide(calls.clone())).await?["state"] == "completed",
+            "first run"
+        );
+        ensure!(
+            runtime.run_task(&task, provide(calls.clone())).await?["state"] == "completed",
+            "second run"
+        );
         let detail = tp.task_detail(&task).await?;
         ensure!(detail["state"] == "completed", "state");
-        ensure!(contents(&detail) == vec![json!({"text": "Canonical loop answer"})], "results: {detail}");
+        ensure!(
+            contents(&detail) == vec![json!({"text": "Canonical loop answer"})],
+            "results: {detail}"
+        );
         ensure!(calls.load(Ordering::SeqCst) == 1, "provider calls");
         Ok(())
     }
@@ -342,7 +385,10 @@ async fn home_execution_loop_rejects_malformed_or_unadvertised_provider_outputs_
 
 fn journal_intent(tp: &Tp, name: &str, task: &str) -> Result<Value> {
     let db = minarbot_testkit::db::Inspector::open(tp.dir().join(name))?;
-    let intent: String = db.scalar("SELECT intent_json FROM device_journal WHERE task_id=?", [task])?;
+    let intent: String = db.scalar(
+        "SELECT intent_json FROM device_journal WHERE task_id=?",
+        [task],
+    )?;
     Ok(serde_json::from_str(&intent)?)
 }
 
@@ -353,7 +399,9 @@ async fn home_execution_loop_resumes_saved_provider_output_after_completion_repl
     let result = async {
         let name = "loop-restart.sqlite";
         let runtime = RustTask::start(&tp, name, &tp.origin()).await?;
-        let task = loop_task(&tp, &runtime.device, false, Binding::New).await?.task;
+        let task = loop_task(&tp, &runtime.device, false, Binding::New)
+            .await?
+            .task;
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
         runtime
@@ -367,9 +415,18 @@ async fn home_execution_loop_resumes_saved_provider_output_after_completion_repl
             )
             .await?;
         let intent = journal_intent(&tp, name, &task)?;
-        ensure!(intent["completeRequestId"].is_string(), "complete request id: {intent}");
-        ensure!(intent.get("completionReceipt").is_none(), "receipt before reply");
-        ensure!(tp.task_detail(&task).await?["state"] == "completed", "server completed");
+        ensure!(
+            intent["completeRequestId"].is_string(),
+            "complete request id: {intent}"
+        );
+        ensure!(
+            intent.get("completionReceipt").is_none(),
+            "receipt before reply"
+        );
+        ensure!(
+            tp.task_detail(&task).await?["state"] == "completed",
+            "server completed"
+        );
         let counter = calls.clone();
         let rerun = runtime
             .run_task(&task, move |_| {
@@ -384,7 +441,10 @@ async fn home_execution_loop_resumes_saved_provider_output_after_completion_repl
             "results"
         );
         let intent = journal_intent(&tp, name, &task)?;
-        ensure!(intent["completionReceipt"]["requestId"] == intent["completeRequestId"], "receipt: {intent}");
+        ensure!(
+            intent["completionReceipt"]["requestId"] == intent["completeRequestId"],
+            "receipt: {intent}"
+        );
         Ok(())
     }
     .await;
@@ -665,7 +725,8 @@ fn owned_post(tp: &Tp, path: &str) -> Result<impl Fn(Value) -> Provided + Send +
     let client = tp.app.server.client()?;
     let (origin, token, path) = (tp.origin(), tp.jwt("user_owner")?, path.to_owned());
     Ok(move |body: Value| -> Provided {
-        let (client, origin, token, path) = (client.clone(), origin.clone(), token.clone(), path.clone());
+        let (client, origin, token, path) =
+            (client.clone(), origin.clone(), token.clone(), path.clone());
         Box::pin(async move {
             let request = text(&body["requestId"]);
             let response = client
@@ -679,7 +740,9 @@ fn owned_post(tp: &Tp, path: &str) -> Result<impl Fn(Value) -> Provided + Send +
                 .send()
                 .await?;
             let status = response.status().as_u16();
-            Ok(json!({"status": status, "body": response.json::<Value>().await.unwrap_or(Value::Null)}))
+            Ok(
+                json!({"status": status, "body": response.json::<Value>().await.unwrap_or(Value::Null)}),
+            )
         })
     })
 }
@@ -746,7 +809,10 @@ async fn home_execution_loop_holds_missing_bindings_and_enforces_provider_slots_
         let runtime = tp.device("capacity-loop.sqlite")?;
         runtime.enroll(&tp.jwt("user_owner")?, "new").await?;
         let connection = runtime.connect().await?;
-        until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+        until("home", SETTLE, || async {
+            Ok(connection.phase() == "connected")
+        })
+        .await?;
         let device = runtime.device_id()?;
         let hold = {
             let releases = releases.clone();
@@ -764,16 +830,27 @@ async fn home_execution_loop_holds_missing_bindings_and_enforces_provider_slots_
         };
         let held = |count: usize| {
             let releases = releases.clone();
-            async move { until("held provider calls", SETTLE, || async { Ok(locked(&releases).len() == count) }).await }
+            async move {
+                until("held provider calls", SETTLE, || async {
+                    Ok(locked(&releases).len() == count)
+                })
+                .await
+            }
         };
         let mut running = Vec::new();
         let missing = loop_task(&tp, &device, false, Binding::None).await?;
         ensure!(
-            run_on(&runtime, &missing.task, |_| async { failed("Missing binding must not dispatch") }).await?["state"]
+            run_on(&runtime, &missing.task, |_| async {
+                failed("Missing binding must not dispatch")
+            })
+            .await?["state"]
                 == "waiting_resource",
             "missing binding"
         );
-        ensure!(tp.task_detail(&missing.task).await?["state"] == "waiting_resource", "missing state");
+        ensure!(
+            tp.task_detail(&missing.task).await?["state"] == "waiting_resource",
+            "missing state"
+        );
         let first = loop_task(&tp, &device, false, Binding::New).await?;
         let spawn = |task: String| {
             let (runtime, provide) = (runtime.clone(), hold());
@@ -782,14 +859,31 @@ async fn home_execution_loop_holds_missing_bindings_and_enforces_provider_slots_
         running.push(spawn(first.task.clone()));
         held(1).await?;
         let busy = run_on(&runtime, &first.task, hold()).await;
-        ensure!(busy.as_ref().is_err_and(|error| is_code(error, "executor_busy")), "busy: {busy:?}");
+        ensure!(
+            busy.as_ref()
+                .is_err_and(|error| is_code(error, "executor_busy")),
+            "busy: {busy:?}"
+        );
         let same = new_id();
         let (status, _) = tp
-            .send("/api/tasks", Some(task_body(&same, &first.project, &first.agent, &device, &direct("Same agent/project"))))
+            .send(
+                "/api/tasks",
+                Some(task_body(
+                    &same,
+                    &first.project,
+                    &first.agent,
+                    &device,
+                    &direct("Same agent/project"),
+                )),
+            )
             .await?;
         ensure!(status == 202, "same task: {status}");
         ensure!(
-            run_on(&runtime, &same, |_| async { failed("Same agent/project must wait") }).await?["state"] == "waiting_capacity",
+            run_on(&runtime, &same, |_| async {
+                failed("Same agent/project must wait")
+            })
+            .await?["state"]
+                == "waiting_capacity",
             "same agent waits"
         );
         let binding = first.binding.clone().ok_or("first binding")?;
@@ -798,7 +892,11 @@ async fn home_execution_loop_holds_missing_bindings_and_enforces_provider_slots_
         held(2).await?;
         let third = loop_task(&tp, &device, false, Binding::Existing(binding)).await?;
         ensure!(
-            run_on(&runtime, &third.task, |_| async { failed("Third binding call must wait") }).await?["state"] == "waiting_capacity",
+            run_on(&runtime, &third.task, |_| async {
+                failed("Third binding call must wait")
+            })
+            .await?["state"]
+                == "waiting_capacity",
             "third binding call waits"
         );
         for count in 2..4 {
@@ -808,7 +906,11 @@ async fn home_execution_loop_holds_missing_bindings_and_enforces_provider_slots_
         }
         let fifth = loop_task(&tp, &device, false, Binding::New).await?;
         ensure!(
-            run_on(&runtime, &fifth.task, |_| async { failed("Fifth host call must wait") }).await?["state"] == "waiting_capacity",
+            run_on(&runtime, &fifth.task, |_| async {
+                failed("Fifth host call must wait")
+            })
+            .await?["state"]
+                == "waiting_capacity",
             "fifth host call waits"
         );
         // Refill the real 40-proof/2s device budget before releasing four held calls.
@@ -820,7 +922,11 @@ async fn home_execution_loop_holds_missing_bindings_and_enforces_provider_slots_
             run.await??;
         }
         ensure!(
-            run_on(&runtime, &same, |_| async { Ok(json!({"text": "Later same-agent answer"})) }).await?["state"] == "completed",
+            run_on(&runtime, &same, |_| async {
+                Ok(json!({"text": "Later same-agent answer"}))
+            })
+            .await?["state"]
+                == "completed",
             "same agent later"
         );
         connection.stop().await?;

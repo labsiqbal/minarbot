@@ -2,7 +2,10 @@
 
 use super::{
     execution::{loop_task, Binding},
-    fixture::{account, agent_body, digest, direct, encode, fresh_revisions, until, Tp, DEVICE_RECONNECT, SETTLE},
+    fixture::{
+        account, agent_body, digest, direct, encode, fresh_revisions, until, Tp, DEVICE_RECONNECT,
+        SETTLE,
+    },
     routines::text,
     workflow_waits::{signed_event, workflow_wait, WorkflowHome},
     workflows::{create, wait_run},
@@ -18,7 +21,10 @@ fn delta(project: &str, cursor: &Value) -> String {
 }
 
 fn page(data: &Value) -> Vec<Value> {
-    data["page"]["events"].as_array().cloned().unwrap_or_default()
+    data["page"]["events"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn approval_graph(prompt: &str) -> Value {
@@ -34,26 +40,41 @@ async fn canonical_workflow_inbox_pages_twenty_outputs_without_duplicate_complet
     let result = async {
         let inbox = format!("/api/projects/{}/workflow-notifications", w.project);
         let collaborator = account(&w.tp, "user_collaborator").await?;
-        w.tp.write()?
-            .execute("INSERT INTO project_members VALUES (?,?,'member',1,0)", [&w.project, &collaborator])?;
+        w.tp.write()?.execute(
+            "INSERT INTO project_members VALUES (?,?,'member',1,0)",
+            [&w.project, &collaborator],
+        )?;
         create(&w, "Paged inbox", &w.graph).await?;
         let run_path = format!("{}/run", w.detail);
         let mut runs = Vec::new();
         for n in 0..21 {
             let run = new_id();
-            let command = json!({"requestId": run, "id": run, "revision": 1, "input": n.to_string()});
+            let command =
+                json!({"requestId": run, "id": run, "revision": 1, "input": n.to_string()});
             runs.push(run);
             let (status, accepted) = w.tp.send(&run_path, Some(command.clone())).await?;
             ensure!(status == 201, "run {n}: {status}");
-            ensure!(w.tp.send(&run_path, Some(command)).await?.1["receipt"] == accepted["receipt"], "replay {n}");
+            ensure!(
+                w.tp.send(&run_path, Some(command)).await?.1["receipt"] == accepted["receipt"],
+                "replay {n}"
+            );
         }
-        until("21 unread", SETTLE, || async { Ok(w.tp.data(&inbox).await?["unread"] == 21) }).await?;
+        until("21 unread", SETTLE, || async {
+            Ok(w.tp.data(&inbox).await?["unread"] == 21)
+        })
+        .await?;
         let first = w.tp.data(&inbox).await?;
-        ensure!(first["items"].as_array().map(Vec::len) == Some(20), "first page");
+        ensure!(
+            first["items"].as_array().map(Vec::len) == Some(20),
+            "first page"
+        );
         ensure!(!first["nextCursor"].is_null(), "first cursor");
         let second_path = format!("{inbox}?before={}", text(&first["nextCursor"]));
         let second = w.tp.data(&second_path).await?;
-        ensure!(second["items"].as_array().map(Vec::len) == Some(1), "second page");
+        ensure!(
+            second["items"].as_array().map(Vec::len) == Some(1),
+            "second page"
+        );
         ensure!(second["nextCursor"].is_null(), "second cursor");
         ensure!(second["unread"] == 21, "second unread");
         let mut listed: Vec<String> = page_items(&first).chain(page_items(&second)).collect();
@@ -65,40 +86,78 @@ async fn canonical_workflow_inbox_pages_twenty_outputs_without_duplicate_complet
             let tp = &w.tp;
             async move { tp.send_as(&path, None, "user_collaborator", None).await }
         };
-        ensure!(as_member(inbox.clone()).await?.1["data"]["items"] == json!([]), "unassigned member inbox");
+        ensure!(
+            as_member(inbox.clone()).await?.1["data"]["items"] == json!([]),
+            "unassigned member inbox"
+        );
         w.tp.write()?.execute(
             "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
             [&w.project, &collaborator, &w.agent],
         )?;
         ensure!(
-            as_member(format!("/api/projects/{}/workflow-runs/{}", w.project, runs[0])).await?.0 == 200,
+            as_member(format!(
+                "/api/projects/{}/workflow-runs/{}",
+                w.project, runs[0]
+            ))
+            .await?
+            .0 == 200,
             "assigned member run"
         );
-        ensure!(as_member(inbox.clone()).await?.1["data"]["items"] == json!([]), "no recipient backfill");
+        ensure!(
+            as_member(inbox.clone()).await?.1["data"]["items"] == json!([]),
+            "no recipient backfill"
+        );
         w.tp.restart().await?;
-        ensure!(w.tp.data(&inbox).await?["unread"] == 21, "unread after restart");
-        ensure!(w.tp.data(&second_path).await? == second, "second page after restart");
+        ensure!(
+            w.tp.data(&inbox).await?["unread"] == 21,
+            "unread after restart"
+        );
+        ensure!(
+            w.tp.data(&second_path).await? == second,
+            "second page after restart"
+        );
         let last = new_id();
         ensure!(
-            w.tp.send(&run_path, Some(json!({"requestId": last, "id": last, "revision": 1,
-                "input": "Newly assigned reader"})))
-                .await?
-                .0
-                == 201,
+            w.tp.send(
+                &run_path,
+                Some(json!({"requestId": last, "id": last, "revision": 1,
+                "input": "Newly assigned reader"}))
+            )
+            .await?
+            .0 == 201,
             "last run"
         );
         until("member unread", SETTLE, || async {
-            Ok(w.tp.send_as(&inbox, None, "user_collaborator", None).await?.1["data"]["unread"] == 1)
+            Ok(w.tp
+                .send_as(&inbox, None, "user_collaborator", None)
+                .await?
+                .1["data"]["unread"]
+                == 1)
         })
         .await?;
         ensure!(
-            w.tp.send_as(&inbox, None, "user_collaborator", None).await?.1["data"]["items"][0]["run"] == last.as_str(),
+            w.tp.send_as(&inbox, None, "user_collaborator", None)
+                .await?
+                .1["data"]["items"][0]["run"]
+                == last.as_str(),
             "member notice"
         );
         let read = new_id();
         let command = json!({"requestId": read, "id": read});
-        ensure!(w.tp.send(&format!("{inbox}/{}/read", runs[0]), Some(command.clone())).await?.0 == 200, "read");
-        ensure!(w.tp.send(&format!("{inbox}/{last}/read"), Some(command)).await?.0 == 409, "reused request");
+        ensure!(
+            w.tp.send(&format!("{inbox}/{}/read", runs[0]), Some(command.clone()))
+                .await?
+                .0
+                == 200,
+            "read"
+        );
+        ensure!(
+            w.tp.send(&format!("{inbox}/{last}/read"), Some(command))
+                .await?
+                .0
+                == 409,
+            "reused request"
+        );
         Ok(())
     }
     .await;
@@ -107,7 +166,11 @@ async fn canonical_workflow_inbox_pages_twenty_outputs_without_duplicate_complet
 }
 
 fn page_items(data: &Value) -> impl Iterator<Item = String> + '_ {
-    data["items"].as_array().into_iter().flatten().map(|item| text(&item["run"]))
+    data["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|item| text(&item["run"]))
 }
 
 #[tokio::test]
@@ -120,35 +183,70 @@ async fn workflow_sync_publishes_metadata_and_revisioned_run_transitions_once_ac
             "name": "Observed workflow", "graph": approval_graph("Private approval canary")});
         let (status, saved) = w.tp.send(&w.list, Some(create.clone())).await?;
         ensure!(status == 201, "create: {status}");
-        ensure!(w.tp.send(&w.list, Some(create)).await?.1["receipt"] == saved["receipt"], "create replay");
+        ensure!(
+            w.tp.send(&w.list, Some(create)).await?.1["receipt"] == saved["receipt"],
+            "create replay"
+        );
         let created = w.tp.data(&delta(&w.project, &before["nextCursor"])).await?;
         let rows: Vec<Value> = page(&created)
             .iter()
             .map(|event| json!([event["recordKind"], event["recordId"], event["revision"]]))
             .collect();
-        ensure!(rows == vec![json!(["workflow", w.workflow, 1])], "created: {rows:?}");
-        ensure!(page(&created)[0]["body"]["detailRef"] == w.detail.as_str(), "detailRef");
+        ensure!(
+            rows == vec![json!(["workflow", w.workflow, 1])],
+            "created: {rows:?}"
+        );
+        ensure!(
+            page(&created)[0]["body"]["detailRef"] == w.detail.as_str(),
+            "detailRef"
+        );
         let run = new_id();
         let path = format!("/api/projects/{}/workflow-runs/{run}", w.project);
         let command = json!({"requestId": run, "id": run, "revision": 1,
             "input": "Private workflow input canary"});
-        let (status, accepted) = w.tp.send(&format!("{}/run", w.detail), Some(command.clone())).await?;
+        let (status, accepted) =
+            w.tp.send(&format!("{}/run", w.detail), Some(command.clone()))
+                .await?;
         ensure!(status == 201, "run: {status}");
         ensure!(
-            w.tp.send(&format!("{}/run", w.detail), Some(command)).await?.1["receipt"] == accepted["receipt"],
+            w.tp.send(&format!("{}/run", w.detail), Some(command))
+                .await?
+                .1["receipt"]
+                == accepted["receipt"],
             "run replay"
         );
         wait_run(&w, &path, |run| run["status"] == "approval").await?;
         let approve_id = new_id();
-        let approve = json!({"requestId": approve_id, "id": approve_id, "revision": 2, "accepted": true});
-        ensure!(w.tp.send(&format!("{path}/approve"), Some(approve.clone())).await?.0 == 200, "approve");
+        let approve =
+            json!({"requestId": approve_id, "id": approve_id, "revision": 2, "accepted": true});
+        ensure!(
+            w.tp.send(&format!("{path}/approve"), Some(approve.clone()))
+                .await?
+                .0
+                == 200,
+            "approve"
+        );
         wait_run(&w, &path, |run| run["status"] == "done").await?;
         w.tp.restart().await?;
-        ensure!(w.tp.send(&format!("{path}/approve"), Some(approve)).await?.0 == 200, "approve replay");
-        let changes = w.tp.data(&delta(&w.project, &created["nextCursor"])).await?;
+        ensure!(
+            w.tp.send(&format!("{path}/approve"), Some(approve))
+                .await?
+                .0
+                == 200,
+            "approve replay"
+        );
+        let changes =
+            w.tp.data(&delta(&w.project, &created["nextCursor"]))
+                .await?;
         let rows: Vec<Value> = page(&changes)
             .iter()
-            .map(|event| json!([event["recordKind"], event["revision"], event["body"]["status"]]))
+            .map(|event| {
+                json!([
+                    event["recordKind"],
+                    event["revision"],
+                    event["body"]["status"]
+                ])
+            })
             .collect();
         ensure!(
             rows == vec![
@@ -172,7 +270,12 @@ async fn workflow_sync_publishes_metadata_and_revisioned_run_transitions_once_ac
                 .is_some_and(|event| event["revision"] == 4),
             "snapshot revision"
         );
-        ensure!(!json!([created, changes, snapshot]).to_string().contains("canary"), "canary synced");
+        ensure!(
+            !json!([created, changes, snapshot])
+                .to_string()
+                .contains("canary"),
+            "canary synced"
+        );
         ensure!(!changes.to_string().contains("graph"), "graph synced");
         Ok(())
     }
@@ -449,13 +552,27 @@ async fn signed_human_sync_preserves_delta_cursors_through_canonical_restart_and
         let path = sync(&project);
         let (status, first) = tp.send(&path, None).await?;
         ensure!(status == 200, "first: {status}");
-        ensure!(!text(&first["data"]["nextCursor"]).is_empty(), "first cursor");
-        let edit = json!({"requestId": new_id(), "expectedRevision": 1, "name": "Persisted sync value"});
+        ensure!(
+            !text(&first["data"]["nextCursor"]).is_empty(),
+            "first cursor"
+        );
+        let edit =
+            json!({"requestId": new_id(), "expectedRevision": 1, "name": "Persisted sync value"});
         let project_path = format!("/api/projects/{project}");
-        let (status, saved) = tp.send_as(&project_path, Some(edit.clone()), "user_owner", Some(Method::PATCH)).await?;
+        let (status, saved) = tp
+            .send_as(
+                &project_path,
+                Some(edit.clone()),
+                "user_owner",
+                Some(Method::PATCH),
+            )
+            .await?;
         ensure!(status == 200, "edit: {status}");
         ensure!(
-            tp.send_as(&project_path, Some(edit), "user_owner", Some(Method::PATCH)).await?.1["receipt"] == saved["receipt"],
+            tp.send_as(&project_path, Some(edit), "user_owner", Some(Method::PATCH))
+                .await?
+                .1["receipt"]
+                == saved["receipt"],
             "edit replay"
         );
         tp.restart().await?;
@@ -463,10 +580,27 @@ async fn signed_human_sync_preserves_delta_cursors_through_canonical_restart_and
         let (status, changes) = tp.send(&delta_path, None).await?;
         ensure!(status == 200, "delta: {status}");
         ensure!(page(&changes["data"]).len() == 1, "delta events");
-        ensure!(page(&changes["data"])[0]["body"]["name"] == "Persisted sync value", "delta name");
-        ensure!(tp.send_as(&delta_path, None, "user_stranger", None).await?.0 == 403, "stranger");
-        for suffix in ["&cursor=".to_owned(), "&page=broken".into(), "&repo=private".into(), format!("&projectId={project}")] {
-            ensure!(tp.send(&format!("{path}{suffix}"), None).await?.0 == 400, "{suffix}");
+        ensure!(
+            page(&changes["data"])[0]["body"]["name"] == "Persisted sync value",
+            "delta name"
+        );
+        ensure!(
+            tp.send_as(&delta_path, None, "user_stranger", None)
+                .await?
+                .0
+                == 403,
+            "stranger"
+        );
+        for suffix in [
+            "&cursor=".to_owned(),
+            "&page=broken".into(),
+            "&repo=private".into(),
+            format!("&projectId={project}"),
+        ] {
+            ensure!(
+                tp.send(&format!("{path}{suffix}"), None).await?.0 == 400,
+                "{suffix}"
+            );
         }
         let (status, _) = tp
             .send_as(

@@ -565,12 +565,8 @@ fn tool(
             // Canonical homes run through their provider binding, not a
             // local provider instance. Fallback models were removed in #87,
             // so `backupModel` stays empty as in agent listings.
-            let profile = one(
-                db,
-                "SELECT revision,model FROM agents WHERE id=?",
-                [agent],
-            )?
-            .ok_or_else(Failure::storage)?;
+            let profile = one(db, "SELECT revision,model FROM agents WHERE id=?", [agent])?
+                .ok_or_else(Failure::storage)?;
             let binding = if current["participation"]["provider_binding"].is_null() {
                 None
             } else {

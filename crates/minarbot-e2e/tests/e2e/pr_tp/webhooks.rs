@@ -58,12 +58,27 @@ impl Webhook {
         let configuration = json!({"requestId": routine, "id": routine, "revision": 0, "name": "Webhook",
             "prompt": "PRIVATE_WEBHOOK_PROMPT", "nextAt": wall_ms() + 600_000, "intervalSeconds": 300,
             "enabled": true, "trigger": "webhook"});
-        ensure!(w.tp.send(&routines_of(&w), Some(configuration.clone())).await?.0 == 201, "routine");
+        ensure!(
+            w.tp.send(&routines_of(&w), Some(configuration.clone()))
+                .await?
+                .0
+                == 201,
+            "routine"
+        );
         let create = json!({"requestId": new_id(), "revision": 0, "rotate": true,
             "filters": [{"pointer": "/count", "equals": 4}]});
-        let (status, hook) = w.tp.send(&format!("{path}/webhook"), Some(create.clone())).await?;
+        let (status, hook) =
+            w.tp.send(&format!("{path}/webhook"), Some(create.clone()))
+                .await?;
         ensure!(status == 201, "webhook: {status} {hook}");
-        Ok(Self { w, routine, path, configuration, create, hook })
+        Ok(Self {
+            w,
+            routine,
+            path,
+            configuration,
+            create,
+            hook,
+        })
     }
 
     fn secret(&self) -> String {
@@ -89,8 +104,16 @@ impl Webhook {
                 headers.push((name.to_owned(), value));
             }
         }
-        let route = event.route.unwrap_or_else(|| format!("{}/webhook-events", self.path));
-        let mut request = self.w.tp.app.server.client()?.post(format!("{}{route}", self.w.tp.origin()));
+        let route = event
+            .route
+            .unwrap_or_else(|| format!("{}/webhook-events", self.path));
+        let mut request = self
+            .w
+            .tp
+            .app
+            .server
+            .client()?
+            .post(format!("{}{route}", self.w.tp.origin()));
         for (name, value) in headers {
             request = request.header(name, value);
         }
@@ -122,7 +145,11 @@ impl Webhook {
 
 fn hmac_bytes(secret: &str, message: &[u8]) -> String {
     let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.as_bytes());
-    ring::hmac::sign(&key, message).as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+    ring::hmac::sign(&key, message)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn occurrence_id(routine: &str, event: &str) -> String {
@@ -282,7 +309,8 @@ fn denied(response: &(u16, Value)) -> Result<()> {
     }
     ensure!(
         body["ok"] == false
-            && error == json!({"code": "invalid_webhook", "message": "Webhook signature does not match.", "retryable": false})
+            && error
+                == json!({"code": "invalid_webhook", "message": "Webhook signature does not match.", "retryable": false})
             && body.as_object().map(|map| map.len()) == Some(2),
         "denied body: {body}"
     );
@@ -294,30 +322,69 @@ async fn canonical_routine_webhook_conceals_missing_and_inactive_targets_until_s
 ) -> Result<()> {
     let f = Webhook::start().await?;
     let result = async {
-        let bad = || f.event(Event { secret: Some("wrong-secret"), ..Event::default() });
+        let bad = || {
+            f.event(Event {
+                secret: Some("wrong-secret"),
+                ..Event::default()
+            })
+        };
         denied(&bad().await?)?;
         for header in ["X-Minarbot-Time", "X-Minarbot-Id", "X-Minarbot-Signature"] {
             for value in [Some(String::new()), Some("invalid!".to_owned()), None] {
-                denied(&f.event(Event { extra: vec![(header, value)], ..Event::default() }).await?)?;
+                denied(
+                    &f.event(Event {
+                        extra: vec![(header, value)],
+                        ..Event::default()
+                    })
+                    .await?,
+                )?;
             }
         }
         for offset in [-301, 301] {
-            denied(&f.event(Event { time: Some((wall_ms() / 1000 + offset).to_string()), ..Event::default() }).await?)?;
+            denied(
+                &f.event(Event {
+                    time: Some((wall_ms() / 1000 + offset).to_string()),
+                    ..Event::default()
+                })
+                .await?,
+            )?;
         }
         for route in [
             f.path.replace(&f.routine, &new_id()),
             f.path.replace(&f.w.project, &new_id()),
             f.path.replace(&f.w.project, &f.w.other),
         ] {
-            denied(&f.event(Event { route: Some(format!("{route}/webhook-events")), ..Event::default() }).await?)?;
+            denied(
+                &f.event(Event {
+                    route: Some(format!("{route}/webhook-events")),
+                    ..Event::default()
+                })
+                .await?,
+            )?;
         }
         let routine = new_id();
-        let no_hook = format!("/api/projects/{}/routines/{routine}/webhook-events", f.w.project);
+        let no_hook = format!(
+            "/api/projects/{}/routines/{routine}/webhook-events",
+            f.w.project
+        );
         let mut configuration = f.configuration.clone();
         configuration["requestId"] = json!(routine);
         configuration["id"] = json!(routine);
-        ensure!(f.w.tp.send(&routines_of(&f.w), Some(configuration)).await?.0 == 201, "second routine");
-        denied(&f.event(Event { route: Some(no_hook.clone()), ..Event::default() }).await?)?;
+        ensure!(
+            f.w.tp
+                .send(&routines_of(&f.w), Some(configuration))
+                .await?
+                .0
+                == 201,
+            "second routine"
+        );
+        denied(
+            &f.event(Event {
+                route: Some(no_hook.clone()),
+                ..Event::default()
+            })
+            .await?,
+        )?;
         denied(
             &f.event(Event {
                 secret: Some("minarbot-routine-webhook-dummy-secret-v1"),
@@ -329,36 +396,78 @@ async fn canonical_routine_webhook_conceals_missing_and_inactive_targets_until_s
         )?;
         let keys = f.w.tp.app.keys.clone();
         keys.fail_read.store(true, Ordering::SeqCst);
-        denied(&f.event(Event { route: Some(no_hook), ..Event::default() }).await?)?;
-        for extra in [vec![], vec![("X-Minarbot-Signature", Some(String::new()))], vec![("X-Minarbot-Signature", Some("0".repeat(64)))]] {
+        denied(
+            &f.event(Event {
+                route: Some(no_hook),
+                ..Event::default()
+            })
+            .await?,
+        )?;
+        for extra in [
+            vec![],
+            vec![("X-Minarbot-Signature", Some(String::new()))],
+            vec![("X-Minarbot-Signature", Some("0".repeat(64)))],
+        ] {
             let before = f.stderr()?.len();
-            denied(&f.event(Event { extra, ..Event::default() }).await?)?;
-            until("keystore error logged", SETTLE, || async { Ok(f.stderr()?.len() > before) }).await?;
+            denied(
+                &f.event(Event {
+                    extra,
+                    ..Event::default()
+                })
+                .await?,
+            )?;
+            until("keystore error logged", SETTLE, || async {
+                Ok(f.stderr()?.len() > before)
+            })
+            .await?;
             let logged = f.stderr()?;
             ensure!(
-                logged[before..].trim() == format!("Webhook keystore is unavailable for routine {}.", f.routine),
+                logged[before..].trim()
+                    == format!("Webhook keystore is unavailable for routine {}.", f.routine),
                 "logged: {}",
                 &logged[before..]
             );
         }
         let webhook = format!("{}/webhook", f.path);
-        ensure!(f.w.tp.data(&webhook).await?["keystore"] == "unavailable", "keystore unavailable");
-        ensure!(f.w.tp.send(&webhook, Some(f.create.clone())).await?.0 == 503, "create while unavailable");
+        ensure!(
+            f.w.tp.data(&webhook).await?["keystore"] == "unavailable",
+            "keystore unavailable"
+        );
+        ensure!(
+            f.w.tp.send(&webhook, Some(f.create.clone())).await?.0 == 503,
+            "create while unavailable"
+        );
         let logged = f.stderr()?;
         ensure!(!logged.contains(&f.secret()), "secret logged");
         ensure!(!logged.contains("PRIVATE_"), "private text logged");
         keys.fail_read.store(false, Ordering::SeqCst);
-        ensure!(f.w.tp.data(&webhook).await?["keystore"] == "ok", "keystore ok");
+        ensure!(
+            f.w.tp.data(&webhook).await?["keystore"] == "ok",
+            "keystore ok"
+        );
         for (revision, enabled, trigger) in [(1, false, "webhook"), (2, true, "schedule")] {
             ensure!(
-                f.w.tp.send(&format!("{}/edit", f.path), Some(f.edit(revision, json!({"enabled": enabled, "trigger": trigger})))).await?.0 == 200,
+                f.w.tp
+                    .send(
+                        &format!("{}/edit", f.path),
+                        Some(f.edit(revision, json!({"enabled": enabled, "trigger": trigger})))
+                    )
+                    .await?
+                    .0
+                    == 200,
                 "edit {revision}"
             );
             denied(&bad().await?)?;
             let (status, signed) = f.simple().await?;
             ensure!(status == 409, "inactive {revision}: {status}");
-            ensure!(signed["error"]["code"] == "webhook_inactive", "inactive code");
-            ensure!(signed["error"]["message"] == "Webhook routine is inactive.", "inactive message");
+            ensure!(
+                signed["error"]["code"] == "webhook_inactive",
+                "inactive code"
+            );
+            ensure!(
+                signed["error"]["message"] == "Webhook routine is inactive.",
+                "inactive message"
+            );
         }
         Ok(())
     }
@@ -378,7 +487,14 @@ async fn canonical_routine_webhook_performs_one_keyring_read_for_configured_and_
             let (f, keys) = (&f, keys.clone());
             async move {
                 keys.clear_reads();
-                let (status, _) = f.event(Event { secret: Some("wrong-secret"), extra, route: Some(route), ..Event::default() }).await?;
+                let (status, _) = f
+                    .event(Event {
+                        secret: Some("wrong-secret"),
+                        extra,
+                        route: Some(route),
+                        ..Event::default()
+                    })
+                    .await?;
                 ensure!(status == 401, "status: {status}");
                 let reads = keys.reads();
                 ensure!(reads.len() == 1, "reads: {reads:?}");
@@ -392,14 +508,26 @@ async fn canonical_routine_webhook_performs_one_keyring_read_for_configured_and_
         ensure!(missing.0 == configured.0, "service");
         ensure!(missing.1 != configured.1, "name");
         ensure!(other_missing == missing, "other missing");
-        ensure!(!keys.values().contains_key(&format!("{}/{}", missing.0, missing.1)), "missing key stored");
+        ensure!(
+            !keys
+                .values()
+                .contains_key(&format!("{}/{}", missing.0, missing.1)),
+            "missing key stored"
+        );
         for extra in [
             vec![("X-Minarbot-Signature", Some(String::new()))],
             vec![("X-Minarbot-Id", Some("invalid!".to_owned()))],
             vec![("X-Minarbot-Time", None)],
         ] {
-            ensure!(read(events(f.path.clone()), extra.clone()).await? == configured, "configured {extra:?}");
-            ensure!(read(events(f.path.replace(&f.routine, &new_id())), extra.clone()).await? == missing, "missing {extra:?}");
+            ensure!(
+                read(events(f.path.clone()), extra.clone()).await? == configured,
+                "configured {extra:?}"
+            );
+            ensure!(
+                read(events(f.path.replace(&f.routine, &new_id())), extra.clone()).await?
+                    == missing,
+                "missing {extra:?}"
+            );
         }
         Ok(())
     }
@@ -542,7 +670,10 @@ async fn canonical_routine_webhook_settings_require_current_owner_while_assigned
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    !needle.is_empty() && haystack.windows(needle.len()).any(|window| window == needle)
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 #[tokio::test]

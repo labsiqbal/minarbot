@@ -2,7 +2,9 @@
 //! messages, setup, interruption, profile, provider settings and routines.
 
 use super::{
-    fixture::{agent_body, digest, direct, fresh_revisions, locked, until, Home, Owned, Tp, SETTLE},
+    fixture::{
+        agent_body, digest, direct, fresh_revisions, locked, until, Home, Owned, Tp, SETTLE,
+    },
     routines::text,
     shared::run,
 };
@@ -14,32 +16,59 @@ use std::sync::{
 
 /// Lose the `/context-mutations` reply of `input`, apply `change`, restart
 /// and wait for recovery to acknowledge the action; returns its content.
-async fn lost_then(tp: &mut Tp, home: &Home, owned: &Owned, input: &Value, change: impl FnOnce(&Tp) -> Result<()>) -> Result<Value> {
+async fn lost_then(
+    tp: &mut Tp,
+    home: &Home,
+    owned: &Owned,
+    input: &Value,
+    change: impl FnOnce(&Tp) -> Result<()>,
+) -> Result<Value> {
     let action = text(&input["actionId"]);
     let seen = tp.lose_next("/context-mutations");
     let lost = home.execute(input).await;
     tp.fault(None);
     ensure!(lost.is_err(), "reply was not lost: {lost:?}");
-    ensure!(*locked(&seen) == Some(200), "lost reply status {:?}", locked(&seen));
+    ensure!(
+        *locked(&seen) == Some(200),
+        "lost reply status {:?}",
+        locked(&seen)
+    );
     change(tp)?;
     tp.restart_home(home).await?;
     home.acknowledged(&action).await?;
     home.content(tp, &owned.task, &action).await
 }
 
-async fn run_lost(tp: &mut Tp, home: &Home, owned: &mut Owned, name: &str, args: Value, change: impl FnOnce(&Tp) -> Result<()>) -> Result<Value> {
+async fn run_lost(
+    tp: &mut Tp,
+    home: &Home,
+    owned: &mut Owned,
+    name: &str,
+    args: Value,
+    change: impl FnOnce(&Tp) -> Result<()>,
+) -> Result<Value> {
     let input = home.canonical_input(tp, owned, name, &args).await?;
     lost_then(tp, home, owned, &input, change).await
 }
 
-async fn admitted(tp: &Tp, home: &Home, project: &str, agent: &str, text_body: &str) -> Result<Owned> {
+async fn admitted(
+    tp: &Tp,
+    home: &Home,
+    project: &str,
+    agent: &str,
+    text_body: &str,
+) -> Result<Owned> {
     let task = new_id();
     tp.task(&task, project, agent, home, text_body).await?;
     home.start(&task).await
 }
 
 fn ids(rows: &Value, field: &str) -> Vec<Value> {
-    rows.as_array().into_iter().flatten().map(|row| row[field].clone()).collect()
+    rows.as_array()
+        .into_iter()
+        .flatten()
+        .map(|row| row[field].clone())
+        .collect()
 }
 
 async fn participate(tp: &Tp, project: &str, agent: &str, tools: Value) -> Result<()> {
@@ -58,7 +87,8 @@ async fn participate(tp: &Tp, project: &str, agent: &str, tools: Value) -> Resul
 }
 
 fn account_of(tp: &Tp, subject: &str) -> Result<String> {
-    tp.inspect()?.scalar("SELECT id FROM accounts WHERE clerk_sub=?", [subject])
+    tp.inspect()?
+        .scalar("SELECT id FROM accounts WHERE clerk_sub=?", [subject])
 }
 
 #[tokio::test]
@@ -109,9 +139,18 @@ async fn canonical_memory_rpc_isolates_projects_and_retains_committed_memory_aft
 }
 
 /// A direct, side-thread or channel task that reads history.
-async fn history_task(tp: &Tp, home: &Home, kind: &str, project: &str, agent: &str, thread: &str, channel: &str) -> Result<Owned> {
+async fn history_task(
+    tp: &Tp,
+    home: &Home,
+    kind: &str,
+    project: &str,
+    agent: &str,
+    thread: &str,
+    channel: &str,
+) -> Result<Owned> {
     let task = new_id();
-    let mut payload = json!({"v": 1, "kind": kind, "message": {"text": "Read history", "files": []}});
+    let mut payload =
+        json!({"v": 1, "kind": kind, "message": {"text": "Read history", "files": []}});
     let mut revisions = fresh_revisions();
     if kind == "side" {
         payload["threadId"] = json!(thread);
@@ -125,7 +164,15 @@ async fn history_task(tp: &Tp, home: &Home, kind: &str, project: &str, agent: &s
     home.start(&task).await
 }
 
-async fn admit_with(tp: &Tp, home: &Home, task: &str, project: &str, agent: &str, payload: &Value, revisions: &Value) -> Result<()> {
+async fn admit_with(
+    tp: &Tp,
+    home: &Home,
+    task: &str,
+    project: &str,
+    agent: &str,
+    payload: &Value,
+    revisions: &Value,
+) -> Result<()> {
     let home_id = home.id();
     let (status, body) = tp
         .send(
@@ -391,11 +438,31 @@ async fn canonical_teammate_sends_retain_one_scoped_delivery_on_its_fixed_home_a
         let other_home = device_row(&tp, &remote.device_id()?).await?;
         let (project, agent, peer) = (new_id(), new_id(), new_id());
         tp.project(&project, "Messages").await?;
-        tp.agent(&agent, "Sender", "Project teammate", &project, &home).await?;
-        ensure!(tp.send("/api/agents", Some(agent_body(&peer, "Recipient", "Project teammate", &project, &other_home))).await?.0 == 201, "recipient");
+        tp.agent(&agent, "Sender", "Project teammate", &project, &home)
+            .await?;
+        ensure!(
+            tp.send(
+                "/api/agents",
+                Some(agent_body(
+                    &peer,
+                    "Recipient",
+                    "Project teammate",
+                    &project,
+                    &other_home
+                ))
+            )
+            .await?
+            .0 == 201,
+            "recipient"
+        );
         let mut owned = admitted(&tp, &home, &project, &agent, "PRIVATE_SENDER_HISTORY").await?;
         let input = home
-            .canonical_input(&tp, &mut owned, "send_message", &json!({"recipients": [peer], "text": "Only this text", "expects_reply": false}))
+            .canonical_input(
+                &tp,
+                &mut owned,
+                "send_message",
+                &json!({"recipients": [peer], "text": "Only this text", "expects_reply": false}),
+            )
             .await?;
         let action = text(&input["actionId"]);
         lost_then(&mut tp, &home, &owned, &input, |_| Ok(())).await?;
@@ -404,43 +471,113 @@ async fn canonical_teammate_sends_retain_one_scoped_delivery_on_its_fixed_home_a
         ensure!(sent["status"] == "sent", "status: {sent}");
         ensure!(sent["expects_reply"] == false, "expects_reply");
         let db = tp.inspect()?;
-        let children = db.rows("SELECT turn FROM agent_deliveries WHERE request=?", [&text(&sent["request"])])?;
+        let children = db.rows(
+            "SELECT turn FROM agent_deliveries WHERE request=?",
+            [&text(&sent["request"])],
+        )?;
         ensure!(children.len() == 1, "deliveries: {children:?}");
         let child = text(&children[0]["turn"]);
         ensure!(db.count("tasks")? == 2, "tasks");
-        ensure!(db.scalar::<i64>("SELECT count(*) FROM task_results WHERE action=?", [&action])? == 1, "results");
-        let child_detail = tp.task_detail(&child).await?;
-        ensure!(child_detail["homeDeviceId"] == other_home["id"], "child home");
-        ensure!(child_detail["state"] == "waiting_device", "child state");
-        ensure!(tp.send_as(&format!("/api/tasks/{child}"), None, "user_foreign", None).await?.0 == 404, "foreign child");
-        let remote_connection = remote.connect().await?;
-        until("remote", SETTLE, || async { Ok(remote_connection.phase() == "connected") }).await?;
-        let child_owned = remote.start_task(&child).await?;
-        let child_context = remote.context(&child, &child_owned["ownership"], &child_owned["revision"]).await?;
-        let conversation = &child_context["snapshot"]["conversation"];
-        ensure!(conversation["message"] == json!({"text": "Only this text", "files": []}), "child message");
-        ensure!(conversation["history"] == json!([]), "child history");
-        ensure!(!child_context["snapshot"].to_string().contains("PRIVATE_SENDER_HISTORY"), "sender history leaked");
         ensure!(
-            !child_context["snapshot"]["tools"].as_array().into_iter().flatten().any(|tool| {
-                ["send_message", "list_agents", "interrupt_agent"].contains(&tool["function"]["name"].as_str().unwrap_or_default())
-            }),
+            db.scalar::<i64>(
+                "SELECT count(*) FROM task_results WHERE action=?",
+                [&action]
+            )? == 1,
+            "results"
+        );
+        let child_detail = tp.task_detail(&child).await?;
+        ensure!(
+            child_detail["homeDeviceId"] == other_home["id"],
+            "child home"
+        );
+        ensure!(child_detail["state"] == "waiting_device", "child state");
+        ensure!(
+            tp.send_as(&format!("/api/tasks/{child}"), None, "user_foreign", None)
+                .await?
+                .0
+                == 404,
+            "foreign child"
+        );
+        let remote_connection = remote.connect().await?;
+        until("remote", SETTLE, || async {
+            Ok(remote_connection.phase() == "connected")
+        })
+        .await?;
+        let child_owned = remote.start_task(&child).await?;
+        let child_context = remote
+            .context(&child, &child_owned["ownership"], &child_owned["revision"])
+            .await?;
+        let conversation = &child_context["snapshot"]["conversation"];
+        ensure!(
+            conversation["message"] == json!({"text": "Only this text", "files": []}),
+            "child message"
+        );
+        ensure!(conversation["history"] == json!([]), "child history");
+        ensure!(
+            !child_context["snapshot"]
+                .to_string()
+                .contains("PRIVATE_SENDER_HISTORY"),
+            "sender history leaked"
+        );
+        ensure!(
+            !child_context["snapshot"]["tools"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|tool| {
+                    ["send_message", "list_agents", "interrupt_agent"]
+                        .contains(&tool["function"]["name"].as_str().unwrap_or_default())
+                }),
             "child coordination tools"
         );
         let (status, paused) = control(&tp, &owned.task, &detail["revision"], "pause").await?;
         ensure!(status == 200, "pause: {status}");
-        let denied = remote.context(&child, &child_owned["ownership"], &child_owned["revision"]).await;
-        ensure!(denied.as_ref().is_err_and(|error| is_code(error, "task_not_runnable")), "paused child: {denied:?}");
-        ensure!(control(&tp, &child, &child_owned["revision"], "pause").await?.0 == 200, "child pause");
-        let (status, resumed) = control(&tp, &owned.task, &paused["data"]["revision"], "resume").await?;
-        ensure!(status == 200, "resume: {status}");
-        ensure!(tp.task_detail(&child).await?["state"] == "paused", "child stays paused");
-        let (status, child_resumed) = control(&tp, &child, &json!(child_owned["revision"].as_i64().unwrap_or(0) + 1), "resume").await?;
-        ensure!(status == 200, "child resume: {status}");
-        remote.context(&child, &child_owned["ownership"], &child_resumed["data"]["revision"]).await?;
-        let continued = home.host.context(&owned.task, &owned.ownership, &resumed["data"]["revision"]).await?;
+        let denied = remote
+            .context(&child, &child_owned["ownership"], &child_owned["revision"])
+            .await;
         ensure!(
-            continued["snapshot"]["coordination"].as_array().is_some_and(|rows| rows.iter().any(|row| row["request"] == sent["request"])),
+            denied
+                .as_ref()
+                .is_err_and(|error| is_code(error, "task_not_runnable")),
+            "paused child: {denied:?}"
+        );
+        ensure!(
+            control(&tp, &child, &child_owned["revision"], "pause")
+                .await?
+                .0
+                == 200,
+            "child pause"
+        );
+        let (status, resumed) =
+            control(&tp, &owned.task, &paused["data"]["revision"], "resume").await?;
+        ensure!(status == 200, "resume: {status}");
+        ensure!(
+            tp.task_detail(&child).await?["state"] == "paused",
+            "child stays paused"
+        );
+        let (status, child_resumed) = control(
+            &tp,
+            &child,
+            &json!(child_owned["revision"].as_i64().unwrap_or(0) + 1),
+            "resume",
+        )
+        .await?;
+        ensure!(status == 200, "child resume: {status}");
+        remote
+            .context(
+                &child,
+                &child_owned["ownership"],
+                &child_resumed["data"]["revision"],
+            )
+            .await?;
+        let continued = home
+            .host
+            .context(&owned.task, &owned.ownership, &resumed["data"]["revision"])
+            .await?;
+        ensure!(
+            continued["snapshot"]["coordination"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| row["request"] == sent["request"])),
             "coordination: {}",
             continued["snapshot"]["coordination"]
         );
@@ -638,11 +775,26 @@ async fn canonical_caller_interruption_retains_one_notice_and_fences_remote_deli
     result
 }
 
-async fn profile_task(tp: &Tp, home: &Home, project: &str, agent: &str, agent_revision: i64) -> Result<String> {
+async fn profile_task(
+    tp: &Tp,
+    home: &Home,
+    project: &str,
+    agent: &str,
+    agent_revision: i64,
+) -> Result<String> {
     let task = new_id();
     let mut revisions = fresh_revisions();
     revisions["agent"] = json!(agent_revision);
-    admit_with(tp, home, &task, project, agent, &direct("Edit profile"), &revisions).await?;
+    admit_with(
+        tp,
+        home,
+        &task,
+        project,
+        agent,
+        &direct("Edit profile"),
+        &revisions,
+    )
+    .await?;
     Ok(task)
 }
 

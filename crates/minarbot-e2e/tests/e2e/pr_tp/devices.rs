@@ -20,19 +20,26 @@ use std::sync::{
 const BUSY: &str = "Another canonical server is still running.";
 
 fn free_port() -> Result<u16> {
-    Ok(std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?
-        .local_addr()?
-        .port())
+    Ok(
+        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?
+            .local_addr()?
+            .port(),
+    )
 }
 
 async fn ready(connection: &ConnectionProcess) -> Result<()> {
-    until("connection ready", SETTLE, || async { Ok(connection.phase() == "connected") }).await
+    until("connection ready", SETTLE, || async {
+        Ok(connection.phase() == "connected")
+    })
+    .await
 }
 
 fn identity(options: &HostOptions) -> Result<Value> {
     let mut path = options.database.as_os_str().to_owned();
     path.push(".host/identity.json");
-    Ok(serde_json::from_slice(&std::fs::read(std::path::PathBuf::from(path))?)?)
+    Ok(serde_json::from_slice(&std::fs::read(
+        std::path::PathBuf::from(path),
+    )?)?)
 }
 
 async fn home_row(tp: &Tp, device: &str) -> Result<Value> {
@@ -48,7 +55,11 @@ async fn canonical_listener_rejects_a_second_server_on_the_same_database_and_rel
 ) -> Result<()> {
     let mut tp = Tp::start().await?;
     let result = async {
-        let duplicate = tp.app.root.start_error(tp.app.config_on(free_port()?)).await?;
+        let duplicate = tp
+            .app
+            .root
+            .start_error(tp.app.config_on(free_port()?))
+            .await?;
         // The Node launcher mapped this startup error to `canonical_server_busy`.
         ensure!(duplicate.contains(BUSY), "duplicate: {duplicate}");
         let alias = TestRoot::new()?;
@@ -58,11 +69,17 @@ async fn canonical_listener_rejects_a_second_server_on_the_same_database_and_rel
         ensure!(tp.send("/api/session", None).await?.0 == 200, "session");
         let failed = TestRoot::new()?;
         let in_use = failed.start_error(tp.app.config_on(tp.app.port)).await?;
-        ensure!(in_use.contains("Address already in use") || in_use.contains("EADDRINUSE"), "port in use: {in_use}");
+        ensure!(
+            in_use.contains("Address already in use") || in_use.contains("EADDRINUSE"),
+            "port in use: {in_use}"
+        );
         let mut second = failed.start(tp.app.config_on(free_port()?)).await?;
         second.shutdown().await?;
         tp.restart().await?;
-        ensure!(tp.send("/api/session", None).await?.0 == 200, "session after restart");
+        ensure!(
+            tp.send("/api/session", None).await?.0 == 200,
+            "session after restart"
+        );
         Ok(())
     }
     .await;
@@ -302,17 +319,29 @@ async fn device_key_loss_fails_closed_and_concurrent_stream_replacement_fences_o
         let mut missing = ConnectionProcess::start(&keyless)?;
         let status = missing.wait().await?;
         ensure!(!status.success(), "keyless host succeeded");
-        until("key error", SETTLE, || async { Ok(missing.stderr().contains("Device key is unavailable")) }).await?;
-        ensure!(std::fs::read_to_string(&empty)? == "{}", "Must not replace missing identity key");
+        until("key error", SETTLE, || async {
+            Ok(missing.stderr().contains("Device key is unavailable"))
+        })
+        .await?;
+        ensure!(
+            std::fs::read_to_string(&empty)? == "{}",
+            "Must not replace missing identity key"
+        );
         let mut first = ConnectionProcess::start(&options)?;
         ready(&first).await?;
         let mut second = ConnectionProcess::start(&options)?;
         ready(&second).await?;
-        until("first fenced", SETTLE, || async { Ok(first.phase() != "connected") }).await?;
+        until("first fenced", SETTLE, || async {
+            Ok(first.phase() != "connected")
+        })
+        .await?;
         first.stop().await?;
         let current = tp.data("/api/devices").await?[0].clone();
         ensure!(current["status"] == "ready", "status");
-        ensure!(current["connection_generation"].as_i64().unwrap_or(0) >= 2, "generation: {current}");
+        ensure!(
+            current["connection_generation"].as_i64().unwrap_or(0) >= 2,
+            "generation: {current}"
+        );
         second.stop().await?;
         Ok(())
     }
@@ -328,7 +357,10 @@ async fn lost_enrollment_ack_resumes_same_request_and_explicit_reenroll_rotation
     let result = async {
         let mut runtime = tp.device("device.sqlite")?;
         let seen = tp.lose_next("/api/devices/link");
-        ensure!(runtime.enroll(&tp.jwt("user_owner")?, "new").await.is_err(), "lost enrollment accepted");
+        ensure!(
+            runtime.enroll(&tp.jwt("user_owner")?, "new").await.is_err(),
+            "lost enrollment accepted"
+        );
         tp.fault(None);
         ensure!(locked(&seen).is_some(), "enrollment reply was not lost");
         let pending = identity(&runtime.options)?["pending"].clone();
@@ -337,12 +369,18 @@ async fn lost_enrollment_ack_resumes_same_request_and_explicit_reenroll_rotation
         let canonical = tp.inspect()?;
         ensure!(canonical.count("devices")? == 1, "devices");
         ensure!(
-            canonical.scalar::<i64>("SELECT count(*) FROM receipts WHERE scope='device_enrollment'", [])? == 1,
+            canonical.scalar::<i64>(
+                "SELECT count(*) FROM receipts WHERE scope='device_enrollment'",
+                []
+            )? == 1,
             "enrollment receipts"
         );
         let request = text(&pending["request"]["requestId"]);
         ensure!(
-            canonical.scalar::<String>("SELECT request_id FROM receipts WHERE request_id=?", [&request])? == request,
+            canonical.scalar::<String>(
+                "SELECT request_id FROM receipts WHERE request_id=?",
+                [&request]
+            )? == request,
             "original request"
         );
         let home = runtime.device_id()?;
@@ -354,14 +392,23 @@ async fn lost_enrollment_ack_resumes_same_request_and_explicit_reenroll_rotation
         ensure!(rotated["deviceId"] == home.as_str(), "rotate id");
         ensure!(rotated["generation"] == 3, "rotate generation");
         let after = identity(&runtime.options)?;
-        ensure!(after["signingRef"] != before["signingRef"], "signing key rotated");
+        ensure!(
+            after["signingRef"] != before["signingRef"],
+            "signing key rotated"
+        );
         ensure!(after["descriptor"]["keyRevision"] == 2, "key revision");
         let old = format!("/{}", text(&before["signingRef"]));
-        ensure!(runtime.keys()?.keys().any(|key| key.ends_with(&old)), "old signing key kept");
+        ensure!(
+            runtime.keys()?.keys().any(|key| key.ends_with(&old)),
+            "old signing key kept"
+        );
         runtime.close().await?;
         runtime = tp.device("device.sqlite")?;
         let connection = runtime.connect().await?;
-        until("connected", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+        until("connected", SETTLE, || async {
+            Ok(connection.phase() == "connected")
+        })
+        .await?;
         Ok(())
     }
     .await;
@@ -380,16 +427,42 @@ async fn canonical_task_http_survives_lost_acceptance_response_restart_without_d
         let home = tp.data("/api/devices").await?[0].clone();
         let (project, agent) = (new_id(), new_id());
         tp.project(&project, "Task project").await?;
-        ensure!(tp.send("/api/agents", Some(agent_body(&agent, "Agent", "Research", &project, &home))).await?.0 == 201, "agent");
+        ensure!(
+            tp.send(
+                "/api/agents",
+                Some(agent_body(&agent, "Agent", "Research", &project, &home))
+            )
+            .await?
+            .0 == 201,
+            "agent"
+        );
         let task = new_id();
-        let command = task_body(&task, &project, &agent, &text(&home["id"]), &direct("Persistent task"));
-        ensure!(tp.send("/api/tasks", Some(command.clone())).await?.0 == 202, "task");
+        let command = task_body(
+            &task,
+            &project,
+            &agent,
+            &text(&home["id"]),
+            &direct("Persistent task"),
+        );
+        ensure!(
+            tp.send("/api/tasks", Some(command.clone())).await?.0 == 202,
+            "task"
+        );
         tp.restart().await?;
         let (status, detail) = tp.send(&format!("/api/tasks/{task}"), None).await?;
         ensure!(status == 200, "detail: {status}");
         ensure!(detail["data"]["state"] == "waiting_device", "state");
-        ensure!(tp.send("/api/tasks", Some(command)).await?.0 == 200, "replay");
-        ensure!(tp.send_as(&format!("/api/tasks/{task}"), None, "user_foreign", None).await?.0 == 404, "foreign read");
+        ensure!(
+            tp.send("/api/tasks", Some(command)).await?.0 == 200,
+            "replay"
+        );
+        ensure!(
+            tp.send_as(&format!("/api/tasks/{task}"), None, "user_foreign", None)
+                .await?
+                .0
+                == 404,
+            "foreign read"
+        );
         let db = tp.inspect()?;
         ensure!(db.count("tasks")? == 1, "tasks");
         ensure!(db.count("task_actions")? == 0, "actions");
