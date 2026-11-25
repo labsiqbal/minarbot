@@ -9,6 +9,7 @@ mod goals;
 mod harness;
 mod kit;
 mod questions;
+mod sa_agent_interrupt;
 mod sa_agent_messages;
 mod sa_agent_result_files;
 mod sa_coordination;

@@ -171,14 +171,18 @@ async fn forward(
             request = request.header(name, value);
         }
     }
-    let gated = method == Method::POST && path.ends_with("/chat/completions") && {
+    // The generation is taken when the request is gated, so a release that
+    // lands while the model is still answering lets this reply through too.
+    let gated = if method == Method::POST && path.ends_with("/chat/completions") {
         let Ok(mut inner) = shared.inner.lock() else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
         let matched = inner.filter.as_ref().is_some_and(|filter| {
             serde_json::from_slice::<serde_json::Value>(&body).is_ok_and(|value| filter(&value))
         });
-        std::mem::take(&mut inner.armed) || matched
+        (std::mem::take(&mut inner.armed) || matched).then_some(inner.generation)
+    } else {
+        None
     };
     let reply = match request.send().await {
         Ok(reply) => reply,
@@ -190,14 +194,10 @@ async fn forward(
         Ok(bytes) => bytes,
         Err(error) => return (StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
     };
-    if gated {
-        let generation = match shared.inner.lock() {
-            Ok(mut inner) => {
-                inner.held += 1;
-                inner.generation
-            }
-            Err(_) => 0,
-        };
+    if let Some(generation) = gated {
+        if let Ok(mut inner) = shared.inner.lock() {
+            inner.held += 1;
+        }
         loop {
             let notified = shared.notify.notified();
             if shared

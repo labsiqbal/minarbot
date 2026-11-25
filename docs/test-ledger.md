@@ -194,6 +194,7 @@ Product bugs fixed in this slice:
 | `app/fallback.test.ts` | 1 | 1 | 0 | 0 |
 | `app/coordination.test.ts` | 1 | 1 | 0 | 0 |
 | `app/agent-messages.test.ts` | 1 | 1 | 0 | 0 |
+| `app/agent-interrupt.test.ts` | 1 | 1 | 0 | 0 |
 
 ### `app/memory.test.ts`
 
@@ -408,6 +409,12 @@ socket path fits `sun_path`.
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | --- | --- |
 | teammate messages correlate groups, isolate context, persist receipts and bound delivery | `sa_agent_messages::teammate_messages_correlate_groups_isolate_context_persist_receipts_and_bound_delivery` | 48 -> 55 | Full apart from M1: the bypass turn now stays `queued` while the parent waits, the group result carries both replies with an empty `delivered_earlier`, and the bypass receives no replies (the Node `delivered_earlier[0].consumer`, bypass `receivedAgentReplies` and parent-`queued` checks invert). H1: self and duplicate recipients and the outside-channel recipient are refused to the model (the turn is `done` and its answer carries the error, "Recipient ..." for the channel); reply loops are refused and retried until the tool budget fails the delivery. The suite returns to two slots after the one-slot pause check (M1). Model-side checks run in the scripted model and are asserted at the end. |
+
+### `app/agent-interrupt.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| caller interruption cancels only owned deliveries, journals notice and preserves other work | `sa_agent_interrupt::caller_interruption_cancels_only_owned_deliveries_journals_notice_and_preserves_other_work` | 30 -> 31 | Full. M1: Alpha's own requests and its `inspect`/`stop` turns run in side threads (a waiting parent, including Alpha's channel turn, holds its conversation), Alpha may run 8 threads and the server 10 turns. H1: "no active work", "You can only stop" (self and ancestor) and the channel call (where `interrupt_agent` is not offered) reach the model as errors and the turns end `done` with the error in the answer; the ancestor delivery is `done` with the refusal instead of `failed`. The notice trigger is seeded with `edit_database`; holds use `ModelGate::hold_when` (the kit gate now releases replies that were gated before a release but answered after it). |
 <!-- stale-a end -->
 
 ## #67 hosted Hub test migration
