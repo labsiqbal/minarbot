@@ -160,6 +160,15 @@ one scripted reply so a test can act between "the model chose a tool" and
 answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
 (`not ported: option hubLink.<name>`), as the Node bridge did.
 
+Kit fixes found while porting: `fake-gateway` forwards `turn/start`
+`input_image` items and treats `MINARBOT_TOOL_BUDGET=0` as an exhausted
+budget; a finished `fake-gateway` run no longer removes the run that
+replaced it on the same thread (a later `turn/interrupt` could not abort
+it, and the peer never exited: the flaky `g8_g9_g11...` self-test);
+`ModelGate` holds by predicate (`hold_when`) and releases replies gated
+before a release but answered after it; the scripted model and the gate
+accept bodies up to 64 MiB.
+
 Product bugs fixed in this slice:
 
 | Bug | Found by | Cause and fix |
