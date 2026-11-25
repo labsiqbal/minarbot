@@ -17,6 +17,7 @@ mod pd_shared_data_http;
 mod pd_skill_tools;
 mod pd_webhooks;
 mod pd_workflow_parallel;
+mod pd_workspace_shell;
 mod questions;
 mod support;
 mod threads;
