@@ -165,7 +165,7 @@ async function exercise(client, app) {
 
   try {
     for (const [id, name] of [[ids.agent, 'Routine owner'], [ids.other, 'Other workflow agent']]) {
-      await api('/api/agents', { id, runtime: 'api', name, model: 'fixture', instructions: 'Synthetic fixture.' });
+      await api('/api/agents', { id, providerInstance: 'codex-test-gateway', name, model: 'fixture', instructions: 'Synthetic fixture.' });
     }
     let project = await api('/api/projects', { id: ids.project, name: 'Fixture project', folders: [{ mode: 'existing', path: folder }], members: [{ agent: ids.agent, write: false }] });
     project = await api(`/api/projects/${project.id}/sections`, { id: ids.section, revision: project.revision, name: 'Reports' });

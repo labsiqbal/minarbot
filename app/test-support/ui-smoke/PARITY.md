@@ -45,6 +45,10 @@ the live test uses an ephemeral port or temporary root. Assertions still use
 the real disposable fixture. Capture-only text substitutions restore the
 original values before the smoke continues, so future captures stay stable.
 
+The automation gateway redacts the synthetic word `fixture` in agent replies.
+Automation captures restore `Automation [REDACTED] completed.` to
+`Automation fixture completed.` inside the reply text bounds.
+
 No frozen PNG was replaced for #67. A fixture-only replacement is allowed when
 the original UUID, port, or timestamp cannot be recovered cheaply. Review the
 side-by-side and diff image for that named pair, verify every changed pixel is

@@ -44,8 +44,8 @@ try {
     assert(response.ok, path + ': ' + JSON.stringify(value));
     return value;
   }
-  const agent = await api('/api/agents', { id: fixtureId(12), runtime: 'api', name: 'Calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
-  const other = await api('/api/agents', { id: fixtureId(13), runtime: 'api', name: 'Other calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
+  const agent = await api('/api/agents', { id: fixtureId(12), providerInstance: 'codex-test-gateway', name: 'Calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
+  const other = await api('/api/agents', { id: fixtureId(13), providerInstance: 'codex-test-gateway', name: 'Other calendar agent', model: 'fixture', instructions: 'Synthetic automation fixture.' });
   const project = await api('/api/projects', { id: fixtureId(14), name: 'Field Operations', members: [{ agent: agent.id, write: false }] });
   const scope = { project: project.id, zone, trigger: 'schedule', enabled: true };
   const once = (date, time) => ({ kind: 'once', date, time });

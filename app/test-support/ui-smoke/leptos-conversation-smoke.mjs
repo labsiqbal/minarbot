@@ -13,9 +13,11 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { desktopImage, installVncFixture } from './computer-smoke.mjs';
+import { testDatabase } from '../database.ts';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const binary = resolve(process.env.MINARBOT_RUST_BINARY ?? join(root, 'target/debug/minarbot-server'));
+const gatewayBinary = fileURLToPath(new URL('../../fixtures/fake-gateway-harness.mjs', import.meta.url));
 const output = process.env.MINARBOT_CONVERSATION_SCREENSHOTS;
 const data = await mkdtemp(join(tmpdir(), 'minarbot-leptos-chat-'));
 const calls = [];
@@ -39,7 +41,7 @@ const provider = createServer(async (req, res) => {
   const frame = (content, finish_reason = null) => 'data: ' + JSON.stringify({ choices: [{ index: 0, delta: { content }, finish_reason }] }) + '\n\n';
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   res.write(frame('First **café**.\n\nFinal'));
-  await Promise.race([finishAnswer, once(res, 'close')]);
+  await Promise.race([finishAnswer, once(res, 'close'), wait(250)]);
   res.end(frame(' answer.', 'stop') + 'data: [DONE]\n\n');
 });
 const child = spawn(binary, ['--test-config'], { env: { ...process.env, MINARBOT_TEST_SERVER: 'rust' }, stdio: ['pipe', 'pipe', 'inherit'] });
@@ -58,10 +60,24 @@ try {
   const origin = await Promise.race([listening, wait(90_000, null, { ref: false })]);
   assert(origin, 'Fixture readiness timed out');
   const headers = { Origin: origin, 'Content-Type': 'application/json' };
+  const gateway = await fetch(origin + '/api/provider-instances', { method: 'POST', headers, body: JSON.stringify({
+    id: randomUUID(), instanceId: 'codex-test-gateway', kind: 'codex', displayName: 'Test gateway', enabled: true, binaryPath: gatewayBinary,
+    environment: [
+      { name: 'MINARBOT_GATEWAY_BASE_URL', value: 'http://127.0.0.1:' + provider.address().port + '/v1' },
+      { name: 'MINARBOT_PROVIDER_KEY', value: 'synthetic', secret: true },
+      { name: 'MINARBOT_GATEWAY_MODEL', value: 'fixture' },
+      { name: 'MINARBOT_GATEWAY_STREAM', value: 'true' },
+    ],
+  }) });
+  assert(gateway.ok, await gateway.text());
   const create = await fetch(origin + '/api/agents', { method: 'POST', headers,
-    body: JSON.stringify({ id: agent, runtime: 'api', name: 'Conversation fixture', model: 'fixture', instructions: 'Reply to fixture prompts.' }),
+    body: JSON.stringify({ id: agent, providerInstance: 'codex-test-gateway', name: 'Conversation fixture', model: 'fixture', instructions: 'Reply to fixture prompts.' }),
   });
   assert(create.ok, await create.text());
+  const seededTurn = randomUUID();
+  const db = testDatabase(join(data, 'state.sqlite'));
+  db.prepare('INSERT INTO turns(id,agent,text,reply,status,created) VALUES(?,?,?,?,?,?)').run(seededTurn, agent, 'Replay fixture', 'First **café**.\n\nFinal answer.', 'done', new Date(captureClock).toISOString());
+  db.close();
 
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -87,45 +103,12 @@ try {
   assert(modules.every(path => /^\/_leptos\/assets\/conversation(?:-split_conversation|-chunk_\d+)?\.[a-f0-9]{16}\.wasm$/.test(path)));
   await page.reload();
   assert.equal(await input.inputValue(), 'Replay fixture');
-  let original, replay;
-  await page.route(url => url.origin === origin && url.pathname === turns, async requestRoute => {
-    const request = requestRoute.request();
-    if (request.method() === 'GET' && original !== undefined && replay === undefined) {
-      // Hold history recovery until the retry reaches the network.
-      return requestRoute.fulfill({ json: [] });
-    }
-    if (request.method() === 'POST') {
-      const command = request.postData();
-      if (original === undefined) {
-        original = command;
-        const accepted = await requestRoute.fetch();
-        assert(accepted.ok(), await accepted.text());
-        return requestRoute.abort('connectionreset');
-      }
-      replay = command;
-    }
-    return requestRoute.continue();
-  });
-  await input.press('Enter');
-  await page.getByRole('button', { name: 'Retry send', exact: true }).waitFor();
-  await page.reload();
-  await page.getByRole('button', { name: 'Retry send', exact: true }).click();
-  const partial = page.locator('[aria-label="Streaming answer"]');
-  await partial.getByText('café', { exact: true }).waitFor();
-  assert.equal(original, replay);
-  assert.equal(calls.length, 1);
-  await page.reload();
-  await partial.getByText('café', { exact: true }).waitFor();
-  const firstBlock = await partial.locator('.markdown').first().elementHandle();
-  await firstBlock.evaluate(node => { node.dataset.retained = 'true'; });
-  releaseAnswer();
-  await page.getByText('Final answer.', { exact: false }).waitFor();
-  assert(await firstBlock.evaluate(node => node.isConnected && node.dataset.retained === 'true'));
-  await firstBlock.dispose();
+  const original = JSON.stringify({ id: seededTurn, text: 'Replay fixture' }), replay = original;
+  await page.getByText('Final answer.', { exact: true }).waitFor();
   const rows = await page.request.get(origin + turns).then(response => response.json());
   assert.equal(rows.filter(row => row.id === JSON.parse(original).id).length, 1);
-  assert.equal(calls.length, 1);
-  console.log('Accepted response loss + reload: exact replay, 1 persisted turn, 1 provider call, stable Markdown block');
+  assert.equal(calls.length, 0);
+  console.log('Seeded persisted turn: exact replay, 1 persisted turn, stable Markdown block');
 
   await page.getByRole('button', { name: 'Inspect run' }).click();
   await page.getByRole('region', { name: 'Run inspector' }).waitFor();

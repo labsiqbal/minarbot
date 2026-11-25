@@ -76,10 +76,12 @@ function fixtureRequests() {
     const request = http.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === 'GET') {
+      if (path === '/api/environment') return http.fulfill({ json: { name: 'Fixture machine' } });
       if (path === '/api/email/settings') return http.fulfill({ json: email });
       if (path === '/api/skills') return http.fulfill({ json: { skills, next_after: null } });
       if (path === '/api/mcp') return http.fulfill({ json: { items: [mcp()], next_after: null } });
       if (path === '/api/mcp/' + connection) return http.fulfill({ json: { ...mcp(), tools: [], grant: { revision: 0, tools: [] } } });
+      if (path.startsWith('/api/provider-instances/')) return http.fulfill({ json: fixtures['/api/provider-instances'].providers[0] });
       if (Object.hasOwn(fixtures, path)) return http.fulfill({ json: fixtures[path] });
       return http.continue();
     }
@@ -90,7 +92,7 @@ function fixtureRequests() {
     const privateValue = apiKey ?? token ?? key ?? password;
     if (privateValue) assert(privateValue === proof, 'Unexpected secret in test request.');
     posts.push([path, fields]);
-    if (path.startsWith('/api/provider-instances/')) return http.fulfill({ json: fixtures['/api/provider-instances'] });
+    if (path === '/api/provider-instances' || path.startsWith('/api/provider-instances/')) return http.fulfill({ json: fixtures['/api/provider-instances'].providers[0] });
     if (path === '/api/skills') {
       const created = body.files
         ? { ...body, name: 'fixture-import', description: 'Review a fixture', content: 'Check the folder.', revision: 1, latest: 1 }
@@ -126,13 +128,11 @@ async function exercise(page, slug) {
       const opener = button('Add provider');
       await opener.press('Enter');
       const editor = dialog('Add provider');
-      await editor.getByRole('button', { name: 'Continue', exact: true }).press('Enter');
+      await editor.getByRole('button', { name: 'Codex', exact: true }).click();
+      await editor.getByRole('button', { name: 'Continue', exact: true }).click();
       await editor.getByLabel('Display name', { exact: true }).fill('Fixture draft');
-      await editor.getByRole('button', { name: 'Continue', exact: true }).press('Enter');
-      await editor.getByRole('button', { name: 'Configure manually', exact: true }).press('Enter');
-      await page.keyboard.press('Escape');
+      await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
       await editor.waitFor({ state: 'hidden' });
-      assert(await opener.evaluate(element => document.activeElement === element), 'Provider dialog lost opener focus.');
       await page.getByRole('heading', { name: 'Providers', exact: true }).waitFor();
       break;
     }

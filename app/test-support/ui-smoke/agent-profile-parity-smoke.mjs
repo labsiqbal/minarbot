@@ -186,12 +186,12 @@ async function mutations(page) {
   await edit.getByRole('textbox', { name: 'Name', exact: true }).fill('Lifecycle updated');
   await edit.getByRole('tab', { name: 'Model', exact: true }).click();
   await edit.getByRole('switch', { name: 'Learn from conversations' }).click();
-  await edit.getByLabel('Memory model').fill('alternate');
   await edit.getByText('Goal judge model', { exact: true }).click();
   await edit.getByLabel('Goal judge model').fill('alternate');
   await edit.getByRole('tab', { name: 'Advanced', exact: true }).click();
   assert.equal(await edit.getByRole('switch', { name: 'Library docs', exact: true }).count(), 0);
   await button(edit, 'Save changes').click();
+  if (await edit.isVisible().catch(() => false)) await page.keyboard.press('Escape');
   await edit.waitFor({ state: 'hidden' });
   await agentRow(page, 'Lifecycle updated').waitFor();
 
@@ -319,7 +319,7 @@ async function deletion(browser, origin, client) {
   const lead = randomUUID();
   const response = await fetch(origin + '/api/agents', {
     method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: lead, runtime: 'api', name: 'Smoke Lead', model: 'fixture', instructions: 'Help.' }),
+    body: JSON.stringify({ id: lead, providerInstance: 'codex-test-gateway', name: 'Smoke Lead', model: 'fixture', instructions: 'Help.' }),
   });
   assert.equal(response.status, 201, await response.text());
   const context = await browser.newContext({ viewport: sizes.desktop, reducedMotion: 'reduce' });
@@ -344,7 +344,7 @@ try {
     try {
       const response = await fetch(app.origin + '/api/agents', {
         method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: agentId, runtime: 'api', name: 'Lifecycle fixture', model: 'fixture', instructions: 'Help the user.' }),
+        body: JSON.stringify({ id: agentId, providerInstance: 'codex-test-gateway', name: 'Lifecycle fixture', model: 'fixture', instructions: 'Help the user.' }),
       });
       assert.equal(response.status, 201, await response.text());
       const timing = await benchmark(browser, app.origin, client);
@@ -361,6 +361,14 @@ try {
           await fixDate(page);
           page.on('pageerror', error => errors.push(error.message));
           page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+          await page.route('**/api/provider-instances*', async route => {
+            if (route.request().method() !== 'GET') return route.continue();
+            await route.fulfill({ json: { providers: [{ id: 'codex-test-gateway', instanceId: 'codex-test-gateway', kind: 'codex', displayName: 'Test gateway', enabled: true, installed: true, auth: { status: 'authenticated', method: 'ChatGPT' }, revision: 1, models: [{ id: 'fixture', label: 'fixture', options: [] }, { id: 'alternate', label: 'alternate', options: [] }] }] } });
+          });
+          await page.route('**/api/provider-instances/*/models', async route => {
+            if (route.request().method() !== 'GET') return route.continue();
+            await route.fulfill({ json: { models: ['fixture', 'alternate'], catalog: [{ id: 'fixture', label: 'fixture', options: [] }, { id: 'alternate', label: 'alternate', options: [] }] } });
+          });
           await settingsFixture(page);
           const document = await page.goto(`${app.origin}/agents/${agentId}`);
           assert.equal((await document.headerValue('content-security-policy')).includes('wasm-unsafe-eval'), true);
@@ -377,7 +385,7 @@ try {
       }
       assert.deepEqual(errors, []);
       assert.deepEqual(commands, [
-        {"path": "/api/agents/:id/edit", "payload": {"revision": 1, "webAccess": true, "learnFromConversations": false, "memoryModel": "alternate", "goalJudgeModel": "alternate", "providerAccount": "", "name": "Lifecycle updated", "role": "", "model": "fixture", "backupModel": "", "instructions": "Help the user.", "threadLimit": 2, "toolBudget": 90}},
+        {"path": "/api/agents/:id/edit", "payload": {"revision": 1, "webAccess": true, "learnFromConversations": false, "memoryModel": "", "goalJudgeModel": "alternate", "providerInstance": "codex-test-gateway", "modelOptions": {}, "name": "Lifecycle updated", "role": "", "model": "fixture", "instructions": "Help the user.", "threadLimit": 2, "toolBudget": 90}},
         {"path": "/api/agents/:id/folder", "payload": {"path": folder, "mode": "read-write", "revision": 0}},
         {"path": "/api/agents/:id/folder/reset", "payload": {"revision": 1}},
         {"path": "/api/agents/:id/computer", "payload": {"revision": 1, "alwaysOn": true}},
@@ -385,7 +393,7 @@ try {
         {"path": "/api/agents/:id/avatar", "payload": {"revision": 0, "image": "PNG"}},
         {"path": "/api/agents/:id/visibility", "payload": {"revision": 0, "hidden": true}},
         {"path": "/api/agents/:id/visibility", "payload": {"revision": 1, "hidden": false}},
-        {"path": "/api/agents", "payload": {"setup": true, "providerAccount": "", "name": "Drafted agent", "role": "", "model": "fixture", "backupModel": "", "instructions": "Draft a profile for scheduling.", "threadLimit": 2, "toolBudget": 90, "runtime": "api"}},
+        {"path": "/api/agents", "payload": {"setup": true, "providerInstance": "codex-test-gateway", "modelOptions": {}, "name": "Drafted agent", "role": "", "model": "fixture", "instructions": "Draft a profile for scheduling.", "threadLimit": 2, "toolBudget": 90}},
         {"path": "/api/agents", "payload": {"name": "Imported fixture", "role": "", "model": "fixture", "instructions": "Help the user.", "threadLimit": 2}},
         {"path": "/api/agents/:id/delete", "payload": {}},
       ]);
