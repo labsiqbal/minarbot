@@ -255,6 +255,10 @@ impl Peer {
                 continue;
             }
             let chunk: Value = serde_json::from_str(data)?;
+            // A provider `error` event ends the stream as a failure.
+            if chunk.get("error").is_some_and(|error| !error.is_null()) {
+                return Err("Gateway provider stream failed".into());
+            }
             let choice = &chunk["choices"][0];
             let delta = &choice["delta"];
             if let Some(text) = delta["content"].as_str() {

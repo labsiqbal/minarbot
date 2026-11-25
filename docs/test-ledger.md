@@ -133,6 +133,16 @@ Behaviour that changed with #87, and how the ports treat it:
   statuses, verbatim tool arguments, a stalled SSE stream, per-answer usage).
 - New `stub.rs`: `HttpStub`, a closure-backed HTTP server for remote MCP
   servers and similar external fakes, with a lost-reply response.
+- New `connector_fixture.rs`: `SlackFixture` (fake Slack Web API and Socket
+  Mode WebSocket, `--connector-config` runner) and `journal` for
+  `--connector-journal-config`. The kit's `axum` dependency gains the `ws`
+  feature the server already uses.
+- `control.rs` also answers streamed requests with SSE, scripts
+  `GET /v1/models` (`respond_catalog`, redirects, held catalog requests) and
+  has stream error and cut answers; `fake/gateway.rs` fails on an SSE `error`
+  event.
+- `fake/native.rs`: `ENV_PRESENT` / `ENV_ABSENT` check `PROJECT_TEST_TOKEN`
+  in the harness process (the Node `project-integrations` fixture patch).
 - `fake/gateway.rs`: streamed content deltas are forwarded as soon as their
   SSE line arrives (the Node fixture buffered the whole body, so a stalled
   provider never showed partial text), an answer without `usage` reports
@@ -148,6 +158,10 @@ Behaviour that changed with #87, and how the ports treat it:
 | S2 | a8cfcac removed the local `read_provider_settings` executor with provider accounts but kept offering the tool in private conversations, so every call failed. `turns/tools.rs` executes it again with the instance binding (`revision`, `providerInstance`, `model`, `configured`), the shape of the canonical executor, private-only and without arguments. |
 | S3 | `turns/harness.rs` (`specs`) offered `edit_profile` to harness turns in channels, where the executor refuses it with 403; the direct client offered it only in private conversations. It is now private-only, like the skill tools (ef64cd9). |
 | S4 | a8cfcac deleted the direct-provider path that appended the team roster (`## Messaging other agents`, capability epoch, teammates) to answer prompts, leaving `messaging::awareness` unused; harness agents no longer saw their teammates. `turns/provider.rs` (`call`) appends it again under the old conditions: answer calls only (not memory, compaction, goal judge or routing), not profile setup, and only when the turn may message teammates. |
+| S5 | `harness/store.rs` (`run`, f89f751) treated a turn that is not `running` as paused and returned an empty reply. Background memory calls run on finished turns, so every extraction and consolidation got an empty answer and failed after retries. The check now skips memory phases, whose turn lookup already allows finished turns. |
+| S6 | Harness turns run without an isolated home, so a mise shim launch got the owner's `HOME` and `configure_mise` never set `MISE_STATE_DIR`; mise would record trust in the owner's state dir, which the probe path avoids. Mise launches without a home now get a private one per binding under the harness homes root. |
+| S7 | A paused turn whose provider instance was disabled still ran on it when its question was answered (`ready()` checks only at admission). `harness/store.rs` refuses a disabled instance before launch. |
+| S8 | Instance model discovery returned a catalog that contained the instance's secret (the provider key as a model id) to the browser. `model_catalog::models_for_instance` rejects such a catalog as invalid (502), as the direct client did; `provider_instances::secret_values` lists the decrypted secrets. |
 
 ### `app/compaction.test.ts`
 
@@ -234,6 +248,130 @@ Behaviour that changed with #87, and how the ports treat it:
 | write grant creates restore once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_restore_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above, with the 2048-byte recovery input. |
 | write grant creates replace once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_replace_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above. |
 | provider workspace writes reject malformed Unicode without changing bytes or path | `sb_workspace_writes::provider_workspace_writes_reject_malformed_unicode_without_changing_bytes_or_path` | 8 -> 6 | Full; the lone-surrogate arguments are sent verbatim (`Answer::RawTool`). |
+
+### `app/gemini.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| Gemini HTTP streaming, signed tool recovery, models and cancellation | `sb_gemini::gemini_http_streaming_signed_tool_recovery_models_and_cancellation` | 18 -> 18 | Dropped with the Gemini API client (#87): `x-goog-api-key`, `generateContent` payloads, `thoughtSignature` replay, `maxOutputTokens`, `MAX_TOKENS` failure, catalog paging. Ported against the instance: catalog, text and tool turns, the held tool step resumed after restart without a second tool call, cancel, streamed and unary requests. |
+
+### `app/provider.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| native Anthropic messages, catalog, tools, resume, cancellation and fallback use one explicit provider | `sb_provider::native_anthropic_messages_catalog_tools_resume_cancellation_and_fallback_use_one_explicit_provider` | 39 -> 20 | Dropped with the Anthropic client (#87): `/v1/messages` shape, headers, `tool_choice`, catalog pagination/cycle/redirect errors, `max_tokens` partial failure, parallel tool rejection, redirect, `backupModel` fallback, `family: anthropic`. An unknown tool reaches the model as an MCP error (turn done). Ported: replies, artifact tool result pairing, provider failures without fallback, receipts, question across restart, empty workflow output, routing, delegate/transfer coordination, cancel, usage redaction. |
+
+### `app/provider-accounts.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| agents bind isolated provider accounts across channels, side threads, edit and restart | `sb_provider_accounts::agents_bind_isolated_provider_accounts_across_channels_side_threads_edit_and_restart` | 36 -> 29 | Accounts became provider instances created through `/api/provider-instances` (gateway binary, own model, own secret key). Dropped: provider families, `/api/models?account=`, `usage.account`. Removing an account is deleting or disabling the instance; found S7. |
+
+### `app/provider-account-change.test.ts`
+
+All nine cases are dropped: they test the agent tools `set_provider_account`, `list_provider_accounts`, `list_provider_models` and the browser consent flow for account switches, which #87 removed with provider accounts (a8cfcac). The surviving parts are ported elsewhere: carrying history to a new endpoint without foreign history or keys is `sb_handoff`; private provider settings are `sb_provider_settings`; instance model discovery is `sb_provider_matrix`.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| provider account switch requires scoped browser consent and survives restart without replay | - | 34 -> 0 | Dropped: `set_provider_account` consent flow (#87). |
+| provider account metadata tool redacts credentials and paths | - | 11 -> 0 | Dropped: `list_provider_accounts` (#87). |
+| private model discovery uses selected account, pages results and cancels without continuation | - | 21 -> 0 | Dropped: `list_provider_models` (#87). |
+| confirmed account switch openai-compatible to anthropic retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch openai-compatible to gemini retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch anthropic to openai-compatible retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch anthropic to gemini retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch gemini to openai-compatible retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch gemini to anthropic retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+
+### `app/provider-handoff.test.ts`
+
+Provider families and their payload conversions left with #87, so each family pair collapses onto its scope's test: the instance is re-pointed at a different model endpoint across a restart while the question waits.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| provider handoff openai-compatible to openai-compatible in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to gemini in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to gemini in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to openai-compatible in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to anthropic in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to anthropic in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to openai-compatible in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to openai-compatible in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to gemini in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to gemini in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to openai-compatible in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to anthropic in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to anthropic in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to openai-compatible in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to openai-compatible in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to gemini in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to gemini in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to openai-compatible in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to anthropic in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to anthropic in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to openai-compatible in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+
+### `app/provider-matrix.test.ts`
+
+One parent case with 34 subtests; each subtest is its own Rust test against the test gateway instance. Every test ends with `scan` (the key absent from responses, server output and files). The exact direct-client error texts per status, backup-model fallback and named accounts left with #87; what remains is a key-free failure, one request and no replay.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| loading remains pending; empty catalog succeeds without inventing models | `sb_provider_matrix::loading_remains_pending_empty_catalog_succeeds_without_inventing_models` | 6 -> 8 | Instance catalog (`/api/provider-instances/{id}/models`). |
+| discovery http-401 | `sb_provider_matrix::discovery_http_401` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery http-403 | `sb_provider_matrix::discovery_http_403` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery catalog-secret | `sb_provider_matrix::discovery_catalog_secret` | 5 -> 8 | Found S8 (the key came back as a model id). |
+| discovery non-json | `sb_provider_matrix::discovery_non_json` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery oversize | `sb_provider_matrix::discovery_oversize` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery invalid-catalog | `sb_provider_matrix::discovery_invalid_catalog` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery redirect | `sb_provider_matrix::discovery_redirect` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery http-408 | `sb_provider_matrix::discovery_http_408` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery http-429 | `sb_provider_matrix::discovery_http_429` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery http-503 | `sb_provider_matrix::discovery_http_503` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery catalog-timeout | `sb_provider_matrix::discovery_catalog_timeout` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| missing named account cannot use configured default | `sb_provider_matrix::missing_named_account_cannot_use_configured_default` | 3 -> 5 | A missing instance id (404), no provider request. |
+| turn http-401 does not fall back or replay | `sb_provider_matrix::turn_http_401_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-403 does not fall back or replay | `sb_provider_matrix::turn_http_403_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-404 does not fall back or replay | `sb_provider_matrix::turn_http_404_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-408 does not fall back or replay | `sb_provider_matrix::turn_http_408_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn timeout does not fall back or replay | `sb_provider_matrix::turn_timeout_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-500 does not fall back or replay | `sb_provider_matrix::turn_http_500_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-502 does not fall back or replay | `sb_provider_matrix::turn_http_502_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn text-secret does not fall back or replay | `sb_provider_matrix::turn_text_secret_does_not_fall_back_or_replay` | 7 -> 10 | An echoed key is redacted. |
+| turn malformed does not fall back or replay | `sb_provider_matrix::turn_malformed_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn tools does not fall back or replay | `sb_provider_matrix::turn_tools_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn other-400 does not fall back or replay | `sb_provider_matrix::turn_other_400_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn 429 falls back once on same account | `sb_provider_matrix::turn_429_falls_back_once_on_same_account` | 6 -> 10 | Fallback removed (#87): one request, turn failed. |
+| turn 503 falls back once on same account | `sb_provider_matrix::turn_503_falls_back_once_on_same_account` | 6 -> 10 | As above. |
+| fallback failure ends after two requests | `sb_provider_matrix::fallback_failure_ends_after_two_requests` | 4 -> 10 | As above: one request. |
+| rate limit without fallback stays failed | `sb_provider_matrix::rate_limit_without_fallback_stays_failed` | 4 -> 7 | Exact error text dropped. |
+| completed tool effect blocks automatic fallback; acknowledged resume retains artifact | `sb_provider_matrix::completed_tool_effect_blocks_automatic_fallback_acknowledged_resume_retains_artifact` | 9 -> 10 | Full apart from the error text. |
+| turn stream-cut retains partial text without fallback or replay on restart | `sb_provider_matrix::turn_stream_cut_retains_partial_text_without_fallback_or_replay_on_restart` | 9 -> 12 | Exact error text dropped. |
+| turn stream-socket-cut retains partial text without fallback or replay on restart | `sb_provider_matrix::turn_stream_socket_cut_retains_partial_text_without_fallback_or_replay_on_restart` | 9 -> 12 | Exact error text dropped. |
+| streamed credential echo never reaches partial storage | `sb_provider_matrix::streamed_credential_echo_never_reaches_partial_storage` | 7 -> 6 | Exact error text dropped. |
+| unconfigured default is distinct from missing named account | `sb_provider_matrix::unconfigured_default_is_distinct_from_missing_named_account` | 4 -> 7 | A disabled instance: turns 503, no provider request. |
+| unreachable loopback host reports connection problem | `sb_provider_matrix::unreachable_loopback_host_reports_connection_problem` | 4 -> 7 | Exact error text dropped. |
+
+### `app/memory-reflect.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| scoped auto-recall, history, reflection and standing answer refresh | `sb_memory::scoped_auto_recall_history_reflection_and_standing_answer_refresh` | 22 -> 25 | Found S5 (background memory calls always got an empty answer). The Node case minted an MCP session and called `recall`/`remember` directly; here the turn's own MCP session runs them. |
+| background learning uses the binding catalog unless Memory model is set | `sb_memory::background_learning_uses_the_binding_catalog_unless_memory_model_is_set` | 10 -> 12 | Dropped: the cheapest-model default from the API account catalog (`/api/models?runtime=api`, `api_memory_default`), removed by #87; learning now uses the Memory model, else the agent's model. Per-phase calls, models and usage rows carry over. |
+
+### `app/slack-output.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| Slack artifacts retain exact bytes and upload stages across uncertain completion and grant recovery | `sb_slack_output::slack_artifacts_retain_exact_bytes_and_upload_stages_across_uncertain_completion_and_grant_recovery` | 24 -> 21 | Full; the fake Slack Web API and Socket Mode server is `connector_fixture::SlackFixture`. |
+
+### `app/rust-harness.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| mise shim probes and launches with trusted mise paths and an isolated home | `sb_rust_harness::mise_shim_probes_and_launches_with_trusted_mise_paths_and_an_isolated_home` | 5 -> 3 | Full (the stand-in `mise` script checks the environment itself). Found S6. |
+| Rust ACP and Pi execute fake protocols with model selection and approvals | `sb_rust_harness::rust_acp_and_pi_execute_fake_protocols_with_model_selection_and_approvals` | 6 -> 6 | Full. |
+| Rust MCP feature receipts, scopes, cursors and stdio forwarding | `sb_rust_harness::rust_mcp_feature_receipts_scopes_cursors_and_stdio_forwarding` | 17 -> 15 | Full; peer tokens come from `/api/mcp-server/peer-tokens`. |
 
 <!-- stale-b files -->
 

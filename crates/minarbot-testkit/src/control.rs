@@ -51,12 +51,18 @@ pub enum Answer {
     Status(u16, Value),
     /// Raw body text with status 200 (for malformed provider output).
     Raw(String),
+    /// `302 Found` to `location`.
+    Redirect(String),
     /// Keep the request open until the test answers it.
     Defer,
     /// Stream one SSE content delta, then keep the response open with no
     /// further bytes (a provider that stalls mid-answer). Ends when the
     /// client disconnects or the model stops.
     Stall(String),
+    /// Stream one content delta, then an SSE `error` event, then end.
+    StreamError(String, String),
+    /// Stream one content delta, then break the connection.
+    StreamCut(String),
 }
 
 impl Answer {
@@ -72,7 +78,41 @@ impl Answer {
         }
     }
 
+    /// Server-sent events for a streamed request (`stream: true`).
+    fn events(choice: &Value, usage: Option<&Value>) -> Response {
+        let message = &choice["message"];
+        let mut frames = Vec::new();
+        if let Some(text) = message["content"].as_str() {
+            frames.push(json!({"choices": [{"index": 0, "delta": {"role": "assistant", "content": text}, "finish_reason": null}]}));
+        }
+        for (index, call) in message["tool_calls"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            let mut call = call.clone();
+            call["index"] = json!(index);
+            frames.push(json!({"choices": [{"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": null}]}));
+        }
+        let mut last = json!({"choices": [{"index": 0, "delta": {}, "finish_reason": choice["finish_reason"]}]});
+        if let Some(usage) = usage {
+            last["usage"] = usage.clone();
+        }
+        frames.push(last);
+        let mut body: String = frames
+            .iter()
+            .map(|frame| format!("data: {frame}\n\n"))
+            .collect();
+        body.push_str("data: [DONE]\n\n");
+        ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response()
+    }
+
     fn response(self, usage: Option<(u64, u64)>) -> Response {
+        self.respond(usage, false)
+    }
+
+    fn respond(self, usage: Option<(u64, u64)>, stream: bool) -> Response {
         let usage = usage.map(|(prompt, completion)| {
             json!({"prompt_tokens": prompt, "completion_tokens": completion,
                 "total_tokens": prompt + completion})
@@ -96,6 +136,31 @@ impl Answer {
                 return (status, Json(body)).into_response();
             }
             Self::Raw(body) => return (StatusCode::OK, body).into_response(),
+            Self::Redirect(location) => {
+                return (StatusCode::FOUND, [(header::LOCATION, location)], "").into_response()
+            }
+            Self::StreamError(text, message) => {
+                let frame = json!({"choices": [{"index": 0, "delta": {"role": "assistant",
+                    "content": text}, "finish_reason": null}]});
+                let body = format!(
+                    "data: {frame}\n\nevent: error\ndata: {}\n\n",
+                    json!({"error": {"message": message}})
+                );
+                return ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response();
+            }
+            Self::StreamCut(text) => {
+                let frame = json!({"choices": [{"index": 0, "delta": {"role": "assistant",
+                    "content": text}, "finish_reason": null}]});
+                let first = futures_util::stream::once(async move {
+                    Ok::<_, std::io::Error>(format!("data: {frame}\n\n"))
+                });
+                let cut = futures_util::stream::once(async {
+                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                    Err::<String, std::io::Error>(std::io::Error::other("stream cut"))
+                });
+                let body = Body::from_stream(first.chain(cut));
+                return ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response();
+            }
             Self::Stall(text) => {
                 let frame = json!({"choices": [{"index": 0, "delta": {"role": "assistant",
                     "content": text}, "finish_reason": null}]});
@@ -109,6 +174,9 @@ impl Answer {
                 return (StatusCode::INTERNAL_SERVER_ERROR, "deferred twice").into_response()
             }
         };
+        if stream {
+            return Self::events(&choice, usage.as_ref());
+        }
         let mut body = json!({"choices": [choice]});
         if let Some(usage) = usage {
             body["usage"] = usage;
@@ -133,8 +201,12 @@ impl Deferred {
     }
 }
 
+type CatalogResponder = Arc<dyn Fn() -> Answer + Send + Sync>;
+
 struct Script {
     responder: Option<Responder>,
+    catalog_responder: Option<CatalogResponder>,
+    catalog_calls: usize,
     requests: Vec<ModelRequest>,
     deferred: VecDeque<Deferred>,
     catalog: Vec<String>,
@@ -169,6 +241,8 @@ impl ControlModel {
         let shared = Shared {
             state: Arc::new(Mutex::new(Script {
                 responder: None,
+                catalog_responder: None,
+                catalog_calls: 0,
                 requests: Vec::new(),
                 deferred: VecDeque::new(),
                 catalog: vec!["fixture".into()],
@@ -220,6 +294,21 @@ impl ControlModel {
     /// Usage attached to later answers; `None` omits the `usage` field.
     pub fn set_usage(&self, usage: Option<(u64, u64)>) {
         self.shared.with(|state| state.usage = usage);
+    }
+
+    /// Answer `GET /v1/models` with `responder` instead of the catalog:
+    /// `Raw`, `Status`, `Redirect` and `Defer` (a held request whose
+    /// [`Deferred::request`] body is `{"catalog": true}`); other answers
+    /// fall back to the catalog.
+    pub fn respond_catalog(&self, responder: impl Fn() -> Answer + Send + Sync + 'static) {
+        let responder: CatalogResponder = Arc::new(responder);
+        self.shared
+            .with(|state| state.catalog_responder = Some(responder));
+    }
+
+    /// Number of `GET /v1/models` requests so far.
+    pub fn catalog_calls(&self) -> usize {
+        self.shared.with(|state| state.catalog_calls)
     }
 
     /// Model ids listed by `GET /v1/models`.
@@ -290,12 +379,13 @@ async fn completion(
         (request, state.responder.clone(), state.usage)
     });
     let answer = responder.map_or_else(|| Answer::text("ok"), |responder| responder(&request));
+    let stream = request.body["stream"] == true;
     match answer {
         Answer::Defer => {
             let (sender, receiver) = oneshot::channel();
             shared.with(|state| state.deferred.push_back(Deferred { request, sender }));
             match receiver.await {
-                Ok(answer) => answer.response(usage),
+                Ok(answer) => answer.respond(usage, stream),
                 Err(_) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "deferred request dropped",
@@ -303,11 +393,43 @@ async fn completion(
                     .into_response(),
             }
         }
-        answer => answer.response(usage),
+        answer => answer.respond(usage, stream),
     }
 }
 
-async fn models(State(shared): State<Shared>) -> Response {
+async fn models(State(shared): State<Shared>, headers: HeaderMap) -> Response {
+    let (responder, index) = shared.with(|state| {
+        state.catalog_calls += 1;
+        (state.catalog_responder.clone(), state.catalog_calls)
+    });
+    if let Some(responder) = responder {
+        match responder() {
+            Answer::Defer => {
+                let (sender, receiver) = oneshot::channel();
+                let request = ModelRequest {
+                    index,
+                    body: json!({"catalog": true}),
+                    authorization: headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned),
+                };
+                shared.with(|state| state.deferred.push_back(Deferred { request, sender }));
+                return match receiver.await {
+                    Ok(answer) => answer.response(None),
+                    Err(_) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "deferred request dropped",
+                    )
+                        .into_response(),
+                };
+            }
+            answer @ (Answer::Raw(_) | Answer::Status(..) | Answer::Redirect(_)) => {
+                return answer.response(None)
+            }
+            _ => {}
+        }
+    }
     let data: Vec<Value> = shared.with(|state| {
         state
             .catalog

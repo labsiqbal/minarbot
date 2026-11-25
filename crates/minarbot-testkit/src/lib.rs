@@ -20,6 +20,7 @@
 pub mod bridge;
 pub mod canonical;
 pub mod cli;
+pub mod connector_fixture;
 pub mod control;
 pub mod db;
 pub mod fake;

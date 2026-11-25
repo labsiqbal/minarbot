@@ -1532,7 +1532,8 @@ async fn execute(
     child.notification = None;
     // Coordination tools can pause turn while harness process reports its
     // terminal event. Preserve stream receipt and let scheduler resume turn.
-    let paused = {
+    // Memory calls run on finished turns, so the turn state does not apply.
+    let paused = !memory && {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         one(
             &guard.connection,
@@ -1631,6 +1632,11 @@ pub async fn run(
         (turn, profile, binding)
     };
     let instance_id = string(&profile, "provider_instance");
+    if data::provider_instances::instance(state, instance_id)?
+        .is_some_and(|row| row["enabled"] != 1)
+    {
+        return Err(error(503, "This provider instance is disabled."));
+    }
     let instance = if instance_id.is_empty() {
         None
     } else {
@@ -1818,6 +1824,22 @@ pub async fn run(
         env.extend(process::HERMES_ENV.map(|(key, value)| (key.into(), value.into())));
     }
     if mise {
+        // mise records trust for every HOME in its state dir; a turn without
+        // an isolated harness home would otherwise use the owner's HOME and
+        // state. Give mise launches a private home per binding.
+        if !env.contains_key("HOME") {
+            use sha2::{Digest, Sha256};
+            let root =
+                config::homes_root(&state.config.database).map_err(|_| Failure::storage())?;
+            let digest = format!("{:x}", Sha256::digest(key.as_bytes()));
+            let home = root.join(format!("mise-{}", &digest[..16]));
+            DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(&home)
+                .map_err(|_| Failure::storage())?;
+            env.insert("HOME".into(), home.to_string_lossy().into_owned());
+        }
         process::configure_mise(&mut env);
     }
     let instance_secrets = {

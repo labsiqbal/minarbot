@@ -255,6 +255,23 @@ pub(crate) fn instance_from_db(db: &Connection, id: &str) -> Result<Option<Value
     row(db, id)
 }
 
+/// Decrypted values of the instance's secret environment variables.
+pub(crate) fn secret_values(state: &AppState, id: &str) -> Result<Vec<String>> {
+    let Some(row) = instance(state, id)? else {
+        return Ok(Vec::new());
+    };
+    let values: Vec<Value> =
+        serde_json::from_str(string(&row, "environment")).map_err(|_| Failure::storage())?;
+    values
+        .iter()
+        .filter(|value| value["secret"] == true)
+        .map(|value| {
+            provider_store::decrypt_secret(state, id, string(value, "value"))
+                .ok_or_else(Failure::storage)
+        })
+        .collect()
+}
+
 pub(crate) fn launch_config(state: &AppState, id: &str) -> Result<Option<LaunchConfig>> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     launch_config_from_db(state, &guard.connection, id)

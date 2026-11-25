@@ -211,6 +211,7 @@ impl Peer {
     fn finish(&self, allowed: bool) {
         let prompt = self.prompt();
         let checked = prompt.contains("NATIVE_CHECK");
+        self.project_environment(&prompt);
         match self.mode {
             Mode::Codex => {
                 if checked {
@@ -290,6 +291,42 @@ impl Peer {
                 }
                 self.send(result_message(&session, "fake result", 11, 7));
             }
+        }
+    }
+}
+
+impl Peer {
+    /// `ENV_PRESENT` / `ENV_ABSENT` in the latest user message (port of the
+    /// `project-integrations` fixture patch): `PROJECT_TEST_TOKEN` must be set
+    /// (and visible to a shell command, whose output is streamed as two
+    /// deltas) or must be absent; otherwise the peer exits 1.
+    fn project_environment(&self, prompt: &str) {
+        let latest = prompt
+            .rfind("\"role\":\"user\"")
+            .or_else(|| prompt.rfind("user:"))
+            .map_or(prompt, |at| &prompt[at..]);
+        let value = std::env::var("PROJECT_TEST_TOKEN").ok();
+        if latest.contains("ENV_PRESENT") {
+            let output = std::process::Command::new("/bin/sh")
+                .args(["-c", "printf %s \"$PROJECT_TEST_TOKEN\""])
+                .output()
+                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                .unwrap_or_default();
+            if value.as_deref().is_none_or(str::is_empty)
+                || value.as_deref() != Some(output.as_str())
+            {
+                eprintln!("fake harness: PROJECT_TEST_TOKEN missing from the project shell");
+                std::process::exit(1);
+            }
+            let split = output
+                .char_indices()
+                .nth(8)
+                .map_or(output.len(), |(at, _)| at);
+            self.delta(&output[..split]);
+            self.delta(&output[split..]);
+        } else if latest.contains("ENV_ABSENT") && value.is_some() {
+            eprintln!("fake harness: PROJECT_TEST_TOKEN leaked outside its project");
+            std::process::exit(1);
         }
     }
 }
