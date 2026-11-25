@@ -438,9 +438,13 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
             Err(failure) if !exhausted => {
                 let spent = {
                     let db = state.database.lock().map_err(|_| Failure::storage())?;
-                    one(&db.connection, "SELECT tool_budget_used FROM turns WHERE id=?", [id])?
-                        .and_then(|row| row["tool_budget_used"].as_i64())
-                        .unwrap_or(0)
+                    one(
+                        &db.connection,
+                        "SELECT tool_budget_used FROM turns WHERE id=?",
+                        [id],
+                    )?
+                    .and_then(|row| row["tool_budget_used"].as_i64())
+                    .unwrap_or(0)
                 };
                 Err(if spent >= budget {
                     error(

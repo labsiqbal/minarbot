@@ -509,7 +509,6 @@ fn launch_turn(
     launch()
 }
 
-#[allow(clippy::too_many_arguments)]
 /// `message` with each `image_url` content part replaced by a short note.
 fn without_image_data(message: &Value) -> Value {
     let mut message = message.clone();
@@ -523,6 +522,7 @@ fn without_image_data(message: &Value) -> Value {
     message
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute(
     state: &AppState,
     turn: &Value,

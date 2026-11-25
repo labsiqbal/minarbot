@@ -3,10 +3,10 @@ mod browser;
 mod fixture;
 mod node;
 mod routing;
-mod session;
-mod storage;
 #[cfg(test)]
 mod schema_tests;
+mod session;
+mod storage;
 #[cfg(test)]
 mod tests;
 

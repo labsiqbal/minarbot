@@ -233,8 +233,8 @@ pub async fn tool(
         use base64::{engine::general_purpose::STANDARD, Engine};
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         // The turn's own attachments already reach the harness as images.
-        let attached: Vec<String> = serde_json::from_str(row["attachments"].as_str().unwrap_or("[]"))
-            .unwrap_or_default();
+        let attached: Vec<String> =
+            serde_json::from_str(row["attachments"].as_str().unwrap_or("[]")).unwrap_or_default();
         if attached.iter().any(|id| id == string(&result, "id")) {
             return Ok(
                 json!({"id":result["id"],"name":result["name"],"note":"Image already included in this execution."}),

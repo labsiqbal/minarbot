@@ -140,8 +140,11 @@ pub struct SocketScript {
     /// client to reconnect (`disconnect`, `refresh_requested`).
     pub disconnect_after_first_ack: bool,
     /// Called with each acknowledged envelope id.
-    pub on_ack: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    pub on_ack: Option<AckHook>,
 }
+
+/// Callback for acknowledged Socket Mode envelope ids.
+pub type AckHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 type Shared = Arc<Mutex<Record>>;
 

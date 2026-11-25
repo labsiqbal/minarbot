@@ -15,8 +15,11 @@ impl Drop for Temp {
     }
 }
 
+/// One schema object: type, name, table and whitespace-normalized SQL.
+type SchemaObject = (String, String, String, Option<String>);
+
 /// Schema objects with whitespace-normalized SQL, ordered by type and name.
-fn snapshot(db: &Connection) -> Check<Vec<(String, String, String, Option<String>)>> {
+fn snapshot(db: &Connection) -> Check<Vec<SchemaObject>> {
     let mut statement =
         db.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name")?;
     let rows = statement.query_map([], |row| {

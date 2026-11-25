@@ -166,7 +166,8 @@ async fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
                         | "set_avatar"
                         | "interrupt_agent"
                 ))
-                && (messaging || !matches!(name, "list_agents" | "send_message" | "interrupt_agent"))
+                && (messaging
+                    || !matches!(name, "list_agents" | "send_message" | "interrupt_agent"))
         });
     }
     specs.retain(|t| {
