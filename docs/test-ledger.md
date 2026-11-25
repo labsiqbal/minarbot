@@ -494,3 +494,30 @@ Paths below are relative to `app/`. Playwright remains in `test-support/ui-smoke
   `transcript.test.ts`, `turn-stream.test.ts`, `turn-waits.test.ts`, `usage.test.ts`,
   `webhooks.test.ts`, `workflow-files.test.ts`, `workflow-http.test.ts`,
   `workflow-parallel.test.ts`, `workflow-waits.test.ts`, `workspace-files.test.ts`.
+
+## #89 peers slice: multi-server Node suites to Rust
+
+Ported to `crates/minarbot-e2e/tests/e2e/pr_*.rs`, one Rust test per Node
+runtime case. Assertion counts are `assert` calls in the Node case body
+against `ensure!` calls in the Rust test; status codes checked inside the
+`call`/`api` helpers are not counted on either side (the Rust helpers check
+them too). Node servers always had a computer bridge; the Rust tests start
+`machine_bridge::MachineBridge` when a case needs `refreshMachines`, a fake
+peer token issuer or the manual machine clock, and otherwise let the
+servers talk to each other directly. Peer suites use the real clock, as the
+Node suites did. Multi-server tests reserve their server slots at once with
+`Servers::reserve`, so two such tests cannot deadlock on the two-slot cap.
+
+### `app/machines.test.ts` (9 cases, 9 Rust tests, file deleted)
+
+| Node case | Rust test (`pr_machines::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| paired machine recovers after restart while roster sync times out on a shared link | `paired_machine_recovers_after_restart_while_roster_sync_times_out_on_a_shared_link` | 12 -> 12 | The throttled link is a `relay::Relay` with origin rewriting and a paced roster body. |
+| peer transport accepts proxy host headers while owner machine routes retain the local host boundary | `peer_transport_accepts_proxy_host_headers_while_owner_machine_routes_retain_the_local_host_boundary` | 8 -> 8 | Raw HTTP/1.1 requests carry the foreign `Host`. |
+| two real instances pair mutually, expose scoped cached agents, survive restarts, recover offline, and revoke on unpair without leaking credentials | `two_real_instances_pair_mutually_expose_scoped_cached_agents_survive_restarts_recover_offline_and_revoke_on_unpair_without_leaking_credentials` | 28 -> 28 | Node captured test-process logs; Rust scans the server logs, which the file scan also covers. |
+| pairing uses uniform invalid-code errors, strict bodies, one-time expiry, persisted rate limits, and browser-only owner writes | `pairing_uses_uniform_invalid_code_errors_strict_bodies_one_time_expiry_persisted_rate_limits_and_browser_only_owner_writes` | 4 -> 4 | Manual machine clock through the bridge. |
+| origins reject unsafe forms; remote pairing rejects redirects, oversized bodies, and credential reflection | `origins_reject_unsafe_forms_remote_pairing_rejects_redirects_oversized_bodies_and_credential_reflection` | 3 -> 3 | No bridge, so the product's own client meets the redirect and size limits. "No issued token" is read from `/api/mcp-server/peer-tokens`. |
+| unpair removes first while remote is offline; missing wrapping key fails closed and cached agents remain readable | `unpair_removes_first_while_remote_is_offline_missing_wrapping_key_fails_closed_and_cached_agents_remain_readable` | 3 -> 3 | |
+| background health records a different peer version as online and never sends bearer to a changed identity or redirected descriptor | `background_health_records_a_different_peer_version_as_online_and_never_sends_bearer_to_a_changed_identity_or_redirected_descriptor` | 14 -> 15 | Adds a check that only one token was issued. |
+| lost reciprocal acknowledgement retries encrypted pending credentials after restart without minting another token | `lost_reciprocal_acknowledgement_retries_encrypted_pending_credentials_after_restart_without_minting_another_token` | 7 -> 7 | The Node in-handler `assert.equal(data.token, saved)` is a recorded mismatch flag. |
+| default wiring issues pairing tokens from the Minarbot MCP token registry and revokes them on unpair | `default_wiring_issues_pairing_tokens_from_the_minarbot_mcp_token_registry_and_revokes_them_on_unpair` | 12 -> 12 | |

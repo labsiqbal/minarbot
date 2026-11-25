@@ -26,10 +26,12 @@ pub mod fakes;
 pub mod http;
 pub mod image;
 pub mod issuer;
+pub mod machine_bridge;
 pub mod model;
 pub mod protocol;
 pub mod providers;
 pub mod proxy;
+pub mod relay;
 pub mod server;
 pub mod wait;
 pub mod workspace;
@@ -39,7 +41,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 /// Result alias for kit helpers and tests.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub use server::{Server, ServerConfig, TestRoot, FIXED_CLOCK, WAIT};
+pub use server::{Server, ServerConfig, Servers, TestRoot, FIXED_CLOCK, WAIT};
 
 /// Re-exported for tests that build fixture payloads.
 pub use base64;

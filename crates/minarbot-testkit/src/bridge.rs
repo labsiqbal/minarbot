@@ -54,10 +54,15 @@ impl BridgeError {
 }
 
 type Operations = dyn Fn(&str, &Value) -> Result<Value, BridgeError> + Send + Sync;
+/// Async `{operation, args}` handler (peer HTTP and hub transports await I/O).
+pub type AsyncOperations = dyn Fn(String, Value) -> futures_util::future::BoxFuture<'static, Result<Value, BridgeError>>
+    + Send
+    + Sync;
 type Pdf = dyn Fn(&[u8]) -> Option<(u16, String)> + Send + Sync;
 
 enum Kind {
     Operations(Arc<Operations>),
+    AsyncOperations(Arc<AsyncOperations>),
     Paths(Arc<Operations>),
     Pdf(Arc<Pdf>),
     Key(String),
@@ -121,6 +126,13 @@ async fn operation(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: 
                 body["operation"].as_str().unwrap_or_default(),
                 &body["args"],
             ))
+        }
+        Kind::AsyncOperations(handler) => {
+            let Ok(body) = serde_json::from_slice::<Value>(&body) else {
+                return answer(Err(BridgeError::new(400, "Invalid bridge request.")));
+            };
+            let operation = body["operation"].as_str().unwrap_or_default().to_owned();
+            answer(handler(operation, body["args"].clone()).await)
         }
         Kind::Pdf(handler) => match handler(&body) {
             None => StatusCode::NO_CONTENT.into_response(),
@@ -196,6 +208,11 @@ impl Bridge {
         handler: impl Fn(&str, &Value) -> Result<Value, BridgeError> + Send + Sync + 'static,
     ) -> Result<Self> {
         Self::start(Kind::Operations(Arc::new(handler))).await
+    }
+
+    /// Async `{operation, args}` bridge, for operations that await I/O.
+    pub async fn operations_async(handler: Arc<AsyncOperations>) -> Result<Self> {
+        Self::start(Kind::AsyncOperations(handler)).await
     }
 
     /// `POST /<operation>` bridge (the canonical bridge).

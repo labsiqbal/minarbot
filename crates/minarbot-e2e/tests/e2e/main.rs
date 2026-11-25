@@ -8,6 +8,8 @@ mod cli;
 mod goals;
 mod harness;
 mod kit;
+mod pr_machines;
+mod pr_support;
 mod questions;
 mod support;
 mod threads;

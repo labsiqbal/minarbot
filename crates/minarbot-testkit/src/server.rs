@@ -451,7 +451,18 @@ impl TestRoot {
             root: self.clone(),
             config,
             process: Some(process),
-            _slot: slot,
+            _slot: Slot::Own(slot),
+        })
+    }
+
+    /// Start a server inside a [`Servers`] reservation.
+    pub async fn start_in(&self, group: &Servers, config: ServerConfig) -> Result<Server> {
+        let process = spawn(self, &config).await?;
+        Ok(Server {
+            root: self.clone(),
+            config,
+            process: Some(process),
+            _slot: Slot::Group(group.0.clone()),
         })
     }
 
@@ -515,15 +526,16 @@ pub fn server_binary(explicit: Option<&Path>) -> Result<PathBuf> {
 fn slots() -> Arc<tokio::sync::Semaphore> {
     static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
     SLOTS
-        .get_or_init(|| {
-            let count = std::env::var("MINARBOT_TEST_SERVERS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .filter(|count| *count > 0)
-                .unwrap_or(2);
-            Arc::new(tokio::sync::Semaphore::new(count))
-        })
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(slot_count())))
         .clone()
+}
+
+fn slot_count() -> usize {
+    std::env::var("MINARBOT_TEST_SERVERS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or(2)
 }
 
 async fn spawn(root: &TestRoot, config: &ServerConfig) -> Result<Process> {
@@ -641,13 +653,37 @@ fn startup_error(reason: String, process: &Process) -> Error {
     .into()
 }
 
+/// Slots reserved at once for a test that runs several servers together.
+///
+/// Two tests that each start two servers one by one can each take one of
+/// the two slots and then wait for each other forever. [`Servers::reserve`]
+/// takes all slots a test needs atomically. A test that needs more servers
+/// than `MINARBOT_TEST_SERVERS` allows (a three-node case) takes every slot,
+/// so it runs alone, and may then start its extra server.
+#[derive(Clone)]
+pub struct Servers(Arc<tokio::sync::OwnedSemaphorePermit>);
+
+impl Servers {
+    pub async fn reserve(count: u32) -> Result<Self> {
+        let semaphore = slots();
+        let total = u32::try_from(slot_count()).unwrap_or(u32::MAX);
+        let permits = semaphore.acquire_many_owned(count.clamp(1, total)).await?;
+        Ok(Self(Arc::new(permits)))
+    }
+}
+
+enum Slot {
+    Own(#[allow(dead_code)] tokio::sync::OwnedSemaphorePermit),
+    Group(#[allow(dead_code)] Arc<tokio::sync::OwnedSemaphorePermit>),
+}
+
 /// A running (or stopped) Minarbot server bound to a [`TestRoot`].
 pub struct Server {
     root: TestRoot,
     config: ServerConfig,
     process: Option<Process>,
     /// Concurrency slot, kept across restarts and crashes.
-    _slot: tokio::sync::OwnedSemaphorePermit,
+    _slot: Slot,
 }
 
 impl Server {
