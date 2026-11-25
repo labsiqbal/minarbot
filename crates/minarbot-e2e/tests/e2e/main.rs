@@ -10,6 +10,7 @@ mod fx_queues;
 mod fx_scripts;
 mod fx_support;
 mod fx_tools;
+mod fx_waits;
 mod goals;
 mod harness;
 mod kit;

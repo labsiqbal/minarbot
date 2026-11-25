@@ -1,7 +1,7 @@
 //! Agent deletion and visibility (ports of `app/agent-delete.test.ts` and
 //! `app/agent-visibility.test.ts`).
 
-use crate::fx_support::{after_pause, api_agent, gated, id, pause_reply, row, settle};
+use crate::fx_support::{after_pause, api_agent, gated, id, pause_reply_for, row, settle};
 use minarbot_testkit::{
     db::{Fixture, Inspector},
     gated::{Answer, GatedModel},
@@ -517,7 +517,7 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
     let (seen, recorded) = (roster.clone(), calls.clone());
     model.respond(move |request| {
         if after_pause(request) {
-            return pause_reply();
+            return pause_reply_for(request);
         }
         let last = request.messages().last().cloned().unwrap_or(Value::Null);
         let text = last["content"].as_str().unwrap_or_default().to_owned();

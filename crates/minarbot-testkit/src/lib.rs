@@ -34,6 +34,8 @@ pub mod protocol;
 pub mod providers;
 pub mod proxy;
 pub mod server;
+pub mod signing;
+pub mod stub;
 pub mod wait;
 pub mod workspace;
 
