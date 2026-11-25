@@ -249,7 +249,7 @@ async fn protected_workflow_connection_reveals_only_ciphertext_to_its_current_ow
         let device = f.w.tp.data("/api/devices").await?[0].clone();
         let secret = f.w.secret(None)?;
         ensure!(
-            value["waitKey"] == json!(["workflow", f.run, 1]).to_string(),
+            value["waitKey"].as_str() == Some(json!(["workflow", f.run, 1]).to_string().as_str()),
             "wait key: {value}"
         );
         ensure!(value["sourceDeviceId"] == f.w.home["id"], "source: {value}");

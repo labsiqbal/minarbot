@@ -41,8 +41,7 @@ fn latest(body: &Value) -> String {
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|message| message["role"] == "user")
-        .next_back()
+        .rfind(|message| message["role"] == "user")
         .and_then(|message| message["content"].as_str())
         .map(|content| {
             content

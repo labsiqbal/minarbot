@@ -225,12 +225,14 @@ enum Control {
     Close(u16, String),
 }
 
+type Observer = Arc<dyn Fn(&str) + Send + Sync>;
+
 #[derive(Default)]
 struct Hooks {
     receive: Option<Receive>,
     outgoing: Option<Outgoing>,
     lose_enrollment: bool,
-    observers: Vec<Arc<dyn Fn(&str) + Send + Sync>>,
+    observers: Vec<Observer>,
 }
 
 /// Node-side hub transport for one or more node servers.

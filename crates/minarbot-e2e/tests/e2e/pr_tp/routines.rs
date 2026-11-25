@@ -1082,7 +1082,7 @@ async fn outcome_recovers_terminal_result_after_home_sigkill(name: &'static str)
         let run = wait_first_run(&w, &detail, |run| run["state"] == "admitted").await?;
         let task = text(&run["taskId"]);
         connection.stop().await?;
-        minarbot_testkit::device_host::crash_task(&w.options, &task, &provider.origin(), "tool-reply").await?;
+        minarbot_testkit::device_host::crash_task(&w.options, &task, provider.origin(), "tool-reply").await?;
         ensure!(calls.load(Ordering::SeqCst) == 1, "provider calls before crash recovery");
         let terminal = if name == "no_update" { "done" } else { "failed" };
         let run = wait_first_run(&w, &detail, |run| run["state"] == terminal).await?;
@@ -1117,7 +1117,7 @@ async fn outcome_recovers_terminal_result_after_home_sigkill(name: &'static str)
         drop(db);
         w.tp.restart().await?;
         for _ in 0..2 {
-            let resumed = minarbot_testkit::device_host::run_task_process(&w.options, &task, &provider.origin()).await?;
+            let resumed = minarbot_testkit::device_host::run_task_process(&w.options, &task, provider.origin()).await?;
             ensure!(
                 resumed["state"] == if name == "no_update" { "completed" } else { "failed" },
                 "resumed: {resumed}"

@@ -118,10 +118,7 @@ async fn paired_machine_recovers_after_restart_while_roster_sync_times_out_on_a_
                 locked(&shared).roster_bytes = body.len();
                 let length = body.len();
                 // Desktop traffic uses 15 KiB/s of the 25 KiB/s uplink.
-                let chunks: Vec<Bytes> = body
-                    .chunks(1024)
-                    .map(|chunk| Bytes::copy_from_slice(chunk))
-                    .collect();
+                let chunks: Vec<Bytes> = body.chunks(1024).map(Bytes::copy_from_slice).collect();
                 let stream = relay::paced(chunks, Duration::from_millis(100));
                 return Ok(Answer::stream(
                     status,

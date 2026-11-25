@@ -53,7 +53,7 @@ pub enum Fault {
     /// Wait for this future, then forward.
     Hold(BoxFuture),
     /// Forward, read the reply, then lose it when `lose(status, body)` holds.
-    LoseReply(Box<dyn Fn(u16, &[u8]) -> bool + Send>),
+    LoseReply(LoseWhen),
     /// Lose the request before it reaches the server.
     Drop,
     /// Forward, then reply with `rewrite(status, body)` instead.
@@ -61,6 +61,9 @@ pub enum Fault {
     /// Forward and read the reply, then deliver it after this future.
     After(BoxFuture),
 }
+
+/// `lose(status, body)`: whether to lose a reply.
+pub type LoseWhen = Box<dyn Fn(u16, &[u8]) -> bool + Send>;
 
 pub type FaultHook = Arc<dyn Fn(&Exchange) -> Fault + Send + Sync>;
 

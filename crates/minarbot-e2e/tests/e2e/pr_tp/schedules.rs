@@ -468,8 +468,8 @@ async fn workflow_schedule_sync_retains_scoped_metadata_and_exact_deltas_across_
         ensure!(events[0]["body"]["scheduleRevision"] == 1, "schedule revision");
         ensure!(events[1]["body"]["missedCount"] == 3, "missed count");
         ensure!(
-            events[1]["recordId"]
-                == json!([w.workflow, current["occurrences"][0]["occurrenceId"]]).to_string(),
+            events[1]["recordId"].as_str()
+                == Some(json!([w.workflow, current["occurrences"][0]["occurrenceId"]]).to_string().as_str()),
             "occurrence record id"
         );
         ensure!(

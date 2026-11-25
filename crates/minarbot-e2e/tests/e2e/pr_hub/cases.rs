@@ -1343,7 +1343,8 @@ async fn withdrawal_drains_its_control_frame_before_queued_section_delivery_clos
     let node = f.node("Queued withdrawal", &f.alice).await?;
     let p = f.owner(&node).await?;
     let delayed = Arc::new(AtomicBool::new(false));
-    let queued: Arc<Mutex<Option<tokio::task::JoinHandle<Result<Vec<String>>>>>> = Arc::default();
+    type Queued = Option<tokio::task::JoinHandle<Result<Vec<String>>>>;
+    let queued: Arc<Mutex<Queued>> = Arc::default();
     let (flag, slot, hub) = (delayed.clone(), queued.clone(), f.clone());
     f.transport.intercept_sends(Some(Arc::new(move |frame| {
         if body_kind(frame) != "participation.withdraw" {

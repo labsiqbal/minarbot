@@ -177,7 +177,7 @@ impl RustTask {
     {
         let (provide, failure) = guard(provide);
         let relay = provider(provide).await?;
-        let result = run_task_process(&self.options, task, &relay.origin()).await;
+        let result = run_task_process(&self.options, task, relay.origin()).await;
         drop(relay);
         guarded(result, &failure)
     }
@@ -189,7 +189,7 @@ impl RustTask {
     {
         let (provide, failure) = guard(provide);
         let relay = provider(provide).await?;
-        let result = crash_task(&self.options, task, &relay.origin(), checkpoint).await;
+        let result = crash_task(&self.options, task, relay.origin(), checkpoint).await;
         drop(relay);
         guarded(result.map(|()| Value::Null), &failure).map(|_| ())
     }
@@ -481,11 +481,11 @@ async fn home_execution_loop_survives_sigkill_across_provider_and_tool_results_w
         let runtime = RustTask::start(&tp, "killed-loop.sqlite", &tp.origin()).await?;
         for checkpoint in ["provider-not-sent", "canonical-not-sent", "provider-saved", "tool-reply", "tool-report", "provider-in-flight"] {
             let task = loop_task(&tp, &runtime.device, false, Binding::New).await?.task;
-            crash_task(&runtime.options, &task, &relay.origin(), checkpoint).await?;
+            crash_task(&runtime.options, &task, relay.origin(), checkpoint).await?;
             tp.restart().await?;
             let in_flight = checkpoint == "provider-in-flight";
             for _ in 0..2 {
-                let recovered = run_task_process(&runtime.options, &task, &relay.origin()).await?;
+                let recovered = run_task_process(&runtime.options, &task, relay.origin()).await?;
                 ensure!(
                     recovered["state"] == if in_flight { "uncertain" } else { "completed" },
                     "{checkpoint}: {recovered}"
@@ -752,7 +752,7 @@ async fn home_execution_loop_persists_provider_wait_across_reply_loss_and_preser
 ) -> Result<()> {
     let tp = Tp::start().await?;
     let result = async {
-        let runtime = RustTask::start(&tp, "wait-loop.sqlite", &tp.proxy.origin()).await?;
+        let runtime = RustTask::start(&tp, "wait-loop.sqlite", tp.proxy.origin()).await?;
         let missing = loop_task(&tp, &runtime.device, false, Binding::None).await?;
         let seen = tp.lose_next("/wait-provider");
         let lost = runtime.run_task(&missing.task, |_| async { failed("No provider binding") }).await;

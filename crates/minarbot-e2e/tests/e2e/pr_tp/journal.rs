@@ -289,7 +289,7 @@ async fn sigkill_recovery_proves_no_send_before_marker_and_never_repeats_marked_
             ("provider-report-reply", "acknowledged", true),
         ] {
             let task = loop_task(&tp, &device, false, Binding::New).await?.task;
-            crash_task(&options, &task, &origin, checkpoint).await?;
+            crash_task(&options, &task, origin, checkpoint).await?;
             let db = minarbot_testkit::db::Inspector::open(&options.database)?;
             let action = db.row("SELECT action_id, send_marker FROM device_journal WHERE task_id=? AND sequence=0", [&task])?;
             ensure!(action["send_marker"] == i64::from(marked), "{checkpoint} marker");
@@ -327,7 +327,7 @@ async fn sigkill_recovery_proves_no_send_before_marker_and_never_repeats_marked_
                 }
                 if !marked && restart == 0 {
                     ensure!(detail["state"] == "running", "{checkpoint} running");
-                    ensure!(run_task_process(&options, &task, &origin).await?["state"] == "completed", "{checkpoint} continued");
+                    ensure!(run_task_process(&options, &task, origin).await?["state"] == "completed", "{checkpoint} continued");
                     let continued = db.row("SELECT action_id,state,result_json FROM device_journal WHERE task_id=? AND sequence=1", [&task])?;
                     ensure!(continued["action_id"] != action["action_id"], "{checkpoint} new action");
                     ensure!(continued["state"] == "acknowledged", "{checkpoint} continued state");
