@@ -9,6 +9,7 @@ mod crypto;
 mod devices;
 mod events;
 mod execution;
+mod journal;
 #[allow(dead_code)]
 mod fixture;
 mod routines;

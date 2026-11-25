@@ -127,6 +127,17 @@ where
     guarded(result, &failure)
 }
 
+/// Run an action on the test-control host with a guarded effect.
+pub async fn act_on<F, Fut>(host: &DeviceHost, input: &Value, effect: F) -> Result<Value>
+where
+    F: Fn(Value) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Result<Value>> + Send + 'static,
+{
+    let (effect, failure) = guard(effect);
+    let result = host.action(input, effect).await;
+    guarded(result, &failure)
+}
+
 /// `rustTaskFixture`: an enrolled Rust device whose tasks run as their own
 /// `run-task` processes.
 pub struct RustTask {
