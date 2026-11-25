@@ -99,6 +99,39 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
                 .map_err(|_| Failure::storage())?,
         );
     }
+    if caller["kind"] == "session" && caller["turn"].is_string() {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let turn = one(
+            &guard.connection,
+            "SELECT * FROM turns WHERE id=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))))",
+            [string(caller, "turn")],
+        )?
+        .ok_or_else(|| error(403, "MCP authorization failed."))?;
+        for spec in crate::turns::tools::offered(state, &guard.connection, &turn)? {
+            let name = string(&spec["function"], "name");
+            if [
+                "list_agents",
+                "send_message",
+                "delegate_task",
+                "transfer_task",
+                "task_status",
+                "wait_task",
+                "cancel_task",
+                "interrupt_agent",
+            ]
+            .contains(&name)
+            {
+                specs.retain(|item| item["name"] != name);
+                specs.push(json!({
+                    "name": name,
+                    "description": spec["function"]["description"],
+                    "inputSchema": spec["function"]["parameters"],
+                    "scope": "orchestration",
+                    "native": true
+                }));
+            }
+        }
+    }
     specs.retain(|t| {
         allowed(caller, string(t, "scope"))
             && (!setup || ["edit_profile", "ask_user"].contains(&string(t, "name")))
@@ -206,7 +239,7 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
     }
     let params = &body["params"];
     let name = string(params, "name");
-    let args = params
+    let mut args = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
@@ -219,6 +252,10 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
             &body["id"],
             Err(error(400, "Invalid skill request.")),
         ));
+    }
+    if caller["kind"] == "session" && name == "delegate_task" && args["agent"].is_string() {
+        args["requestId"] = json!(uuid::Uuid::new_v4().to_string());
+        args["turn"] = caller["turn"].clone();
     }
     if caller["kind"] == "session" && caller["agent"] == super::guide::ID {
         let turn = {
