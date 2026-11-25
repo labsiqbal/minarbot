@@ -54,6 +54,15 @@ pub fn workspace(
             [project],
         )?;
         let Some(first) = folders.first() else {
+            if turn["channel"].is_string()
+                && crate::data::exists(
+                    db,
+                    "SELECT 1 FROM local_project_legacy_channels WHERE channel=?",
+                    [string(turn, "channel")],
+                )?
+            {
+                return data::agent_folders::effective(state, db, string(turn, "agent")).map(Some);
+            }
             return Ok(None);
         };
         let directory = context["folder"]

@@ -193,12 +193,21 @@ pub async fn tool(
     let result = tools::run(state, &row, &call).await;
     drop(clock);
     let mut result = result?;
+    if name == "read_attachment" {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        tools::journal(&guard.connection, &row, &call, &result)?;
+    }
     if name == "read_attachment" && result["media_type"].is_string() {
         use base64::{engine::general_purpose::STANDARD, Engine};
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         if let Some(file) =
             super::history::readable_file(&guard.connection, &row, string(&result, "id"))?
         {
+            if file.bytes.len() * 4 / 3 > 2 * 1024 * 1024 {
+                return Ok(
+                    json!({"error":"Image context exceeds 4 MiB. Continue without reading another image."}),
+                );
+            }
             return Ok(json!({"content":[
                 {"type":"text","text":result.to_string()},
                 {"type":"image","mimeType":result["media_type"],"data":STANDARD.encode(file.bytes)}
