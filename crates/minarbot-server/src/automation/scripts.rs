@@ -359,6 +359,30 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
     }
     let q = data::query(&request);
     let (mut parts, raw) = request.into_parts();
+    if let ["api", "scripts", "agents", agent, "models"] = p.as_slice() {
+        let instance = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            let db = &guard.connection;
+            allowed(db, agent)?;
+            if parts.method != Method::GET {
+                return Err(error(405, "Model catalog requires GET."));
+            }
+            if q.iter().any(|(key, _)| key != "instance") {
+                return Err(error(400, "Invalid catalog parameters."));
+            }
+            let profile = data::agents::read(db, agent)?;
+            data::param(&q, "instance")
+                .unwrap_or(string(&profile, "providerInstance"))
+                .to_owned()
+        };
+        let result =
+            crate::harness::model_catalog::models_for_instance(state, &instance, true).await;
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        allowed(&guard.connection, agent)?;
+        let mut value = result?;
+        value["instance"] = json!(instance);
+        return Ok(crate::json_response(200, value));
+    }
     let post = parts.method == Method::POST;
     let body = if post {
         if crate::text_header(&parts.headers, "content-type")
@@ -457,7 +481,6 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
             {
                 Some("Question answer requires POST.")
             }
-            ["models"] if !get => Some("Model catalog requires GET."),
             ["approvals"] if !get => Some("Approval list requires GET."),
             ["workflows"] | ["workflow-runs", _] | ["workflow-runs", _, "files", _] if !get => {
                 Some("Reading a workflow requires GET.")
@@ -530,7 +553,17 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
             }
             ["provider"] if !post => {
                 let a = data::agents::read(db, agent)?;
-                let providers = data::provider_instances::list(state)?["providers"].clone();
+                let providers = all(
+                    db,
+                    "SELECT id,kind,display_name AS displayName,enabled FROM provider_instances ORDER BY rowid",
+                    [],
+                )?
+                .into_iter()
+                .map(|mut row| {
+                    row["enabled"] = json!(row["enabled"] == 1);
+                    row
+                })
+                .collect::<Vec<_>>();
                 return Ok(crate::json_response(
                     200,
                     json!({"revision":a["revision"],"model":a["model"],"providerInstance":a["providerInstance"],"providers":providers}),
@@ -661,15 +694,6 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
             | ["turns", _, "cancel"]
             | ["turns", _, "questions", _, "answer"]
             | ["threads"] => (path.replacen("/api/scripts/", "/api/", 1), body),
-            ["models"] => {
-                if q.iter().any(|(k, _)| k != "instance") {
-                    return Err(error(400, "Invalid catalog parameters."));
-                }
-                let a = data::agents::read(db, agent)?;
-                let instance =
-                    data::param(&q, "instance").unwrap_or(string(&a, "providerInstance"));
-                (format!("/api/provider-instances/{instance}/models"), body)
-            }
             ["provider"] if post => {
                 if !data::closed(
                     &body,
@@ -688,24 +712,6 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
             _ => return Err(error(404, "Route not found.")),
         }
     };
-    if mapped.starts_with("/api/models?") {
-        let account = url::form_urlencoded::parse(
-            mapped
-                .split_once('?')
-                .map(|(_, q)| q)
-                .unwrap_or("")
-                .as_bytes(),
-        )
-        .find(|(k, _)| k == "account")
-        .map(|(_, v)| v.into_owned())
-        .unwrap_or_default();
-        let result = data::providers::models(state, &[("account".into(), account.clone())]).await;
-        let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        allowed(&guard.connection, p[3])?;
-        let mut value = result?;
-        value["account"] = json!(account);
-        return Ok(crate::json_response(200, value));
-    }
     if post && mapped.ends_with("/turns") {
         let mapped_parts = mapped
             .trim_start_matches('/')

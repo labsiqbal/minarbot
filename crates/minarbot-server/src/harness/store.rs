@@ -417,8 +417,7 @@ async fn bridge(state: &AppState, operation: &str, args: Value) -> Result<Value>
 }
 fn save_session(
     state: &AppState,
-    agent: &str,
-    conversation: &str,
+    turn: &Value,
     runtime: &str,
     workspace: &Path,
     id: &str,
@@ -426,8 +425,22 @@ fn save_session(
     if id.is_empty() || id.len() > 256 {
         return Err(error(502, "Harness session identifier is invalid."));
     }
+    let conversation = turn["channel"]
+        .as_str()
+        .or(turn["thread"].as_str())
+        .unwrap_or("direct");
     let db = state.database.lock().map_err(|_| Failure::storage())?;
-    db.connection.execute("INSERT INTO harness_sessions VALUES(?,?,?,?,?) ON CONFLICT(agent,conversation,runtime,workspace) DO UPDATE SET session=excluded.session",rusqlite::params![agent,conversation,runtime,workspace.to_str(),id])?;
+    if !exists(
+        &db.connection,
+        "SELECT 1 FROM turns WHERE id=? AND status='running'",
+        [string(turn, "id")],
+    )? {
+        return Err(process::stopped());
+    }
+    // Restart context comes from the transcript. Its native session is ephemeral.
+    if turn["dispatch_mode"] != "restart" {
+        db.connection.execute("INSERT INTO harness_sessions VALUES(?,?,?,?,?) ON CONFLICT(agent,conversation,runtime,workspace) DO UPDATE SET session=excluded.session",rusqlite::params![string(turn, "agent"),conversation,runtime,workspace.to_str(),id])?;
+    }
     Ok(())
 }
 fn reminder(
@@ -938,19 +951,8 @@ async fn execute(
             .await?;
         }
     }
-    let conversation = turn["channel"]
-        .as_str()
-        .or(turn["thread"].as_str())
-        .unwrap_or("direct");
     if runtime != "pi" && !judging {
-        save_session(
-            state,
-            string(turn, "agent"),
-            conversation,
-            runtime,
-            workspace,
-            &session,
-        )?;
+        save_session(state, turn, runtime, workspace, &session)?;
     }
     let native_secrets = secrets.clone();
     let mut snapshot = Snapshot::new(state, call, string(turn, "id"), secrets).private(judging);

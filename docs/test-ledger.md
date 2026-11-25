@@ -5,67 +5,74 @@
 `crates/minarbot-testkit` replaces `app/test-bridge.ts`,
 `app/rust-test-server.ts` and the `app/fixtures/*.mjs` peers. The six suites
 below were ported case by case to `crates/minarbot-e2e/tests/e2e/<area>.rs`.
-A Node case remains only when it tests a TypeScript module, which leaves with
-`app/` in stage 5, or when one of its assertions waits on a product bug
-listed below. Retained cases keep their original code.
+Four cases remain in Node. They exercise TypeScript modules scheduled
+for removal with `app/` in stage 5.
 
 | Node file | Node runtime cases | Rust tests | Node cases kept |
 | --- | ---: | ---: | ---: |
 | `app/threads.test.ts` | 4 | 3 | 1 (TS module) |
 | `app/questions.test.ts` | 2 | 1 | 1 (TS module) |
-| `app/goals.test.ts` | 5 | 5 | 1 (B9) |
-| `app/cli.test.ts` | 4 | 4 | 3 (B1, B2, B3) |
-| `app/agent-create.test.ts` | 8 | 6 | 3 (2 TS module, B4-B6) |
-| `app/harness.test.ts` | 17 declarations / 32 runtime cases | 28 | 5 (B7, B8) |
-| Total | 55 | 47 | 14 |
+| `app/goals.test.ts` | 5 | 5 | 0 |
+| `app/cli.test.ts` | 4 | 4 + 1 regression | 0 |
+| `app/agent-create.test.ts` | 8 | 6 + 2 regressions | 2 (TS module) |
+| `app/harness.test.ts` | 17 declarations / 32 runtime cases | 32 + 1 regression | 0 |
+| Total | 55 | 51 + 4 regressions | 4 |
 
-`crates/minarbot-e2e/tests/e2e/kit.rs` (2 tests) and
+`crates/minarbot-e2e/tests/e2e/kit.rs` (3 tests) and
 `crates/minarbot-testkit/tests/{fakes,kit}.rs` (18 tests) cover the kit itself.
 
 ### Case map
 
-| Node case | Rust test | Notes |
-| --- | --- | --- |
-| threads: side threads isolate queues, history, controls and archive recovery | `threads::side_threads_isolate_queues_history_controls_and_archive_recovery` | Full. |
-| threads: configured concurrency limits side threads and validates before opening storage | `threads::configured_concurrency_limits_side_threads_and_validates_before_opening_storage` | Full. `NaN` and `Infinity` have no JSON form, so the test uses `"NaN"` and `1e300`. |
-| threads: conversation commands protect Main chat, revisions, queued work and deleted history across restart | `threads::conversation_commands_protect_main_chat_revisions_queued_work_and_deleted_history` | Full. |
-| threads: conversation recovery retains exact request and refuses corrupt or foreign routes | Kept in Node | Tests `app/src/thread-command.ts`. |
-| questions: question cards persist, answer once in scope, and resume without repeating effects | `questions::question_cards_persist_answer_once_in_scope_and_resume_without_repeating_effects` | The last step changed with #87: harness turns get an invalid question as an MCP tool error, not a failed turn. The test asserts the rejection reaches the model and no card is stored. |
-| questions: answer recovery rejects malformed storage and preserves exact retry identity | Kept in Node | Tests `app/src/question-answer.ts`. |
-| goals: goal judges work separately, uses the configured model and keeps ordinary requests unchanged | `goals::goal_judges_work_separately_uses_the_configured_model_and_keeps_ordinary_requests_unchanged` | Full. |
-| goals: goal can be set by an agent, pauses for you and resumes on answer | `goals::goal_can_be_set_by_an_agent_pauses_for_you_and_resumes_on_answer` | Full. |
-| goals: stop, token limits and restart fence prevent later work | `goals::stop_and_restart_fence_prevent_later_goal_work` | The token-limit step is kept in Node (B9). |
-| goals: loops use routine occurrences after restart and stop on until or max runs | `goals::loops_use_routine_occurrences_after_restart_and_stop_on_until_or_max_runs` | Full. |
-| goals: ACP work and judge use distinct sessions with tools disabled for the judge | `goals::acp_work_and_judge_use_distinct_sessions_with_tools_disabled_for_the_judge` | Full. The inline ACP script is now the judge mode of `fake-acp`. The agent is bound through `/api/provider-instances`, because #87 ignores `runtime` on create. |
-| cli: CLI routine lists and histories stay within the selected granted agent | `cli::cli_routine_lists_and_histories_stay_within_the_selected_granted_agent` | `script provider` reads (B2) and `script models` (B3) are kept in Node. #87 replaced `providerAccount`/`accounts` with `providerInstance`/`providers`. |
-| cli: CLI workflow discovery paginates and explicit approvals retain identity after lost responses | `cli::cli_workflow_discovery_paginates_and_explicit_approvals_retain_identity_after_lost_responses` | Full. |
-| cli: script CLI discovers only grants, sends once, waits, preserves retry ID and reports attention/timeouts | `cli::script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_and_reports_attention` | Model-call counts exclude the step after a question (B1); the strict count stays in Node. A deterministic offline window replaces the racy server-stop gap. |
-| cli: CLI answers retain receipt identity across lost replies and restart | `cli::cli_answers_retain_receipt_identity_across_lost_replies_and_restart` | Same B1 counting. |
-| agent-create: creation recovery keeps exact command and rejects malformed authority | Kept in Node | Tests `app/shared/agent-create.ts`. |
-| agent-create: prompt creation atomically queues one restricted setup and recovers without duplicate work | `agent_create::prompt_creation_atomically_queues_one_restricted_setup_and_recovers_without_duplicate_work` | Name-only setup (B4), offline creation (B5) and receipt replay after provider removal (B6) are kept in Node. The saved profile is matched by tool name, since resumed transcripts use server call IDs. |
-| agent-create: canonical draft carries project/home authority and rejects legacy or malformed provenance | Kept in Node | Tests `app/test-support/canonical-agent-creation.ts`. |
-| agent-create: canonical creation is owner/home scoped, offline-safe, exact and fully atomic | `agent_create::canonical_creation_is_owner_home_scoped_offline_safe_exact_and_fully_atomic` | Full. |
-| agent-create: provider binding stays explicit and avatar receipt hashes original bytes | `agent_create::provider_binding_stays_explicit_and_avatar_receipt_hashes_original_bytes` | #87 dropped `agents.provider_account`; the test asserts `agent_authority.provider_binding`. |
-| agent-create: canonical setup admission rolls back every row and requires a ready explicit home binding | `agent_create::canonical_setup_admission_rolls_back_every_row_and_requires_a_ready_explicit_home_binding` | Full. |
-| agent-create: second project participation and shared CAS isolate rules/capabilities and stale grants | `agent_create::second_project_participation_and_shared_cas_isolate_rules_capabilities_and_stale_grants` | Full. |
-| agent-create: local role create/edit receipts preserve normalized profile, omissions and revision conflicts across restart | `agent_create::local_role_create_edit_receipts_preserve_normalized_profile_omissions_and_revision_conflicts` | Full. |
-| harness: claude: workspace shell inspection and checks finish without approval | `harness::claude_workspace_shell_inspection_and_checks_finish_without_approval` | Sandbox checks ported with a shell script. The "no approval" assertion is kept in Node (B8). |
-| harness (codex, claude): native check receipt prevents a second verification turn | `harness::native_check_receipt_prevents_a_second_verification_turn::{codex,claude}` | Full. |
-| harness (codex, claude): gated segments replace only final answer, coalesce writes and restore without replay | `harness::gated_segments_replace_only_final_answer_coalesce_writes_and_restore_without_replay::{codex,claude}` | Full. |
-| harness (codex, claude): abort flush preserves final pending segment and stays unfinished after restart | `harness::abort_flush_preserves_final_pending_segment_and_stays_unfinished_after_restart::{codex,claude}` | Full. |
-| harness (codex, claude): error flush commits buffered tail without declaring a final answer | `harness::error_flush_commits_buffered_tail_without_declaring_a_final_answer::{codex,claude}` | Full. |
-| harness (codex, claude): authoritative snapshot and reply apply identical session-token redaction | `harness::authoritative_snapshot_and_reply_apply_identical_session_token_redaction::{codex,claude}` | Full. |
-| harness (codex, claude): stream, tool activity, MCP lifetime, follow-up and restart resume | `harness::stream_tool_activity_mcp_lifetime_follow_up_and_restart_resume::{codex,claude}` | Full. |
-| harness (codex, claude): Steer degrades to linked Restart with partial context and fresh native session | Kept in Node | B7. |
-| harness (codex, claude): addressed room Steer restarts only selected member; room Stop expires approval and fences restart | Kept in Node | B7. |
-| harness (codex, claude): durable approval allow, deny, prefix grant and scoped receipt | `harness::durable_approval_allow_deny_prefix_grant_and_scoped_receipt::{codex,claude}` | Full. |
-| harness (codex, claude): workspace write policy, outside-file and network consent | `harness::workspace_write_policy_outside_file_and_network_consent::{codex,claude}` | Full. |
-| harness (codex, claude): crash fails once, preserves unfinished text and never replays | `harness::crash_fails_once_preserves_unfinished_text_and_never_replays::{codex,claude}` | Full. |
-| harness (codex, claude): cancel kills descendants and revokes MCP; mid-turn runtime switch refused | `harness::cancel_kills_descendants_and_revokes_mcp_mid_turn_runtime_switch_refused::{codex,claude}` | Full. |
-| harness (codex, claude): pending approval expires on shutdown/restart, no auto approval | `harness::pending_approval_expires_on_shutdown_restart_no_auto_approval::{codex,claude}` | Full. |
-| harness (codex, claude): bounded output fails without replay | `harness::bounded_output_fails_without_replay::{codex,claude}` | Full. |
-| harness: runtime changes require confirmation and revision; missing workspaces are provisioned | `harness::runtime_changes_require_confirmation_and_revision_missing_workspaces_are_provisioned` | Removed by #87: the unconfirmed runtime switch (409) and `agents[0].runtime == "api"`. Revisions, replay, runtime choices and a missing executable remain. |
-| harness (codex, claude): done check nudges once and preserves native session | `harness::done_check_nudges_once_and_preserves_native_session::{codex,claude}` | Full. |
+Counts are assertion sites per case body. Rust counts include explicit
+status and exit-code helpers. One site can check multiple fields or run
+for each item in a loop. Counts for Codex and Claude apply to each runtime.
+
+| Node case | Rust test | Node / Rust assertion sites | Notes |
+| --- | --- | --- | --- |
+| threads: side threads isolate queues, history, controls and archive recovery | `threads::side_threads_isolate_queues_history_controls_and_archive_recovery` | 28 / 70 | Full. |
+| threads: configured concurrency limits side threads and validates before opening storage | `threads::configured_concurrency_limits_side_threads_and_validates_before_opening_storage` | 17 / 14 | Full. `NaN` and `Infinity` have no JSON form, so the test uses `"NaN"` and `1e300`. |
+| threads: conversation commands protect Main chat, revisions, queued work and deleted history across restart | `threads::conversation_commands_protect_main_chat_revisions_queued_work_and_deleted_history` | 21 / 37 | Full. |
+| threads: conversation recovery retains exact request and refuses corrupt or foreign routes | Kept in Node | 3 / 0 | Tests `app/src/thread-command.ts`. |
+| questions: question cards persist, answer once in scope, and resume without repeating effects | `questions::question_cards_persist_answer_once_in_scope_and_resume_without_repeating_effects` | 22 / 28 | The last step changed with #87: harness turns get an invalid question as an MCP tool error, not a failed turn. The test asserts the rejection reaches the model and no card is stored. |
+| questions: answer recovery rejects malformed storage and preserves exact retry identity | Kept in Node | 2 / 0 | Tests `app/src/question-answer.ts`. |
+| goals: goal judges work separately, uses the configured model and keeps ordinary requests unchanged | `goals::goal_judges_work_separately_uses_the_configured_model_and_keeps_ordinary_requests_unchanged` | 8 / 10 | Full. |
+| goals: goal can be set by an agent, pauses for you and resumes on answer | `goals::goal_can_be_set_by_an_agent_pauses_for_you_and_resumes_on_answer` | 4 / 3 | Full. |
+| goals: stop, token limits and restart fence prevent later work | `goals::stop_and_restart_fence_prevent_later_goal_work` | 3 / 3 | Full, including the pre-dispatch `maxTokens` fence. |
+| goals: loops use routine occurrences after restart and stop on until or max runs | `goals::loops_use_routine_occurrences_after_restart_and_stop_on_until_or_max_runs` | 6 / 9 | Full. |
+| goals: ACP work and judge use distinct sessions with tools disabled for the judge | `goals::acp_work_and_judge_use_distinct_sessions_with_tools_disabled_for_the_judge` | 3 / 4 | Full. The inline ACP script is now the judge mode of `fake-acp`. The agent is bound through `/api/provider-instances`, because #87 ignores `runtime` on create. |
+| cli: CLI routine lists and histories stay within the selected granted agent | `cli::cli_routine_lists_and_histories_stay_within_the_selected_granted_agent` | 71 / 58 | Provider settings use instance metadata. Catalog checks also run in `cli::cli_models_reads_the_granted_provider_instance_catalog`. |
+| cli: script model catalog reads the granted provider instance | `cli::cli_models_reads_the_granted_provider_instance_catalog` | supplemental B3 regression | The Node catalog assertions are included in the routine case. |
+| cli: CLI workflow discovery paginates and explicit approvals retain identity after lost responses | `cli::cli_workflow_discovery_paginates_and_explicit_approvals_retain_identity_after_lost_responses` | 97 / 84 | Full. |
+| cli: script CLI discovers only grants, sends once, waits, preserves retry ID and reports attention/timeouts | `cli::script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_and_reports_attention` | 76 / 68 | Full model-call counts after questions. A deterministic offline window replaces the racy server-stop gap. |
+| cli: CLI answers retain receipt identity across lost replies and restart | `cli::cli_answers_retain_receipt_identity_across_lost_replies_and_restart` | 71 / 58 | Full model-call counts after questions. |
+| agent-create: creation recovery keeps exact command and rejects malformed authority | Kept in Node | 4 / 0 | Tests `app/shared/agent-create.ts`. |
+| agent-create: prompt creation atomically queues one restricted setup and recovers without duplicate work | `agent_create::prompt_creation_atomically_queues_one_restricted_setup_and_recovers_without_duplicate_work` | 16 / 33 | B4 is covered in the setup flow. B5 and B6 use dedicated regressions below. Resumed transcripts use server call IDs, so saves are matched by tool name. |
+| agent-create: setup creation rejects missing provider before storing an agent | `agent_create::setup_creation_requires_a_ready_provider` | supplemental B5 regression | The provider readiness guard returns 503 and leaves no agent row. |
+| agent-create: creation receipt replays after provider removal | `agent_create::creation_replay_survives_provider_removal` | supplemental B6 regression | Both omitted and explicit provider requests replay without another setup turn. |
+| agent-create: canonical draft carries project/home authority and rejects legacy or malformed provenance | Kept in Node | 4 / 0 | Tests `app/test-support/canonical-agent-creation.ts`. |
+| agent-create: canonical creation is owner/home scoped, offline-safe, exact and fully atomic | `agent_create::canonical_creation_is_owner_home_scoped_offline_safe_exact_and_fully_atomic` | 25 / 12 | Full. |
+| agent-create: provider binding stays explicit and avatar receipt hashes original bytes | `agent_create::provider_binding_stays_explicit_and_avatar_receipt_hashes_original_bytes` | 10 / 6 | #87 dropped `agents.provider_account`; the test asserts `agent_authority.provider_binding`. |
+| agent-create: canonical setup admission rolls back every row and requires a ready explicit home binding | `agent_create::canonical_setup_admission_rolls_back_every_row_and_requires_a_ready_explicit_home_binding` | 11 / 8 | Full. |
+| agent-create: second project participation and shared CAS isolate rules/capabilities and stale grants | `agent_create::second_project_participation_and_shared_cas_isolate_rules_capabilities_and_stale_grants` | 19 / 9 | Full. |
+| agent-create: local role create/edit receipts preserve normalized profile, omissions and revision conflicts across restart | `agent_create::local_role_create_edit_receipts_preserve_normalized_profile_omissions_and_revision_conflicts` | 11 / 22 | Full. |
+| harness: claude: workspace shell inspection and checks finish without approval | `harness::claude_workspace_shell_inspection_and_checks_finish_without_approval` | 4 / 3 | Full, including no approval in test mode. |
+| harness (codex, claude): native check receipt prevents a second verification turn | `harness::native_check_receipt_prevents_a_second_verification_turn::{codex,claude}` | 7 / 8 | Full. |
+| harness (codex, claude): gated segments replace only final answer, coalesce writes and restore without replay | `harness::gated_segments_replace_only_final_answer_coalesce_writes_and_restore_without_replay::{codex,claude}` | 17 / 14 | Full. |
+| harness (codex, claude): abort flush preserves final pending segment and stays unfinished after restart | `harness::abort_flush_preserves_final_pending_segment_and_stays_unfinished_after_restart::{codex,claude}` | 5 / 3 | Full. |
+| harness (codex, claude): error flush commits buffered tail without declaring a final answer | `harness::error_flush_commits_buffered_tail_without_declaring_a_final_answer::{codex,claude}` | 7 / 5 | Full. |
+| harness (codex, claude): authoritative snapshot and reply apply identical session-token redaction | `harness::authoritative_snapshot_and_reply_apply_identical_session_token_redaction::{codex,claude}` | 3 / 3 | Full. |
+| harness (codex, claude): stream, tool activity, MCP lifetime, follow-up and restart resume | `harness::stream_tool_activity_mcp_lifetime_follow_up_and_restart_resume::{codex,claude}` | 21 / 14 | Full. |
+| harness (codex, claude): Steer degrades to linked Restart with partial context and fresh native session | `harness::steer_degrades_to_linked_restart_with_partial_context_and_fresh_native_session::{codex,claude}` | 15 / 13 | Full B7 coverage. |
+| harness: queued Steer promotion restarts the linked turn | `harness::queued_steer_promotion_restarts_the_linked_turn` | supplemental B7 regression | Exercises the `/dispatch` promotion path after admission already queued the message. |
+| harness (codex, claude): addressed room Steer restarts only selected member; room Stop expires approval and fences restart | `harness::addressed_room_steer_restarts_only_selected_member_and_room_stop_fences_restart::{codex,claude}` | 11 / 10 | Full B7 coverage. |
+| harness (codex, claude): durable approval allow, deny, prefix grant and scoped receipt | `harness::durable_approval_allow_deny_prefix_grant_and_scoped_receipt::{codex,claude}` | 15 / 16 | Full. |
+| harness (codex, claude): workspace write policy, outside-file and network consent | `harness::workspace_write_policy_outside_file_and_network_consent::{codex,claude}` | 9 / 10 | Full. |
+| harness (codex, claude): crash fails once, preserves unfinished text and never replays | `harness::crash_fails_once_preserves_unfinished_text_and_never_replays::{codex,claude}` | 4 / 3 | Full. |
+| harness (codex, claude): cancel kills descendants and revokes MCP; mid-turn runtime switch refused | `harness::cancel_kills_descendants_and_revokes_mcp_mid_turn_runtime_switch_refused::{codex,claude}` | 3 / 2 | Full. |
+| harness (codex, claude): pending approval expires on shutdown/restart, no auto approval | `harness::pending_approval_expires_on_shutdown_restart_no_auto_approval::{codex,claude}` | 3 / 4 | Full. |
+| harness (codex, claude): bounded output fails without replay | `harness::bounded_output_fails_without_replay::{codex,claude}` | 3 / 2 | Full. |
+| harness: runtime changes require confirmation and revision; missing workspaces are provisioned | `harness::runtime_changes_require_confirmation_and_revision_missing_workspaces_are_provisioned` | 5 / 4 | Removed by #87: the unconfirmed runtime switch (409) and `agents[0].runtime == "api"`. Revisions, replay, runtime choices and a missing executable remain. |
+| harness (codex, claude): done check nudges once and preserves native session | `harness::done_check_nudges_once_and_preserves_native_session::{codex,claude}` | 5 / 5 | Full. |
 
 ### Node fixture gaps fixed by the kit
 
@@ -88,22 +95,22 @@ the Node bridge and fixtures, not the product:
 
 ### Product bugs found
 
-Each bug keeps its Node case. The Rust test leaves that assertion out until
-the bug is fixed.
+The Rust regressions for B1 through B8 fail against `af83887` and pass
+against the patched server. B9 passes on both builds.
 
-| Bug | Kept Node assertion | Cause |
+| Bug | Rust regression test | Root cause and fix |
 | --- | --- | --- |
-| B1 | `app/cli.test.ts` "script CLI ..." `assert.equal(calls, 5)` and "CLI answers ..." `assert.equal(calls, 2)` | `ask_user` (`crates/minarbot-server/src/turns/tools.rs`, `"ask_user"` arm) pauses the turn and returns `null` at once. The harness then takes one more model step after every question; a real Codex run could also run more tools while the question waits. If that stray step is held or answered with text, it races the pause, and later turns of the conversation sometimes stalled for over 30 s. Rust tests fail that step at once (`support::after_question_reply`) and leave it out of model-call counts. |
-| B2 | `app/cli.test.ts` "CLI routine ..." `assert.equal(settings.exitCode, 0)` | `GET /api/scripts/agents/{id}/provider` holds the `state.database` guard (`automation/scripts.rs:387`) and calls `provider_instances::list` (`:533`), which locks it again. The server deadlocks and every later request hangs. |
-| B3 | `app/cli.test.ts` "CLI routine ..." `assert.deepEqual((await terminal(['models', a.id])).models, ['fixture', 'fixture-alt'])` | `script models` forwards a GET to `/api/provider-instances/{id}/models`, which accepts only POST with an `instanceId` body. It always fails with "Use GET or POST for provider instances." |
-| B4 | `app/agent-create.test.ts` "prompt creation ..." name-only step `await until(partial.id, 'failed')` | `edit_profile` (`turns/profile.rs:61`) checks the `profile_setup` column. Local setup turns are recognized only through `profile::setup()` (`agent_creations.setup`), so over MCP a setup save without instructions is accepted and the turn ends `done`. |
-| B5 | `app/agent-create.test.ts` "prompt creation ..." `await request('/api/agents', { ...offline, runtime: 'api' }, 503)` | a8cfcac removed the "no provider configured" guard for setup creation and added no instance check. With no usable instance the agent is stored (`providerInstance: ""`) with a setup turn that cannot run. |
-| B6 | `app/agent-create.test.ts` "prompt creation ..." `await request('/api/agents', { ...input, runtime: 'api' })` after provider removal | Replaying a stored creation after its provider instance is deleted returns 400 "Choose a provider instance." instead of the stored receipt. |
-| B7 | `app/harness.test.ts` Steer cases `assert.equal(receipt.dispatch_mode, 'restart')` | a8cfcac removed the "Runtime cannot steer" restart in turn creation and `turns/dispatch.rs`, because it keyed on `agents.runtime`. Every runtime still reports `steer: false` (`data/agents.rs` `capabilities`), but a steer is now stored as "Waiting for steering safe point". |
-| B8 | `app/harness.test.ts` "claude: workspace shell ..." `assert.deepEqual(row.harnessApprovals, [])` | 5528da5 made `turns/shell.rs` (`approval`) ask approval for every `run_shell` command in test mode, so tests cannot exercise the production auto-allow for workspace checks. |
-| B9 | `app/goals.test.ts` "stop, token limits ..." `await until(getGoal, goal => goal.status === 'token_limit'); assert.equal(app.calls.length, 1)` | `turns::goals::allowance` (`turns/goals.rs:399`) lost its only caller in a8cfcac, so a goal's `maxTokens` is no longer checked before a harness turn. |
+| B1 | `cli::script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_and_reports_attention`, `cli::cli_answers_retain_receipt_identity_across_lost_replies_and_restart` | `ask_user` paused the turn but returned a normal tool result to the native gateway. The server commits the question, signals cancellation and holds the MCP reply until the worker releases its slot. |
+| B2 | `cli::cli_routine_lists_and_histories_stay_within_the_selected_granted_agent` | Script provider read held the database guard while calling the state-locking provider list. The route reads instance metadata using the current connection and omits connection details. |
+| B3 | `cli::cli_models_reads_the_granted_provider_instance_catalog` | Script models called a POST-only provider-instance route with GET. The script route invokes the instance catalog outside the DB lock and rechecks the grant before replying. |
+| B4 | `agent_create::prompt_creation_atomically_queues_one_restricted_setup_and_recovers_without_duplicate_work` | Profile setup validation checked a transient column instead of `profile::setup()`. Both tool validation and final setup completion now use the setup predicate. |
+| B5 | `agent_create::setup_creation_requires_a_ready_provider` | Setup creation lacked a ready provider guard. Setup now returns 503 before storing rows when the provider readiness check fails. |
+| B6 | `agent_create::creation_replay_survives_provider_removal` | Replay validation rejected a stored provider that had since been deleted. Replay compares the normalized request using the original provider choice before checking live providers. |
+| B7 | `harness::steer_degrades_to_linked_restart_with_partial_context_and_fresh_native_session::{codex,claude}`, `harness::addressed_room_steer_restarts_only_selected_member_and_room_stop_fences_restart::{codex,claude}` | Turn admission and dispatch promotion now convert unsupported steer to restart, preserve the cannot-steer label, cancel the selected active turn, clear native session state, and retain room stop fencing. Queued promotion is covered by `harness::queued_steer_promotion_restarts_the_linked_turn`. |
+| B8 | `harness::claude_workspace_shell_inspection_and_checks_finish_without_approval` | Test mode forced approval for every shell command. Approval now follows the same writable-workspace and sensitive-command policy as production. |
+| B9 | `goals::stop_and_restart_fence_prevent_later_goal_work` | `6ae2a68` restored `goals::allowance` in `execution::run` before this slice. The port asserts that `maxTokens: 1` stops the goal without dispatching. |
 
-No product hook was added; `crates/minarbot-server/src` is unchanged.
+
 
 ## #67 hosted Hub test migration
 

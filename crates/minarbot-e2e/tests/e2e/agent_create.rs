@@ -23,7 +23,6 @@ fn setup_reply(script: &Mutex<Setup>, request: &ModelRequest) -> Reply {
         return Reply::status(500, json!({"error": "poisoned"}));
     };
     if after_question(request) {
-        // Bug B1 continuation step: it is not setup work.
         return after_question_reply();
     }
     script.calls += 1;
@@ -66,7 +65,7 @@ fn setup_reply(script: &Mutex<Setup>, request: &ModelRequest) -> Reply {
         script.continued = true;
         return Reply::hold();
     }
-    if saved || script.mode == "no-save" {
+    if saved || script.mode == "no-save" || script.mode == "name-only" && !edits.is_empty() {
         return Reply::text("Profile setup checked.");
     }
     match script.mode {
@@ -187,8 +186,18 @@ async fn prompt_creation_atomically_queues_one_restricted_setup_and_recovers_wit
         failed["generatedFiles"] == json!([]),
         "restricted setup wrote a file: {failed}"
     );
-    // The `name-only` step (a setup that saves no instructions must fail)
-    // stays in the Node case until bug B4 is fixed.
+    set_mode("name-only")?;
+    let partial = command();
+    app.post_expect("/api/agents", partial.clone(), 201).await?;
+    let result = first_turn(&app, &partial, |row| {
+        matches!(row["status"].as_str(), Some("done" | "failed"))
+    })
+    .await?;
+    ensure!(result["status"] == "failed", "name-only setup finished");
+    ensure!(
+        app.post_expect("/api/agents", partial.clone(), 200).await?["revision"] == 1,
+        "name-only setup changed profile"
+    );
     set_mode("no-save")?;
     let empty = command();
     app.post_expect("/api/agents", empty.clone(), 201).await?;
@@ -247,17 +256,6 @@ async fn prompt_creation_atomically_queues_one_restricted_setup_and_recovers_wit
         "resume repeated the saved profile edit"
     );
 
-    // Since #87 the provider is a stored instance: remove it through its API
-    // (the Node case removed `baseURL` from the server options).
-    app.restart_with(ServerConfig::new()).await?;
-    app.post(
-        "/api/provider-instances/codex-test-gateway/delete",
-        json!({"id": new_id(), "instanceId": "codex-test-gateway"}),
-    )
-    .await?;
-    // Two steps stay in the Node case: creating a setup agent while no
-    // provider is available must answer 503 and store nothing (bug B5), and
-    // the historical creation receipt must survive provider removal (B6).
     app.shutdown().await?;
     minarbot_testkit::db::Fixture::open(app.database())?
         .execute_batch("CREATE TRIGGER reject_setup BEFORE INSERT ON turns BEGIN SELECT RAISE(ABORT, 'synthetic setup fault'); END")?;
@@ -274,6 +272,59 @@ async fn prompt_creation_atomically_queues_one_restricted_setup_and_recovers_wit
         violations.is_empty(),
         "setup model contract: {violations:?}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_creation_requires_a_ready_provider() -> Result<()> {
+    let root = TestRoot::new()?;
+    let app = root.start(ServerConfig::new()).await?;
+    let offline = command();
+    app.post_expect("/api/agents", offline.clone(), 503).await?;
+    ensure!(
+        !listed(&app.get("/api/agents").await?, &offline["id"]),
+        "offline setup kept the agent"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn creation_replay_survives_provider_removal() -> Result<()> {
+    let model = ScriptedModel::start().await?;
+    model.respond(|request| {
+        if request.called("edit_profile") {
+            Reply::text("Profile setup checked.")
+        } else {
+            Reply::tool("edit_profile", json!({"revision": 1, "name": "Research partner", "instructions": "Cite evidence."}))
+        }
+    });
+    let root = TestRoot::new()?;
+    let mut app = root.start(ServerConfig::new().model(&model)).await?;
+    let implicit = command();
+    let mut explicit = command();
+    explicit["providerInstance"] = json!("codex-test-gateway");
+    for input in [&implicit, &explicit] {
+        app.post_expect("/api/agents", input.clone(), 201).await?;
+        first_turn(&app, input, |row| row["status"] == "done").await?;
+    }
+    app.restart_with(ServerConfig::new()).await?;
+    app.post(
+        "/api/provider-instances/codex-test-gateway/delete",
+        json!({"id": new_id(), "instanceId": "codex-test-gateway"}),
+    )
+    .await?;
+    let calls = model.calls();
+    for input in [implicit, explicit] {
+        let replay = app.post_expect("/api/agents", input.clone(), 200).await?;
+        ensure!(
+            replay["id"] == input["id"] && replay["name"] == "Research partner",
+            "wrong creation replay: {replay}"
+        );
+        let mut changed = input.clone();
+        changed["instructions"] = json!("Different");
+        app.post_expect("/api/agents", changed, 409).await?;
+    }
+    ensure!(model.calls() == calls, "creation replay ran setup");
     Ok(())
 }
 

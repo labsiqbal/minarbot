@@ -230,6 +230,8 @@ per_runtime!(
     error_flush_commits_buffered_tail_without_declaring_a_final_answer,
     authoritative_snapshot_and_reply_apply_identical_session_token_redaction,
     stream_tool_activity_mcp_lifetime_follow_up_and_restart_resume,
+    steer_degrades_to_linked_restart_with_partial_context_and_fresh_native_session,
+    addressed_room_steer_restarts_only_selected_member_and_room_stop_fences_restart,
     durable_approval_allow_deny_prefix_grant_and_scoped_receipt,
     workspace_write_policy_outside_file_and_network_consent,
     crash_fails_once_preserves_unfinished_text_and_never_replays,
@@ -589,6 +591,265 @@ async fn stream_tool_activity_mcp_lifetime_follow_up_and_restart_resume(
             .any(|call| call["input_tokens"] == 11 && call["output_tokens"] == 7)),
         "usage: {usage}"
     );
+    Ok(())
+}
+
+async fn steer_degrades_to_linked_restart_with_partial_context_and_fresh_native_session(
+    runtime: &'static str,
+) -> Result<()> {
+    let mut f = Harness::new(runtime, Options::default()).await?;
+    let first = f.send("HOLD").await?;
+    f.until(&first, |row| row["partial"]["text"] == "Harness ")
+        .await?;
+    let active = f.app.get(&format!("{}/dispatch", f.path)).await?;
+    ensure!(
+        active[0]["capabilities"]["steer"] == false,
+        "dispatch: {active}"
+    );
+    let command = json!({
+        "id": new_id(),
+        "text": "RESTART_FINISH",
+        "dispatchMode": "steer",
+        "targetTurn": first
+    });
+    let receipt = f.app.post(&f.turns(), command.clone()).await?;
+    ensure!(
+        receipt["dispatch_mode"] == "restart"
+            && receipt["dispatch_label"]
+                .as_str()
+                .is_some_and(|label| label.contains("cannot steer")),
+        "steer receipt: {receipt}"
+    );
+    let command_id = command["id"].as_str().ok_or("command id")?;
+    let done = f.settled(command_id).await?;
+    ensure!(status(&done) == "done", "restart turn: {done}");
+    ensure!(
+        status(&f.row(&first).await?) == "cancelled",
+        "active turn was not cancelled"
+    );
+    ensure!(
+        done["activity"]["dispatch"][0]["source_turn"] == json!(first),
+        "dispatch activity: {}",
+        done["activity"]["dispatch"]
+    );
+    let log = f.log()?;
+    let turns = fakes::turns(&log);
+    let prompt = turns
+        .last()
+        .and_then(|row| row["prompt"].as_str())
+        .ok_or("restart prompt")?;
+    ensure!(
+        prompt.contains(r#"\"partial\":\"Harness \""#)
+            && prompt.contains("Never replay uncertain operations"),
+        "restart prompt lost interrupted context"
+    );
+    ensure!(
+        turns.len() == 2 && turns[0]["session"] != turns[1]["session"],
+        "restart session"
+    );
+    ensure!(f.resumes()? == 0, "restart reused native session");
+    let minted = f.minted();
+    f.app.restart().await?;
+    ensure!(
+        f.app.post(&f.turns(), command.clone()).await? == receipt,
+        "receipt replay"
+    );
+    ensure!(f.minted() == minted, "receipt replay minted a session");
+    let follow = f.send("FOLLOW_RESTART_FINISH").await?;
+    ensure!(status(&f.settled(&follow).await?) == "done", "follow-up");
+    let turns = fakes::turns(&f.log()?);
+    ensure!(turns.len() == 3, "native turns: {}", turns.len());
+    ensure!(
+        turns[2]["session"] != turns[1]["session"]
+            && turns[2]["session"] != turns[0]["session"]
+            && f.resumes()? == 0,
+        "follow-up reused a restart session"
+    );
+    Ok(())
+}
+
+async fn addressed_room_steer_restarts_only_selected_member_and_room_stop_fences_restart(
+    runtime: &'static str,
+) -> Result<()> {
+    let mut f = Harness::new(runtime, Options::default()).await?;
+    let peer = f
+        .app
+        .post(
+            "/api/agents",
+            with(
+                json!({"id": new_id(), "providerInstance": runtime}),
+                profile(),
+            ),
+        )
+        .await?;
+    let peer_id = peer["id"].as_str().ok_or("peer id")?.to_owned();
+    let folder = f.root.dir("home/room")?;
+    let project = f
+        .app
+        .post(
+            "/api/projects",
+            json!({
+                "id": new_id(),
+                "name": "Harness room",
+                "folders": [{"mode": "existing", "path": folder}],
+                "members": [{"agent": f.agent, "write": true}, {"agent": peer_id, "write": true}],
+                "confirmWrite": true
+            }),
+        )
+        .await?;
+    let channel_id = project["sections"][0]["id"].as_str().ok_or("section")?;
+    let path = format!("/api/channels/{channel_id}/turns");
+    let root = new_id();
+    f.app
+        .post(&path, json!({"id": root, "text": "APPROVE"}))
+        .await?;
+    let rows = f
+        .app
+        .wait_get(&path, |rows| {
+            rows.as_array()
+                .is_some_and(|rows| rows.iter().filter(|row| approvals(row) > 0).count() == 1)
+        })
+        .await?;
+    let rows = rows.as_array().ok_or("room turns")?;
+    let selected = rows
+        .iter()
+        .find(|row| status(row) == "running" && row["harnessApprovals"][0]["state"] == "approval")
+        .ok_or("selected room member")?;
+    let selected_id = selected["id"].as_str().ok_or("selected turn id")?;
+    let other_id = rows
+        .iter()
+        .find(|row| status(row) == "queued")
+        .and_then(|row| row["id"].as_str())
+        .ok_or("queued room member")?;
+    let command = json!({
+        "id": new_id(),
+        "text": "RESTART_FINISH",
+        "dispatchMode": "steer",
+        "targetTurn": selected["id"],
+        "recipient": selected["agent"]
+    });
+    let receipt = f.app.post(&path, command.clone()).await?;
+    ensure!(
+        receipt["dispatch_mode"] == "restart",
+        "room steer: {receipt}"
+    );
+    let command_id = command["id"].as_str().ok_or("command id")?;
+    let restarted = f
+        .app
+        .wait_row(&path, command_id, |row| {
+            row["harnessApprovals"][0]["state"] == "approval" || status(row) == "failed"
+        })
+        .await?;
+    ensure!(
+        status(&restarted) == "running",
+        "restart failed: {}",
+        restarted["error"]
+    );
+    ensure!(
+        f.app
+            .row(&path, selected_id)
+            .await?
+            .is_some_and(|row| status(&row) == "cancelled")
+            && f.app
+                .row(&path, other_id)
+                .await?
+                .is_some_and(|row| status(&row) == "queued"),
+        "restart did not isolate the selected member"
+    );
+    let approval = &restarted["harnessApprovals"][0];
+    let approval_id = approval["id"].as_str().ok_or("restart approval id")?;
+    f.app
+        .post(
+            &format!("{path}/{command_id}/harness-approvals/{approval_id}"),
+            json!({"id": new_id(), "revision": approval["revision"], "decision": "allow"}),
+        )
+        .await?;
+    f.app.wait_status(&path, command_id, "done").await?;
+    let other = f
+        .app
+        .wait_row(&path, other_id, |row| {
+            status(row) == "running" && row["harnessApprovals"][0]["state"] == "approval"
+        })
+        .await?;
+    let stop_path = format!("/api/channels/{channel_id}/discussions/{root}/stop");
+    let stop_command = json!({"id": new_id(), "generation": root});
+    let stopped = f.app.post(&stop_path, stop_command.clone()).await?;
+    ensure!(
+        stopped["cancelled"]
+            .as_array()
+            .is_some_and(|ids| ids.iter().any(|id| id == other_id)),
+        "stop missed active member: {stopped}"
+    );
+    let expired = f
+        .app
+        .wait_row(&path, other_id, |row| {
+            row["harnessApprovals"][0]["state"] == "expired"
+        })
+        .await?;
+    let card = &expired["harnessApprovals"][0];
+    let other_card_id = other["harnessApprovals"][0]["id"]
+        .as_str()
+        .ok_or("other approval id")?;
+    f.app
+        .post_expect(
+            &format!("{path}/{other_id}/harness-approvals/{other_card_id}"),
+            json!({"id": new_id(), "revision": card["revision"], "decision": "allow"}),
+            409,
+        )
+        .await?;
+    f.app
+        .post_expect(
+            &path,
+            json!({"id": new_id(), "text": "Restart stopped discussion", "recipient": other["agent"], "dispatchMode": "steer", "targetTurn": other_id}),
+            409,
+        )
+        .await?;
+    let minted = f.minted();
+    f.app.restart().await?;
+    ensure!(
+        f.app.post(&stop_path, stop_command).await? == stopped,
+        "stop replay"
+    );
+    ensure!(
+        f.app.post(&path, command).await? == receipt,
+        "room steer replay"
+    );
+    ensure!(f.minted() == minted, "room replay minted a session");
+    Ok(())
+}
+
+#[tokio::test]
+async fn queued_steer_promotion_restarts_the_linked_turn() -> Result<()> {
+    let f = Harness::new("codex", Options::default()).await?;
+    let first = f.send("HOLD").await?;
+    f.until(&first, |row| row["partial"]["text"] == "Harness ")
+        .await?;
+    let queued = f.send("RESTART_FINISH").await?;
+    let row = f.row(&queued).await?;
+    ensure!(status(&row) == "queued", "queued turn: {row}");
+    let path = format!("{}/{queued}/dispatch", f.turns());
+    let command =
+        json!({"id": new_id(), "revision": row["revision"], "mode": "steer", "targetTurn": first});
+    let receipt = f.app.post(&path, command.clone()).await?;
+    ensure!(
+        receipt["dispatch_mode"] == "restart",
+        "promotion: {receipt}"
+    );
+    let done = f.settled(&queued).await?;
+    ensure!(status(&done) == "done", "promoted turn: {done}");
+    ensure!(
+        status(&f.row(&first).await?) == "cancelled",
+        "source kept running"
+    );
+    ensure!(
+        done["activity"]["dispatch"][0]["source_turn"] == first,
+        "source link: {done}"
+    );
+    ensure!(
+        f.app.post(&path, command).await? == receipt,
+        "promotion replay"
+    );
+    ensure!(f.resumes()? == 0, "promotion reused native session");
     Ok(())
 }
 
@@ -997,9 +1258,6 @@ async fn runtime_changes_require_confirmation_and_revision_missing_workspaces_ar
 
 #[tokio::test]
 async fn claude_workspace_shell_inspection_and_checks_finish_without_approval() -> Result<()> {
-    // The "finish without approval" assertion stays in the Node case until
-    // bug B8 (test mode asks approval for every run_shell command) is fixed;
-    // this port approves the card and checks the sandbox itself.
     let f = Harness::new(
         "claude",
         Options {
@@ -1029,14 +1287,10 @@ async fn claude_workspace_shell_inspection_and_checks_finish_without_approval() 
             approvals(row) > 0 || ["done", "failed"].contains(&status(row))
         })
         .await?;
-    if approvals(&row) > 0 {
-        let card = row["harnessApprovals"][0].clone();
-        ensure!(
-            card["input"]["command"] == minarbot_testkit::fake::native::WORKSPACE_SHELL,
-            "card: {card}"
-        );
-        f.decide(&id, &card, "allow", 200).await?;
-    }
+    ensure!(
+        approvals(&row) == 0,
+        "workspace shell requested approval: {row}"
+    );
     let row = f.settled(&id).await?;
     ensure!(
         status(&row) == "done" && row["reply"] == "finished",

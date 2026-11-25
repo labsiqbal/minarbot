@@ -208,10 +208,19 @@ pub async fn tool(
         return Ok(json!({"taskId":args["taskId"],"status":"waiting"}));
     }
     let call = json!({"id":call_id,"type":"function","function":{"name":name,"arguments":args.to_string()}});
+    let running = if name == "ask_user" {
+        state.turns.running(turn)?
+    } else {
+        None
+    };
     let clock = super::diagnostics::Clock::start(state, turn, call_id);
     let result = tools::run(state, &row, &call).await;
     drop(clock);
     let mut result = result?;
+    if let Some(mut running) = running {
+        // The question is stored. Hold the reply until the worker has stopped its harness.
+        while running.changed().await.is_ok() {}
+    }
     if name == "read_attachment" {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         tools::journal(&guard.connection, &row, &call, &result)?;

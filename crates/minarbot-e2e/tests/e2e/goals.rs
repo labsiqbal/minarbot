@@ -211,8 +211,6 @@ async fn goal_can_be_set_by_an_agent_pauses_for_you_and_resumes_on_answer() -> R
     Ok(())
 }
 
-/// The token-limit step of the Node case stays in `app/goals.test.ts` until
-/// the product bug in `docs/test-ledger.md` (#89, goal allowance) is fixed.
 #[tokio::test]
 async fn stop_and_restart_fence_prevent_later_goal_work() -> Result<()> {
     let model = ScriptedModel::start().await?;
@@ -233,6 +231,13 @@ async fn stop_and_restart_fence_prevent_later_goal_work() -> Result<()> {
         )
         .await?;
     ensure!(stopped["status"] == "stopped", "stop: {stopped}");
+    let limited = json!({"id": new_id(), "target": "Exhaust the budget.", "maxTokens": 1});
+    app.post(&format!("{path}/goal"), limited).await?;
+    app.wait_get(&format!("{path}/goal"), |goal| {
+        goal["status"] == "token_limit"
+    })
+    .await?;
+    ensure!(model.calls() == 1, "token-limited goal called model again");
     app.post(&format!("{path}/goal"), start("Wait for restart."))
         .await?;
     model.wait_calls(2).await?;

@@ -78,34 +78,65 @@ pub fn promote(
     {
         return Err(error(409, "Restore the conversation first."));
     }
-    let mode = string(v, "mode");
-    if mode == "steer" && data::json(&turn["attachments"])? != json!([]) {
-        return Err(error(409, "This message can be queued or restarted."));
+    let target = string(&active, "id");
+    if room::stopped(db, target)? {
+        return Err(error(409, "Discussion is stopped. Send a new message."));
     }
     if active["status"] != "running" {
         db.execute("UPDATE turns SET dispatch_label='Queued after active turn',revision=revision+1 WHERE id=?",[id])?;
     } else {
-        let target = string(&active, "id");
-        db.execute(
-            "INSERT INTO dispatch_links VALUES(?,?,?,?,?,?)",
-            params![
-                uuid::Uuid::new_v4().to_string(),
-                target,
-                id,
-                mode,
-                "",
-                iso(db, state.config.now())?
-            ],
-        )?;
-        if mode == "restart" {
-            cancel(db, target, "Stopped for restart.")?;
-            db.execute("INSERT INTO queue_positions VALUES(?,?) ON CONFLICT(turn) DO UPDATE SET position=excluded.position",params![id,history::position(db,&active)?])?;
+        if let Some(root) = room::generation(db, target)? {
+            db.execute(
+                "INSERT INTO room_dispatches VALUES(?,?) ON CONFLICT(turn) DO UPDATE SET root=excluded.root",
+                params![id, root],
+            )?;
         }
-        db.execute("UPDATE turns SET dispatch_mode=?,dispatch_target=?,dispatch_label=?,revision=revision+1 WHERE id=?",params![mode,target,if mode=="steer"{"Waiting for steering safe point"}else{"Restarted from interrupted turn"},id])?;
+        restart(state, db, &active, id, string(v, "mode"))?;
+        db.execute("UPDATE turns SET revision=revision+1 WHERE id=?", [id])?;
     }
     let result = one(db, "SELECT * FROM turns WHERE id=?", [id])?.ok_or_else(Failure::storage)?;
     data::save_receipt(db, "task_controls", string(v, "id"), &request, &result)?;
     Ok(result)
+}
+
+pub(super) fn restart(
+    state: &AppState,
+    db: &Connection,
+    active: &Value,
+    id: &str,
+    mode: &str,
+) -> Result<()> {
+    // Every supported provider runtime advertises steer:false.
+    let source = string(active, "id");
+    db.execute(
+        "INSERT INTO dispatch_links VALUES(?,?,?,'restart','',?)",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            source,
+            id,
+            iso(db, state.config.now())?
+        ],
+    )?;
+    cancel(db, source, "Stopped for restart. Provider effects may already have happened; uncertain operations were not replayed.")?;
+    db.execute("INSERT INTO queue_positions VALUES(?,?) ON CONFLICT(turn) DO UPDATE SET position=excluded.position",params![id,history::position(db,active)?])?;
+    let conversation = active["channel"]
+        .as_str()
+        .or(active["thread"].as_str())
+        .unwrap_or("direct");
+    db.execute(
+        "DELETE FROM harness_sessions WHERE agent=? AND conversation=?",
+        params![string(active, "agent"), conversation],
+    )?;
+    let label = if mode == "steer" {
+        "Runtime cannot steer; restarted from interrupted turn"
+    } else {
+        "Restarted from interrupted turn"
+    };
+    db.execute(
+        "UPDATE turns SET dispatch_mode='restart',dispatch_target=?,dispatch_label=? WHERE id=?",
+        params![source, label, id],
+    )?;
+    Ok(())
 }
 pub fn cancel(db: &Connection, id: &str, message: &str) -> Result<()> {
     for row in all(db,"WITH RECURSIVE tree(id) AS(SELECT id FROM turns WHERE id=? UNION SELECT t.id FROM turns t JOIN tree ON t.parent=tree.id WHERE NOT EXISTS(SELECT 1 FROM room_turns rt WHERE rt.turn=t.id AND rt.root=t.parent AND rt.round=1)) SELECT id FROM tree",[id])? {

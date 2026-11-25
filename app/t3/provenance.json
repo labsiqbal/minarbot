@@ -731,7 +731,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/harness.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/harness.rs"
     },
     {
       "sourcePath": "packages/effect-codex-app-server/src/protocol.ts",
@@ -747,7 +747,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/harness.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/harness.rs"
     },
     {
       "sourcePath": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
@@ -764,7 +764,7 @@
       "dependencies": [
         "@anthropic-ai/claude-agent-sdk@0.3.321"
       ],
-      "compatibilityCheck": "app/harness.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/harness.rs"
     },
     {
       "sourcePath": "packages/effect-codex-app-server/src/_internal/shared.ts",
@@ -779,7 +779,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/harness.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/harness.rs"
     },
     {
       "sourcePath": "packages/provider-acp/src/server/AcpSessionRuntime.ts",
@@ -1060,7 +1060,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Translate message dispatch admission, stable target selection, journal-before-effect ordering, late-steer queue fallback and restart links to SQLite/Node.",
-      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
       "sourcePath": "apps/server/src/orchestration-v2/CommandPolicy.ts",
@@ -1074,7 +1074,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Translate capability-driven active steering versus interrupt_restart policy into plain TypeScript; API tool-loop safe points and conservative fresh harness sessions.",
-      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
       "sourcePath": "apps/server/src/orchestration-v2/ThreadForkService.ts",
@@ -1090,7 +1090,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt same-agent fork lineage and ContextTransfer source cutoff to an immutable bounded portable transcript, native SQLite transaction and idempotent request receipt. Minarbot requires a completed text answer.",
-      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/TimelineAssistantRows.tsx",
@@ -1104,7 +1104,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt response-level fork action and in-flight guard to Minarbot Radix Button, durable browser request identity and same-agent side-thread navigation.",
-      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/composerCommandKey.ts",
@@ -1118,7 +1118,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt per-submission keyboard intent and capability-aware steer shortcut to existing textarea: Enter queues, Ctrl/Cmd+Enter steers when supported; button follows visible dispatch mode.",
-      "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; app/test-support/ui-smoke/smoke.mjs"
+      "compatibilityCheck": "app/dispatch.test.ts; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/smoke.mjs"
     }
   ],
   "serverUpdateSourceEntries": [
@@ -1354,7 +1354,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Copy conservative blank-line/fence splitter and preserve whole-document fallback; memoized completed blocks retain DOM through partial/final transitions.",
-      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/markdownStreamBlocks.test.tsx",
@@ -1370,7 +1370,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt native every-prefix equivalence tests to Minarbot marked renderer; no upstream test framework dependency.",
-      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/MessageCopyButton.tsx",
@@ -1386,7 +1386,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt clipboard action, copied check feedback, accessible tooltip and failure state to native Clipboard API and Minarbot Radix kit.",
-      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/TimelineAssistantRows.tsx",
@@ -1406,7 +1406,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt quiet icon actions revealed by message hover/focus, always visible on latest reply. Preserve restore journal and add fork/stop confirmation.",
-      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/AgentElapsed.tsx",
@@ -1424,7 +1424,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt live elapsed clock with tabular numerals to provider-ledger timing and one-line room-agent status.",
-      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/TimelineWorkGroupRows.tsx",
@@ -1441,7 +1441,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt compact work-log disclosure and terminal collapse to existing Radix Collapsible; room-agent logs use trailing chevron with streaming answer in place.",
-      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/WorkLog.tsx",
@@ -1459,7 +1459,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt quiet inline work summary and grouped steps to Minarbot tokens, existing tool ledger and accessible disclosures.",
-      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/useTimelineFollow.ts",
@@ -1476,7 +1476,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt following versus free-scroll and explicit jump-to-latest to native scroll container and ResizeObserver. R6 follows in the layout phase before paint. No virtual-list dependency.",
-      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
       "sourcePath": "apps/web/src/components/chat/timelineScrollAnchoring.ts",
@@ -1492,7 +1492,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt follow/free-scroll separation and measured bottom position; native scrollTop updates stay within transcript and never scroll outer layout.",
-      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
+      "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; crates/minarbot-server/tests/turn_protocol/provider_stream.rs; crates/minarbot-e2e/tests/e2e/harness.rs; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     }
   ],
   "settingsSourceEntries": [
@@ -2437,7 +2437,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt compact app guidance, active-tool filtering and ACP context blocks to Minarbot tools and trust boundaries; no T3 orchestration runtime.",
-      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; app/harness.test.ts; app/acp-harness.test.ts"
+      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; crates/minarbot-e2e/tests/e2e/harness.rs; app/acp-harness.test.ts"
     },
     {
       "sourcePath": "packages/provider-core/src/server/runtimeInstructions.ts",
@@ -2453,7 +2453,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt runtime identity and inline Markdown file links to Minarbot file URLs; Minarbot extends the app guidance with bounded verification, request review and work-log evidence.",
-      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; app/harness.test.ts; app/acp-harness.test.ts; app/self-verification.test.ts; app/navigation.test.ts"
+      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; crates/minarbot-e2e/tests/e2e/harness.rs; app/acp-harness.test.ts; app/self-verification.test.ts; app/navigation.test.ts"
     },
     {
       "sourcePath": "apps/server/src/provider/CodexDeveloperInstructions.ts",
@@ -2473,7 +2473,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt numbered application-context entries capped at 4000 UTF-8 bytes; Claude native system append and ACP prompt context preserve harness prompts.",
-      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; app/harness.test.ts; app/acp-harness.test.ts"
+      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; crates/minarbot-e2e/tests/e2e/harness.rs; app/acp-harness.test.ts"
     },
     {
       "sourcePath": "app/base-instructions.ts",

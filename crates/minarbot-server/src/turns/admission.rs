@@ -219,21 +219,8 @@ pub fn ready(state: &AppState, db: &Connection, agent: &str) -> Result<()> {
         ));
     }
     let instance = string(&profile, "provider_instance");
-    let instance = data::provider_instances::instance_from_db(db, instance)?
-        .ok_or_else(|| error(503, "Choose a provider instance before starting this task."))?;
-    if instance["enabled"] != 1 {
-        return Err(error(503, "This provider instance is disabled."));
-    }
-    let runtime = string(&instance, "kind");
-    if crate::harness::executable(state, runtime).is_none()
-        && instance["binary_path"].as_str().is_none_or(str::is_empty)
-    {
-        return Err(error(
-            503,
-            "This provider instance is not installed on this host.",
-        ));
-    }
-    Ok(())
+    let instance = data::provider_instances::instance_from_db(db, instance)?;
+    data::provider_instances::ready(state, instance.as_ref())
 }
 pub fn account(
     _state: &AppState,
@@ -566,32 +553,7 @@ pub(crate) fn create(
             }
         }
         if let Some(a) = active.filter(|a| a["status"] == "running") {
-            let active = string(&a, "id");
-            db.execute(
-                "INSERT INTO dispatch_links VALUES (?,?,?,?,?,?)",
-                params![
-                    uuid::Uuid::new_v4().to_string(),
-                    active,
-                    id,
-                    mode,
-                    "",
-                    iso(db, state.config.now())?
-                ],
-            )?;
-            if mode == "steer" {
-                if f.as_array().is_some_and(|a| !a.is_empty()) {
-                    return Err(error(
-                        400,
-                        "Queue or restart to send attachments while a turn runs.",
-                    ));
-                }
-                db.execute("UPDATE turns SET dispatch_mode='steer',dispatch_target=?,dispatch_label='Waiting for steering safe point' WHERE id=?",[active,id])?;
-            } else {
-                dispatch::cancel(db, active, "Stopped for restart. Provider effects may already have happened; uncertain operations were not replayed.")?;
-                db.execute("INSERT INTO queue_positions VALUES(?,?) ON CONFLICT(turn) DO UPDATE SET position=excluded.position",params![id,history::position(db,&a)?])?;
-                state.turns.cancel(active);
-                db.execute("UPDATE turns SET dispatch_mode='restart',dispatch_target=?,dispatch_label='Restarted from interrupted turn' WHERE id=?",[active,id])?;
-            }
+            dispatch::restart(state, db, &a, id, mode)?;
         } else {
             db.execute(
                 "UPDATE turns SET dispatch_label='Queued after active turn' WHERE id=?",

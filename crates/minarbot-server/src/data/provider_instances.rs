@@ -255,6 +255,23 @@ pub(crate) fn instance_from_db(db: &Connection, id: &str) -> Result<Option<Value
     row(db, id)
 }
 
+pub(crate) fn ready(state: &AppState, instance: Option<&Value>) -> Result<()> {
+    let instance = instance
+        .ok_or_else(|| error(503, "Choose a provider instance before starting this task."))?;
+    if instance["enabled"] != 1 {
+        return Err(error(503, "This provider instance is disabled."));
+    }
+    if string(instance, "binary_path").is_empty()
+        && harness::executable(state, string(instance, "kind")).is_none()
+    {
+        return Err(error(
+            503,
+            "This provider instance is not installed on this host.",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn launch_config(state: &AppState, id: &str) -> Result<Option<LaunchConfig>> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     launch_config_from_db(state, &guard.connection, id)
