@@ -1,4 +1,4 @@
-//! Canonical task protocol fixture (port of `app/rust-task-test-bridge.ts`
+//! Canonical task protocol fixture (replaces the removed `app/rust-task-test-bridge.ts`
 //! and the `fixture()` helper of `app/task-recovery.test.ts`).
 //!
 //! [`TaskFixture::new`] installs the canonical schema, adds owner, member and

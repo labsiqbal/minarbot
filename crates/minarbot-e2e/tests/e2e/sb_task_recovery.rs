@@ -4993,3 +4993,481 @@ async fn canonical_interruption_isolates_sender_human_and_project_while_preservi
         .expect_ok()?;
     Ok(())
 }
+
+async fn context_of(f: &TaskFixture, task: &Task) -> Result<Envelope> {
+    let revision = task_revision(f, task).await?;
+    f.task_op("context", &task.id, json!({"requestId": new_id(), "ownership": task.ownership, "expectedTaskRevision": revision}), &task.token)
+        .await
+}
+
+/// Acquire with a fresh token without expecting success.
+async fn try_acquire(f: &TaskFixture, task: &str) -> Result<Envelope> {
+    let token = minarbot_testkit::task_bridge::random_token()?;
+    f.acquire(
+        json!({"requestId": new_id(), "taskId": task, "previousExecutorGeneration": 0, "executorTokenHash": sha256_hex(&token),
+            "lockProof": minarbot_testkit::task_bridge::lock_proof()}),
+        &token,
+    )
+    .await
+}
+
+async fn control_as(f: &TaskFixture, actor: &minarbot_testkit::canonical::Account, task: &str, operation: &str) -> Result<Envelope> {
+    let revision = lookup_data(f, actor, task).await?["revision"].clone();
+    f.control(actor, task, json!({"requestId": new_id(), "expectedRevision": revision, "operation": operation})).await?.expect_ok()
+}
+
+#[tokio::test]
+async fn canonical_messages_retain_full_assignment_isolated_children_group_waits_and_atomic_cancellation() -> Result<()> {
+    let f = TaskFixture::new(&["send_message", "list_agents", "read_provider_settings", "search_memory"], None).await?;
+    let mut peers: Vec<String> = (0..11).map(|_| new_id()).collect();
+    peers.sort();
+    let other = new_project(&f, "Other").await?;
+    let foreign = new_id();
+    for agent in peers.iter().chain([&foreign]) {
+        let project = if *agent == foreign { &other } else { &f.project };
+        f.human(
+            minarbot_testkit::http::Method::POST,
+            "/api/agents",
+            Some(with(agent_body(agent, agent, &f), json!({"instructions": "Recipient", "projectId": project}))),
+            &f.owner,
+        )
+        .await?
+        .expect_ok()?;
+    }
+    for agent in std::iter::once(&f.agent).chain(peers.iter()) {
+        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, agent])?;
+    }
+    let member = f.member.clone();
+    let new_task = || async {
+        let command = f.command(json!({}));
+        f.admit(&member, &command).await?.expect_ok()?;
+        begin(&f, command["requestId"].as_str().ok_or("task")?, &member).await
+    };
+    let send = "send_message";
+    let message = |recipients: &[&String], text: &str, reply: bool| json!({"recipients": recipients, "text": text, "expects_reply": reply});
+    let mut main = new_task().await?;
+    let sent = run_tool(&f, &mut main, send, message(&[&peers[10]], "Only explicit text", false)).await?;
+    ensure!(sent["status"] == "sent", "sent: {sent}");
+    let mut notice = begin(&f, &children(&f, &sent["request"])?[0], &member).await?;
+    let notice_snapshot = context_of(&f, &notice).await?.expect_ok()?.data()["snapshot"].clone();
+    ensure!(notice_snapshot["conversation"]["message"] == json!({"text": "Only explicit text", "files": []}), "notice message: {}", notice_snapshot["conversation"]);
+    ensure!(notice_snapshot["conversation"]["history"] == json!([]), "notice history: {}", notice_snapshot["conversation"]);
+    ensure!(
+        !notice_snapshot["tools"].as_array().is_some_and(|tools| tools.iter().any(|tool| ["list_agents", "send_message"].contains(&tool["function"]["name"].as_str().unwrap_or_default()))),
+        "notice tools: {}",
+        notice_snapshot["tools"]
+    );
+    stage(&f, &mut notice, &json!({}), "list_agents").await?.run(&f).await?.expect_code("execution_denied")?;
+    let invalid = run_tool(&f, &mut main, send, message(&[&peers[0], &foreign], "No partial delivery", false)).await?;
+    ensure!(invalid["status"] == 404, "foreign recipient: {invalid}");
+    ensure!(field(&f, "SELECT count(*) n FROM agent_requests WHERE turn=?", [&main.id], "n")? == 1, "partial delivery saved");
+    let upper = peers[0].to_uppercase();
+    for args in [
+        json!({"recipients": [peers[0], upper], "text": "Duplicate", "expects_reply": false}),
+        message(&[&peers[0]], "\u{0}", false),
+        json!({"recipients": [], "text": "Empty", "expects_reply": false}),
+        json!({"recipients": [peers[0]], "text": "Missing flag"}),
+    ] {
+        ensure!(status_of(&f, &mut main, args.clone(), send).await?.is_number(), "accepted {args}");
+    }
+    let atomic = stage(&f, &mut main, &message(&[&peers[0], &peers[1]], "Atomic group", true), send).await?;
+    let before = field(&f, "SELECT count(*) n FROM tasks", [], "n")?;
+    f.db().execute_batch("CREATE TRIGGER fail_message_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END")?;
+    atomic.run(&f).await?.expect_code("storage_failed")?;
+    f.db().execute_batch("DROP TRIGGER fail_message_result")?;
+    ensure!(field(&f, "SELECT count(*) n FROM tasks", [], "n")? == before, "failed group kept tasks");
+    let group = result_content(&atomic.run(&f).await?.expect_ok()?);
+    ensure!(children(&f, &group["request"])?.len() == 2, "group deliveries");
+    ensure!(result_content(&atomic.run(&f).await?.expect_ok()?) == group, "group replay");
+    context_of(&f, &main).await?.expect_code("waiting_agents")?;
+    let ids = children(&f, &group["request"])?;
+    let mut child = begin(&f, &ids[0], &member).await?;
+    ensure!(
+        !one(&f, "SELECT 1 x FROM tasks WHERE id=? AND initiator_account=?", [&child.id, &member.account_id])?.is_null(),
+        "child initiator"
+    );
+    let roster = run_tool(&f, &mut child, "list_agents", json!({})).await?;
+    ensure!(!roster["agents"].as_array().is_some_and(|rows| rows.iter().any(|row| row["id"] == f.agent.as_str())), "requester listed: {roster}");
+    let old_context = context_of(&f, &child).await?.expect_ok()?;
+    control_as(&f, &member, &main.id, "pause").await?;
+    context_of(&f, &child).await?.expect_code("task_not_runnable")?;
+    try_acquire(&f, &ids[1]).await?.expect_code("task_not_runnable")?;
+    control_as(&f, &member, &main.id, "resume").await?;
+    let old_ref = old_context.data()["snapshotRef"].clone();
+    let stale_action = new_id();
+    let child_revision = task_revision(&f, &child).await?;
+    let stale_payload = sha256_hex("read");
+    let sequence = child.sequence;
+    let stale_intent = read_intent(&child.id, &stale_action, sequence, &child.ownership, &stale_payload, &old_ref);
+    f.prepare(&child.id, &stale_action, json!({"requestId": new_id(), "sequence": sequence, "ownership": child.ownership, "payloadDigest": stale_payload,
+        "actionKind": "read", "contextSnapshotId": old_ref["snapshotId"], "contextDigest": old_ref["digest"], "grantRevision": 1,
+        "expectedTaskRevision": child_revision, "journalSequence": sequence + 1, "intentDigest": stale_intent}), &child.token)
+        .await?
+        .expect_code("context_stale")?;
+    control_as(&f, &member, &child.id, "pause").await?;
+    control_as(&f, &member, &main.id, "pause").await?;
+    control_as(&f, &member, &main.id, "resume").await?;
+    ensure!(task_state(&f, &member, &child.id).await? == "paused", "main resume resumed a paused child");
+    let paused_context = context_of(&f, &child).await?.expect_ok()?;
+    let paused_ref = paused_context.data()["snapshotRef"].clone();
+    let paused_revision = task_revision(&f, &child).await?;
+    let paused_action = new_id();
+    let paused_call = json!({"id": paused_action, "function": {"name": "list_agents", "arguments": "{}"}});
+    let paused_digest = minarbot_testkit::task_bridge::tool_digest(&paused_call, &json!(paused_revision.as_i64().unwrap_or(0) + 1), None);
+    let paused_intent = digest_command(&json!([child.id, paused_action, child.sequence, child.ownership, paused_digest, "canonical",
+        paused_ref["snapshotId"], paused_ref["digest"], null, null, 1, null, null, null]));
+    f.prepare(&child.id, &paused_action, json!({"requestId": new_id(), "sequence": child.sequence, "ownership": child.ownership,
+        "payloadDigest": paused_digest, "actionKind": "canonical", "contextSnapshotId": paused_ref["snapshotId"], "contextDigest": paused_ref["digest"],
+        "grantRevision": 1, "expectedTaskRevision": paused_revision, "journalSequence": child.sequence + 1, "intentDigest": paused_intent}), &child.token)
+        .await?
+        .expect_code("task_not_runnable")?;
+    control_as(&f, &member, &child.id, "resume").await?;
+    let nested = run_tool(&f, &mut child, send, message(&[&peers[2]], "Nested explicit task", true)).await?;
+    let grandchild = children(&f, &nested["request"])?[0].clone();
+    for task in &ids {
+        control_as(&f, &member, task, "cancel").await?;
+    }
+    ensure!(task_state(&f, &member, &grandchild).await? == "cancelled", "grandchild not cancelled");
+    try_acquire(&f, &grandchild).await?.expect_code("execution_denied")?;
+    let coordination = context_of(&f, &main).await?.expect_ok()?.data()["snapshot"]["coordination"].clone();
+    let settled = coordination.as_array().and_then(|rows| rows.iter().find(|row| row["request"] == group["request"])).cloned().unwrap_or_default();
+    ensure!(
+        settled["replies"].as_array().is_some_and(|rows| !rows.is_empty() && rows.iter().all(|row| row["status"] == "cancelled" && row["paused"] == 0)),
+        "settled replies: {settled}"
+    );
+    ensure!(task_state(&f, &member, &main.id).await? == "running", "main state");
+    let channel = lead_channel(&f, &[&f.agent, &peers[0]])?;
+    let channel_scope = format!("project:{}/channels:{channel}", f.project);
+    let private_scope = format!("project:{}/agents:{}/human:{}", f.project, peers[0], member.account_id);
+    for (scope, kind, root, value) in [(&channel_scope, "channel", &channel, "SHARED_ROOM_MEMORY"), (&private_scope, "agent", &peers[0], "PRIVATE_AGENT_MEMORY")] {
+        let saved = remember(&f, scope, value)?;
+        scope_row(&f, "memories", json!([scope, saved]), &member.account_id, &f.project, if kind == "channel" { "project" } else { "owner" }, root)?;
+        f.db().execute("UPDATE record_scopes SET root_kind=? WHERE table_name='memories' AND key_json=?", [kind, &json!([scope, saved]).to_string()])?;
+    }
+    f.db().execute_batch("UPDATE memories SET essential=1")?;
+    let room_id = admit_for(&f, &f.agent, &member, &f.project, "channel", &channel, "Room request").await?;
+    let mut room = begin(&f, &room_id, &member).await?;
+    ensure!(run_tool(&f, &mut room, send, message(&[&peers[0], &peers[1]], "Members only", false)).await?["status"] == 404, "non-member recipient");
+    let room_send = run_tool(&f, &mut room, send, message(&[&peers[0]], "Room child", true)).await?;
+    let mut room_child = begin(&f, &children(&f, &room_send["request"])?[0], &member).await?;
+    let room_snapshot = context_of(&f, &room_child).await?.expect_ok()?.data()["snapshot"].clone();
+    ensure!(
+        !room_snapshot["tools"].as_array().is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == "read_provider_settings")),
+        "room child offered provider settings"
+    );
+    ensure!(
+        room_snapshot["memories"].as_array().is_some_and(|rows| rows.iter().any(|row| row["text"] == "SHARED_ROOM_MEMORY")),
+        "room memory: {}",
+        room_snapshot["memories"]
+    );
+    ensure!(!room_snapshot.to_string().contains("PRIVATE_AGENT_MEMORY"), "private memory in a room");
+    stage(&f, &mut room_child, &json!({}), "read_provider_settings").await?.run(&f).await?.expect_code("execution_denied")?;
+    f.db().execute("DELETE FROM channel_members WHERE channel=? AND agent=?", [&channel, &peers[0]])?;
+    context_of(&f, &room_child).await?.expect_code("execution_denied")?;
+    let mut bounded = new_task().await?;
+    let eight: Vec<&String> = peers[..8].iter().collect();
+    for _ in 0..3 {
+        ensure!(run_tool(&f, &mut bounded, send, message(&eight, "Bounded family", false)).await?["status"] == "sent", "family batch");
+    }
+    ensure!(run_tool(&f, &mut bounded, send, message(&eight[..7], "Final family slots", false)).await?["status"] == "sent", "final family batch");
+    ensure!(run_tool(&f, &mut bounded, send, message(&[&peers[0]], "Over family bound", false)).await?["status"] == 409, "family bound");
+    let mut deep = new_task().await?;
+    for peer in &peers[..7] {
+        let next = run_tool(&f, &mut deep, send, message(&[peer], "Bounded depth", true)).await?;
+        ensure!(next["status"] == "waiting", "depth step: {next}");
+        deep = begin(&f, &children(&f, &next["request"])?[0], &member).await?;
+    }
+    ensure!(run_tool(&f, &mut deep, send, message(&[&peers[7]], "Over depth bound", false)).await?["status"] == 409, "depth bound");
+    f.db().execute("UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?", [&member.account_id, &peers[3]])?;
+    ensure!(run_tool(&f, &mut main, send, message(&[&peers[3]], "No grant", false)).await?["status"] == 404, "revoked grant");
+    let revoked = run_tool(&f, &mut main, send, message(&[&peers[4]], "Accepted before revoke", true)).await?;
+    let revoked_child = children(&f, &revoked["request"])?[0].clone();
+    f.db().execute("UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?", [&member.account_id, &peers[4]])?;
+    try_acquire(&f, &revoked_child).await?.expect_code("execution_denied")?;
+    f.db().execute("DELETE FROM record_scopes WHERE table_name='agent_requests' AND key_json=?", [json!([revoked["request"]]).to_string()])?;
+    context_of(&f, &main).await?.expect_code("record_scope_missing")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn context_counts_projected_result_bytes_once_including_escaped_json_content() -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    commit(&f, &p).await?;
+    let content = json!({"text": "\\".repeat(2 * 1024 * 1024 + 100_000)});
+    let (digest, reference) = result_ref(&p.task, &p.action, &content);
+    let reported = reconcile(&f, &p, with(report(&p, "acknowledged", "known", 2), json!({"resultContent": content, "resultDigest": digest, "resultRef": reference})))
+        .await?
+        .expect_ok()?;
+    let context = f
+        .task_op("context", &p.task, json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": reported.receipt()["recordRevision"]}), &p.token)
+        .await?
+        .expect_ok()?;
+    ensure!(context.data()["snapshot"]["toolJournal"][0]["result"] == content, "journal result");
+    ensure!(canonical_json(context.data()).len() < 8 * 1024 * 1024, "context counted the result twice");
+    Ok(())
+}
+
+/// `recoveryEnvelopeBody(generation, requestId, envelope)`.
+fn envelope_body(generation: &Value, request: &Value, envelope: &Value) -> Value {
+    let entries: Vec<Value> = envelope["entries"].as_array().map(|entries| entries.iter().map(|e| json!([e["taskId"], e["actionId"], e["sequence"],
+        e["executorGeneration"], e["actionKind"], e["payloadDigest"], e["intentDigest"], e.get("bindingId").cloned().unwrap_or(Value::Null),
+        e.get("bindingRevision").cloned().unwrap_or(Value::Null), e["grantRevision"], e["state"], e["effectStatus"],
+        e.get("resultDigest").cloned().unwrap_or(Value::Null), e.get("resultRef").cloned().unwrap_or(Value::Null), e["journalSequence"], e["signature"]])).collect()).unwrap_or_default();
+    let stops: Vec<Value> = envelope["stopEvidence"].as_array().map(|stops| stops.iter().map(|s| json!([s["taskId"], s["actionId"], s["journalDigest"], s["signature"]])).collect()).unwrap_or_default();
+    json!(["minarbot-recovery-envelope-v1", generation, request, envelope["sourceAuthority"], envelope["sourceDeviceId"],
+        envelope["sourceDeviceGeneration"], envelope["watermark"], entries, stops])
+}
+
+/// Re-sign every entry and the envelope of a recovery `request` with `key`.
+fn resign(f: &TaskFixture, request: &mut Value, key: &minarbot_testkit::task_bridge::SigningKey) {
+    let authority = json!(f.principal.authority_generation);
+    if let Some(entries) = request["envelope"]["entries"].as_array_mut() {
+        for entry in entries {
+            if let Some(fields) = entry.as_object_mut() {
+                fields.remove("signature");
+            }
+            let signature = key.sign_json(&journal_entry_body(&authority, &f.home, 1, entry));
+            entry["signature"] = json!(signature);
+        }
+    }
+    request["signature"] = json!(key.sign_json(&envelope_body(&request["recoveryGeneration"], &request["requestId"], &request["envelope"])));
+}
+
+/// `recoveryEnvelope(f, requestId, generation, resultContent?)`.
+fn recovery_request(f: &TaskFixture, p: &Prepared, generation: &Value, content: Option<&Value>) -> Result<Value> {
+    let action = one(f, "SELECT * FROM task_actions WHERE id=?", [&p.action])?;
+    let mut entry = json!({"taskId": p.task, "actionId": p.action, "sequence": action["sequence"], "executorGeneration": p.ownership["executorGeneration"],
+        "actionKind": action["action_kind"], "payloadDigest": p.payload_digest, "intentDigest": action["intent_digest"], "grantRevision": action["grant_revision"],
+        "state": if content.is_some() { "reported" } else { "uncertain" }, "effectStatus": if content.is_some() { "known" } else { "unknown" }, "journalSequence": 2});
+    if let Some(content) = content {
+        let (digest, reference) = result_ref(&p.task, &p.action, content);
+        entry["resultDigest"] = json!(digest);
+        entry["resultRef"] = reference;
+    }
+    let mut request = json!({"requestId": new_id(), "recoveryGeneration": generation, "envelope": {"v": 1, "sourceAuthority": f.principal.authority_generation,
+        "sourceDeviceId": f.home, "sourceDeviceGeneration": 1, "watermark": 2, "entries": [entry], "stopEvidence": []}});
+    resign(f, &mut request, &f.signing);
+    if let Some(content) = content {
+        request["resultContent"] = content.clone();
+    }
+    Ok(request)
+}
+
+fn without(mut value: Value, key: &str) -> Value {
+    if let Some(fields) = value.as_object_mut() {
+        fields.remove(key);
+    }
+    value
+}
+
+/// Commit the prepared action, revoke the home device and open an owner
+/// recovery session; returns `(proof, generation)`.
+async fn revoked_session(f: &TaskFixture, p: &Prepared) -> Result<(String, Value)> {
+    commit(f, p).await?;
+    f.revoke_device(&f.owner, &f.home, json!({"requestId": new_id(), "expectedRevision": 1})).await?.expect_ok()?;
+    let session = f.recovery_session(&f.owner, &p.task, session_command(f)).await?.expect_ok()?;
+    Ok((session.data()["session"].as_str().ok_or("session")?.to_owned(), session.data()["recoveryGeneration"].clone()))
+}
+
+fn session_command(f: &TaskFixture) -> Value {
+    json!({"requestId": new_id(), "expectedAuthorityGeneration": f.principal.authority_generation, "sourceDeviceId": f.home, "sourceDeviceGeneration": 1})
+}
+
+#[tokio::test]
+async fn disaster_mixed_batches_reconcile_known_evidence_and_privately_quarantine_only_unknown_actions_atomically() -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    commit(&f, &p).await?;
+    f.db().execute_batch("CREATE TABLE minarbot_backup_authority(generation TEXT,owner_account TEXT)")?;
+    f.db().execute("INSERT INTO minarbot_backup_authority VALUES (?,?)", [&f.principal.authority_generation, &f.owner.account_id])?;
+    f.db().execute("UPDATE authority_state SET generation=?,serving_state='read_only_recovery'", [new_id()])?;
+    let bootstrap = minarbot_testkit::task_bridge::random_token()?;
+    f.db().execute(
+        "UPDATE authority_state SET recovery_session_hash=?,recovery_expires_at=?,revision=revision+1 WHERE id=1",
+        (sha256_hex(&bootstrap), now_millis()? + 900_000),
+    )?;
+    let restore = f
+        .human(minarbot_testkit::http::Method::POST, "/api/restore/reconcile", Some(json!({"requestId": new_id(), "bootstrap": bootstrap})), &f.owner)
+        .await?
+        .expect_ok()?;
+    let proof = restore.data()["session"].as_str().ok_or("restore session")?.to_owned();
+    let generation = restore.data()["recoveryGeneration"].clone();
+    let mut request = recovery_request(&f, &p, &generation, None)?;
+    let mut unknown = request["envelope"]["entries"][0].clone();
+    unknown["actionId"] = json!(new_id());
+    unknown["sequence"] = json!(1);
+    unknown["journalSequence"] = json!(3);
+    let unknown_id = unknown["actionId"].clone();
+    let entries = request["envelope"]["entries"].as_array_mut().ok_or("entries")?;
+    entries.push(unknown);
+    entries.sort_by(|a, b| a["actionId"].as_str().cmp(&b["actionId"].as_str()));
+    request["envelope"]["watermark"] = json!(3);
+    let known_index = request["envelope"]["entries"].as_array().and_then(|entries| entries.iter().position(|entry| entry["actionId"] == p.action.as_str())).ok_or("known entry")?;
+    request["envelope"]["entries"][known_index]["intentDigest"] = json!(sha256_hex("wrong known intent"));
+    resign(&f, &mut request, &f.signing);
+    f.recovery_import(&f.owner, &p.task, request.clone(), &proof).await?.expect_code("recovery_provenance_invalid")?;
+    ensure!(field(&f, "SELECT count(*) n FROM recovery_quarantine", [], "n")? == 0, "quarantine kept a rejected batch");
+    ensure!(field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 0, "import kept a rejected batch");
+    request["envelope"]["entries"][known_index]["intentDigest"] = p.commit["intentDigest"].clone();
+    resign(&f, &mut request, &f.signing);
+    let result = f.recovery_import(&f.owner, &p.task, request.clone(), &proof).await?.expect_ok()?;
+    ensure!(result.data()["importedActionIds"] == json!([p.action]), "imported: {}", result.body);
+    ensure!(result.data()["quarantinedActionIds"] == json!([unknown_id]), "quarantined: {}", result.body);
+    ensure!(result.receipt().get("projectId").is_none(), "receipt names the project: {}", result.body);
+    ensure!(f.recovery_import(&f.owner, &p.task, request.clone(), &proof).await?.body == result.body, "import replay");
+    ensure!(field(&f, "SELECT count(*) n FROM task_actions", [], "n")? == 1, "quarantined action published");
+    let saved = one(&f, "SELECT * FROM recovery_quarantine", [])?;
+    ensure!(saved["owner_account"] == f.owner.account_id.as_str(), "quarantine owner: {saved}");
+    let envelope: Value = serde_json::from_str(saved["envelope_json"].as_str().ok_or("envelope_json")?)?;
+    ensure!(envelope == request, "quarantined envelope: {envelope}");
+    let previous = result.receipt()["requestId"].clone();
+    request["requestId"] = json!(new_id());
+    resign(&f, &mut request, &f.signing);
+    f.recovery_import(&f.owner, &p.task, request, &proof).await?.expect_code("recovery_conflict")?;
+    ensure!(field(&f, "SELECT receipt_id FROM task_reports", [], "receipt_id")? == previous, "report receipt replaced");
+    Ok(())
+}
+
+#[tokio::test]
+async fn owner_recovery_session_is_scoped_nonsecret_on_retry_rotates_and_requires_revoked_original_source() -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    commit(&f, &p).await?;
+    let command = session_command(&f);
+    f.recovery_session(&f.owner, &p.task, command.clone()).await?.expect_code("recovery_source_current")?;
+    f.revoke_device(&f.owner, &f.home, json!({"requestId": new_id(), "expectedRevision": 1})).await?.expect_ok()?;
+    f.recovery_session(&f.member, &p.task, command.clone()).await?.expect_code("owner_required")?;
+    let first = f.recovery_session(&f.owner, &p.task, command.clone()).await?.expect_ok()?;
+    let session = first.data()["session"].as_str().ok_or("session")?.to_owned();
+    ensure!(session.len() == 43 && session.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'), "session format");
+    let retry = f.recovery_session(&f.owner, &p.task, command.clone()).await?.expect_ok()?;
+    ensure!(retry.data().get("session").is_none_or(Value::is_null), "retry repeated the session");
+    ensure!(retry.data()["recoveryGeneration"] == first.data()["recoveryGeneration"], "retry generation");
+    ensure!(!f.db().rows("SELECT * FROM receipts", [])?.iter().any(|row| row.to_string().contains(&session)), "session saved in a receipt");
+    let next = f.recovery_session(&f.owner, &p.task, with(command, json!({"requestId": new_id()}))).await?.expect_ok()?;
+    ensure!(next.data()["recoveryGeneration"] != first.data()["recoveryGeneration"], "session not rotated");
+    ensure!(field(&f, "SELECT revoked FROM recovery_evidence_sessions WHERE id_hash=?", [sha256_hex(&session)], "revoked")? == 1, "old session open");
+    ensure!(field(&f, "SELECT serving_state FROM authority_state", [], "serving_state")? == "active", "serving state");
+    Ok(())
+}
+
+#[tokio::test]
+async fn revoked_source_recovery_retains_signed_evidence_then_publishes_exact_content_without_granting_execution() -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    let (proof, generation) = revoked_session(&f, &p).await?;
+    let content = json!({"text": "Recovered original result"});
+    let metadata = without(recovery_request(&f, &p, &generation, Some(&content))?, "resultContent");
+    let imported = f.recovery_import(&f.owner, &p.task, metadata.clone(), &proof).await?.expect_ok()?;
+    ensure!(imported.data()["state"] == "result_missing", "state: {}", imported.body);
+    ensure!(field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 0, "result without content");
+    ensure!(f.recovery_import(&f.owner, &p.task, metadata.clone(), &proof).await?.body == imported.body, "import replay");
+    let zero = minarbot_testkit::base64::Engine::encode(&minarbot_testkit::base64::engine::general_purpose::URL_SAFE_NO_PAD, [0_u8; 64]);
+    f.recovery_import(&f.owner, &p.task, with(metadata.clone(), json!({"signature": zero})), &proof).await?.expect_code("recovery_signature_invalid")?;
+    let result_request = recovery_request(&f, &p, &generation, Some(&content))?;
+    let published = f.recovery_results(&f.owner, &p.task, result_request.clone(), &proof).await?.expect_ok()?;
+    ensure!(f.recovery_results(&f.owner, &p.task, result_request, &proof).await?.body == published.body, "publish replay");
+    ensure!(lookup_data(&f, &f.owner, &p.task).await?["results"][0]["content"] == content, "published content");
+    ensure!(field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 1, "result count");
+    ensure!(field(&f, "SELECT status FROM devices WHERE id=?", [&f.home], "status")? == "revoked", "device status");
+    ensure!(field(&f, "SELECT executor_generation FROM execution_owners WHERE task=?", [&p.task], "executor_generation")? == 1, "executor generation");
+    ensure!(!f.acquire(json!({"requestId": new_id()}), &p.token).await?.ok(), "revoked source acquired");
+    f.recovery_import(&f.owner, &p.task, with(metadata, json!({"requestId": new_id()})), &proof).await?.expect_code("recovery_signature_invalid")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn recovery_rejects_replacement_keys_expired_proof_changed_content_and_non_advancing_watermarks_atomically() -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    let (proof, generation) = revoked_session(&f, &p).await?;
+    let content = json!({"text": "Signed result"});
+    let request = recovery_request(&f, &p, &generation, Some(&content))?;
+    let other = minarbot_testkit::task_bridge::SigningKey::generate()?;
+    f.db().execute("UPDATE devices SET signing_public_key=? WHERE id=?", [other.public(), f.home.clone()])?;
+    let mut substituted = request.clone();
+    resign(&f, &mut substituted, &other);
+    f.recovery_results(&f.owner, &p.task, substituted, &proof).await?.expect_code("recovery_signature_invalid")?;
+    f.recovery_results(&f.owner, &p.task, with(request.clone(), json!({"resultContent": {"text": "Altered"}})), &proof).await?.expect_code("result_digest_mismatch")?;
+    let mut unknown = request.clone();
+    let action = json!(new_id());
+    unknown["envelope"]["entries"][0]["actionId"] = action.clone();
+    unknown["envelope"]["entries"][0]["resultRef"]["actionId"] = action;
+    resign(&f, &mut unknown, &f.signing);
+    f.recovery_results(&f.owner, &p.task, unknown, &proof).await?.expect_code("recovery_provenance_invalid")?;
+    ensure!(field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 0, "rejected import saved");
+    ensure!(field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 0, "rejected result saved");
+    let result = f.recovery_results(&f.owner, &p.task, request.clone(), &proof).await?.expect_ok()?;
+    let repeat = without(recovery_request(&f, &p, &generation, Some(&content))?, "resultContent");
+    f.recovery_import(&f.owner, &p.task, repeat, &proof).await?.expect_code("recovery_conflict")?;
+    let mut changed = recovery_request(&f, &p, &generation, Some(&json!({"text": "Different signed result"})))?;
+    changed["envelope"]["watermark"] = json!(3);
+    changed["envelope"]["entries"][0]["journalSequence"] = json!(3);
+    resign(&f, &mut changed, &f.signing);
+    f.recovery_results(&f.owner, &p.task, changed, &proof).await?.expect_code("recovery_conflict")?;
+    f.db().execute("UPDATE recovery_evidence_sessions SET expires_at=0 WHERE id_hash=?", [sha256_hex(&proof)])?;
+    f.recovery_results(&f.owner, &p.task, request.clone(), &proof).await?.expect_code("recovery_session_invalid")?;
+    f.db().execute("UPDATE recovery_evidence_sessions SET expires_at=? WHERE id_hash=?", (now_millis()? + 60_000, sha256_hex(&proof)))?;
+    f.db().execute("UPDATE authority_state SET generation=?", [new_id()])?;
+    f.recovery_results(&f.owner, &p.task, request, &proof).await?.expect_code("recovery_session_invalid")?;
+    ensure!(field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 1, "import count");
+    ensure!(field(&f, "SELECT receipt_id FROM task_reports", [], "receipt_id")? == result.receipt()["requestId"], "report receipt");
+    Ok(())
+}
+
+#[tokio::test]
+async fn recovery_stop_proof_preserves_original_journal_signature_and_rejects_altered_runner_evidence() -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    let (proof, generation) = revoked_session(&f, &p).await?;
+    let authority = json!(f.principal.authority_generation);
+    let entry = json!({"taskId": p.task, "actionId": p.action, "sequence": 0, "executorGeneration": 1, "actionKind": "read", "payloadDigest": p.payload_digest,
+        "intentDigest": p.commit["intentDigest"], "grantRevision": 1, "state": "not_sent", "effectStatus": "none", "journalSequence": 2});
+    let body = journal_entry_body(&authority, &f.home, 1, &entry);
+    let signed = with(entry, json!({"signature": f.signing.sign_json(&body)}));
+    let mut stop = json!({"v": 1, "sourceAuthority": authority, "taskId": p.task, "actionId": p.action, "sourceDeviceId": f.home, "sourceDeviceGeneration": 1,
+        "executorGeneration": 1, "bootId": p.lock_proof["bootId"], "processId": p.lock_proof["processId"], "processStart": p.lock_proof["processStart"],
+        "lockId": p.lock_proof["lockId"], "observationBootId": p.lock_proof["bootId"], "observation": "process_exited", "children": [],
+        "observedAt": now_millis()?, "journalDigest": sha256_hex(body.to_string())});
+    stop["signature"] = json!(f.signing.sign_json(&stop_evidence_body(&stop)));
+    let envelope = json!({"v": 1, "sourceAuthority": authority, "sourceDeviceId": f.home, "sourceDeviceGeneration": 1, "watermark": 2,
+        "entries": [signed], "stopEvidence": [stop]});
+    let request_id = json!(new_id());
+    let request = json!({"requestId": request_id, "recoveryGeneration": generation, "envelope": envelope,
+        "signature": f.signing.sign_json(&envelope_body(&generation, &request_id, &envelope))});
+    let mut altered = request.clone();
+    altered["envelope"]["stopEvidence"][0]["processStart"] = json!("1000");
+    f.recovery_import(&f.owner, &p.task, altered, &proof).await?.expect_code("recovery_signature_invalid")?;
+    let result = f.recovery_import(&f.owner, &p.task, request.clone(), &proof).await?.expect_ok()?;
+    ensure!(field(&f, "SELECT state FROM task_actions WHERE id=?", [&p.action], "state")? == "not_sent", "action state");
+    let saved: Value = serde_json::from_str(field(&f, "SELECT envelope_json FROM recovery_imports", [], "envelope_json")?.as_str().ok_or("envelope_json")?)?;
+    ensure!(saved["entries"][0]["signature"] == signed["signature"], "journal signature replaced");
+    ensure!(f.recovery_import(&f.owner, &p.task, request, &proof).await?.body == result.body, "import replay");
+    Ok(())
+}
+
+#[tokio::test]
+async fn late_content_completes_a_saved_recovery_batch_without_lowering_newer_evidence_watermark() -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    let (proof, generation) = revoked_session(&f, &p).await?;
+    let content = json!({"text": "Late content"});
+    let old = without(recovery_request(&f, &p, &generation, Some(&content))?, "resultContent");
+    f.recovery_import(&f.owner, &p.task, old, &proof).await?.expect_ok()?;
+    let mut newer = without(recovery_request(&f, &p, &generation, Some(&content))?, "resultContent");
+    newer["envelope"]["watermark"] = json!(3);
+    newer["envelope"]["entries"][0]["journalSequence"] = json!(3);
+    resign(&f, &mut newer, &f.signing);
+    f.recovery_import(&f.owner, &p.task, newer, &proof).await?.expect_ok()?;
+    let late = recovery_request(&f, &p, &generation, Some(&content))?;
+    let published = f.recovery_results(&f.owner, &p.task, late, &proof).await?.expect_ok()?;
+    ensure!(published.receipt()["recordId"] == p.action.as_str(), "receipt record: {}", published.body);
+    ensure!(field(&f, "SELECT journal_sequence FROM task_reports", [], "journal_sequence")? == 3, "report journal sequence");
+    let payload: Value = serde_json::from_str(field(&f, "SELECT payload_json FROM task_reports", [], "payload_json")?.as_str().ok_or("payload_json")?)?;
+    ensure!(payload["journalSequence"] == 3, "report payload: {payload}");
+    ensure!(field(&f, "SELECT max(watermark) n FROM recovery_imports", [], "n")? == 3, "watermark lowered");
+    ensure!(field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 2, "import count");
+    ensure!(lookup_data(&f, &f.owner, &p.task).await?["results"][0]["content"] == content, "published content");
+    Ok(())
+}
