@@ -11,7 +11,14 @@ npm run build --prefix app
 cargo xtask leptos
 ```
 
-Run app tests with `npm test` from `app/` after building the workspace and Leptos. The TypeScript check leaves the built app output intact.
+Write integration tests with `minarbot-testkit` as described in `docs/testing.md`. Build the server and the kit's fake peers before running them:
+
+```sh
+cargo build -p minarbot-server -p minarbot-testkit
+cargo test -p minarbot-testkit -p minarbot-e2e
+```
+
+The remaining Node suite is legacy coverage during the #89 migration. Do not add Node tests.
 
 ## Rust
 

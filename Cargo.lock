@@ -2392,6 +2392,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "minarbot-e2e"
+version = "0.1.0"
+dependencies = [
+ "minarbot-testkit",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "minarbot-launcher"
 version = "0.1.0"
 dependencies = [
@@ -2469,6 +2478,25 @@ dependencies = [
  "url",
  "uuid",
  "whatsapp-rust",
+]
+
+[[package]]
+name = "minarbot-testkit"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "futures-util",
+ "image",
+ "jsonwebtoken",
+ "reqwest",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
