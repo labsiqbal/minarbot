@@ -961,6 +961,17 @@ async fn execute(
     let mut claude_tools = HashMap::<String, (String, Option<String>)>::new();
     for pass in 0..2 {
         let prompt_id;
+        let provider_effect = crate::computer::hub::before_effect(
+            state,
+            turn_id,
+            "provider",
+            json!({"model": model, "phase": phase}),
+        )
+        .await?;
+        // Provider inference has no user-visible side effect. Reserve its
+        // hub budget before dispatch and close receipt before the harness can
+        // wait on tool approvals or other work.
+        crate::computer::hub::finish_effect(state, provider_effect, "succeeded").await?;
         if runtime == "codex" {
             let context = additional_context(&instructions);
             let mut input = vec![json!({"type":"text","text":prompt})];
@@ -1519,6 +1530,21 @@ async fn execute(
         break;
     }
     child.notification = None;
+    // Coordination tools can pause turn while harness process reports its
+    // terminal event. Preserve stream receipt and let scheduler resume turn.
+    let paused = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        one(
+            &guard.connection,
+            "SELECT status,paused FROM turns WHERE id=?",
+            [string(turn, "id")],
+        )?
+        .is_some_and(|row| row["status"] != "running" || row["paused"] == 1)
+    };
+    if paused {
+        snapshot.flush()?;
+        return Ok(String::new());
+    }
     let reply = snapshot.finish()?;
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     db.connection.execute("UPDATE provider_calls SET status='received',finished=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE seq=? AND status='pending'",rusqlite::params![data::iso(&db.connection,state.config.now())?,usage[0],usage[1],usage[0].zip(usage[1]).map(|(a,b)|a+b),call])?;
