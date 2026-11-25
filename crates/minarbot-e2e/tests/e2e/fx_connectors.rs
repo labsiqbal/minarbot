@@ -1551,7 +1551,9 @@ fn runner_remote(
             runner.problems.push("uploaded document bytes".into());
         }
         runner.deliveries += 1;
-        if kind == Kind::Telegram {
+        // The Node fixture stopped 100 ms after the document and relied on
+        // the text reply arriving first; stop once both were delivered.
+        if kind == Kind::Telegram && runner.deliveries >= 2 {
             runner.abort = true;
         }
         return StubReply::ok(json!({"ok": true, "result": {"message_id": 40, "chat": {"id": 4}}}));
@@ -1596,7 +1598,7 @@ fn runner_remote(
                 if text.contains("/answer ") {
                     runner.answer = answer_id(&text, '/');
                 }
-                if text == final_text && !file {
+                if (text == final_text && !file) || (file && runner.deliveries >= 2) {
                     runner.abort = true;
                 }
                 result
@@ -1614,7 +1616,9 @@ fn runner_remote(
             } else if target.ends_with("/files.getUploadURLExternal") {
                 json!({"file_id": "FFILE", "upload_url": format!("{origin}/upload")})
             } else if target.ends_with("/files.completeUploadExternal") {
-                runner.abort = true;
+                if runner.deliveries >= 2 {
+                    runner.abort = true;
+                }
                 json!({"files": body["files"]})
             } else {
                 if body["channel"] != "DCHAT" || body["thread_ts"] != "1700000000.000001" {
@@ -1642,7 +1646,7 @@ fn runner_remote(
                         );
                     }
                 }
-                if text == final_text && !file {
+                if (text == final_text && !file) || (file && runner.deliveries >= 2) {
                     runner.abort = true;
                 }
                 result

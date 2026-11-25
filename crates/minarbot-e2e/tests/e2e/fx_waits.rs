@@ -474,6 +474,15 @@ async fn routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upl
             }
             Answer::Status(500, json!({}))
         };
+        // The one-time verification reminder follows the first final answer;
+        // with B1 that can be the extra step's answer before the event, so it
+        // is answered without counting (see the ledger).
+        if request
+            .last_user_text()
+            .starts_with("One verification reminder")
+        {
+            return Answer::text("Routine resumed.");
+        }
         if !request
             .tool_names()
             .iter()
@@ -609,8 +618,8 @@ async fn routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upl
         failures.lock().map(|f| f.clone())
     );
     // Node counts 2: the event continuation and the one-time verification
-    // reminder. B1's extra step after `wait_for_event` ends the harness turn
-    // first and uses that reminder up, so only the continuation remains.
+    // reminder. With B1 the reminder can follow the extra step instead, so
+    // reminders are not counted and only the continuation remains.
     ensure!(
         completed.load(Ordering::SeqCst) == 1,
         "completed {}",
