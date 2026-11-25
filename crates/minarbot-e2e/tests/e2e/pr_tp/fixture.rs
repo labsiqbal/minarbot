@@ -52,8 +52,8 @@ pub enum Fault {
     Pass,
     /// Wait for this future, then forward.
     Hold(BoxFuture),
-    /// Forward, then lose the reply when `drop(status)` holds.
-    LoseReply(Box<dyn Fn(u16) -> bool + Send>),
+    /// Forward, read the reply, then lose it when `lose(status, body)` holds.
+    LoseReply(Box<dyn Fn(u16, &[u8]) -> bool + Send>),
 }
 
 pub type FaultHook = Arc<dyn Fn(&Exchange) -> Fault + Send + Sync>;
@@ -105,10 +105,13 @@ impl Tp {
                     Err(_) => return Ok(Answer::Drop),
                 };
                 if let Fault::LoseReply(lose) = fault {
-                    if lose(upstream.status) {
-                        let _ = upstream.bytes().await;
+                    let status = upstream.status;
+                    let headers = relay::without_length(upstream.headers.clone());
+                    let body = upstream.bytes().await.unwrap_or_default();
+                    if lose(status, &body) {
                         return Ok(Answer::Drop);
                     }
+                    return Ok(Answer::bytes(status, headers, body));
                 }
                 Ok(relayed(upstream))
             }
@@ -398,7 +401,7 @@ impl Tp {
                 && armed.swap(false, std::sync::atomic::Ordering::SeqCst)
             {
                 let status_seen = status_seen.clone();
-                return Fault::LoseReply(Box::new(move |status| {
+                return Fault::LoseReply(Box::new(move |status, _| {
                     *locked(&status_seen) = Some(status);
                     true
                 }));

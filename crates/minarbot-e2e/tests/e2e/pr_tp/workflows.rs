@@ -735,3 +735,196 @@ async fn canonical_workflow_dispatch_retains_original_collaborator_and_owner_can
     w.tp.close().await?;
     result
 }
+
+#[tokio::test]
+async fn canonical_workflow_completion_recovers_a_lost_ack_after_advancing_to_approval(
+) -> Result<()> {
+    let mut w = WorkflowHome::start().await?;
+    let result = async {
+        let connection = connect(&w).await?;
+        bind_provider(&w).await?;
+        let graph = json!({"entry": "work", "maxSteps": 3, "nodes": [
+            {"id": "work", "kind": "agent", "agent": w.agent, "prompt": "Answer once", "next": "approve"},
+            {"id": "approve", "kind": "approval", "prompt": "Proceed?", "yes": "out"},
+            {"id": "out", "kind": "output"}]});
+        create(&w, "Completion recovery", &graph).await?;
+        let (_, path) = start_run(&w, "Synthetic").await?;
+        let current = wait_run(&w, &path, |run| run["status"] == "waiting").await?;
+        let task = current["steps"][0]["turn"].as_str().unwrap_or_default().to_owned();
+        let saved: Arc<Mutex<Option<(u16, Value, String)>>> = Arc::default();
+        let capture = saved.clone();
+        w.tp.fault(Some(Arc::new(move |exchange| {
+            if !exchange.path.ends_with("/complete") {
+                return super::fixture::Fault::Pass;
+            }
+            let action = exchange.json()["actionId"].as_str().unwrap_or_default().to_owned();
+            let capture = capture.clone();
+            super::fixture::Fault::LoseReply(Box::new(move |status, body| {
+                let value = serde_json::from_slice(body).unwrap_or(Value::Null);
+                *locked(&capture) = Some((status, value, action.clone()));
+                true
+            }))
+        })));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = calls.clone();
+        let lost = w
+            .host
+            .run_task(&task, move |_| {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { Ok(json!({"text": "Saved once"})) }
+            })
+            .await;
+        w.tp.fault(None);
+        ensure!(lost.is_err(), "completion ACK was not lost: {lost:?}");
+        let (status, body, action) = locked(&saved).clone().ok_or("completion not seen")?;
+        ensure!(status == 200, "completion status: {status} {body}");
+        wait_run(&w, &path, |run| run["status"] == "approval").await?;
+        ensure!(
+            w.host.complete(&task, &action).await?["receipt"] == body["receipt"],
+            "completion replay"
+        );
+        w.tp.restart().await?;
+        until("reconnected", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+        ensure!(
+            w.host.complete(&task, &action).await?["receipt"] == body["receipt"],
+            "completion replay after restart"
+        );
+        ensure!(calls.load(std::sync::atomic::Ordering::SeqCst) == 1, "provider calls");
+        ensure!(
+            w.tp.inspect()?.scalar::<i64>("SELECT count(*) FROM receipts WHERE scope=?", [format!("tasks:complete:{task}")])?
+                == 1,
+            "completion receipts"
+        );
+        w.tp.write()?.execute(
+            "UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?",
+            [&w.project, &w.agent],
+        )?;
+        let denied = w.host.complete(&task, &action).await;
+        ensure!(
+            denied.as_ref().is_err_and(|error| minarbot_testkit::device_host::is_code(error, "execution_denied")),
+            "completion after removal: {denied:?}"
+        );
+        Ok(())
+    }
+    .await;
+    w.tp.fault(None);
+    w.tp.close().await?;
+    result
+}
+
+#[tokio::test]
+async fn canonical_workflow_cancellation_fences_no_reply_descendants_of_completed_steps(
+) -> Result<()> {
+    let w = WorkflowHome::start().await?;
+    let result = async {
+        let connection = connect(&w).await?;
+        bind_provider(&w).await?;
+        let peer = new_id();
+        let home = w.tp.data("/api/devices").await?[0].clone();
+        let (status, _) = w
+            .tp
+            .send("/api/agents", Some(super::fixture::agent_body(&peer, "Teammate", "Help", &w.project, &home)))
+            .await?;
+        ensure!(status == 201, "teammate: {status}");
+        let graph = json!({"entry": "work", "maxSteps": 3, "nodes": [
+            {"id": "work", "kind": "agent", "agent": w.agent, "prompt": "Delegate without waiting", "next": "approve"},
+            {"id": "approve", "kind": "approval", "prompt": "Proceed?", "yes": "out"},
+            {"id": "out", "kind": "output"}]});
+        create(&w, "Cancel descendants", &graph).await?;
+        let (_, path) = start_run(&w, "Synthetic").await?;
+        let current = wait_run(&w, &path, |run| run["status"] == "waiting").await?;
+        let parent = current["steps"][0]["turn"].as_str().unwrap_or_default().to_owned();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (counter, recipient) = (calls.clone(), peer.clone());
+        let ran = w
+            .host
+            .run_task(&parent, move |_| {
+                let first = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+                let recipient = recipient.clone();
+                async move {
+                    Ok(if first {
+                        json!({"toolCall": {"id": "delegate", "function": {"name": "send_message",
+                            "arguments": json!({"recipients": [recipient], "text": "Background work",
+                                "expects_reply": false}).to_string()}}})
+                    } else {
+                        json!({"text": "Parent done"})
+                    })
+                }
+            })
+            .await?;
+        ensure!(ran["state"] == "completed", "parent: {ran}");
+        let current = wait_run(&w, &path, |run| run["status"] == "approval").await?;
+        let child: String = w.tp.inspect()?.scalar("SELECT id FROM turns WHERE parent=?", [&parent])?;
+        let owned = w.host.start_task(&child).await?;
+        w.host.context(&child, &owned["ownership"], &owned["revision"]).await?;
+        ensure!(
+            w.tp.send(&format!("{path}/cancel"), Some(command(&current["revision"]))).await?.0 == 200,
+            "cancel"
+        );
+        ensure!(w.tp.task_detail(&child).await?["state"] == "cancelled", "child cancelled");
+        ensure!(w.tp.task_detail(&parent).await?["state"] == "completed", "parent kept");
+        let db = w.tp.inspect()?;
+        ensure!(
+            db.scalar::<String>("SELECT reply FROM turns WHERE id=?", [&parent])? == "Parent done",
+            "parent reply"
+        );
+        ensure!(
+            db.scalar::<i64>("SELECT stopped FROM execution_owners WHERE task=?", [&child])? == 1,
+            "child owner stopped"
+        );
+        ensure!(w.host.start_task(&child).await.is_err(), "cancelled child restarted");
+        connection.stop().await?;
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+#[tokio::test]
+async fn canonical_workflow_oversized_handoff_fails_once_without_starving_later_runs() -> Result<()>
+{
+    let mut w = WorkflowHome::start().await?;
+    let result = async {
+        let connection = connect(&w).await?;
+        bind_provider(&w).await?;
+        let graph = json!({"entry": "first", "maxSteps": 3, "nodes": [
+            {"id": "first", "kind": "agent", "agent": w.agent, "prompt": "First", "next": "work"},
+            {"id": "work", "kind": "agent", "agent": w.agent, "prompt": "x".repeat(16000), "next": "out"},
+            {"id": "out", "kind": "output"}]});
+        create(&w, "Oversized", &graph).await?;
+        let (run, path) = start_run(&w, "").await?;
+        let current = wait_run(&w, &path, |run| run["status"] == "waiting").await?;
+        let first = current["steps"][0]["turn"].as_str().unwrap_or_default().to_owned();
+        let ran = w
+            .host
+            .run_task(&first, |_| async { Ok(json!({"text": "y".repeat(250_000)})) })
+            .await?;
+        ensure!(ran["state"] == "completed", "first: {ran}");
+        let (_, later_path) = start_run(&w, "Later").await?;
+        let failed = wait_run(&w, &path, |run| run["status"] == "failed").await?;
+        ensure!(
+            failed["error"].as_str().unwrap_or_default().contains("Step input exceeds 256 KiB"),
+            "error: {failed}"
+        );
+        wait_run(&w, &later_path, |run| run["status"] == "waiting").await?;
+        let revision = w.tp.data(&path).await?["revision"].clone();
+        w.tp.restart().await?;
+        ensure!(w.tp.data(&path).await?["revision"] == revision, "revision changed across restart");
+        let events = w.tp.data(&format!("/api/sync?projectId={}", w.project)).await?;
+        let observed = events["page"]["events"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|event| event["recordKind"] == "workflow_run" && event["recordId"] == run.as_str())
+                    .cloned()
+            })
+            .ok_or("run observation missing")?;
+        ensure!(observed["body"]["status"] == "failed", "observation: {observed}");
+        drop(connection);
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}

@@ -362,6 +362,11 @@ impl DeviceHost {
         result
     }
 
+    pub async fn complete(&self, task: &str, action: &str) -> Result<Value> {
+        self.call("complete", json!({"taskId": task, "actionId": action}))
+            .await
+    }
+
     pub async fn recover(&self) -> Result<Value> {
         self.call("recover", json!({})).await
     }

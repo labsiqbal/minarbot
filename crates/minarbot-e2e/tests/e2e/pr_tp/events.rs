@@ -583,7 +583,7 @@ async fn protected_turn_wait_uses_outbound_stream_and_recovers_lost_host_ack_wit
         f.fault(Some(Arc::new(move |exchange| {
             if exchange.path.ends_with("/wait-secret-results") && !flag.load(Ordering::SeqCst) {
                 let (flag, status_seen) = (flag.clone(), status_seen.clone());
-                return Fault::LoseReply(Box::new(move |status| {
+                return Fault::LoseReply(Box::new(move |status, _| {
                     *super::fixture::locked(&status_seen) = Some(status);
                     flag.store(true, Ordering::SeqCst);
                     true
