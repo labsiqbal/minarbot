@@ -8,6 +8,7 @@ mod cli;
 mod goals;
 mod harness;
 mod kit;
+mod pd_workflow_parallel;
 mod questions;
 mod support;
 mod threads;
