@@ -14,6 +14,7 @@ mod pd_history_tools;
 mod pd_image_generation;
 mod pd_mcp_isolation;
 mod pd_pdf_text;
+mod pd_rust_desktop_http;
 mod pd_shared_data_http;
 mod pd_skill_tools;
 mod pd_webhooks;
