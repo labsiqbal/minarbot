@@ -275,3 +275,18 @@ fn loop_until_and_run_limit_disable_the_routine() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn allowance_stops_a_goal_before_provider_dispatch() -> TestResult {
+    let fixture = Fixture::open()?;
+    let guard = fixture.state.database.lock().map_err(|_| "Database lock")?;
+    let db = &guard.connection;
+    fixture.start(db, 20, 8)?;
+    let messages = [json!({"role":"user","content":"This input exceeds the goal budget."})];
+    let failure = allowance(&fixture.state, "root", &messages)
+        .err()
+        .ok_or("goal allowance unexpectedly passed")?;
+    assert_eq!(failure.status, 409);
+    assert_eq!(status(db)?, "token_limit");
+    Ok(())
+}
