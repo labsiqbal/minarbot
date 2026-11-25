@@ -131,6 +131,7 @@ each iteration as a case.
 | `app/base-instructions-scenario.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/turn-waits.test.ts` | 5 | 5 | 0 | 2 (B1) |
 | `app/acp-harness.test.ts` | 17 | 17 | 0 | 0 (deleted) |
+| `app/agent-delegation.test.ts` | 19 | 19 | 0 | 1 (B1) |
 
 <!-- fixture-summary -->
 
@@ -246,6 +247,30 @@ each iteration as a case.
 | ACP cancel reaches child, kills detached tool process and preserves inspect diagnostics | `fx_acp::acp_cancel_reaches_child_kills_detached_tool_process_and_preserves_inspect_diagnostics` | 13 -> 12 | Full; the Node `assert(start)` is the `ok_or` on the process start time. |
 | ACP runtimes work through server: approvals, segments and runtime picker | `fx_acp::acp_runtimes_work_through_server_approvals_segments_and_runtime_picker` | 6 -> 4 | Full; the Node count includes two helper asserts. |
 | ACP room queue, checkpoints and stop preserve peer approvals | `fx_acp::acp_room_queue_checkpoints_and_stop_preserve_peer_approvals` | 6 -> 4 | Full; project folders must sit in the server's home, so the Git workspace is under `home/`. The Node count includes two helper asserts. |
+
+### `app/agent-delegation.test.ts` (kept: B1, restart-wait)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| delegation isolates child context and durably wakes idle parent exactly once | `fx_delegation::delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly_once` | 12 -> 6 | Full; found F3 (fixed). The Node count includes four fixture helper asserts. |
+| durable task wait: complete | `fx_delegation::durable_task_wait_complete` | 7 -> 7 | Full; found F4 (fixed). |
+| durable task wait: timeout | `fx_delegation::durable_task_wait_timeout` | 7 -> 7 | Full. |
+| durable task wait: restart-wait | `fx_delegation::durable_task_wait_restart_wait` | 7 -> 7 | Kept in Node for B1: `childCalls === 2` leaves out the model step after `ask_user`; the Rust count excludes it. |
+| durable task wait: restart-child | `fx_delegation::durable_task_wait_restart_child` | 7 -> 7 | Full; the restart waits for the child's model request (the harness sends it just after the turn starts). |
+| durable task wait: delegate-wait | `fx_delegation::durable_task_wait_delegate_wait` | 7 -> 7 | Full. |
+| backend delegation limit: depth | `fx_delegation::backend_delegation_limit_depth` | 6 -> 6 | Full. |
+| backend delegation limit: children | `fx_delegation::backend_delegation_limit_children` | 6 -> 6 | Changed by #87: the 409 returns to the model and the turn ends `done` with it instead of `failed`. |
+| backend delegation limit: size | `fx_delegation::backend_delegation_limit_size` | 6 -> 6 | Full. |
+| delegated task authority denies unrelated caller; cancel stops entire mixed-message tree | `fx_delegation::delegated_task_authority_denies_unrelated_caller_cancel_stops_entire_mixed_message_tree` | 5 -> 4 | Full; the Node count includes a helper assert. |
+| team awareness refreshes role and bounded roster on next provider request | `fx_delegation::team_awareness_refreshes_role_and_bounded_roster_on_next_provider_request` | 5 -> 4 | Changed by #87: the provider client that rebuilt the system prompt (roster and capability epoch) before each request was removed; harness turns read the roster with `list_agents`. The test asserts the refreshed role and the bound through two `list_agents` calls in one turn; the epoch assertion is dropped. |
+| delegate_task receives actionable rate error across conversations, restart and cooldown | `fx_delegation::delegate_task_receives_actionable_rate_error_across_conversations_restart_and_cooldown` | 3 -> 3 | Full. |
+| send_message receives actionable rate error across conversations, restart and cooldown | `fx_delegation::send_message_receives_actionable_rate_error_across_conversations_restart_and_cooldown` | 3 -> 3 | Full. |
+| nested async children: wait includes completion follow-up | `fx_delegation::nested_async_children_wait_includes_completion_follow_up` | 6 -> 6 | Full. |
+| nested async children: cancel completed root with running descendants | `fx_delegation::nested_async_children_cancel_completed_root_with_running_descendants` | 6 -> 6 | Full. |
+| owner later turns can inspect and wait without a duplicate completion wake | `fx_delegation::owner_later_turns_can_inspect_and_wait_without_a_duplicate_completion_wake` | 3 -> 3 | Full. |
+| completion wakes a parent waiting for user input and preserves its pending question | `fx_delegation::completion_wakes_a_parent_waiting_for_user_input_and_preserves_its_pending_question` | 3 -> 3 | Full. |
+| concurrent child limit counts tasks still waiting on their async descendants | `fx_delegation::concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descendants` | 4 -> 4 | Full. |
+| Rust counts active children of an owner completion turn against its inherited budget | `fx_delegation::rust_counts_active_children_of_an_owner_completion_turn_against_its_inherited_budget` | 3 -> 3 | Changed by #87: the limit refusal returns to the model, which ends the continuation `done` with it instead of `failed`. |
 
 <!-- fixture-cases -->
 
