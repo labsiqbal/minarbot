@@ -20,4 +20,5 @@ mod sync;
 mod workflow_config;
 mod workflow_runs;
 mod workflow_waits;
+mod webhooks;
 mod workflows;
