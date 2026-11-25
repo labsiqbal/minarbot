@@ -645,6 +645,26 @@ fn send(state: &AppState, db: &Connection, caller: &Value, args: &Value) -> Resu
 mod tests {
     use super::*;
 
+    #[test]
+    fn send_schema_supports_batch_coordination() -> crate::db::Result<()> {
+        let send = tools()
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["name"] == "send_message"))
+            .ok_or_else(|| Failure::storage())?;
+        assert_eq!(
+            send["inputSchema"]["properties"]["recipients"]["maxItems"],
+            8
+        );
+        assert_eq!(
+            send["inputSchema"]["properties"]["expects_reply"]["type"],
+            "boolean"
+        );
+        assert!(send["inputSchema"]["required"]
+            .as_array()
+            .is_some_and(|required| required.iter().any(|value| value == "requestId")));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn formatted_results_keep_their_original_envelope(
     ) -> std::result::Result<(), Box<dyn std::error::Error>> {
