@@ -11,7 +11,7 @@ through kit peers. Source declaration counts include generated runtime cases.
 | --- | ---: | ---: | --- |
 | `app/threads.test.ts` | 4 | 2 | `threads::stored_threads_are_created_and_listed_without_agent_turn`, `threads::duplicate_thread_command_is_idempotent` |
 | `app/agent-create.test.ts` | 8 | 2 | `agent_create::agent_creation_persists_profile`, `agent_create::malformed_agent_creation_is_rejected` |
-| `app/harness.test.ts` | 17 declarations / 31 runtime cases | 2 | `harness::codex_and_claude_provider_instances_are_stored`, `harness::harness_agent_turn_uses_test_workspace` |
+| `app/harness.test.ts` | 17 declarations / 32 runtime cases | 2 | `harness::codex_and_claude_provider_instances_are_stored`, `harness::harness_agent_turn_uses_test_workspace` |
 | `app/goals.test.ts` | 5 | 2 | `goals::goal_route_is_scoped_to_agent`, `goals::goal_duplicate_receipt_is_idempotent` |
 | `app/questions.test.ts` | 2 | 2 | `questions::question_answer_route_rejects_unknown_turn`, `questions::question_answer_receipt_requires_text` |
 | `app/cli.test.ts` | 4 | 2 | `cli::cli_routines_stay_within_selected_agent`, `cli::cli_unknown_agent_is_fenced` |
