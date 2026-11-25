@@ -136,17 +136,17 @@ Node side only.
 | `app/skill-tools.test.ts` | 1 | 1 | 15 -> 12 | 0 |
 | `app/workspace-shell.test.ts` | 2 | 2 | 18 -> 19 | 0 |
 | `app/mcp-isolation.test.ts` | 1 | 1 | 7 -> 4 | 0 |
-| `app/rust-desktop-http.test.ts` | 5 | 5 | 123 -> 112 | 1 (B1) |
+| `app/rust-desktop-http.test.ts` | 5 | 5 | 123 -> 112 | 0 |
 | `app/sidebar.test.ts` | 3 | 3 | 42 -> 48 | 0 |
 | `app/channel-context.test.ts` | 1 declaration / 2 runtime cases | 2 | 15 -> 13 per case | 0 |
 | `app/agent-reply-capture.test.ts` | 1 | 1 | 35 -> 37 | 0 |
 | `app/guide-infra.test.ts` | 1 | 1 | 26 -> 25 | 0 |
 | `app/local-projects.test.ts` | 13 | 13 | 166 -> 164 | 0 |
 | `app/local-routines.test.ts` | 4 | 4 | 44 -> 55 | 0 |
-| Total | 42 | 42 | 802 -> 858 | 1 |
+| Total | 42 | 42 | 802 -> 858 | 0 |
 
-Every Node file except `app/rust-desktop-http.test.ts` is deleted. That
-file keeps one case, unchanged, for B1.
+Every Node file is deleted. `app/rust-desktop-http.test.ts` kept one case
+for B1 until the #89 integration below fixed it.
 
 ### Case map
 
@@ -163,12 +163,12 @@ file keeps one case, unchanged, for B1.
 | image-generation: image generation preserves scope, uncertain receipts and exact artifacts through restart | `pd_image_generation::image_generation_preserves_scope_uncertain_receipts_and_exact_artifacts_through_restart` | 27 -> 18 | Full; the image and chat contract checks (path, keys, body, tool offers) are violation lists asserted once each. |
 | history-tools: agent history tools retrieve old originals and reject foreign conversations | `pd_history_tools::agent_history_tools_retrieve_old_originals_and_reject_foreign_conversations` | 24 -> 22 | Full. The undici network-error capture was Node diagnostics only. |
 | skill-tools: skill tools page own enabled pins, reject foreign access and observe revocation | `pd_skill_tools::skill_tools_page_own_enabled_pins_reject_foreign_access_and_observe_revocation` | 15 -> 12 | Full. |
-| workspace-shell: Rust shell confines cwd, filesystem and environment and enforces read-only and approval | `pd_workspace_shell::rust_shell_confines_cwd_filesystem_and_environment_and_enforces_read_only_and_approval` | 12 -> 12 | Full. |
-| workspace-shell: Rust shell caps output, times out and stops descendants after exit and cancellation | `pd_workspace_shell::rust_shell_caps_output_times_out_and_stops_descendants_after_exit_and_cancellation` | 6 -> 5 | Full; the 2.1 s absence check is `wait::never`. |
+| workspace-shell: Rust shell confines cwd, filesystem and environment and enforces read-only and approval | `pd_workspace_shell::rust_shell_confines_cwd_filesystem_and_environment_and_enforces_read_only_and_approval` | 12 -> 12 | Full. Since B8, plain commands on a writable binding run without a card: the check asserts no approval, and the denied command adds `chmod` so it still needs one (#89 integration). |
+| workspace-shell: Rust shell caps output, times out and stops descendants after exit and cancellation | `pd_workspace_shell::rust_shell_caps_output_times_out_and_stops_descendants_after_exit_and_cancellation` | 6 -> 5 | Full; the 2.1 s absence check is `wait::never`. Since B8 the commands run without a card, which each step asserts (#89 integration). |
 | mcp-isolation: a hostile MCP output schema cannot block HTTP, exceed the worker deadline or resist cancellation | `pd_mcp_isolation::a_hostile_mcp_output_schema_cannot_block_http_exceed_the_worker_deadline_or_resist_cancellation` | 7 -> 4 | Full. |
 | rust-desktop-http: harness stdio MCP bridge delivers Computer images, input, scoped access and human-control pause | `pd_rust_desktop_http::harness_stdio_mcp_bridge_delivers_computer_images_input_scoped_access_and_human_control_pause` | 14 -> 13 | Sessions are seeded in `mcp_server_tokens` (the Node test called `mcpServer.mintAgentSession`); the bridge is `minarbot-server --mcp-stdio`, whose refusal text is "MCP request failed." (JSON-RPC -32603) instead of the Node bridge's "Minarbot MCP request failed.". |
 | rust-desktop-http: server advertises gated tools, sends model image pixels, protects viewer routes and refuses uncertain resume | `pd_rust_desktop_http::server_advertises_gated_tools_sends_model_image_pixels_protects_viewer_routes_and_refuses_uncertain_resume` | 41 -> 38 | Full after the uncertain-action fix below. |
-| rust-desktop-http: HTTP control and user input enforce Origin, revision, validation and rate limits; paused turn resumes once | `pd_rust_desktop_http::http_control_and_user_input_enforce_origin_revision_validation_and_rate_limits_paused_turn_resumes_once` | 44 -> 39 | Model-call counts leave out the step after a pausing Computer tool (B1); the strict counts stay in Node. |
+| rust-desktop-http: HTTP control and user input enforce Origin, revision, validation and rate limits; paused turn resumes once | `pd_rust_desktop_http::http_control_and_user_input_enforce_origin_revision_validation_and_rate_limits_paused_turn_resumes_once` | 44 -> 39 | Full. Strict model-call counts (1, 2, 4) since the #89 integration fixed the B1 step after a pausing Computer tool. |
 | rust-desktop-http: HTTP VNC relay enforces owner Host/Origin, tickets, viewer cap, live control fencing and stop cleanup | `pd_rust_desktop_http::http_vnc_relay_enforces_owner_host_origin_tickets_viewer_cap_live_control_fencing_and_stop_cleanup` | 13 -> 10 | Full, with the kit's WebSocket/RFB client. |
 | rust-desktop-http: Always-on Computer uses a desktop slot, survives idle and restores on server restart | `pd_rust_desktop_http::always_on_computer_uses_a_desktop_slot_survives_idle_and_restores_on_server_restart` | 11 -> 12 | Real clock: the idle deadline must advance. |
 | sidebar: sidebar validates unique membership, names, IDs and bounded settings | `pd_sidebar::sidebar_validates_unique_membership_names_ids_and_bounded_settings` | 4 -> 3 | Full (13 invalid layouts in a loop). |
@@ -203,7 +203,7 @@ file keeps one case, unchanged, for B1.
 | Group requests held their conversation | agent-reply-capture | A session `send_message` with `expects_reply` polled up to 30 s inside its MCP call, so the harness turn stayed active and blocked the conversation; in test mode `messaging::run` also skipped queueing the source turn (c9a9e0f). New user turns could not run or capture ready replies. The source turn is now queued in every mode and the MCP call returns the waiting receipt at once, like `wait_task`; the scheduler resumes it when the replies settle (`turns/messaging.rs`, `mcp/server.rs`). |
 | Failed Computer actions looked retryable | rust-desktop-http (uncertain resume) | A native action is journaled as uncertain before it runs, but a failure returned the raw error to the harness as an ordinary tool error, so the model could repeat the input and the turn ended `done`. Failures after the journal now return the uncertain outcome (502), as MCP tool calls do (`computer/control.rs`). |
 
-### Product bugs kept
+### Product bugs kept (fixed in the #89 integration)
 
 | Bug | Kept Node assertion | Cause |
 | --- | --- | --- |
@@ -245,25 +245,25 @@ each iteration as a case.
 | `app/queue-edits.test.ts` | 3 | 3 | 0 | 0 (deleted) |
 | `app/queue-order.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/agent-delete.test.ts` | 6 | 6 | 0 | 0 (deleted) |
-| `app/agent-visibility.test.ts` | 1 | 1 | 0 | 1 (B1, TS module) |
-| `app/script-discovery.test.ts` | 3 | 3 | 0 | 1 (B2) |
-| `app/script-messages.test.ts` | 1 | 1 | 0 | 1 (B1) |
+| `app/agent-visibility.test.ts` | 1 | 1 | 0 | 1 (TS module, split out) |
+| `app/script-discovery.test.ts` | 3 | 3 | 0 | 0 (deleted) |
+| `app/script-messages.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/flow-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/routine-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/artifacts.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/avatar-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/site-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/base-instructions-scenario.test.ts` | 1 | 1 | 0 | 0 (deleted) |
-| `app/turn-waits.test.ts` | 5 | 5 | 0 | 2 (B1) |
+| `app/turn-waits.test.ts` | 5 | 5 | 0 | 0 (deleted) |
 | `app/acp-harness.test.ts` | 17 | 17 | 0 | 0 (deleted) |
-| `app/agent-delegation.test.ts` | 19 | 19 | 0 | 1 (B1) |
+| `app/agent-delegation.test.ts` | 19 | 19 | 0 | 0 (deleted) |
 | `app/composio.test.ts` | 3 | 3 | 0 | 1 (TS module, split out) |
-| `app/dispatch.test.ts` | 11 | 10 | 0 | 3 (B7 x2, TS module) |
+| `app/dispatch.test.ts` | 11 | 10 | 0 | 1 (TS module) |
 | `app/turn-stream.test.ts` | 2 | 1 | 0 | 1 (TS module) |
 | `app/connector-task-files.test.ts` | 6 | 6 | 0 | 0 (deleted) |
 | `app/workflow-files.test.ts` | 8 | 8 | 0 | 0 (deleted) |
-| `app/rust-connectors.test.ts` | 13 | 13 | 0 | 2 (B1) |
-| Total | 105 | 103 | 0 | 13 (B1 x7, B2, B7 x2; 3 TS-module cases) |
+| `app/rust-connectors.test.ts` | 13 | 13 | 0 | 0 (deleted) |
+| Total | 105 | 103 | 0 | 4 TS-module cases (the B1, B2 and B7 cases were ported in the #89 integration) |
 
 "Dropped" counts whole cases; assertions dropped for removed behaviour are
 named per case below. Partly dropped behaviour: the malformed-JSON tool
@@ -296,25 +296,25 @@ failed MCP tool calls (several cases), all removed with the #87 API runtime.
 | paired peer cannot delete owner agents; deletion on owner refreshes peer roster | `fx_agents::paired_peer_cannot_delete_owner_agents_deletion_on_owner_refreshes_peer_roster` | 6 -> 4 | Full: issued token, 403, 404, refreshed roster. Both servers use `peer::PeerBridge` (token issuer and loopback `peer-http`) and start through `server::start_pair`. |
 | owned Git checkpoint refs clean up durably without removing project files; failed cleanup retries | `fx_agents::owned_git_checkpoint_refs_clean_up_durably_without_removing_project_files_failed_cleanup_retries` | 6 -> 6 | Full. |
 
-### `app/agent-visibility.test.ts` (kept: B1)
+### `app/agent-visibility.test.ts` (kept: TS module)
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
-| hidden agents finish active work, hold queue across restart, reject new work and skip missed schedules | `fx_agents::hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_work_and_skip_missed_schedules` | 33 -> 27 | Kept in Node for B1: `wait_for_event` returns `null` and the harness takes one more model step, so the Rust test fails that step at once and leaves it out of `calls.length === 6`. The 7 `visibilityCommand` asserts test `app/shared/agent-visibility.ts`, a TS module with no importer besides this case, and stay in Node. |
+| hidden agents finish active work, hold queue across restart, reject new work and skip missed schedules | `fx_agents::hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_work_and_skip_missed_schedules` | 33 -> 27 | Full, with the strict `calls.length === 6` since the #89 integration. The 7 `visibilityCommand` asserts test `app/shared/agent-visibility.ts` and stay in Node as their own TS-module case ("visibility command accepts an exact hide command and rejects malformed input"). |
 
-### `app/script-discovery.test.ts` (kept: B2)
+### `app/script-discovery.test.ts` (deleted)
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
 | duplicate discovery startup cannot interrupt the owning server task | `fx_scripts::duplicate_discovery_startup_cannot_interrupt_the_owning_server_task` | 4 -> 2 | Full: the duplicate start fails and the owning turn keeps running. The duplicate start shares the running server's slot (`TestRoot::start_error_beside`). |
-| private script discovery follows live grants, rotates on restart and preserves foreign files | `fx_scripts::private_script_discovery_follows_live_grants_rotates_on_restart_and_preserves_foreign_files` | 27 -> 22 | Kept in Node for B2: the fresh token is proven on `/api/scripts/agents/{id}/turns`, because `/api/scripts/agents/{id}/provider` deadlocks the server. The stale-token 403 on `/provider` is asserted. |
+| private script discovery follows live grants, rotates on restart and preserves foreign files | `fx_scripts::private_script_discovery_follows_live_grants_rotates_on_restart_and_preserves_foreign_files` | 27 -> 22 | Full: the fresh token is proven on `/api/scripts/agents/{id}/provider` since B2 is fixed (#89 integration). |
 | discovery rejects unsafe directories and symlink destinations without changing targets | `fx_scripts::discovery_rejects_unsafe_directories_and_symlink_destinations_without_changing_targets` | 7 -> 6 | Full. |
 
-### `app/script-messages.test.ts` (kept: B1)
+### `app/script-messages.test.ts` (deleted)
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
-| script messages and answers share grants, scope, receipts, redaction and rate admission | `fx_scripts::script_messages_and_answers_share_grants_scope_receipts_redaction_and_rate_admission` | 45 -> 50 | Kept in Node for B1 (`assert.equal(calls, 2)` counts the step after `ask_user`). The fixed clock replaces the mocked `Date`. The 58 admitted messages each run one harness turn, so the drain before the restart waits 2 s per queued turn. |
+| script messages and answers share grants, scope, receipts, redaction and rate admission | `fx_scripts::script_messages_and_answers_share_grants_scope_receipts_redaction_and_rate_admission` | 45 -> 50 | Full, with the strict `calls === 2` since the #89 integration. The fixed clock replaces the mocked `Date`. The 58 admitted messages each run one harness turn, so the drain before the restart waits 2 s per queued turn. |
 
 ### `app/flow-tools.test.ts` (deleted)
 
@@ -350,14 +350,14 @@ failed MCP tool calls (several cases), all removed with the #87 API runtime.
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
-| synthetic scenarios record panel without duplicate writes, inline links, workspace context and approved shell | `fx_tools::synthetic_scenarios_record_panel_without_duplicate_writes_inline_links_workspace_context_and_approved_shell` | 29 -> 27 | Changed by #87: `<runtime_info>` names the Codex instance (`through the codex runtime, model fixture`) instead of `api`. The agent session for the native MCP call is minted by inserting a hashed token, as the Node MCP facade did. |
+| synthetic scenarios record panel without duplicate writes, inline links, workspace context and approved shell | `fx_tools::synthetic_scenarios_record_panel_without_duplicate_writes_inline_links_workspace_context_and_approved_shell` | 29 -> 27 | Changed by #87: `<runtime_info>` names the Codex instance (`through the codex runtime, model fixture`) instead of `api`. The agent session for the native MCP call is minted by inserting a hashed token, as the Node MCP facade did. Since B8 a plain check on a writable workspace needs no approval, so the scripted check adds `chmod` to keep the approval step (#89 integration). |
 
-### `app/turn-waits.test.ts` (kept: B1)
+### `app/turn-waits.test.ts` (deleted)
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
-| agent event waits release workers, survive restart, honor pause and accept once | `fx_waits::agent_event_waits_release_workers_survive_restart_honor_pause_and_accept_once` | 37 -> 25 | Kept in Node for B1 (`wait_for_event`): the harness takes one model step after the tool returns `null`; the test ends that step with text (a failed step would fail the waiting turn) and keeps it out of counts. While that step finishes, an immediate resume answers "Previous request has not stopped yet"; the test retries only on that message. Changed by #87: `timeoutSeconds: 0` returns the 400 to the model instead of failing the turn. The backup restore runs `minarbot-server restore workspace` into a second root. Signatures use `signing::hmac_sha256_hex` and the fixed clock. |
-| routine waits preserve artifacts and reject events cancelled before upload completes | `fx_waits::routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upload_completes` | 26 -> 19 | Kept in Node for B1: Node counts two continuations (the event and the one-time verification reminder); with B1 the reminder can follow the extra step instead, so the Rust test answers reminders without counting them and asserts one. Everything else is full, including the half-sent event cancelled mid-upload (`SplitRequest`). |
+| agent event waits release workers, survive restart, honor pause and accept once | `fx_waits::agent_event_waits_release_workers_survive_restart_honor_pause_and_accept_once` | 37 -> 25 | Full since the #89 integration: `wait_for_event` parks the turn without another model step, so `continuations` counts strictly. Changed by #87: `timeoutSeconds: 0` returns the 400 to the model instead of failing the turn. The backup restore runs `minarbot-server restore workspace` into a second root. Signatures use `signing::hmac_sha256_hex` and the fixed clock. A resume right after the pause retries only on "Previous request has not stopped yet" while the worker stops the parked run. |
+| routine waits preserve artifacts and reject events cancelled before upload completes | `fx_waits::routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upload_completes` | 26 -> 19 | Full since the #89 integration: both continuations count (the event and the one-time verification reminder), as in Node. The half-sent event is cancelled mid-upload (`SplitRequest`). |
 | workflow cancellation closes waiting descendants of completed steps | `fx_waits::workflow_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full (shared helper `cancellation_closes_waiting_descendants`). |
 | channel cancellation closes waiting descendants of completed steps | `fx_waits::channel_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full. |
 | thread cancellation closes waiting descendants of completed steps | `fx_waits::thread_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full. |
@@ -384,14 +384,14 @@ failed MCP tool calls (several cases), all removed with the #87 API runtime.
 | ACP runtimes work through server: approvals, segments and runtime picker | `fx_acp::acp_runtimes_work_through_server_approvals_segments_and_runtime_picker` | 6 -> 4 | Full; the Node count includes two helper asserts. |
 | ACP room queue, checkpoints and stop preserve peer approvals | `fx_acp::acp_room_queue_checkpoints_and_stop_preserve_peer_approvals` | 6 -> 4 | Full; project folders must sit in the server's home, so the Git workspace is under `home/`. The Node count includes two helper asserts. |
 
-### `app/agent-delegation.test.ts` (kept: B1, restart-wait)
+### `app/agent-delegation.test.ts` (deleted)
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
 | delegation isolates child context and durably wakes idle parent exactly once | `fx_delegation::delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly_once` | 12 -> 6 | Full; found F3 (fixed). The Node count includes four fixture helper asserts. |
 | durable task wait: complete | `fx_delegation::durable_task_wait_complete` | 7 -> 7 | Full; found F4 (fixed). |
 | durable task wait: timeout | `fx_delegation::durable_task_wait_timeout` | 7 -> 7 | Full. |
-| durable task wait: restart-wait | `fx_delegation::durable_task_wait_restart_wait` | 7 -> 7 | Kept in Node for B1: `childCalls === 2` leaves out the model step after `ask_user`; the Rust count excludes it. |
+| durable task wait: restart-wait | `fx_delegation::durable_task_wait_restart_wait` | 7 -> 7 | Full, with the strict `childCalls === 2` since the #89 integration. |
 | durable task wait: restart-child | `fx_delegation::durable_task_wait_restart_child` | 7 -> 7 | Full; the restart waits for the child's model request (the harness sends it just after the turn starts). |
 | durable task wait: delegate-wait | `fx_delegation::durable_task_wait_delegate_wait` | 7 -> 7 | Full. |
 | backend delegation limit: depth | `fx_delegation::backend_delegation_limit_depth` | 6 -> 6 | Full. |
@@ -416,15 +416,15 @@ failed MCP tool calls (several cases), all removed with the #87 API runtime.
 | installation API key: validation, encrypted persistence, receipts, runtime precedence and restart | `fx_composio::installation_api_key_validation_encrypted_persistence_receipts_runtime_precedence_and_restart` | 39 -> 38 | Full; the environment key changes through the key cell between requests, as `process.env` did. |
 | Rust key replacement and removal reset identity, grants, policies and pending calls atomically | `fx_composio::rust_key_replacement_and_removal_reset_identity_grants_policies_and_pending_calls_atomically` | 21 -> 21 (+6 TS) | Changed by #87: the Node API runtime kept the tool list of the turn's start, so the call held across the reset was refused ("was not offered or access was revoked"). A harness call resolves tools again over MCP, so after the reset and the new grant the write waits for approval; the test denies it and asserts nothing was sent. Every pending-call and reset assertion is full. The 6 `restoreConnectedAppCommand` asserts test `app/src/connected-app-command.ts` and stay in Node as their own TS-module case. |
 
-### `app/dispatch.test.ts` (kept: B7, TS module)
+### `app/dispatch.test.ts` (kept: TS module)
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
 | startup failure reports child output and releases the provider and directory | `fx_dispatch::startup_failure_reports_child_output_and_releases_the_provider_and_directory` | 3 -> 4 | Ported to the kit's startup error: exit status, stdout and stderr tails, no provider call, and the test root is removed when it drops. |
-| steer is injected once at next tool-loop safe point, durable and idempotent | `fx_dispatch::steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempotent` | 15 -> 8 | Kept in Node for B7: the steer is stored but never delivered to a harness turn, so the "Delivered" label, one copy per later request, history and fork assertions stay in Node. Receipt, replay, conflicting mode, held editor, call count before release, final reply, saved file and receipt replay without a model call are ported. |
+| steer is injected once at next tool-loop safe point, durable and idempotent | `fx_dispatch::steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempotent` | 15 -> 19 | Ported in the #89 integration with B7 behaviour: a steer is a linked restart (`dispatch_mode: restart`, "cannot steer" label) that cancels the loop at once, so the loop runs in the steer turn. Ported: receipt, replay, conflicting mode, held editor (409 once the restart runs), call count before release, the linked source, reply, label, saved file, the reminder as last call, one guidance copy per later request, receipt replay without a model call, guidance in later context and in a fork of the steer turn without later requests. Changed: 5 calls instead of 4 (the cancelled root keeps its first call) and the guidance is the restart's own request instead of a delivered steer. |
 | steer before final answer and steer after completion each become one queued turn | `fx_dispatch::steer_before_final_answer_and_steer_after_completion_each_become_one_queued_turn` | 5 -> 5 | Full. |
-| restart cancels and links a new turn, carries partial text and saved results, no effect replay | `fx_dispatch::restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_results_no_effect_replay` | 12 -> 11 | Kept in Node for B7: the undelivered steer cannot reach the restart context (`Keep the delivered constraint`). Partial text, saved result, replay warning, no tool replay, ordering and receipt are ported; the partial arrives through the gateway's live stream forwarding. |
-| server restart mid-steer releases guidance once and never replays uncertain source | `fx_dispatch::server_restart_mid_steer_releases_guidance_once_and_never_replays_uncertain_source` | 2 -> 2 | Full. |
+| restart cancels and links a new turn, carries partial text and saved results, no effect replay | `fx_dispatch::restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_results_no_effect_replay` | 12 -> 14 | Ported in the #89 integration with B7 behaviour: the steer restarts the partial turn at once, so the steer turn saves `effect.txt` and streams the partial before the explicit restart (targeting the steer turn) interrupts it. Everything else is as in Node: receipt target, reply, link, saved file on the cancelled turn, partial text, saved result, steer text and replay warning in the restart context, no tool replay, order before the queued message, receipt replay without a model call. Added: the steer receipt is a restart, and the root saved no file. |
+| server restart mid-steer releases guidance once and never replays uncertain source | `fx_dispatch::server_restart_mid_steer_releases_guidance_once_and_never_replays_uncertain_source` | 2 -> 2 | Full. Since B7 the steer restarts the held source at once, so it is `cancelled` ("Stopped for restart.") instead of `interrupted` (#89 integration). |
 | fork stores bounded immutable cutoff, same agent, idempotency and channel lineage | `fx_dispatch::fork_stores_bounded_immutable_cutoff_same_agent_idempotency_and_channel_lineage` | 25 -> 25 | Full. |
 | composer recovery validates dispatch mode and target | Kept in Node | 3 -> 0 | Tests `app/src/conversation-command.ts`. |
 | restart during uncertain MCP effect keeps its receipt and never replays external call | `fx_dispatch::restart_during_uncertain_mcp_effect_keeps_its_receipt_and_never_replays_external_call` | 6 -> 4 | Full; the external MCP server is `fx_mcp::LosingMcp`. The provider-side check counts as the last assert. |
@@ -463,7 +463,7 @@ failed MCP tool calls (several cases), all removed with the #87 API runtime.
 | telegram notice workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_notice_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
 | telegram nested workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_nested_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
 
-### `app/rust-connectors.test.ts` (kept: B1, question runs)
+### `app/rust-connectors.test.ts` (deleted)
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
@@ -471,12 +471,12 @@ failed MCP tool calls (several cases), all removed with the #87 API runtime.
 | Rust slack offline recovery preserves confirmed delivery and requires confirmation | `fx_connectors::rust_slack_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation` | 10 -> 11 | Full; journal commands run through `connector::journal`. |
 | Rust telegram offline recovery preserves confirmed delivery and requires confirmation | `fx_connectors::rust_telegram_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation` | 10 -> 11 | Full; journal commands run through `connector::journal`. |
 | Rust telegram runner reply through native turns | `fx_connectors::rust_telegram_runner_reply_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
-| Rust telegram runner question through native turns | `fx_connectors::rust_telegram_runner_question_through_native_turns` | 20 -> 22 | Kept in Node for B1: `calls === 2` leaves out the model step after `ask_user`; the Rust count excludes it. Everything else is full. |
+| Rust telegram runner question through native turns | `fx_connectors::rust_telegram_runner_question_through_native_turns` | 20 -> 22 | Full, with the strict `calls === 2` since the #89 integration. |
 | Rust telegram runner file through native turns | `fx_connectors::rust_telegram_runner_file_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
 | Rust telegram runner workflow through native turns | `fx_connectors::rust_telegram_runner_workflow_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
 | Rust telegram runner media through native turns | `fx_connectors::rust_telegram_runner_media_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
 | Rust slack runner reply through native turns | `fx_connectors::rust_slack_runner_reply_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
-| Rust slack runner question through native turns | `fx_connectors::rust_slack_runner_question_through_native_turns` | 20 -> 22 | Kept in Node for B1: `calls === 2` leaves out the model step after `ask_user`; the Rust count excludes it. Everything else is full. |
+| Rust slack runner question through native turns | `fx_connectors::rust_slack_runner_question_through_native_turns` | 20 -> 22 | Full, with the strict `calls === 2` since the #89 integration. |
 | Rust slack runner file through native turns | `fx_connectors::rust_slack_runner_file_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
 | Rust slack runner workflow through native turns | `fx_connectors::rust_slack_runner_workflow_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
 | Rust slack runner media through native turns | `fx_connectors::rust_slack_runner_media_through_native_turns` | 20 -> 22 | Full (shared helper `runner`; in file mode the connector stops once both the document and the reply arrived, where Node stopped 100 ms after the document): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
@@ -491,7 +491,7 @@ failed MCP tool calls (several cases), all removed with the #87 API runtime.
 | F3 | MCP added `requestId` and `turn` to every session `delegate_task`; the native handler rejects unknown fields, so every harness delegation failed with 400. Only the feature tool gets them now. | `fx_delegation::*` |
 | F4 | Harness sessions got the native `wait_task`, which marks the turn paused and waiting but is never resumed. Sessions now use the blocking feature tool, which records a durable delegation wait. | `fx_delegation::durable_task_wait_*` |
 
-B1 also covers `wait_for_event`: it returns `null` at once and the harness takes one more model step. Rust tests end that step with text (a failed step would fail the waiting turn) and leave it out of counts; `fx_support::after_pause` and `pause_reply_for` implement this.
+B1 also covered `wait_for_event`: it returned `null` at once and the harness took one more model step. The #89 integration fixed it (see there); `fx_support::after_pause` and `pause_reply_for` are gone and every count is strict.
 
 Open finding (not fixed, #87 behaviour change): a Composio call held across a key reset is offered again for the new installation over MCP, because harness calls resolve tools per request; the Node API runtime refused it with its turn-start tool list. The Rust test asserts that the call waits for approval and is never dispatched.
 
@@ -565,7 +565,7 @@ Behaviour that changed with #87, and how the ports treat it:
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | ---: | --- |
 | workflow SIGKILL preserves uncertain step without replay across two restarts | `sb_crash::workflow_sigkill_preserves_uncertain_step_without_replay_across_two_restarts` | 16 -> 13 | Full; `Server::crash` replaces the killed bridge child process. |
-| SIGKILL after delegated provider acceptance does not replay parent or child | `sb_crash::sigkill_after_delegated_provider_acceptance_does_not_replay_parent_or_child` | 11 -> 8 | The harness parent also takes its step after the delegation receipt, so 3 requests are in flight at the crash (Node: 2); none is repeated after restart. |
+| SIGKILL after delegated provider acceptance does not replay parent or child | `sb_crash::sigkill_after_delegated_provider_acceptance_does_not_replay_parent_or_child` | 11 -> 8 | Full: 2 requests are in flight at the crash, as in Node, since the #89 integration parks a delegating parent without another model step; none is repeated after restart. |
 
 ### `app/flows.test.ts`
 
@@ -624,7 +624,7 @@ Behaviour that changed with #87, and how the ports treat it:
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | ---: | --- |
-| HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 130 | Kept in Node for B6: the two create replays while the provider is gone (`createRetry` and the replay after restart). Rust checks the replay once the instance is back. "No provider" is a disabled instance (the seeded test instance keeps its binary); `configured: false` became `runnable: false` with a `blocked_reason`. Found S4 (teammate roster missing from prompts). The static page is a minimal Leptos shell in a test `dist`. |
+| HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 132 | Full since the #89 integration: both create replays while the instance is disabled return the edited receipt (B6), before and after a restart. "No provider" is a disabled instance (the seeded test instance keeps its binary); `configured: false` became `runnable: false` with a `blocked_reason`. Found S4 (teammate roster missing from prompts). The static page is a minimal Leptos shell in a test `dist`. |
 
 ### `app/rust-workspace-writes-http.test.ts`
 
@@ -770,7 +770,7 @@ One parent case with 34 subtests; each subtest is its own Rust test against the 
 | new agents default to Codex with a managed workspace; API agents keep runtime and switch in one saved command | `sb_harness_default::new_agents_default_to_codex_with_a_managed_workspace_api_agents_keep_runtime_and_switch_in_one_saved_command` | 11 -> 9 | Dropped (#87): `runtime` on create and the implicit default binding; a new agent is unbound until an instance is chosen. Ported: runtime choices, the confirmed one-command switch with its receipt, the managed workspace, restart, `defaultRuntime`. |
 | agents on this machine's Codex sign-in use the CLI folder without writing to it | `sb_harness_default::agents_on_this_machines_codex_sign_in_use_the_cli_folder_without_writing_to_it` | 11 -> 6 | The `device` account became an instance with `homePath` (sets `CODEX_HOME`). Dropped (#87, a8cfcac): the isolated `HOME` for device turns and the API-runtime 400. |
 | agents on this machine's Claude Code sign-in run with the real HOME and add nothing to ~/.claude | `sb_harness_default::agents_on_this_machines_claude_code_sign_in_run_with_the_real_home_and_add_nothing_to_claude` | 6 -> 4 | Full; the agent is bound through the runtime edit. |
-| provider isolation, account home rotation and MCP shell approval boundaries | `sb_harness_default::provider_isolation_account_home_rotation_and_mcp_shell_approval_boundaries` | 24 -> 11 | Kept in Node for B8 (`harnessApprovals.length === 0` for workspace checks); Rust allows the B8 card and checks the rest. Accounts became instances with secret keys. Dropped (#87): per-binding home rotation and `config.toml` (a8cfcac), the "not offered" tool list (5528da5 offers the full set). |
+| provider isolation, account home rotation and MCP shell approval boundaries | `sb_harness_default::provider_isolation_account_home_rotation_and_mcp_shell_approval_boundaries` | 24 -> 14 | Full apart from #87 drops, since the #89 integration: workspace checks (`echo`, the custom `python3` check) run without approval and record verification, the turn has no approval card, and the sensitive `rm` waits for a card, is denied and leaves the file. Accounts became instances with secret keys. Dropped (#87): per-binding home rotation and `config.toml` (a8cfcac), the "not offered" tool list (5528da5 offers the full set). |
 | default harness setup saves its profile through MCP and cannot use unrelated tools (codex) | `sb_harness_default::default_harness_setup_saves_its_profile_through_mcp_and_cannot_use_unrelated_tools_codex` | 6 -> 6 | Full; bound to an explicit instance. |
 | default harness setup saves its profile through MCP and cannot use unrelated tools (claude) | `sb_harness_default::default_harness_setup_saves_its_profile_through_mcp_and_cannot_use_unrelated_tools_claude` | 6 -> 6 | Full. |
 | new agents fall back to the API runtime when Codex is not installed | `sb_harness_default::new_agents_fall_back_to_the_api_runtime_when_codex_is_not_installed` | 2 -> 3 | `runtime: api` left with #87: the agent stays unbound and not runnable. |
@@ -789,7 +789,7 @@ One parent case with 34 subtests; each subtest is its own Rust test against the 
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | ---: | --- |
-| script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts | `sb_script_provider::script_provider_settings_keep_identity_and_credentials_isolated_reject_busy_revoked_changes_and_preserve_receipts` | 40 -> 23 | Kept in Node for B2 (the provider GET after the grant) and B3 (the three `script models` steps and the catalog held across a revocation). Rust covers every other step. Dropped (#87): the `providerAccount: 'missing'` refusal and `provider_account` in the result. |
+| script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts | `sb_script_provider::script_provider_settings_keep_identity_and_credentials_isolated_reject_busy_revoked_changes_and_preserve_receipts` | 40 -> 33 | Full apart from #87 drops, since the #89 integration: the provider read after the grant (model, the bound instance listed as enabled, no connection details; B2), `script models` (instance and `["new","old"]`, missing instance 404, foreign parameter 400) and a catalog read held across the revocation (403, and the held catalog request carried the instance key; B3). Accounts became instances: `?account=missing` (503) is `?instance=missing` (404). Dropped (#87): the `providerAccount: 'missing'` refusal and `provider_account` in the result. |
 
 ### `app/task-recovery.test.ts`
 
@@ -892,19 +892,20 @@ Recurring #87 differences, stated once and referenced per row:
   Agent edits of such notes now assert that 409; revisions that followed
   them shift down by one.
 - **B1x (null coordination results).** `delegate_task` and `transfer_task`
-  return null like `ask_user` (B1), and the harness takes one more model
-  step before the server parks or stops the turn. Tests answer that step
-  with empty text (delegation) or never (transfer) and leave it out of
-  counts, as stage 1 does for B1.
+  returned null like `ask_user` (B1), and the harness took one more model
+  step before the server parked or stopped the turn. The #89 integration
+  fixed it: the tests no longer special-case that step and count strictly.
 - **D1 (harness context).** The harness keeps its own conversation: the
   server cannot prune older screenshots in it, and a resumed run starts a new
   harness session that sees the transcript text, not earlier tool results.
-- **M1 (harness parent waits).** A harness turn's `send_message` with
-  `expects_reply` holds the MCP call, and the parent's run and slot, until
-  the group settles (at most 30 s, `mcp/server.rs`). The API runtime parked
-  the parent as `queued` instead. A later user turn on that thread therefore
-  queues behind the parent, so no reply is `delivered_earlier` to it, and a
-  group request with one slot cannot run its deliveries until the wait ends.
+- **M1 (harness parent waits).** Written against `af83887`, where a harness
+  turn's `send_message` with `expects_reply` held the MCP call, and the
+  parent's run and slot, until the group settled. The product slice
+  (1018261c) queues the parent and returns the waiting receipt at once, and
+  the #89 integration stops the parked run, as the API runtime did. A later
+  user turn on that thread runs at once and receives ready replies
+  (`delivered_earlier`) again; `sa_agent_interrupt` keeps its side-thread
+  setup, which still holds.
 - **W1 (channel workspaces).** 7098b86 (#87) gives a channel without a project
   its lead agent's workspace, so workspace and Git tools are offered there.
 
@@ -1063,8 +1064,8 @@ All cases drive `minarbot-server restore ...` through `minarbot_testkit::restore
 ### `app/telegram.test.ts`
 
 The connector cases use `minarbot_testkit::connector`. Model steps after
-`ask_user` follow stage 1's B1 handling (`support::after_question_reply`,
-left out of counts).
+`ask_user` followed stage 1's B1 handling until the #89 integration removed
+`support.rs`; their counts are strict now.
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | --- | --- |
@@ -1073,13 +1074,13 @@ left out of counts).
 | Telegram bridge submits once through granted side-thread API and isolates main history | `sa_telegram::telegram_bridge_submits_once_through_granted_side_thread_api_and_isolates_main_history` | 12 -> 11 | Full. |
 | Rust Telegram runner rejects a mismatched bot identity and releases its journal lock | `sa_telegram::rust_telegram_runner_rejects_a_mismatched_bot_identity_and_releases_its_journal_lock` | 3 -> 2 | Full. |
 | Telegram runner replies directly and releases owned journal on shutdown | `sa_telegram::telegram_runner_replies_directly_and_releases_owned_journal_on_shutdown` | 9 -> 6 (shared helper) | Full; the fake's own checks are collected and asserted. |
-| Telegram runner answers a question and releases owned journal on shutdown | `sa_telegram::telegram_runner_answers_a_question_and_releases_owned_journal_on_shutdown` | 9 -> 6 (shared helper) | Same helper; model calls exclude the B1 step (the Node case saw 4). |
+| Telegram runner answers a question and releases owned journal on shutdown | `sa_telegram::telegram_runner_answers_a_question_and_releases_owned_journal_on_shutdown` | 9 -> 6 (shared helper) | Same helper; strict model calls (2, as in Node) since the #89 integration. |
 
 ### `app/telegram-output.test.ts`
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | --- | --- |
-| Telegram sends exact generated artifacts, retains uncertain delivery and rechecks grant before recovery | `sa_telegram_output::telegram_sends_exact_generated_artifacts_retains_uncertain_delivery_and_rechecks_grant_before_recovery` | 22 -> 20 | Full. The three model steps are the file, the answer and the done-check reminder (H2); the B1 step is left out of the count (the Node case saw 4). |
+| Telegram sends exact generated artifacts, retains uncertain delivery and rechecks grant before recovery | `sa_telegram_output::telegram_sends_exact_generated_artifacts_retains_uncertain_delivery_and_rechecks_grant_before_recovery` | 22 -> 20 | Full. The three model steps are the file, the answer and the done-check reminder (H2), counted strictly since the #89 integration. |
 
 ### `app/transcription.test.ts`
 
@@ -1109,10 +1110,10 @@ channels and a record of `Authorization` headers for these cases.
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | --- | --- |
-| Slack actual agent API retries one task and isolates requester question answers (buttons=false) | `sa_slack::slack_actual_agent_api_retries_one_task_and_isolates_requester_question_answers_buttons_false` | 20 -> 19 (shared helper) | Full; model calls exclude the B1 step (the Node case failed on it). |
+| Slack actual agent API retries one task and isolates requester question answers (buttons=false) | `sa_slack::slack_actual_agent_api_retries_one_task_and_isolates_requester_question_answers_buttons_false` | 20 -> 19 (shared helper) | Full, with strict model calls since the #89 integration. |
 | Slack actual agent API retries one task and isolates requester question answers (buttons=true) | `sa_slack::slack_actual_agent_api_retries_one_task_and_isolates_requester_question_answers_buttons_true` | 20 -> 19 (shared helper) | Same. |
 | Slack Socket Mode runner acknowledges journaled event and delivers once after reconnect | `sa_slack::slack_socket_mode_runner_acknowledges_journaled_event_and_delivers_once_after_reconnect` | 16 -> 8 | Full; the fake's checks (429 Retry-After, ack only after journaling, delivery fields) are collected and asserted once. The connector reaches the server through the kit proxy instead of the server's own `connection.json`. |
-| Slack status and stop scope to requester root and preserve cancellation identity after lost responses | `sa_slack::slack_status_and_stop_scope_to_requester_root_and_preserve_cancellation_identity_after_lost_responses` | 17 -> 16 | Full; B1 step left out of model counts. |
+| Slack status and stop scope to requester root and preserve cancellation identity after lost responses | `sa_slack::slack_status_and_stop_scope_to_requester_root_and_preserve_cancellation_identity_after_lost_responses` | 17 -> 16 | Full, with strict model calls since the #89 integration. |
 | Slack offline recovery pins revisions, retains confirmed chunks and requires explicit CLI confirmation | `sa_slack::slack_offline_recovery_pins_revisions_retains_confirmed_chunks_and_requires_explicit_cli_confirmation` | 27 -> 27 | Full. |
 | Slack startup cancellation releases lock and status retains authentication cooldown | `sa_slack::slack_startup_cancellation_releases_lock_and_status_retains_authentication_cooldown` | 8 -> 7 | Full. |
 | Slack interactive Socket Mode withholds early ACK and commits one decision before redelivery ACK | `sa_slack::slack_interactive_socket_mode_withholds_early_ack_and_commits_one_decision_before_redelivery_ack` | 6 -> 5 | Full. |
@@ -1144,7 +1145,7 @@ socket path fits `sun_path`.
 | nine distinct tools complete before per-task budget requests a final answer without tools | `sa_tool_budget::nine_distinct_tools_complete_before_per_task_budget_requests_a_final_answer_without_tools` | 12 -> 6 | Full (the Node count includes the provider's per-request checks). |
 | budget setting rejects malformed values, survives restart and template recovery | `sa_tool_budget::budget_setting_rejects_malformed_values_survives_restart_and_template_recovery` | 9 -> 11 | Server half; `templateCommand` is built inline. `parseAgentTemplate` and `restoreAgentCreation` stay in the trimmed Node case (TS modules). |
 | resume gets fresh budget without replay; desktop images retain latest three across restart | `sa_tool_budget::resume_gets_fresh_budget_without_replay_desktop_images_retain_latest_three_across_restart` | 17 -> 11 | Kept: stop message, 10 captures, summary without tools, resume once (replayed command), 10 fresh captures, 11 requests, 20 distinct tool ids and screenshots, budget 10. D1: the "latest three images", "omitted" note, 10 earlier results in the resumed context and the per-attempt `budget_summary` call phase are API-runtime context management. |
-| legacy channel transfers share attempt budget beyond eight coordination steps | `sa_tool_budget::legacy_channel_transfers_share_attempt_budget_beyond_eight_coordination_steps` | 5 -> 5 | Full after P3; B1x. |
+| legacy channel transfers share attempt budget beyond eight coordination steps | `sa_tool_budget::legacy_channel_transfers_share_attempt_budget_beyond_eight_coordination_steps` | 5 -> 5 | Full after P3; strict counts since the #89 integration (B1x). |
 | duplicate provider IDs have distinct protocol message (current attempt) | Dropped | 4 -> 0 | Provider tool-call IDs stay inside the harness protocol since #87 (the server's provider client was removed); the server never sees them. |
 | duplicate provider IDs have distinct protocol message (saved call) | Dropped | 4 -> 0 | Same. |
 | workflow uses shared per-task budget and final summary | `sa_tool_budget::workflow_uses_shared_per_task_budget_and_final_summary` | 6 -> 6 (shared helper) | Full. |
@@ -1153,7 +1154,7 @@ socket path fits `sun_path`.
 | invalid final summary fails clearly and never executes tools (string) | `sa_tool_budget::invalid_final_summary_fails_clearly_and_never_executes_tools_string` | 5 -> 5 (shared helper) | Full after P3. |
 | invalid final summary fails clearly and never executes tools (object) | `sa_tool_budget::invalid_final_summary_fails_clearly_and_never_executes_tools_object` | 5 -> 5 (shared helper) | Full after P3. |
 | reassign gets fresh budget while retaining recorded computer calls | `sa_tool_budget::reassign_gets_fresh_budget_while_retaining_recorded_computer_calls` | 6 -> 6 | Full. |
-| automatic question continuation retains attempt budget across restart | `sa_tool_budget::automatic_question_continuation_retains_attempt_budget_across_restart` | 5 -> 5 | Full after P3; the B1 step (here the first run's budget summary) is left out of the count. |
+| automatic question continuation retains attempt budget across restart | `sa_tool_budget::automatic_question_continuation_retains_attempt_budget_across_restart` | 5 -> 5 | Full after P3; strict count (11 requests) since the #89 integration. |
 
 ### `app/fallback.test.ts`
 
@@ -1165,13 +1166,13 @@ socket path fits `sun_path`.
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | --- | --- |
-| coordination: durable delegation, transfer, cancellation, rejection and recovery | `sa_coordination::coordination_durable_delegation_transfer_cancellation_rejection_and_recovery` | 55 -> 47 | Full; B1x. Holds use `Reply::hold` and `ModelGate::hold_when`. Children are paused, cancelled or restarted after their first model call (the harness reaches the model shortly after the child starts running). |
+| coordination: durable delegation, transfer, cancellation, rejection and recovery | `sa_coordination::coordination_durable_delegation_transfer_cancellation_rejection_and_recovery` | 55 -> 47 | Full; strict call log since the #89 integration (B1x). Holds use `Reply::hold` and `ModelGate::hold_when`. Children are paused, cancelled or restarted after their first model call (the harness reaches the model shortly after the child starts running). |
 
 ### `app/agent-messages.test.ts`
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | --- | --- |
-| teammate messages correlate groups, isolate context, persist receipts and bound delivery | `sa_agent_messages::teammate_messages_correlate_groups_isolate_context_persist_receipts_and_bound_delivery` | 48 -> 55 | Full apart from M1: the bypass turn now stays `queued` while the parent waits, the group result carries both replies with an empty `delivered_earlier`, and the bypass receives no replies (the Node `delivered_earlier[0].consumer`, bypass `receivedAgentReplies` and parent-`queued` checks invert). H1: self and duplicate recipients and the outside-channel recipient are refused to the model (the turn is `done` and its answer carries the error, "Recipient ..." for the channel); reply loops are refused and retried until the tool budget (10 for the teammates) fails the delivery. The suite returns to two slots after the one-slot pause check (M1). Model-side checks run in the scripted model and are asserted at the end. |
+| teammate messages correlate groups, isolate context, persist receipts and bound delivery | `sa_agent_messages::teammate_messages_correlate_groups_isolate_context_persist_receipts_and_bound_delivery` | 48 -> 57 | Full since the #89 integration (M1 no longer applies): the bypass runs while the parent waits, the group result carries the gamma reply and one `delivered_earlier` entry for the bypass, and the bypass received the beta reply. The resumed parent reads its completed group result from its transcript, which ends with the note on replies delivered earlier. |
 
 ### `app/agent-interrupt.test.ts`
 
@@ -1179,6 +1180,72 @@ socket path fits `sun_path`.
 | --- | --- | --- | --- |
 | caller interruption cancels only owned deliveries, journals notice and preserves other work | `sa_agent_interrupt::caller_interruption_cancels_only_owned_deliveries_journals_notice_and_preserves_other_work` | 30 -> 31 | Full. M1: Alpha's own requests and its `inspect`/`stop` turns run in side threads (a waiting parent, including Alpha's channel turn, holds its conversation), Alpha may run 8 threads and the server 10 turns. H1: "no active work", "You can only stop" (self and ancestor) and the channel call (where `interrupt_agent` is not offered) reach the model as errors and the turns end `done` with the error in the answer; the ancestor delivery is `done` with the refusal instead of `failed`. The notice trigger is seeded with `edit_database`; holds use `ModelGate::hold_when` (the kit gate now releases replies that were gated before a release but answered after it). |
 <!-- stale-a end -->
+
+## #89 integration
+
+`t3/89-integrate` starts from `t3/87-89-base` (185b92a), which merged the B1-B9
+fixes (`t3/89-port-bugs`) with the product, fixture, stale-b and stale-a
+slices, all written on `af83887`. The integration fixes the merged failures,
+removes every B1 workaround from the ports and ports the Node cases the
+slices kept for B1, B2, B3, B6, B7 and B8.
+
+### Merged failures
+
+At 15eacf5 the e2e run had 7 failures; with stale-a merged (185b92a) the e2e
+crate did not compile and 4 more tests failed.
+
+| Test | Cause | Fix |
+| --- | --- | --- |
+| `fx_dispatch::steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempotent` | Test: asserted pre-B7 behaviour (a stored, undelivered steer). | Asserts the B7 linked restart (see the dispatch rows above). |
+| `fx_dispatch::restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_results_no_effect_replay` | Test: the steer now restarts the partial turn before it streams, so the partial never came. | The steer turn streams the partial and the explicit restart targets it. |
+| `fx_dispatch::server_restart_mid_steer_releases_guidance_once_and_never_replays_uncertain_source` | Test: the source is `cancelled` by the steer's restart, not `interrupted` by the server restart. | Asserts `cancelled` with "Stopped for restart.". |
+| `fx_tools::synthetic_scenarios_record_panel_without_duplicate_writes_inline_links_workspace_context_and_approved_shell` | Test: waited for an approval card that B8 no longer shows for a plain check. | The scripted check adds `chmod`, which still needs approval. |
+| `pd_workspace_shell::rust_shell_confines_cwd_filesystem_and_environment_and_enforces_read_only_and_approval` | Test: pre-B8 approvals for plain commands. | Plain checks assert no card; denial uses a sensitive command; `env` and the read-only binding keep their cards. |
+| `pd_workspace_shell::rust_shell_caps_output_times_out_and_stops_descendants_after_exit_and_cancellation` | Test: pre-B8 approvals for plain commands. | Each step asserts it ran without a card. |
+| `sb_harness_default::provider_isolation_account_home_rotation_and_mcp_shell_approval_boundaries` | Test: allowed the pre-B8 card. | Ported the kept B8 assertions (no card, the custom check). |
+| e2e build (`sa_slack`, `sa_telegram`) | Test: imported `support::work_calls`, which the B1 fix removed. | Strict `model.calls()`. |
+| `sa_agent_messages::teammate_messages_correlate_groups_isolate_context_persist_receipts_and_bound_delivery` | Product: after 1018261c a reply-expecting `send_message` queues the turn but replies at once, so the harness took a third model step (B1 pattern). Test: asserted M1. | Product fix below; the test asserts the Node bypass and `delivered_earlier` values. |
+| `sa_agent_result_files::requester_reads_returned_teammate_text_artifacts_but_not_private_inputs_or_no_reply_outputs` and the PDF case | Product: the same extra step after `send_message` re-created the file and changed the returned result on resume. | Product fix below. |
+| `sb_crash::sigkill_after_delegated_provider_acceptance_does_not_replay_parent_or_child` | Test: expected the B1x extra parent step (3 calls) once the product fix removed it. | Node's 2 calls. |
+| `cli::script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_and_reports_attention` | Test: a settle wait kept Node's `--timeout 3` and expired on a loaded host. | `WAIT_SECONDS` for every settle wait, as stage 1 did. |
+
+### Product fix
+
+| Bug | Cause and fix |
+| --- | --- |
+| I1 | B1 was fixed for `ask_user` only. `wait_for_event`, a delegation or transfer that parks the turn, a reply-expecting `send_message` and a Computer hand-off returned to the harness at once, so it took one more model step before the server stopped or resumed the turn. `turns/harness.rs` (`tool`) now stops the run for each of them and holds the MCP reply until the worker has stopped, and `turns/mod.rs` (`run_reserved`) leaves a stopped turn that a tool left `queued` for its resume instead of failing it. The tests that answered or skipped that step (`support.rs`, `fx_support::after_pause`, `pause_reply_for`, `work_calls`, the desktop and stale-a variants) are removed, and every model-call count is strict. |
+
+### Kept cases ported
+
+| Node file | Node case | Rust test | Assertions Node -> Rust |
+| --- | --- | --- | ---: |
+| `app/rust-desktop-http.test.ts` | HTTP control and user input enforce Origin, revision, validation and rate limits; paused turn resumes once (B1) | `pd_rust_desktop_http::http_control_and_user_input_enforce_origin_revision_validation_and_rate_limits_paused_turn_resumes_once` | 44 -> 39 |
+| `app/agent-visibility.test.ts` | hidden agents finish active work, hold queue across restart, reject new work and skip missed schedules (B1) | `fx_agents::hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_work_and_skip_missed_schedules` | 33 -> 27 (+7 TS) |
+| `app/script-discovery.test.ts` | private script discovery follows live grants, rotates on restart and preserves foreign files (B2) | `fx_scripts::private_script_discovery_follows_live_grants_rotates_on_restart_and_preserves_foreign_files` | 27 -> 22 |
+| `app/script-messages.test.ts` | script messages and answers share grants, scope, receipts, redaction and rate admission (B1) | `fx_scripts::script_messages_and_answers_share_grants_scope_receipts_redaction_and_rate_admission` | 45 -> 50 |
+| `app/turn-waits.test.ts` | agent event waits release workers, survive restart, honor pause and accept once (B1) | `fx_waits::agent_event_waits_release_workers_survive_restart_honor_pause_and_accept_once` | 37 -> 25 |
+| `app/turn-waits.test.ts` | routine waits preserve artifacts and reject events cancelled before upload completes (B1) | `fx_waits::routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upload_completes` | 26 -> 19 |
+| `app/agent-delegation.test.ts` | durable task wait: restart-wait (B1) | `fx_delegation::durable_task_wait_restart_wait` | 7 -> 7 |
+| `app/dispatch.test.ts` | steer is injected once at next tool-loop safe point, durable and idempotent (B7) | `fx_dispatch::steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempotent` | 15 -> 19 |
+| `app/dispatch.test.ts` | restart cancels and links a new turn, carries partial text and saved results, no effect replay (B7) | `fx_dispatch::restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_results_no_effect_replay` | 12 -> 14 |
+| `app/rust-connectors.test.ts` | Rust telegram runner question through native turns (B1) | `fx_connectors::rust_telegram_runner_question_through_native_turns` | 20 -> 22 |
+| `app/rust-connectors.test.ts` | Rust slack runner question through native turns (B1) | `fx_connectors::rust_slack_runner_question_through_native_turns` | 20 -> 22 |
+| `app/test.ts` | HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery (B6) | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 132 |
+| `app/harness-default.test.ts` | provider isolation, account home rotation and MCP shell approval boundaries (B8) | `sb_harness_default::provider_isolation_account_home_rotation_and_mcp_shell_approval_boundaries` | 24 -> 14 |
+| `app/script-provider.test.ts` | script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts (B2, B3) | `sb_script_provider::script_provider_settings_keep_identity_and_credentials_isolated_reject_busy_revoked_changes_and_preserve_receipts` | 40 -> 33 |
+
+Counts are static assertion sites, as in each slice. The B1 rows kept their
+Rust sites; their counts became strict. The Node files above are deleted,
+except `app/agent-visibility.test.ts` and `app/dispatch.test.ts`, which keep
+only their TypeScript-module cases.
+
+### Node cases left from #89
+
+Every remaining case tests a TypeScript module and stays until #89 S3:
+`threads` (1), `questions` (1), `agent-create` (2), `agent-visibility` (1),
+`composio` (1), `dispatch` (1), `turn-stream` (1), `memory` (1),
+`memory-selection` (1), `workflow-http` (1) and `tool-budget` (1), all
+`app/<name>.test.ts`.
 
 ## #67 hosted Hub test migration
 
