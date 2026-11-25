@@ -383,27 +383,15 @@ pub fn create(
     let model = field(v, "model", 160)?;
     let instructions = field(v, "instructions", 8000)?;
     let role = role(v.get("role"))?;
-    let previous = one(db, "SELECT request FROM agent_creations WHERE id=?", [id])?;
-    let provider_instance = provider_instance(v)?
-        .map(str::to_owned)
-        .or(default_provider_instance(state, db)?);
+    let previous = one(db, "SELECT request FROM agent_creations WHERE id=?", [id])?
+        .map(|row| json(&row["request"]))
+        .transpose()?;
+    let provider_instance = match (provider_instance(v)?, &previous) {
+        (Some(instance), _) => Some(instance.to_owned()),
+        (None, Some(request)) => request["providerInstance"].as_str().map(str::to_owned),
+        (None, None) => default_provider_instance(state, db)?,
+    };
     let model_options = model_options(v)?;
-    let old_runtime = previous
-        .as_ref()
-        .map(|r| json(&r["request"]))
-        .transpose()?
-        .and_then(|v| v["providerInstance"].as_str().map(str::to_owned));
-    let instance_kind = provider_instance
-        .as_deref()
-        .map(|id| provider_instance_kind(db, id))
-        .transpose()?
-        .flatten();
-    if provider_instance.is_some() && instance_kind.is_none() {
-        return Err(error(400, "Provider instance not found."));
-    }
-    if provider_instance.is_none() && old_runtime.is_some() {
-        return Err(error(400, "Choose a provider instance."));
-    }
     bounds(v)?;
     let mut request = json!({"name":name,"model":model,"instructions":instructions});
     if setup {
@@ -427,7 +415,7 @@ pub fn create(
         request["modelOptions"] = serde_json::from_str(options).map_err(|_| Failure::storage())?;
     }
     if let Some(old) = previous {
-        if json(&old["request"])? != request {
+        if old != request {
             return Err(error(409, "ID was already used for a different agent."));
         }
         let mut a = read(db, id)?;
@@ -440,6 +428,16 @@ pub fn create(
             };
         }
         return Ok((200, a));
+    }
+    let instance = provider_instance
+        .as_deref()
+        .map(|id| {
+            super::provider_instances::instance_from_db(db, id)?
+                .ok_or_else(|| error(400, "Provider instance not found."))
+        })
+        .transpose()?;
+    if setup {
+        super::provider_instances::ready(state, instance.as_ref())?;
     }
     let image = avatar.get(input)?;
     super::agent_folders::ensure_managed(state, id)?;

@@ -219,21 +219,8 @@ pub fn ready(state: &AppState, db: &Connection, agent: &str) -> Result<()> {
         ));
     }
     let instance = string(&profile, "provider_instance");
-    let instance = data::provider_instances::instance_from_db(db, instance)?
-        .ok_or_else(|| error(503, "Choose a provider instance before starting this task."))?;
-    if instance["enabled"] != 1 {
-        return Err(error(503, "This provider instance is disabled."));
-    }
-    let runtime = string(&instance, "kind");
-    if crate::harness::executable(state, runtime).is_none()
-        && instance["binary_path"].as_str().is_none_or(str::is_empty)
-    {
-        return Err(error(
-            503,
-            "This provider instance is not installed on this host.",
-        ));
-    }
-    Ok(())
+    let instance = data::provider_instances::instance_from_db(db, instance)?;
+    data::provider_instances::ready(state, instance.as_ref())
 }
 pub fn account(
     _state: &AppState,

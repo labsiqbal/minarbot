@@ -58,7 +58,7 @@ pub fn execute(
                         .ok_or_else(|| error(400, "Invalid agent role."))
                 })
                 .transpose()?;
-            if turn["profile_setup"] == 1 && (name.is_none() || instructions.is_none()) {
+            if setup(db, turn)? && (name.is_none() || instructions.is_none()) {
                 return Err(error(
                     400,
                     "Profile setup must save the name and instructions together.",
