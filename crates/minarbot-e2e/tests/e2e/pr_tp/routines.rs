@@ -127,7 +127,10 @@ pub async fn raw_as(
         .header("Content-Type", "application/json")
         .header("X-Minarbot-Protocol", "1");
     // A pooled connection can outlive a server restart on the same port.
-    if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("connection")) {
+    if !headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("connection"))
+    {
         request = request.header("Connection", "close");
     }
     for (name, value) in headers {
