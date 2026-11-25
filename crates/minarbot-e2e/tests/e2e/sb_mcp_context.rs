@@ -214,7 +214,7 @@ fn flag(remote: &Arc<Mutex<Remote>>, change: impl FnOnce(&mut Remote)) -> Result
     Ok(())
 }
 
-fn find<'a>(tools: &'a Value, test: impl Fn(&Value) -> bool) -> Option<&'a Value> {
+fn find(tools: &Value, test: impl Fn(&Value) -> bool) -> Option<&Value> {
     tools
         .as_array()
         .and_then(|tools| tools.iter().find(|tool| test(tool)))

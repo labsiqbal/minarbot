@@ -201,10 +201,10 @@ async fn scoped_auto_recall_history_reflection_and_standing_answer_refresh() -> 
     let learned = until_value(
         "conversation learning of the earlier turn",
         || async {
-            Ok(inspector.scalar::<i64>(
+            inspector.scalar::<i64>(
                 "SELECT count(*) FROM memory_learning_turns WHERE turn=?",
                 [&prior],
-            )?)
+            )
         },
         |count| *count == 1,
     )

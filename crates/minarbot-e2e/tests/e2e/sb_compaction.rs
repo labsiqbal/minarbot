@@ -57,7 +57,7 @@ async fn run(app: &Server, scope: &Scope, recipient: &str) -> Result<String> {
     Ok(id)
 }
 
-fn last<'a>(requests: &'a [ModelRequest], summary: bool) -> Result<&'a ModelRequest> {
+fn last(requests: &[ModelRequest], summary: bool) -> Result<&ModelRequest> {
     requests
         .iter()
         .rev()
@@ -453,18 +453,20 @@ async fn rust_compaction_fences_stale_responses_changed_sources_cancelled_turns_
     let before = fence.lock().map_err(|_| "fence")?.summaries;
     app.restart().await?;
     app.wait_status(&turns, &future, "done").await?;
-    let fence_state = fence.lock().map_err(|_| "fence")?;
-    ensure!(fence_state.summaries == before, "future turn compacted");
+    let (summaries, saw_newer) = {
+        let fence_state = fence.lock().map_err(|_| "fence")?;
+        (
+            fence_state.summaries,
+            fence_state.last_prompt.contains("Newer summary"),
+        )
+    };
+    ensure!(summaries == before, "future turn compacted");
     ensure!(
         attempt(&future)?.is_null(),
         "future attempt: {}",
         attempt(&future)?
     );
-    ensure!(
-        !fence_state.last_prompt.contains("Newer summary"),
-        "future turn saw a later summary"
-    );
-    drop(fence_state);
+    ensure!(!saw_newer, "future turn saw a later summary");
     db.execute("UPDATE turns SET revision=revision+1 WHERE seq=1", [])?;
     ensure!(
         app.get(&format!("{path}/compaction")).await?.is_null(),

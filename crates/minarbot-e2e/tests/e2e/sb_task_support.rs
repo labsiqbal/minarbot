@@ -234,7 +234,6 @@ pub struct Prepared {
     pub payload_digest: String,
     pub lock_proof: Value,
     pub commit: Value,
-    pub context: Envelope,
 }
 
 pub async fn prepared(f: &TaskFixture) -> Result<Prepared> {
@@ -296,7 +295,6 @@ pub async fn prepared(f: &TaskFixture) -> Result<Prepared> {
         payload_digest,
         lock_proof: proof,
         commit,
-        context,
     })
 }
 

@@ -565,7 +565,7 @@ async fn project_apps_and_mcp_separate_oauth_identities_offered_tools_approvals_
             return Answer::Status(500, json!({"error": "script"}));
         };
         match script.mode.as_str() {
-            "apps" if request.tool_names().iter().any(|name| *name == tool_name) => {
+            "apps" if request.tool_names().contains(&tool_name) => {
                 Answer::tool(&tool_name, json!({}))
             }
             "mcp" => Answer::tool(
