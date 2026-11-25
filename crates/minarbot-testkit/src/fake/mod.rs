@@ -8,6 +8,7 @@
 pub mod acp;
 pub mod gateway;
 pub mod native;
+pub mod stdio_mcp;
 
 use serde_json::Value;
 use std::{

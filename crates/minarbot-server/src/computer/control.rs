@@ -579,11 +579,19 @@ pub async fn action(
     })?;
     let now = s.config.now();
     let (image, mut result, _guard) = if let Some(browser) = browser {
-        let (image, result) = s.computer.browser_action(agent, browser, now).await?;
+        let (image, result) = s
+            .computer
+            .browser_action(agent, browser, now)
+            .await
+            .map_err(uncertain)?;
         (image, result, guard)
     } else {
         let ((image, title), guard) = if environment.is_empty() {
-            let result = s.computer.action(agent, name, args, now).await?;
+            let result = s
+                .computer
+                .action(agent, name, args, now)
+                .await
+                .map_err(uncertain)?;
             (result, guard)
         } else {
             let computer = s.computer.clone();
@@ -596,7 +604,8 @@ pub async fn action(
                 Ok::<_, Failure>((result, guard))
             })
             .await
-            .map_err(|_| Failure::storage())??
+            .map_err(uncertain)?
+            .map_err(uncertain)?
         };
         let mut result = json!({"status":"done"});
         if let Some(title) = title {
@@ -627,6 +636,16 @@ pub async fn action(
         image,
         paused: false,
     })
+}
+
+/// After the action is journaled as uncertain, any failure means its effect
+/// is unknown. Report it as uncertain (like MCP tool calls) so the harness
+/// stops the turn instead of letting the model repeat the input.
+fn uncertain<E>(_: E) -> Failure {
+    error(
+        502,
+        "Computer action outcome is uncertain. Do not repeat this input.",
+    )
 }
 
 fn journal(

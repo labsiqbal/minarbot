@@ -112,6 +112,124 @@ against the patched server. B9 passes on both builds.
 
 
 
+## #89 product slice
+
+The 18 files of the product slice moved to `crates/minarbot-e2e/tests/e2e/pd_<file>.rs`,
+one Rust test per Node case. Assertion counts are static counts: Node
+`assert*(...)` calls in the case, Rust `ensure!`, `*_expect` and status
+checks in the test and the helpers it calls. Where a Node fixture asserted
+inside its HTTP handler (provider, image server, MCP peer), the Rust fake
+records violations and the test checks them, so several Node assertions map
+to one Rust check. Waits (`until`, `assert.fail('Timed out')`) count on the
+Node side only.
+
+| Node file | Node cases | Rust tests | Node asserts -> Rust | Node cases kept |
+| --- | ---: | ---: | --- | --- |
+| `app/workflow-parallel.test.ts` | 1 | 1 | 59 -> 71 | 0 |
+| `app/flows-http.test.ts` | 1 | 1 | 36 -> 57 | 0 |
+| `app/webhooks.test.ts` | 2 | 2 | 60 -> 76 | 0 |
+| `app/shared-data-http.test.ts` | 1 | 1 | 17 -> 21 | 0 |
+| `app/files.test.ts` | 2 | 2 | 60 -> 73 | 0 |
+| `app/pdf-text.test.ts` | 1 | 1 | 28 -> 31 | 0 |
+| `app/image-generation.test.ts` | 1 | 1 | 27 -> 18 | 0 |
+| `app/history-tools.test.ts` | 1 | 1 | 24 -> 22 | 0 |
+| `app/skill-tools.test.ts` | 1 | 1 | 15 -> 12 | 0 |
+| `app/workspace-shell.test.ts` | 2 | 2 | 18 -> 19 | 0 |
+| `app/mcp-isolation.test.ts` | 1 | 1 | 7 -> 4 | 0 |
+| `app/rust-desktop-http.test.ts` | 5 | 5 | 123 -> 112 | 1 (B1) |
+| `app/sidebar.test.ts` | 3 | 3 | 42 -> 48 | 0 |
+| `app/channel-context.test.ts` | 1 declaration / 2 runtime cases | 2 | 15 -> 13 per case | 0 |
+| `app/agent-reply-capture.test.ts` | 1 | 1 | 35 -> 37 | 0 |
+| `app/guide-infra.test.ts` | 1 | 1 | 26 -> 25 | 0 |
+| `app/local-projects.test.ts` | 13 | 13 | 166 -> 164 | 0 |
+| `app/local-routines.test.ts` | 4 | 4 | 44 -> 55 | 0 |
+| Total | 42 | 42 | 802 -> 858 | 1 |
+
+Every Node file except `app/rust-desktop-http.test.ts` is deleted. That
+file keeps one case, unchanged, for B1.
+
+### Case map
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | --- | --- |
+| workflow-parallel: parallel workflow joins once in branch order, retains failures and cancels all branches | `pd_workflow_parallel::parallel_workflow_joins_once_in_branch_order_retains_failures_and_cancels_all_branches` | 59 -> 71 | Full. `validateWorkflow` (TS) is asserted through the HTTP 400 for an empty block. The model-branch "no tools" check runs for every request at the end. |
+| flows-http: routine flow dispatch joins once, snapshots edits and recovers interrupted steps | `pd_flows_http::routine_flow_dispatch_joins_once_snapshots_edits_and_recovers_interrupted_steps` | 36 -> 57 | Model-call counts leave out the harness step after `report_failure` / `no_update` (the model receives the tool result once more before the server stops the turn); the removed API runtime ended the turn inside its own provider loop. |
+| webhooks: webhook receipts isolate, deduplicate, rotate and persist ignored events | `pd_webhooks::webhook_receipts_isolate_deduplicate_rotate_and_persist_ignored_events` | 35 -> 51 | Full. Signatures use the fixed clock. |
+| webhooks: a signed GitHub issue starts one routine turn with untrusted reference data | `pd_webhooks::a_signed_github_issue_starts_one_routine_turn_with_untrusted_reference_data` | 25 -> 22 | Full; the per-response secret check runs on every browser reply. |
+| shared-data-http: shared data agent tools journal once across resume, user reads/drop and restored workspace retain data | `pd_shared_data_http::shared_data_agent_tools_journal_once_across_resume_user_reads_drop_and_restored_workspace_retain_data` | 17 -> 21 | Full. Restore uses `minarbot-server restore workspace`. |
+| files: files preserve bytes, scope, retry identity and archive boundaries | `pd_files::files_preserve_bytes_scope_retry_identity_and_archive_boundaries` | 42 -> 41 | Full. |
+| files: text attachments reach only selected conversation and retain retry identity | `pd_files::text_attachments_reach_only_selected_conversation_and_retain_retry_identity` | 18 -> 32 | Full. |
+| pdf-text: PDF HTTP preview and messages preserve source, scope, retry, routing, tools and restart | `pd_pdf_text::pdf_http_preview_and_messages_preserve_source_scope_retry_routing_tools_and_restart` | 28 -> 31 | Full. The PDF gate is the kit's async PDF bridge. |
+| image-generation: image generation preserves scope, uncertain receipts and exact artifacts through restart | `pd_image_generation::image_generation_preserves_scope_uncertain_receipts_and_exact_artifacts_through_restart` | 27 -> 18 | Full; the image and chat contract checks (path, keys, body, tool offers) are violation lists asserted once each. |
+| history-tools: agent history tools retrieve old originals and reject foreign conversations | `pd_history_tools::agent_history_tools_retrieve_old_originals_and_reject_foreign_conversations` | 24 -> 22 | Full. The undici network-error capture was Node diagnostics only. |
+| skill-tools: skill tools page own enabled pins, reject foreign access and observe revocation | `pd_skill_tools::skill_tools_page_own_enabled_pins_reject_foreign_access_and_observe_revocation` | 15 -> 12 | Full. |
+| workspace-shell: Rust shell confines cwd, filesystem and environment and enforces read-only and approval | `pd_workspace_shell::rust_shell_confines_cwd_filesystem_and_environment_and_enforces_read_only_and_approval` | 12 -> 12 | Full. |
+| workspace-shell: Rust shell caps output, times out and stops descendants after exit and cancellation | `pd_workspace_shell::rust_shell_caps_output_times_out_and_stops_descendants_after_exit_and_cancellation` | 6 -> 5 | Full; the 2.1 s absence check is `wait::never`. |
+| mcp-isolation: a hostile MCP output schema cannot block HTTP, exceed the worker deadline or resist cancellation | `pd_mcp_isolation::a_hostile_mcp_output_schema_cannot_block_http_exceed_the_worker_deadline_or_resist_cancellation` | 7 -> 4 | Full. |
+| rust-desktop-http: harness stdio MCP bridge delivers Computer images, input, scoped access and human-control pause | `pd_rust_desktop_http::harness_stdio_mcp_bridge_delivers_computer_images_input_scoped_access_and_human_control_pause` | 14 -> 13 | Sessions are seeded in `mcp_server_tokens` (the Node test called `mcpServer.mintAgentSession`); the bridge is `minarbot-server --mcp-stdio`, whose refusal text is "MCP request failed." (JSON-RPC -32603) instead of the Node bridge's "Minarbot MCP request failed.". |
+| rust-desktop-http: server advertises gated tools, sends model image pixels, protects viewer routes and refuses uncertain resume | `pd_rust_desktop_http::server_advertises_gated_tools_sends_model_image_pixels_protects_viewer_routes_and_refuses_uncertain_resume` | 41 -> 38 | Full after the uncertain-action fix below. |
+| rust-desktop-http: HTTP control and user input enforce Origin, revision, validation and rate limits; paused turn resumes once | `pd_rust_desktop_http::http_control_and_user_input_enforce_origin_revision_validation_and_rate_limits_paused_turn_resumes_once` | 44 -> 39 | Model-call counts leave out the step after a pausing Computer tool (B1); the strict counts stay in Node. |
+| rust-desktop-http: HTTP VNC relay enforces owner Host/Origin, tickets, viewer cap, live control fencing and stop cleanup | `pd_rust_desktop_http::http_vnc_relay_enforces_owner_host_origin_tickets_viewer_cap_live_control_fencing_and_stop_cleanup` | 13 -> 10 | Full, with the kit's WebSocket/RFB client. |
+| rust-desktop-http: Always-on Computer uses a desktop slot, survives idle and restores on server restart | `pd_rust_desktop_http::always_on_computer_uses_a_desktop_slot_survives_idle_and_restores_on_server_restart` | 11 -> 12 | Real clock: the idle deadline must advance. |
+| sidebar: sidebar validates unique membership, names, IDs and bounded settings | `pd_sidebar::sidebar_validates_unique_membership_names_ids_and_bounded_settings` | 4 -> 3 | Full (13 invalid layouts in a loop). |
+| sidebar: sidebar HTTP edits retain agents/history through delete, conflicts, retry, restart and backup | `pd_sidebar::sidebar_http_edits_retain_agents_history_through_delete_conflicts_retry_restart_and_backup` | 26 -> 33 | Full. |
+| sidebar: sidebar summary bounds entries and text, redacts credentials, and selects latest explicit remote messages | `pd_sidebar::sidebar_summary_bounds_entries_and_text_redacts_credentials_and_selects_latest_explicit_remote_messages` | 12 -> 12 | The provider credential is the gateway instance's secret launch variable; #87 removed the `apiKey` provider account. |
+| channel-context (automatic): channel context names lead for automatic routing and execution | `pd_channel_context::channel_context_names_lead_for_automatic_routing_and_execution` | 15 -> 13 | Full. |
+| channel-context (explicit): channel context names lead for explicit execution | `pd_channel_context::channel_context_names_lead_for_explicit_execution` | 15 -> 13 | Full. |
+| agent-reply-capture: new user turns capture only ready same-scope group replies once across retries and restart | `pd_agent_reply_capture::new_user_turns_capture_only_ready_same_scope_group_replies_once_across_retries_and_restart` | 35 -> 37 | Full after the messaging fix below. The group receipt is found by content: the gateway peer replays earlier tool results as assistant messages. |
+| guide-infra: Guide infrastructure requires approval and keeps credentials out of replies, storage and logs | `pd_guide_infra::guide_infrastructure_requires_approval_and_keeps_credentials_out_of_replies_storage_and_logs` | 26 -> 25 | #87 dropped `providerAccount`. The server gets the system `TMPDIR`: the askpass socket path under the kit's per-test TMPDIR exceeds the Unix socket limit. |
+| local-projects: Rust project folders reject system, traversal, home, credential, data and symlink paths before creation | `pd_local_projects::rust_project_folders_reject_system_traversal_home_credential_data_and_symlink_paths_before_creation` | 3 -> 3 | `HOME` is the test root, so the data folder sits inside the Owner home as in Node. |
+| local-projects: Rust project CRUD preserves folder ownership, revision fences, exact replay and files on delete | `pd_local_projects::rust_project_crud_preserves_folder_ownership_revision_fences_exact_replay_and_files_on_delete` | 22 -> 21 | Full. |
+| local-projects: Rust project grants resolve by room or selected side thread folder and fail closed after revocation | `pd_local_projects::rust_project_grants_resolve_by_room_or_selected_side_thread_folder_and_fail_closed_after_revocation` | 8 -> 8 | A read-only write returns the tool's 403 to the model and the turn ends `done` (the API runtime failed the turn); revocation is refused at admission with 403 "not a project member" because every send now resolves its harness workspace first. |
+| local-projects: built-in CodeGraph indexes projects and serves API turns without a CLI | `pd_local_projects::built_in_codegraph_indexes_projects_and_serves_api_turns_without_a_cli` | 16 -> 15 | The Node case skipped without bubblewrap; the Rust test requires `codegraphAvailable`. The gateway peer mounts the `codegraph` stdio server as Codex does. |
+| local-projects: project HTTP Owner rules, direct-chat isolation, read/write enforcement, env fallback, per-folder Git and restart receipts | `pd_local_projects::project_http_owner_rules_direct_chat_isolation_read_write_enforcement_env_fallback_per_folder_git_and_restart_receipts` | 28 -> 32 | Read-only write as above. The peer's own log and session files are in `.git/info/exclude`. |
+| local-projects: project harness cwd and read-only native escalation denial; direct chat uses the managed folder | `pd_local_projects::project_harness_cwd_and_read_only_native_escalation_denial_direct_chat_uses_the_managed_folder` | 7 -> 7 | Bound to explicit fake Codex/Claude instances: once a gateway was configured, `runtime: codex` keeps meaning the gateway instance. |
+| local-projects: Rust managed folder retry recovers durable intent after transaction failure without deleting files | `pd_local_projects::rust_managed_folder_retry_recovers_durable_intent_after_transaction_failure_without_deleting_files` | 4 -> 4 | Full. |
+| local-projects: standalone and P2 migration preserves channel IDs, history, read state, memory, files and legacy sidebar through restart and backup restore | `pd_local_projects::standalone_and_p2_migration_preserves_channel_ids_history_read_state_memory_files_and_legacy_sidebar_through_restart_and_backup_restore` | 28 -> 25 | Full; snapshots via `backup::workspace_snapshot`. |
+| local-projects: section commands require revisions and request IDs, inherit members, reorder, archive and replay across restart | `pd_local_projects::section_commands_require_revisions_and_request_ids_inherit_members_reorder_archive_and_replay_across_restart` | 18 -> 19 | Full. |
+| local-projects: folderless project and side threads isolate host grants, accept folders later, and archive retains configuration | `pd_local_projects::folderless_project_and_side_threads_isolate_host_grants_accept_folders_later_and_archive_retains_configuration` | 17 -> 14 | Folderless sends are refused with 503 "Coding runtime requires a workspace for this conversation." (before #87 only harness runtimes got this; now every agent is one). |
+| local-projects: Rust project migration rolls back ownership and retries without touching standalone data | `pd_local_projects::rust_project_migration_rolls_back_ownership_and_retries_without_touching_standalone_data` | 7 -> 8 | Full. |
+| local-projects: Rust migrates a standalone channel with a colliding ID into its own project | `pd_local_projects::rust_migrates_a_standalone_channel_with_a_colliding_id_into_its_own_project` | 6 -> 4 | Full. |
+| local-projects: Rust project members retain added order through reload and edit | `pd_local_projects::rust_project_members_retain_added_order_through_reload_and_edit` | 2 -> 2 | Full. |
+| local-routines: local routines require project membership and a report section belonging to that project | `pd_local_routines::local_routines_require_project_membership_and_a_report_section_belonging_to_that_project` | 4 -> 11 | Full. |
+| local-routines: Rust upgrades legacy routine timing without publishing earlier runs | `pd_local_routines::rust_upgrades_legacy_routine_timing_without_publishing_earlier_runs` | 3 -> 3 | Full (two restarts). |
+| local-routines: project routine runs use project folders and post one system report per outcome across retry and restart | `pd_local_routines::project_routine_runs_use_project_folders_and_post_one_system_report_per_outcome_across_retry_and_restart` | 24 -> 30 | Folders live in the kit's Owner home. |
+| local-routines: scheduled cron catches up once and unavailable project folders do not starve other routines | `pd_local_routines::scheduled_cron_catches_up_once_and_unavailable_project_folders_do_not_starve_other_routines` | 13 -> 11 | `nextScheduleTimes` (TS) is computed in the test: 09:00 Asia/Jakarta is 02:00 UTC. |
+
+### Product bugs fixed
+
+| Bug | Case | Cause and fix |
+| --- | --- | --- |
+| Group requests held their conversation | agent-reply-capture | A session `send_message` with `expects_reply` polled up to 30 s inside its MCP call, so the harness turn stayed active and blocked the conversation; in test mode `messaging::run` also skipped queueing the source turn (c9a9e0f). New user turns could not run or capture ready replies. The source turn is now queued in every mode and the MCP call returns the waiting receipt at once, like `wait_task`; the scheduler resumes it when the replies settle (`turns/messaging.rs`, `mcp/server.rs`). |
+| Failed Computer actions looked retryable | rust-desktop-http (uncertain resume) | A native action is journaled as uncertain before it runs, but a failure returned the raw error to the harness as an ordinary tool error, so the model could repeat the input and the turn ended `done`. Failures after the journal now return the uncertain outcome (502), as MCP tool calls do (`computer/control.rs`). |
+
+### Product bugs kept
+
+| Bug | Kept Node assertion | Cause |
+| --- | --- | --- |
+| B1 | `app/rust-desktop-http.test.ts` "HTTP control and user input ..." `assert.equal(providerCalls, 1)`, `2`, `4` | Same cause as B1: `computer_request_user` (and a click under human control) pauses the turn and answers `waiting_for_user` at once, and the harness takes one more model step. The Rust test fails that step at once and leaves it out of the counts. |
+
+### Kit changes
+
+New files: `parked` (requests held per key and answered later), `webhook`
+(HMAC-SHA256, held deliveries), `upload` (chunked uploads), `backup`
+(download, `restore workspace`, `workspace_snapshot`), `images` (image
+provider on raw TCP), `mcp_server` (external MCP server with held calls),
+`pdf` (PDF fixtures, async PDF gate), `desktop` (desktop fixture runtime),
+`vnc` (WebSocket/RFB client), `fake/stdio_mcp` (stdio MCP client) and
+`reap` (dropping a root kills the processes left in it). Edits:
+`bridge` gained `pdf_async` and `operations_async`; the gateway peer mounts
+extra stdio MCP servers from `thread/start` (G19); `Server` stops its
+process before releasing its root.
+
+### Notes
+
+- Two Unix socket paths exceed the 108-byte limit under long `TMPDIR` or
+  data paths: the Guide SSH askpass socket (`$TMPDIR/minarbot-ssh-<32
+  hex>/password`) and the desktop proxy socket (`<leaseDir>/v-<32
+  hex>/proxy.sock`). Tests use short directories; the product fails with
+  "outcome is uncertain" or a storage error on such hosts.
+
 ## #67 hosted Hub test migration
 
 The app test runner discovers Hub Link once and starts the Rust hosted listener.

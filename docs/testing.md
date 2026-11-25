@@ -45,6 +45,13 @@ one module per area.
 | `canonical` | `Canonical` sets up the canonical schema, accounts and Clerk RS256 tokens (test-only key) for hosted-mode requests. |
 | `bridge` | Closure-backed bridges for computer, canonical, PDF and Composio test options. |
 | `protocol`, `image` | `digest_command`, `canonical_json` and `sha256_hex`; PNG builder and dimensions. |
+| `parked` | `ParkedModel`: an OpenAI-compatible model whose routing closure answers a request at once or parks it under a key until `finish(key, Answer)`. Use it when a step must stay open while the test changes state. |
+| `webhook`, `upload` | `hmac_sha256_hex` and `HeldPost` (last body byte held back); `chunked_post`. |
+| `backup` | `download` (`POST /api/backup`), `restore_workspace` (`minarbot-server restore workspace`), `restore_into_new_root` and `workspace_snapshot`. |
+| `images`, `mcp_server`, `pdf` | Fake image provider (raw TCP, can lose replies); external streamable-HTTP MCP server with held calls; PDF fixtures and `PdfGate` (fail once, hold a parse, see it abandoned). |
+| `desktop`, `vnc` | `DesktopFixture` for `desktop.testRuntime` (launches, commands, failures, held commands); `VncClient`, a WebSocket + RFB 3.8 client. |
+| `fake::stdio_mcp` | `StdioServer`: one stdio MCP request per process, for `minarbot-server --mcp-stdio` or extra harness servers. |
+| `reap` | Dropping the last `TestRoot` kills every process whose executable or working directory is inside it (peers left behind by a killed server). |
 
 Configuring a model (`ServerConfig::model` or `gateway`) makes `fake-gateway`
 the Codex executable, as the Node bridge did, so native Codex tests configure
@@ -177,6 +184,7 @@ name) and, where listed, end to end by an e2e module.
 | G16 | `model/list` returns the provider's `GET /models` as one page. The Node fixture had none. | cli |
 | G17 | Provider requests carry `MINARBOT_PROVIDER_KEY` as a bearer token and the thread's model. | goals |
 | G18 | `fake-gateway-log.jsonl`: method, ID, thread and run stage (`tools`, `provider`, `error`). | - |
+| G19 | Every extra `mcp_servers.<name>` entry with a `command` (CodeGraph) is mounted as a stdio MCP server: its tools are offered and called next to Minarbot's. Proven end to end only. | `pd_local_projects::built_in_codegraph...` |
 
 When stdin closes, a peer finishes its pending work (timers, gates,
 requests) before it exits, as the Node fixtures did.

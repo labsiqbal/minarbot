@@ -55,11 +55,21 @@ impl BridgeError {
 
 type Operations = dyn Fn(&str, &Value) -> Result<Value, BridgeError> + Send + Sync;
 type Pdf = dyn Fn(&[u8]) -> Option<(u16, String)> + Send + Sync;
+/// Future of an asynchronous PDF fault handler.
+pub type PdfFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Option<(u16, String)>> + Send>>;
+type PdfAsync = dyn Fn(Bytes) -> PdfFuture + Send + Sync;
+/// Future of an asynchronous operations handler.
+pub type OperationFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, BridgeError>> + Send>>;
+type OperationsAsync = dyn Fn(String, Value) -> OperationFuture + Send + Sync;
 
 enum Kind {
     Operations(Arc<Operations>),
     Paths(Arc<Operations>),
     Pdf(Arc<Pdf>),
+    PdfAsync(Arc<PdfAsync>),
+    OperationsAsync(Arc<OperationsAsync>),
     Key(String),
 }
 
@@ -122,15 +132,27 @@ async fn operation(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: 
                 &body["args"],
             ))
         }
-        Kind::Pdf(handler) => match handler(&body) {
-            None => StatusCode::NO_CONTENT.into_response(),
-            Some((status, error)) => (
-                StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                Json(json!({"error": error})),
-            )
-                .into_response(),
-        },
+        Kind::OperationsAsync(handler) => {
+            let Ok(body) = serde_json::from_slice::<Value>(&body) else {
+                return answer(Err(BridgeError::new(400, "Invalid bridge request.")));
+            };
+            let operation = body["operation"].as_str().unwrap_or_default().to_owned();
+            answer(handler(operation, body["args"].clone()).await)
+        }
+        Kind::Pdf(handler) => pdf_answer(handler(&body)),
+        Kind::PdfAsync(handler) => pdf_answer(handler(body).await),
         _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn pdf_answer(result: Option<(u16, String)>) -> Response {
+    match result {
+        None => StatusCode::NO_CONTENT.into_response(),
+        Some((status, error)) => (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Json(json!({"error": error})),
+        )
+            .into_response(),
     }
 }
 
@@ -198,6 +220,14 @@ impl Bridge {
         Self::start(Kind::Operations(Arc::new(handler))).await
     }
 
+    /// `{operation, args}` bridge whose handler may wait (for example to
+    /// hold a desktop action while the test changes server state).
+    pub async fn operations_async(
+        handler: impl Fn(String, Value) -> OperationFuture + Send + Sync + 'static,
+    ) -> Result<Self> {
+        Self::start(Kind::OperationsAsync(Arc::new(handler))).await
+    }
+
     /// `POST /<operation>` bridge (the canonical bridge).
     pub async fn paths(
         handler: impl Fn(&str, &Value) -> Result<Value, BridgeError> + Send + Sync + 'static,
@@ -210,6 +240,14 @@ impl Bridge {
         handler: impl Fn(&[u8]) -> Option<(u16, String)> + Send + Sync + 'static,
     ) -> Result<Self> {
         Self::start(Kind::Pdf(Arc::new(handler))).await
+    }
+
+    /// PDF fault bridge whose handler may wait. The server dropping the
+    /// request (shutdown, timeout) drops the handler's future.
+    pub async fn pdf_async(
+        handler: impl Fn(Bytes) -> PdfFuture + Send + Sync + 'static,
+    ) -> Result<Self> {
+        Self::start(Kind::PdfAsync(Arc::new(handler))).await
     }
 
     /// Composio key bridge that serves `key`.

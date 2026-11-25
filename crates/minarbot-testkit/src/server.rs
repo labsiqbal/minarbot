@@ -468,6 +468,7 @@ impl TestRoot {
 impl Drop for TestRoot {
     fn drop(&mut self) {
         if Arc::strong_count(&self.0) == 1 {
+            crate::reap::kill_under(self.path());
             let _ = fs::remove_dir_all(self.path());
         }
     }
@@ -648,6 +649,14 @@ pub struct Server {
     process: Option<Process>,
     /// Concurrency slot, kept across restarts and crashes.
     _slot: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl Drop for Server {
+    /// Stop the process before the root is released, so the root's cleanup
+    /// sees (and kills) whatever the server left behind.
+    fn drop(&mut self) {
+        self.process.take();
+    }
 }
 
 impl Server {
