@@ -213,6 +213,17 @@ impl TurnStream {
             .ok_or_else(|| "SSE closed before snapshot".into())
     }
 
+    async fn drain_ready(&mut self) {
+        for _ in 0..8 {
+            if tokio::time::timeout(Duration::from_millis(10), self.next())
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    }
+
     async fn wait_text(&mut self, turn: &str, text: &str) -> Result<Value> {
         loop {
             let frame = self.snapshot().await?;
@@ -369,6 +380,7 @@ async fn seeded_sse_frames_wake_after_visibility_and_file_lane_commits() -> Resu
         assert!(timeout(quiet, stream.next()).await.is_err());
         assert_eq!(request.send().await?.status(), 200);
         assert_eq!(stream.snapshot().await?["partial"]["text"], text);
+        stream.drain_ready().await;
     }
     let mut repaired = TurnStream::connect(&app, &path).await?;
     assert_eq!(repaired.snapshot().await?["partial"]["revision"], 7);
