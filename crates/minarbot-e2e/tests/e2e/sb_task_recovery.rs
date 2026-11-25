@@ -3909,7 +3909,10 @@ fn remember(f: &TaskFixture, scope: &str, text: &str) -> Result<String> {
          CREATE TABLE IF NOT EXISTS memory_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;",
     )?;
     let columns = f.db().rows("PRAGMA table_info(memories)", [])?;
-    if !columns.iter().any(|column| column["name"] == "selection_locked") {
+    if !columns
+        .iter()
+        .any(|column| column["name"] == "selection_locked")
+    {
         f.db().execute_batch("ALTER TABLE memories ADD COLUMN selection_locked INTEGER NOT NULL DEFAULT 1 CHECK(selection_locked IN (0,1))")?;
     }
     let id = new_id();
@@ -3921,26 +3924,74 @@ fn remember(f: &TaskFixture, scope: &str, text: &str) -> Result<String> {
 }
 
 /// `seedSkillVersion(db, id, {revision, name, description, content})`.
-fn save_skill(f: &TaskFixture, id: &str, revision: i64, name: &str, description: &str, content: &str) -> Result<()> {
+fn save_skill(
+    f: &TaskFixture,
+    id: &str,
+    revision: i64,
+    name: &str,
+    description: &str,
+    content: &str,
+) -> Result<()> {
     let next = revision + 1;
     f.db().execute(
         "INSERT INTO skills VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,revision=excluded.revision",
         (id, name, next),
     )?;
-    f.db().execute("INSERT INTO skill_versions VALUES (?,?,?,?,?)", (id, next, name, description, content))?;
-    Ok(())
-}
-
-fn scope_row(f: &TaskFixture, table: &str, key: Value, account: &str, project: &str, visibility: &str, root: &str) -> Result<()> {
     f.db().execute(
-        "INSERT INTO record_scopes VALUES (?,?,?,?,?,?,?)",
-        [table, &key.to_string(), account, project, visibility, "agent", root],
+        "INSERT INTO skill_versions VALUES (?,?,?,?,?)",
+        (id, next, name, description, content),
     )?;
     Ok(())
 }
 
-fn read_intent(task: &str, action: &str, sequence: i64, ownership: &Value, digest: &str, reference: &Value) -> String {
-    digest_command(&json!([task, action, sequence, ownership, digest, "read", reference["snapshotId"], reference["digest"], null, null, 1, null, null, null]))
+fn scope_row(
+    f: &TaskFixture,
+    table: &str,
+    key: Value,
+    account: &str,
+    project: &str,
+    visibility: &str,
+    root: &str,
+) -> Result<()> {
+    f.db().execute(
+        "INSERT INTO record_scopes VALUES (?,?,?,?,?,?,?)",
+        [
+            table,
+            &key.to_string(),
+            account,
+            project,
+            visibility,
+            "agent",
+            root,
+        ],
+    )?;
+    Ok(())
+}
+
+fn read_intent(
+    task: &str,
+    action: &str,
+    sequence: i64,
+    ownership: &Value,
+    digest: &str,
+    reference: &Value,
+) -> String {
+    digest_command(&json!([
+        task,
+        action,
+        sequence,
+        ownership,
+        digest,
+        "read",
+        reference["snapshotId"],
+        reference["digest"],
+        null,
+        null,
+        1,
+        null,
+        null,
+        null
+    ]))
 }
 
 #[tokio::test]
@@ -3948,69 +3999,195 @@ async fn context_projects_authorized_memory_pinned_skills_and_byte_free_asset_re
 ) -> Result<()> {
     let f = TaskFixture::new(&["transfer_task"], None).await?;
     let p = prepared(&f).await?;
-    let scope = format!("project:{}/agents:{}/human:{}", f.project, f.agent, f.owner.account_id);
+    let scope = format!(
+        "project:{}/agents:{}/human:{}",
+        f.project, f.agent, f.owner.account_id
+    );
     let memory = remember(&f, &scope, "Project A decision")?;
-    f.db().execute("UPDATE memories SET essential=1 WHERE scope=? AND id=?", [&scope, &memory])?;
-    scope_row(&f, "memories", json!([scope, memory]), &f.owner.account_id, &f.project, "owner", &f.agent)?;
+    f.db().execute(
+        "UPDATE memories SET essential=1 WHERE scope=? AND id=?",
+        [&scope, &memory],
+    )?;
+    scope_row(
+        &f,
+        "memories",
+        json!([scope, memory]),
+        &f.owner.account_id,
+        &f.project,
+        "owner",
+        &f.agent,
+    )?;
     let private_scope = format!("private:{}", f.member.account_id);
     let private_memory = remember(&f, &private_scope, "PRIVATE_OTHER_HUMAN")?;
-    f.db().execute("UPDATE memories SET essential=1 WHERE scope=? AND id=?", [&private_scope, &private_memory])?;
-    scope_row(&f, "memories", json!([private_scope, private_memory]), &f.member.account_id, &f.project, "owner", &f.agent)?;
-    remember(&f, &format!("agents:{}", f.agent), "UNMAPPED_LEGACY_PRIVATE")?;
+    f.db().execute(
+        "UPDATE memories SET essential=1 WHERE scope=? AND id=?",
+        [&private_scope, &private_memory],
+    )?;
+    scope_row(
+        &f,
+        "memories",
+        json!([private_scope, private_memory]),
+        &f.member.account_id,
+        &f.project,
+        "owner",
+        &f.agent,
+    )?;
+    remember(
+        &f,
+        &format!("agents:{}", f.agent),
+        "UNMAPPED_LEGACY_PRIVATE",
+    )?;
     let skill = new_id();
-    save_skill(&f, &skill, 0, "Pinned skill", "Reference configuration", "Use project rules")?;
-    save_skill(&f, &skill, 1, "Latest skill", "Must not substitute", "UNINSTALLED_LATEST_VERSION")?;
+    save_skill(
+        &f,
+        &skill,
+        0,
+        "Pinned skill",
+        "Reference configuration",
+        "Use project rules",
+    )?;
+    save_skill(
+        &f,
+        &skill,
+        1,
+        "Latest skill",
+        "Must not substitute",
+        "UNINSTALLED_LATEST_VERSION",
+    )?;
     f.db().execute("INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,7,0)", [&f.agent, &skill])?;
     let raw = b"PRIVATE_ASSET_BYTES";
-    let encoded_raw = minarbot_testkit::base64::Engine::encode(&minarbot_testkit::base64::engine::general_purpose::STANDARD, raw);
+    let encoded_raw = minarbot_testkit::base64::Engine::encode(
+        &minarbot_testkit::base64::engine::general_purpose::STANDARD,
+        raw,
+    );
     f.db().execute(
         "INSERT INTO skill_files VALUES (?,1,?)",
-        [skill.clone(), json!([{"path": "asset.bin", "content": encoded_raw, "encoding": "base64"}]).to_string()],
+        [
+            skill.clone(),
+            json!([{"path": "asset.bin", "content": encoded_raw, "encoding": "base64"}])
+                .to_string(),
+        ],
     )?;
-    for (table, key) in [("skills", json!([skill])), ("skill_versions", json!([skill, 1])), ("agent_skills", json!([f.agent, skill])), ("skill_files", json!([skill, 1]))] {
-        scope_row(&f, table, key, &f.owner.account_id, &f.project, "owner", &f.agent)?;
+    for (table, key) in [
+        ("skills", json!([skill])),
+        ("skill_versions", json!([skill, 1])),
+        ("agent_skills", json!([f.agent, skill])),
+        ("skill_files", json!([skill, 1])),
+    ] {
+        scope_row(
+            &f,
+            table,
+            key,
+            &f.owner.account_id,
+            &f.project,
+            "owner",
+            &f.agent,
+        )?;
     }
-    f.db().execute("UPDATE task_actions SET state='not_sent',effect_status='none' WHERE id=?", [&p.action])?;
+    f.db().execute(
+        "UPDATE task_actions SET state='not_sent',effect_status='none' WHERE id=?",
+        [&p.action],
+    )?;
     let context = f
-        .task_op("context", &p.task, json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": 2}), &p.token)
+        .task_op(
+            "context",
+            &p.task,
+            json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": 2}),
+            &p.token,
+        )
         .await?
         .expect_ok()?;
     let snapshot = context.data()["snapshot"].clone();
-    ensure!(snapshot["memories"][0]["text"] == "Project A decision", "memories: {}", snapshot["memories"]);
-    ensure!(snapshot["memories"].as_array().map(Vec::len) == Some(1), "memory count: {}", snapshot["memories"]);
-    ensure!(snapshot["skills"][0]["id"] == skill.as_str(), "skill: {}", snapshot["skills"]);
-    ensure!(snapshot["skills"][0]["revision"] == 1, "pinned revision: {}", snapshot["skills"]);
-    ensure!(snapshot["skills"][0]["installationRevision"] == 7, "installation revision: {}", snapshot["skills"]);
     ensure!(
-        snapshot["skillAssets"] == json!([{"skillId": skill, "skillRevision": 1, "installationRevision": 7, "source": "asset.bin",
+        snapshot["memories"][0]["text"] == "Project A decision",
+        "memories: {}",
+        snapshot["memories"]
+    );
+    ensure!(
+        snapshot["memories"].as_array().map(Vec::len) == Some(1),
+        "memory count: {}",
+        snapshot["memories"]
+    );
+    ensure!(
+        snapshot["skills"][0]["id"] == skill.as_str(),
+        "skill: {}",
+        snapshot["skills"]
+    );
+    ensure!(
+        snapshot["skills"][0]["revision"] == 1,
+        "pinned revision: {}",
+        snapshot["skills"]
+    );
+    ensure!(
+        snapshot["skills"][0]["installationRevision"] == 7,
+        "installation revision: {}",
+        snapshot["skills"]
+    );
+    ensure!(
+        snapshot["skillAssets"]
+            == json!([{"skillId": skill, "skillRevision": 1, "installationRevision": 7, "source": "asset.bin",
             "digest": sha256_hex(raw), "size": raw.len()}]),
         "assets: {}",
         snapshot["skillAssets"]
     );
-    ensure!(snapshot["tools"] == json!([]), "tools: {}", snapshot["tools"]);
+    ensure!(
+        snapshot["tools"] == json!([]),
+        "tools: {}",
+        snapshot["tools"]
+    );
     let encoded = canonical_json(&snapshot);
-    for secret in ["PRIVATE_OTHER_HUMAN", "UNMAPPED_LEGACY_PRIVATE", "UNINSTALLED_LATEST_VERSION", "PRIVATE_ASSET_BYTES", encoded_raw.as_str()] {
+    for secret in [
+        "PRIVATE_OTHER_HUMAN",
+        "UNMAPPED_LEGACY_PRIVATE",
+        "UNINSTALLED_LATEST_VERSION",
+        "PRIVATE_ASSET_BYTES",
+        encoded_raw.as_str(),
+    ] {
         ensure!(!encoded.contains(secret), "snapshot contains {secret}");
     }
-    ensure!(context.data()["snapshotRef"]["digest"] == sha256_hex(&encoded).as_str(), "snapshot digest");
-    f.db().execute("UPDATE memories SET text=?,revision=revision+1 WHERE scope=? AND id=?", ["Changed decision", &scope, &memory])?;
+    ensure!(
+        context.data()["snapshotRef"]["digest"] == sha256_hex(&encoded).as_str(),
+        "snapshot digest"
+    );
+    f.db().execute(
+        "UPDATE memories SET text=?,revision=revision+1 WHERE scope=? AND id=?",
+        ["Changed decision", &scope, &memory],
+    )?;
     let action = new_id();
     let digest = sha256_hex("next");
     let reference = context.data()["snapshotRef"].clone();
     let prepare = json!({"requestId": new_id(), "sequence": 1, "ownership": p.ownership, "payloadDigest": digest, "actionKind": "read",
         "contextSnapshotId": reference["snapshotId"], "contextDigest": reference["digest"], "grantRevision": 1, "expectedTaskRevision": 2,
         "journalSequence": 2, "intentDigest": read_intent(&p.task, &action, 1, &p.ownership, &digest, &reference)});
-    f.prepare(&p.task, &action, prepare.clone(), &p.token).await?.expect_code("context_stale")?;
+    f.prepare(&p.task, &action, prepare.clone(), &p.token)
+        .await?
+        .expect_code("context_stale")?;
     let next = f
-        .task_op("context", &p.task, json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": 2}), &p.token)
+        .task_op(
+            "context",
+            &p.task,
+            json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": 2}),
+            &p.token,
+        )
         .await?
         .expect_ok()?;
     let next_ref = next.data()["snapshotRef"].clone();
-    f.db().execute("UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE agent=? AND skill=?", [&f.agent, &skill])?;
-    f.prepare(&p.task, &action, with(prepare, json!({"contextSnapshotId": next_ref["snapshotId"], "contextDigest": next_ref["digest"],
-        "intentDigest": read_intent(&p.task, &action, 1, &p.ownership, &digest, &next_ref)})), &p.token)
-        .await?
-        .expect_code("context_stale")?;
+    f.db().execute(
+        "UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE agent=? AND skill=?",
+        [&f.agent, &skill],
+    )?;
+    f.prepare(
+        &p.task,
+        &action,
+        with(
+            prepare,
+            json!({"contextSnapshotId": next_ref["snapshotId"], "contextDigest": next_ref["digest"],
+        "intentDigest": read_intent(&p.task, &action, 1, &p.ownership, &digest, &next_ref)}),
+        ),
+        &p.token,
+    )
+    .await?
+    .expect_code("context_stale")?;
     Ok(())
 }
 
@@ -4031,7 +4208,15 @@ fn context_tables(f: &TaskFixture) -> Result<()> {
 
 /// A done turn mapped to `(account, project, root)` (or unmapped); returns
 /// `(id, seq)`.
-fn seed_turn(f: &TaskFixture, text: &str, reply: &str, project: &str, account: &str, root: &str, mapped: bool) -> Result<(String, i64)> {
+fn seed_turn(
+    f: &TaskFixture,
+    text: &str,
+    reply: &str,
+    project: &str,
+    account: &str,
+    root: &str,
+    mapped: bool,
+) -> Result<(String, i64)> {
     let id = new_id();
     f.db().execute(
         "INSERT INTO turns(id,agent,text,reply,status,created) VALUES (?,?,?,?,'done','fixture')",
@@ -4041,7 +4226,12 @@ fn seed_turn(f: &TaskFixture, text: &str, reply: &str, project: &str, account: &
     if mapped {
         f.db().execute(
             "INSERT INTO record_scopes VALUES ('turns',?,?,?,'owner','agent',?)",
-            [json!([id]).to_string(), account.to_owned(), project.to_owned(), root.to_owned()],
+            [
+                json!([id]).to_string(),
+                account.to_owned(),
+                project.to_owned(),
+                root.to_owned(),
+            ],
         )?;
     }
     Ok((id, seq))
@@ -4053,11 +4243,30 @@ async fn context_preserves_scoped_history_questions_compaction_and_child_evidenc
     let f = TaskFixture::new(&["transfer_task"], None).await?;
     context_tables(&f)?;
     let other_project = new_id();
-    f.human(minarbot_testkit::http::Method::POST, "/api/projects", Some(json!({"requestId": new_id(), "id": other_project, "name": "Other"})), &f.owner)
-        .await?;
-    let (owner, member, agent, project) = (f.owner.account_id.clone(), f.member.account_id.clone(), f.agent.clone(), f.project.clone());
+    f.human(
+        minarbot_testkit::http::Method::POST,
+        "/api/projects",
+        Some(json!({"requestId": new_id(), "id": other_project, "name": "Other"})),
+        &f.owner,
+    )
+    .await?;
+    let (owner, member, agent, project) = (
+        f.owner.account_id.clone(),
+        f.member.account_id.clone(),
+        f.agent.clone(),
+        f.project.clone(),
+    );
     let turn = |text: &str, project: &str, account: &str, root: &str| -> Result<String> {
-        Ok(seed_turn(&f, text, &format!("{text} reply"), project, account, root, true)?.0)
+        Ok(seed_turn(
+            &f,
+            text,
+            &format!("{text} reply"),
+            project,
+            account,
+            root,
+            true,
+        )?
+        .0)
     };
     let mut old = Vec::new();
     for index in 0..42 {
@@ -4068,21 +4277,41 @@ async fn context_preserves_scoped_history_questions_compaction_and_child_evidenc
     turn("OTHER_CONVERSATION", &project, &owner, &new_id())?;
     let scope = format!("project:{project}/agent:{agent}/human:{owner}");
     let through = field(&f, "SELECT seq FROM turns WHERE id=?", [&old[0]], "seq")?;
-    f.db().execute("INSERT INTO compactions VALUES (?,?,?,?)", (scope.clone(), new_id(), through.as_i64(), "Earlier summary"))?;
-    f.db().execute("INSERT INTO compaction_sources VALUES (?,?,1,'done')", (scope.clone(), through.as_i64()))?;
-    scope_row(&f, "compactions", json!([scope]), &owner, &project, "owner", &agent)?;
+    f.db().execute(
+        "INSERT INTO compactions VALUES (?,?,?,?)",
+        (scope.clone(), new_id(), through.as_i64(), "Earlier summary"),
+    )?;
+    f.db().execute(
+        "INSERT INTO compaction_sources VALUES (?,?,1,'done')",
+        (scope.clone(), through.as_i64()),
+    )?;
+    scope_row(
+        &f,
+        "compactions",
+        json!([scope]),
+        &owner,
+        &project,
+        "owner",
+        &agent,
+    )?;
     let command = f.command(json!({}));
     let task = command["requestId"].as_str().ok_or("task")?.to_owned();
     f.admit(&f.owner, &command).await?.expect_ok()?;
     let child = turn("Visible child", &project, &owner, &new_id())?;
-    let call = |id: &str| json!({"id": id, "function": {"name": "search_memory", "arguments": "{}"}});
+    let call =
+        |id: &str| json!({"id": id, "function": {"name": "search_memory", "arguments": "{}"}});
     for target in [&child, &private_turn, &foreign_turn] {
         f.db().execute(
             "INSERT INTO coordination(turn,owner,target,kind,prompt,call,child) VALUES (?,?,?,?,?,?,?)",
             [task.as_str(), &agent, &agent, "delegate_task", "Subtask", &call(target).to_string(), target],
         )?;
     }
-    for (id, result) in [(&task, "Parent result"), (&child, "Child result"), (&private_turn, "PRIVATE_TOOL"), (&foreign_turn, "FOREIGN_TOOL")] {
+    for (id, result) in [
+        (&task, "Parent result"),
+        (&child, "Child result"),
+        (&private_turn, "PRIVATE_TOOL"),
+        (&foreign_turn, "FOREIGN_TOOL"),
+    ] {
         f.db().execute(
             "INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES (?,?,?,?,0,0)",
             [id.as_str(), id, &call(id).to_string(), &json!({"text": result}).to_string()],
@@ -4096,7 +4325,12 @@ async fn context_preserves_scoped_history_questions_compaction_and_child_evidenc
     )?;
     f.db().execute(
         "INSERT INTO record_scopes VALUES ('files',?,?,?,'owner','agent',?)",
-        [json!([file]).to_string(), owner.clone(), project.clone(), agent.clone()],
+        [
+            json!([file]).to_string(),
+            owner.clone(),
+            project.clone(),
+            agent.clone(),
+        ],
     )?;
     f.db().execute(
         "INSERT INTO generated_files(turn,file,call_id,call,after_action) VALUES (?,?,?,?,0)",
@@ -4105,34 +4339,102 @@ async fn context_preserves_scoped_history_questions_compaction_and_child_evidenc
     let question = new_id();
     f.db().execute(
         "INSERT INTO questions VALUES (?,?,?,?,?,?,?,0,0)",
-        [question.as_str(), &old[5], "question", &call("question").to_string(), "Keep scope?", &json!(["Yes"]).to_string(), "Yes"],
+        [
+            question.as_str(),
+            &old[5],
+            "question",
+            &call("question").to_string(),
+            "Keep scope?",
+            &json!(["Yes"]).to_string(),
+            "Yes",
+        ],
     )?;
     let (token, ownership, _) = f.acquire_task(&task).await?;
     let request = json!({"requestId": new_id(), "ownership": ownership, "expectedTaskRevision": 2});
-    let context = f.task_op("context", &task, request.clone(), &token).await?.expect_ok()?;
+    let context = f
+        .task_op("context", &task, request.clone(), &token)
+        .await?
+        .expect_ok()?;
     let snapshot = context.data()["snapshot"].clone();
-    let history = snapshot["conversation"]["history"].as_array().cloned().unwrap_or_default();
+    let history = snapshot["conversation"]["history"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     ensure!(history.len() == 40, "history length: {}", history.len());
-    ensure!(history[0]["text"] == "History 2", "oldest history: {}", history[0]);
-    ensure!(snapshot["conversation"]["compaction"]["summary"] == "Earlier summary", "compaction: {}", snapshot["conversation"]["compaction"]);
-    ensure!(snapshot["conversation"]["questions"][0]["id"] == question.as_str(), "questions: {}", snapshot["conversation"]["questions"]);
-    let coordination = snapshot["coordination"].as_array().cloned().unwrap_or_default();
-    ensure!(coordination.len() == 1 && coordination.iter().filter(|row| !row["child"].is_null()).count() == 1, "coordination: {coordination:?}");
-    ensure!(coordination[0]["child"]["reply"] == "Visible child reply", "child reply: {}", coordination[0]);
-    let journal = snapshot["toolJournal"].as_array().cloned().unwrap_or_default();
-    let texts: Vec<Value> = journal.iter().filter_map(|row| row["result"]["text"].as_str().map(|text| json!(text))).collect();
-    ensure!(texts == [json!("Parent result"), json!("Child result")], "tool journal: {texts:?}");
-    ensure!(journal.last().is_some_and(|row| row["kind"] == "generated_output"), "last journal entry: {:?}", journal.last());
     ensure!(
-        snapshot["artifacts"] == json!([{"id": file, "name": "result.txt", "digest": sha256_hex(&raw), "size": raw.len()}]),
+        history[0]["text"] == "History 2",
+        "oldest history: {}",
+        history[0]
+    );
+    ensure!(
+        snapshot["conversation"]["compaction"]["summary"] == "Earlier summary",
+        "compaction: {}",
+        snapshot["conversation"]["compaction"]
+    );
+    ensure!(
+        snapshot["conversation"]["questions"][0]["id"] == question.as_str(),
+        "questions: {}",
+        snapshot["conversation"]["questions"]
+    );
+    let coordination = snapshot["coordination"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    ensure!(
+        coordination.len() == 1
+            && coordination
+                .iter()
+                .filter(|row| !row["child"].is_null())
+                .count()
+                == 1,
+        "coordination: {coordination:?}"
+    );
+    ensure!(
+        coordination[0]["child"]["reply"] == "Visible child reply",
+        "child reply: {}",
+        coordination[0]
+    );
+    let journal = snapshot["toolJournal"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let texts: Vec<Value> = journal
+        .iter()
+        .filter_map(|row| row["result"]["text"].as_str().map(|text| json!(text)))
+        .collect();
+    ensure!(
+        texts == [json!("Parent result"), json!("Child result")],
+        "tool journal: {texts:?}"
+    );
+    ensure!(
+        journal
+            .last()
+            .is_some_and(|row| row["kind"] == "generated_output"),
+        "last journal entry: {:?}",
+        journal.last()
+    );
+    ensure!(
+        snapshot["artifacts"]
+            == json!([{"id": file, "name": "result.txt", "digest": sha256_hex(&raw), "size": raw.len()}]),
         "artifacts: {}",
         snapshot["artifacts"]
     );
     let encoded = canonical_json(&snapshot);
-    for secret in ["PRIVATE_HUMAN", "FOREIGN_PROJECT", "OTHER_CONVERSATION", "PRIVATE_TOOL", "FOREIGN_TOOL", "ATTACHMENT_BYTES", "legacy-private"] {
+    for secret in [
+        "PRIVATE_HUMAN",
+        "FOREIGN_PROJECT",
+        "OTHER_CONVERSATION",
+        "PRIVATE_TOOL",
+        "FOREIGN_TOOL",
+        "ATTACHMENT_BYTES",
+        "legacy-private",
+    ] {
         ensure!(!encoded.contains(secret), "snapshot contains {secret}");
     }
-    f.db().execute("UPDATE flow_tool_calls SET result=? WHERE turn=?", [json!({"text": "Changed child"}).to_string(), child.clone()])?;
+    f.db().execute(
+        "UPDATE flow_tool_calls SET result=? WHERE turn=?",
+        [json!({"text": "Changed child"}).to_string(), child.clone()],
+    )?;
     let action = new_id();
     let digest = sha256_hex("read");
     let reference = context.data()["snapshotRef"].clone();
@@ -4142,22 +4444,70 @@ async fn context_preserves_scoped_history_questions_compaction_and_child_evidenc
         .await?
         .expect_code("context_stale")?;
     ensure!(
-        canonical_json(f.task_op("context", &task, request.clone(), &token).await?.expect_ok()?.data()) == canonical_json(context.data()),
+        canonical_json(
+            f.task_op("context", &task, request.clone(), &token)
+                .await?
+                .expect_ok()?
+                .data()
+        ) == canonical_json(context.data()),
         "context receipt changed"
     );
-    let private_seq = field(&f, "SELECT seq FROM turns WHERE id=?", [&private_turn], "seq")?;
-    f.db().execute("INSERT INTO compaction_sources VALUES (?,?,1,'done')", (scope.clone(), private_seq.as_i64()))?;
-    let fresh = f.task_op("context", &task, with(request.clone(), json!({"requestId": new_id()})), &token).await?.expect_ok()?;
-    ensure!(fresh.data()["snapshot"]["conversation"]["compaction"].is_null(), "foreign-sourced compaction kept");
-    let snapshots = field(&f, "SELECT count(*) n FROM task_context_snapshots", [], "n")?;
-    f.db().execute("UPDATE flow_tool_calls SET result=? WHERE turn=?", [json!({"text": "x".repeat(9 * 1024 * 1024)}).to_string(), child.clone()])?;
-    f.task_op("context", &task, with(request.clone(), json!({"requestId": new_id()})), &token).await?.expect_code("context_too_large")?;
+    let private_seq = field(
+        &f,
+        "SELECT seq FROM turns WHERE id=?",
+        [&private_turn],
+        "seq",
+    )?;
+    f.db().execute(
+        "INSERT INTO compaction_sources VALUES (?,?,1,'done')",
+        (scope.clone(), private_seq.as_i64()),
+    )?;
+    let fresh = f
+        .task_op(
+            "context",
+            &task,
+            with(request.clone(), json!({"requestId": new_id()})),
+            &token,
+        )
+        .await?
+        .expect_ok()?;
     ensure!(
-        canonical_json(f.task_op("context", &task, request, &token).await?.expect_ok()?.data()) == canonical_json(context.data()),
+        fresh.data()["snapshot"]["conversation"]["compaction"].is_null(),
+        "foreign-sourced compaction kept"
+    );
+    let snapshots = field(&f, "SELECT count(*) n FROM task_context_snapshots", [], "n")?;
+    f.db().execute(
+        "UPDATE flow_tool_calls SET result=? WHERE turn=?",
+        [
+            json!({"text": "x".repeat(9 * 1024 * 1024)}).to_string(),
+            child.clone(),
+        ],
+    )?;
+    f.task_op(
+        "context",
+        &task,
+        with(request.clone(), json!({"requestId": new_id()})),
+        &token,
+    )
+    .await?
+    .expect_code("context_too_large")?;
+    ensure!(
+        canonical_json(
+            f.task_op("context", &task, request, &token)
+                .await?
+                .expect_ok()?
+                .data()
+        ) == canonical_json(context.data()),
         "context receipt after a too-large snapshot"
     );
-    ensure!(field(&f, "SELECT count(*) n FROM task_context_snapshots", [], "n")? == snapshots, "too-large snapshot saved");
-    ensure!(field(&f, "SELECT count(*) n FROM task_actions", [], "n")? == 0, "actions");
+    ensure!(
+        field(&f, "SELECT count(*) n FROM task_context_snapshots", [], "n")? == snapshots,
+        "too-large snapshot saved"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM task_actions", [], "n")? == 0,
+        "actions"
+    );
     Ok(())
 }
 
@@ -4167,21 +4517,56 @@ async fn canonical_history_retains_sequence_cursors_and_excludes_unmapped_foreig
     let f = TaskFixture::new(&["read_history", "read_message"], None).await?;
     context_tables(&f)?;
     let other = new_id();
-    f.human(minarbot_testkit::http::Method::POST, "/api/projects", Some(json!({"requestId": new_id(), "id": other, "name": "Other"})), &f.owner)
-        .await?;
-    let (owner, member, agent, project) = (f.owner.account_id.clone(), f.member.account_id.clone(), f.agent.clone(), f.project.clone());
-    let seed = |text: &str, project: &str, account: &str, root: &str, mapped: bool| seed_turn(&f, text, "Saved original reply", project, account, root, mapped);
+    f.human(
+        minarbot_testkit::http::Method::POST,
+        "/api/projects",
+        Some(json!({"requestId": new_id(), "id": other, "name": "Other"})),
+        &f.owner,
+    )
+    .await?;
+    let (owner, member, agent, project) = (
+        f.owner.account_id.clone(),
+        f.member.account_id.clone(),
+        f.agent.clone(),
+        f.project.clone(),
+    );
+    let seed = |text: &str, project: &str, account: &str, root: &str, mapped: bool| {
+        seed_turn(
+            &f,
+            text,
+            "Saved original reply",
+            project,
+            account,
+            root,
+            mapped,
+        )
+    };
     let mut originals = Vec::new();
     for index in 0..8 {
-        originals.push(seed(&format!("Original {index}"), &project, &owner, &agent, true)?);
+        originals.push(seed(
+            &format!("Original {index}"),
+            &project,
+            &owner,
+            &agent,
+            true,
+        )?);
     }
     let private_turn = seed("PRIVATE", &project, &member, &agent, true)?;
     let foreign = seed("FOREIGN", &other, &owner, &agent, true)?;
     let other_root = seed("OTHER_ROOT", &project, &owner, &new_id(), true)?;
     let unmapped = seed("UNMAPPED", &project, &owner, &agent, false)?;
-    f.db().execute("INSERT INTO queue_positions VALUES (?,?)", (originals[5].0.clone(), originals[4].1))?;
-    f.db().execute("INSERT INTO queue_positions VALUES (?,?)", (originals[4].0.clone(), originals[5].1))?;
-    f.db().execute("UPDATE turns SET status='failed' WHERE id=?", [&originals[0].0])?;
+    f.db().execute(
+        "INSERT INTO queue_positions VALUES (?,?)",
+        (originals[5].0.clone(), originals[4].1),
+    )?;
+    f.db().execute(
+        "INSERT INTO queue_positions VALUES (?,?)",
+        (originals[4].0.clone(), originals[5].1),
+    )?;
+    f.db().execute(
+        "UPDATE turns SET status='failed' WHERE id=?",
+        [&originals[0].0],
+    )?;
     let file = new_id();
     let blocked = new_id();
     let raw = b"SOURCE_DEVICE_BYTES".to_vec();
@@ -4192,55 +4577,172 @@ async fn canonical_history_retains_sequence_cursors_and_excludes_unmapped_foreig
         )?;
         f.db().execute(
             "INSERT INTO record_scopes VALUES ('files',?,?,?,'owner','agent',?)",
-            [json!([id]).to_string(), account.clone(), project.clone(), agent.clone()],
+            [
+                json!([id]).to_string(),
+                account.clone(),
+                project.clone(),
+                agent.clone(),
+            ],
         )?;
     }
-    f.db().execute("UPDATE turns SET attachments=? WHERE id=?", [json!([file, blocked]).to_string(), originals[0].0.clone()])?;
+    f.db().execute(
+        "UPDATE turns SET attachments=? WHERE id=?",
+        [json!([file, blocked]).to_string(), originals[0].0.clone()],
+    )?;
     f.db().execute(
         "INSERT INTO generated_files(turn,file,call_id,call,after_action) VALUES (?,?,?,?,0)",
-        [originals[0].0.as_str(), &file, "file", &json!({"function": {"name": "create_text_file"}}).to_string()],
+        [
+            originals[0].0.as_str(),
+            &file,
+            "file",
+            &json!({"function": {"name": "create_text_file"}}).to_string(),
+        ],
     )?;
     f.db().execute(
         "INSERT INTO questions VALUES (?,?,?,?,?,?,?,0,0)",
-        [new_id().as_str(), &originals[0].0, "question", "{}", "Keep original?", &json!(["Yes"]).to_string(), "Yes"],
+        [
+            new_id().as_str(),
+            &originals[0].0,
+            "question",
+            "{}",
+            "Keep original?",
+            &json!(["Yes"]).to_string(),
+            "Yes",
+        ],
     )?;
     let command = f.command(json!({}));
     f.admit(&f.owner, &command).await?.expect_ok()?;
     let task_id = command["requestId"].as_str().ok_or("task")?.to_owned();
     let (token, ownership, _) = f.acquire_task(&task_id).await?;
     let future = seed("FUTURE", &project, &owner, &agent, true)?;
-    let mut task = Task { id: task_id.clone(), token, ownership, actor: f.owner.clone(), sequence: 0 };
-    let ids = |rows: &Value| -> Vec<Value> { rows.as_array().map(|rows| rows.iter().map(|row| row["id"].clone()).collect()).unwrap_or_default() };
-    let page = result_content(&stage(&f, &mut task, &json!({}), "read_history").await?.run(&f).await?.expect_ok()?);
-    let expected: Vec<Value> = originals[3..].iter().rev().map(|row| json!(row.0)).collect();
+    let mut task = Task {
+        id: task_id.clone(),
+        token,
+        ownership,
+        actor: f.owner.clone(),
+        sequence: 0,
+    };
+    let ids = |rows: &Value| -> Vec<Value> {
+        rows.as_array()
+            .map(|rows| rows.iter().map(|row| row["id"].clone()).collect())
+            .unwrap_or_default()
+    };
+    let page = result_content(
+        &stage(&f, &mut task, &json!({}), "read_history")
+            .await?
+            .run(&f)
+            .await?
+            .expect_ok()?,
+    );
+    let expected: Vec<Value> = originals[3..]
+        .iter()
+        .rev()
+        .map(|row| json!(row.0))
+        .collect();
     ensure!(ids(&page["messages"]) == expected, "first page: {page}");
     ensure!(page["next_before"] == originals[3].1, "cursor: {page}");
-    let next = result_content(&stage(&f, &mut task, &json!({"before": page["next_before"]}), "read_history").await?.run(&f).await?.expect_ok()?);
-    let expected: Vec<Value> = originals[..3].iter().rev().map(|row| json!(row.0)).collect();
+    let next = result_content(
+        &stage(
+            &f,
+            &mut task,
+            &json!({"before": page["next_before"]}),
+            "read_history",
+        )
+        .await?
+        .run(&f)
+        .await?
+        .expect_ok()?,
+    );
+    let expected: Vec<Value> = originals[..3]
+        .iter()
+        .rev()
+        .map(|row| json!(row.0))
+        .collect();
     ensure!(ids(&next["messages"]) == expected, "second page: {next}");
     ensure!(next["next_before"].is_null(), "last cursor: {next}");
-    let read = stage(&f, &mut task, &json!({"id": originals[0].0}), "read_message").await?;
+    let read = stage(
+        &f,
+        &mut task,
+        &json!({"id": originals[0].0}),
+        "read_message",
+    )
+    .await?;
     let read_result = read.run(&f).await?.expect_ok()?;
     let content = result_content(&read_result);
-    ensure!(ids(&content["attachments"]) == [json!(file)], "attachments: {content}");
-    ensure!(ids(&content["generatedFiles"]) == [json!(file)], "generated files: {content}");
-    ensure!(content["questions"][0]["answer"] == "Yes", "questions: {content}");
+    ensure!(
+        ids(&content["attachments"]) == [json!(file)],
+        "attachments: {content}"
+    );
+    ensure!(
+        ids(&content["generatedFiles"]) == [json!(file)],
+        "generated files: {content}"
+    );
+    ensure!(
+        content["questions"][0]["answer"] == "Yes",
+        "questions: {content}"
+    );
     ensure!(content["status"] == "failed", "status: {content}");
-    ensure!(!content.to_string().contains("SOURCE_DEVICE_BYTES"), "file bytes in the message");
-    for id in [&private_turn.0, &foreign.0, &other_root.0, &unmapped.0, &future.0, &task_id] {
-        let result = result_content(&stage(&f, &mut task, &json!({"id": id}), "read_message").await?.run(&f).await?.expect_ok()?);
-        ensure!(result["error"].as_str().is_some_and(|error| error.contains("not found")), "{id} readable: {result}");
+    ensure!(
+        !content.to_string().contains("SOURCE_DEVICE_BYTES"),
+        "file bytes in the message"
+    );
+    for id in [
+        &private_turn.0,
+        &foreign.0,
+        &other_root.0,
+        &unmapped.0,
+        &future.0,
+        &task_id,
+    ] {
+        let result = result_content(
+            &stage(&f, &mut task, &json!({"id": id}), "read_message")
+                .await?
+                .run(&f)
+                .await?
+                .expect_ok()?,
+        );
+        ensure!(
+            result["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("not found")),
+            "{id} readable: {result}"
+        );
     }
-    ensure!(status_of(&f, &mut task, json!({"before": 0}), "read_history").await? == 400, "zero cursor");
-    ensure!(status_of(&f, &mut task, json!({"id": originals[0].0, "offset": -1}), "read_message").await? == 400, "negative offset");
-    f.db().execute("UPDATE turns SET text=?,revision=revision+1 WHERE id=?", ["Changed original", &originals[0].0])?;
+    ensure!(
+        status_of(&f, &mut task, json!({"before": 0}), "read_history").await? == 400,
+        "zero cursor"
+    );
+    ensure!(
+        status_of(
+            &f,
+            &mut task,
+            json!({"id": originals[0].0, "offset": -1}),
+            "read_message"
+        )
+        .await?
+            == 400,
+        "negative offset"
+    );
+    f.db().execute(
+        "UPDATE turns SET text=?,revision=revision+1 WHERE id=?",
+        ["Changed original", &originals[0].0],
+    )?;
     let replay = read.run(&f).await?.expect_ok()?;
-    ensure!(canonical_json(&replay.body) == canonical_json(&read_result.body), "read receipt changed");
+    ensure!(
+        canonical_json(&replay.body) == canonical_json(&read_result.body),
+        "read receipt changed"
+    );
     Ok(())
 }
 
 async fn run_tool(f: &TaskFixture, task: &mut Task, name: &str, args: Value) -> Result<Value> {
-    Ok(result_content(&stage(f, task, &args, name).await?.run(f).await?.expect_ok()?))
+    Ok(result_content(
+        &stage(f, task, &args, name)
+            .await?
+            .run(f)
+            .await?
+            .expect_ok()?,
+    ))
 }
 
 /// A context mutation for a tool call that was never prepared (a forced call).
@@ -4268,14 +4770,21 @@ async fn offered_tools(f: &TaskFixture, task: &Task) -> Result<Value> {
 }
 
 fn not_found(result: &Value) -> bool {
-    result["error"].as_str().is_some_and(|error| error.contains("not found"))
+    result["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("not found"))
 }
 
 async fn new_project(f: &TaskFixture, name: &str) -> Result<String> {
     let project = new_id();
-    f.human(minarbot_testkit::http::Method::POST, "/api/projects", Some(json!({"requestId": new_id(), "id": project, "name": name})), &f.owner)
-        .await?
-        .expect_ok()?;
+    f.human(
+        minarbot_testkit::http::Method::POST,
+        "/api/projects",
+        Some(json!({"requestId": new_id(), "id": project, "name": name})),
+        &f.owner,
+    )
+    .await?
+    .expect_ok()?;
     Ok(project)
 }
 
@@ -4284,11 +4793,20 @@ async fn canonical_skills_retain_installed_pins_owner_mappings_private_boundarie
 ) -> Result<()> {
     let f = TaskFixture::new(&["list_skills", "read_skill", "read_skill_file"], None).await?;
     let config = new_project(&f, "Configuration").await?;
-    let map = |table: &str, key: Value, account: &str| scope_row(&f, table, key, account, &config, "owner", &f.agent);
+    let map = |table: &str, key: Value, account: &str| {
+        scope_row(&f, table, key, account, &config, "owner", &f.agent)
+    };
     let owner = f.owner.account_id.clone();
     let seed = |mapped: bool, account: &str| -> Result<String> {
         let skill = new_id();
-        save_skill(&f, &skill, 0, "Pinned", "Global configuration", "PINNED_INSTRUCTIONS")?;
+        save_skill(
+            &f,
+            &skill,
+            0,
+            "Pinned",
+            "Global configuration",
+            "PINNED_INSTRUCTIONS",
+        )?;
         f.db().execute("INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,1,0)", [&f.agent, &skill])?;
         if mapped {
             map("skills", json!([skill]), account)?;
@@ -4308,15 +4826,35 @@ async fn canonical_skills_retain_installed_pins_owner_mappings_private_boundarie
     let disabled = seed(true, &owner)?;
     let removed = seed(true, &owner)?;
     let uninstalled = seed(true, &owner)?;
-    f.db().execute("UPDATE agent_skills SET enabled=0 WHERE skill=?", [&disabled])?;
-    f.db().execute("UPDATE agent_skills SET removed=1 WHERE skill=?", [&removed])?;
-    f.db().execute("DELETE FROM agent_skills WHERE skill=?", [&uninstalled])?;
+    f.db().execute(
+        "UPDATE agent_skills SET enabled=0 WHERE skill=?",
+        [&disabled],
+    )?;
+    f.db().execute(
+        "UPDATE agent_skills SET removed=1 WHERE skill=?",
+        [&removed],
+    )?;
+    f.db()
+        .execute("DELETE FROM agent_skills WHERE skill=?", [&uninstalled])?;
     let other_agent = new_id();
-    f.db().execute("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Other','fixture','Private')", [&other_agent])?;
+    f.db().execute(
+        "INSERT INTO agents(id,name,model,instructions) VALUES (?,'Other','fixture','Private')",
+        [&other_agent],
+    )?;
     f.db().execute("INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,1,0)", [&other_agent, &uninstalled])?;
     map("agent_skills", json!([other_agent, uninstalled]), &owner)?;
-    save_skill(&f, &skill, 1, "Latest", "Uninstalled version", "LATEST_MUST_NOT_LEAK")?;
-    let binary = minarbot_testkit::base64::Engine::encode(&minarbot_testkit::base64::engine::general_purpose::STANDARD, b"BINARY_MUST_NOT_LEAK");
+    save_skill(
+        &f,
+        &skill,
+        1,
+        "Latest",
+        "Uninstalled version",
+        "LATEST_MUST_NOT_LEAK",
+    )?;
+    let binary = minarbot_testkit::base64::Engine::encode(
+        &minarbot_testkit::base64::engine::general_purpose::STANDARD,
+        b"BINARY_MUST_NOT_LEAK",
+    );
     let text = format!("{}TEXT_TAIL", "x".repeat(8000));
     f.db().execute(
         "INSERT INTO skill_files VALUES (?,1,?)",
@@ -4324,68 +4862,223 @@ async fn canonical_skills_retain_installed_pins_owner_mappings_private_boundarie
     )?;
     map("skill_files", json!([skill, 1]), &owner)?;
     let mut main = start(&f, &f.owner, Some(json!({"v": 1, "kind": "direct", "message": {"text": "Read installed configuration", "files": []}}))).await?;
-    let ids = |rows: &Value| -> Vec<Value> { rows.as_array().map(|rows| rows.iter().map(|row| row["id"].clone()).collect()).unwrap_or_default() };
+    let ids = |rows: &Value| -> Vec<Value> {
+        rows.as_array()
+            .map(|rows| rows.iter().map(|row| row["id"].clone()).collect())
+            .unwrap_or_default()
+    };
     let page = run_tool(&f, &mut main, "list_skills", json!({})).await?;
     let first_page: Vec<Value> = installed[..10].iter().map(|id| json!(id)).collect();
     ensure!(ids(&page["items"]) == first_page, "first page: {page}");
-    ensure!(page["next_after"] == installed[9].as_str(), "cursor: {page}");
-    let next = run_tool(&f, &mut main, "list_skills", json!({"after": page["next_after"]})).await?;
-    ensure!(ids(&next["items"]) == [json!(installed[10])], "second page: {next}");
+    ensure!(
+        page["next_after"] == installed[9].as_str(),
+        "cursor: {page}"
+    );
+    let next = run_tool(
+        &f,
+        &mut main,
+        "list_skills",
+        json!({"after": page["next_after"]}),
+    )
+    .await?;
+    ensure!(
+        ids(&next["items"]) == [json!(installed[10])],
+        "second page: {next}"
+    );
     let read = run_tool(&f, &mut main, "read_skill", json!({"id": skill})).await?;
     ensure!(read["version"] == 1, "pinned version: {read}");
     ensure!(read["content"] == "PINNED_INSTRUCTIONS", "content: {read}");
-    ensure!(read["files"] == json!([{"path": "notes.txt", "characters": 8009}, {"path": "asset.bin", "binary": true}]), "files: {read}");
+    ensure!(
+        read["files"]
+            == json!([{"path": "notes.txt", "characters": 8009}, {"path": "asset.bin", "binary": true}]),
+        "files: {read}"
+    );
     ensure!(!read.to_string().contains(&binary), "binary leaked");
-    let first = run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "notes.txt"})).await?;
+    let first = run_tool(
+        &f,
+        &mut main,
+        "read_skill_file",
+        json!({"id": skill, "path": "notes.txt"}),
+    )
+    .await?;
     ensure!(first["content"] == "x".repeat(8000), "first chunk");
-    ensure!(first["next_offset"] == 8000, "next offset: {}", first["next_offset"]);
-    ensure!(run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "notes.txt", "offset": 8000})).await?["content"] == "TEXT_TAIL", "tail");
-    ensure!(run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "asset.bin"})).await?["binary"] == true, "binary file");
+    ensure!(
+        first["next_offset"] == 8000,
+        "next offset: {}",
+        first["next_offset"]
+    );
+    ensure!(
+        run_tool(
+            &f,
+            &mut main,
+            "read_skill_file",
+            json!({"id": skill, "path": "notes.txt", "offset": 8000})
+        )
+        .await?["content"]
+            == "TEXT_TAIL",
+        "tail"
+    );
+    ensure!(
+        run_tool(
+            &f,
+            &mut main,
+            "read_skill_file",
+            json!({"id": skill, "path": "asset.bin"})
+        )
+        .await?["binary"]
+            == true,
+        "binary file"
+    );
     for id in [&unmapped, &foreign, &disabled, &removed, &uninstalled] {
-        ensure!(not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": id})).await?), "{id} readable");
+        ensure!(
+            not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": id})).await?),
+            "{id} readable"
+        );
     }
-    for (table, key) in [("skills", json!([installed[3]])), ("skill_versions", json!([installed[3], 1])), ("agent_skills", json!([f.agent, installed[3]]))] {
-        f.db().execute("UPDATE record_scopes SET account=? WHERE table_name=? AND key_json=?", [&f.foreign.account_id, table, &key.to_string()])?;
-        ensure!(not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": installed[3]})).await?), "{table} foreign mapping");
-        f.db().execute("DELETE FROM record_scopes WHERE table_name=? AND key_json=?", [table, &key.to_string()])?;
-        ensure!(not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": installed[3]})).await?), "{table} missing mapping");
+    for (table, key) in [
+        ("skills", json!([installed[3]])),
+        ("skill_versions", json!([installed[3], 1])),
+        ("agent_skills", json!([f.agent, installed[3]])),
+    ] {
+        f.db().execute(
+            "UPDATE record_scopes SET account=? WHERE table_name=? AND key_json=?",
+            [&f.foreign.account_id, table, &key.to_string()],
+        )?;
+        ensure!(
+            not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": installed[3]})).await?),
+            "{table} foreign mapping"
+        );
+        f.db().execute(
+            "DELETE FROM record_scopes WHERE table_name=? AND key_json=?",
+            [table, &key.to_string()],
+        )?;
+        ensure!(
+            not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": installed[3]})).await?),
+            "{table} missing mapping"
+        );
         map(table, key, &owner)?;
     }
-    for (name, args) in [("list_skills", json!({"after": "invalid"})), ("read_skill", json!({"id": "invalid"})), ("read_skill_file", json!({"id": skill, "path": "notes.txt", "offset": -1}))] {
-        ensure!(status_of(&f, &mut main, args, name).await? == 400, "{name} accepted invalid arguments");
+    for (name, args) in [
+        ("list_skills", json!({"after": "invalid"})),
+        ("read_skill", json!({"id": "invalid"})),
+        (
+            "read_skill_file",
+            json!({"id": skill, "path": "notes.txt", "offset": -1}),
+        ),
+    ] {
+        ensure!(
+            status_of(&f, &mut main, args, name).await? == 400,
+            "{name} accepted invalid arguments"
+        );
     }
-    ensure!(not_found(&run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "../notes.txt"})).await?), "path traversal");
-    f.db().execute("DELETE FROM record_scopes WHERE table_name='skill_files' AND key_json=?", [json!([skill, 1]).to_string()])?;
-    ensure!(run_tool(&f, &mut main, "read_skill", json!({"id": skill})).await?["files"] == json!([]), "unmapped files listed");
-    ensure!(not_found(&run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "notes.txt"})).await?), "unmapped file readable");
+    ensure!(
+        not_found(
+            &run_tool(
+                &f,
+                &mut main,
+                "read_skill_file",
+                json!({"id": skill, "path": "../notes.txt"})
+            )
+            .await?
+        ),
+        "path traversal"
+    );
+    f.db().execute(
+        "DELETE FROM record_scopes WHERE table_name='skill_files' AND key_json=?",
+        [json!([skill, 1]).to_string()],
+    )?;
+    ensure!(
+        run_tool(&f, &mut main, "read_skill", json!({"id": skill})).await?["files"] == json!([]),
+        "unmapped files listed"
+    );
+    ensure!(
+        not_found(
+            &run_tool(
+                &f,
+                &mut main,
+                "read_skill_file",
+                json!({"id": skill, "path": "notes.txt"})
+            )
+            .await?
+        ),
+        "unmapped file readable"
+    );
     map("skill_files", json!([skill, 1]), &owner)?;
     let saved = stage(&f, &mut main, &json!({"id": skill}), "read_skill").await?;
     let result = saved.run(&f).await?.expect_ok()?;
-    f.db().execute("UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE skill=?", [&skill])?;
-    ensure!(canonical_json(&saved.run(&f).await?.expect_ok()?.body) == canonical_json(&result.body), "read receipt changed");
-    ensure!(not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": skill})).await?), "disabled skill readable");
+    f.db().execute(
+        "UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE skill=?",
+        [&skill],
+    )?;
+    ensure!(
+        canonical_json(&saved.run(&f).await?.expect_ok()?.body) == canonical_json(&result.body),
+        "read receipt changed"
+    );
+    ensure!(
+        not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": skill})).await?),
+        "disabled skill readable"
+    );
     let stale = stage(&f, &mut main, &json!({"id": installed[1]}), "read_skill").await?;
-    f.db().execute("UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE skill=?", [&installed[1]])?;
+    f.db().execute(
+        "UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE skill=?",
+        [&installed[1]],
+    )?;
     stale.run(&f).await?.expect_code("context_stale")?;
     let thread = insert_thread(&f, &owner)?;
-    let mut side = start(&f, &f.owner, Some(side_payload(&thread, "Read installed configuration"))).await?;
-    ensure!(run_tool(&f, &mut side, "read_skill", json!({"id": installed[2]})).await?["content"] == "PINNED_INSTRUCTIONS", "side read");
-    f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, &f.agent])?;
-    f.db().execute("INSERT INTO response_policies VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, &f.agent])?;
+    let mut side = start(
+        &f,
+        &f.owner,
+        Some(side_payload(&thread, "Read installed configuration")),
+    )
+    .await?;
+    ensure!(
+        run_tool(&f, &mut side, "read_skill", json!({"id": installed[2]})).await?["content"]
+            == "PINNED_INSTRUCTIONS",
+        "side read"
+    );
+    f.db().execute(
+        "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+        [&f.project, &f.member.account_id, &f.agent],
+    )?;
+    f.db().execute(
+        "INSERT INTO response_policies VALUES (?,?,?,1,1)",
+        [&f.project, &f.member.account_id, &f.agent],
+    )?;
     let mut member = start(&f, &f.member, None).await?;
-    ensure!(run_tool(&f, &mut member, "read_skill", json!({"id": installed[2]})).await?["content"] == "PINNED_INSTRUCTIONS", "member read");
+    ensure!(
+        run_tool(&f, &mut member, "read_skill", json!({"id": installed[2]})).await?["content"]
+            == "PINNED_INSTRUCTIONS",
+        "member read"
+    );
     let channel = insert_channel(&f)?;
-    let mut room = start(&f, &f.owner, Some(channel_payload(&channel, "Read installed configuration"))).await?;
-    ensure!(offered_tools(&f, &room).await? == json!([]), "channel tools offered");
-    stage(&f, &mut room, &json!({}), "list_skills").await?.run(&f).await?.expect_code("execution_denied")?;
+    let mut room = start(
+        &f,
+        &f.owner,
+        Some(channel_payload(&channel, "Read installed configuration")),
+    )
+    .await?;
+    ensure!(
+        offered_tools(&f, &room).await? == json!([]),
+        "channel tools offered"
+    );
+    stage(&f, &mut room, &json!({}), "list_skills")
+        .await?
+        .run(&f)
+        .await?
+        .expect_code("execution_denied")?;
     Ok(())
 }
 
 #[tokio::test]
-async fn canonical_routine_tools_keep_private_project_mappings_pagination_and_flow_scope() -> Result<()> {
+async fn canonical_routine_tools_keep_private_project_mappings_pagination_and_flow_scope(
+) -> Result<()> {
     let f = TaskFixture::new(&["list_routines", "read_routine", "set_routine_flow"], None).await?;
     let mut task = start(&f, &f.owner, None).await?;
-    ensure!(run_tool(&f, &mut task, "list_routines", json!({})).await? == json!({"routines": [], "next_after": null}), "empty list");
+    ensure!(
+        run_tool(&f, &mut task, "list_routines", json!({})).await?
+            == json!({"routines": [], "next_after": null}),
+        "empty list"
+    );
     f.db().execute_batch(
         "CREATE TABLE IF NOT EXISTS routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT,secret TEXT);
          CREATE TABLE IF NOT EXISTS routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER);
@@ -4402,7 +5095,12 @@ async fn canonical_routine_tools_keep_private_project_mappings_pagination_and_fl
         if mapped {
             f.db().execute(
                 "INSERT INTO record_scopes VALUES ('routines',?,?,?,'owner','agent',?)",
-                [json!([id]).to_string(), account.to_owned(), project.to_owned(), agent.to_owned()],
+                [
+                    json!([id]).to_string(),
+                    account.to_owned(),
+                    project.to_owned(),
+                    agent.to_owned(),
+                ],
             )?;
         }
         Ok(id)
@@ -4416,45 +5114,115 @@ async fn canonical_routine_tools_keep_private_project_mappings_pagination_and_fl
     let private_routine = seed(&f.project, &f.member.account_id, true, &f.agent)?;
     let unmapped = seed(&f.project, &owner, false, &f.agent)?;
     let unassigned = new_id();
-    f.db().execute("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Unassigned','fixture','Help')", [&unassigned])?;
+    f.db().execute(
+        "INSERT INTO agents(id,name,model,instructions) VALUES (?,'Unassigned','fixture','Help')",
+        [&unassigned],
+    )?;
     let foreign_agent = seed(&f.project, &owner, true, &unassigned)?;
-    let ids = |rows: &Value| -> Vec<Value> { rows.as_array().map(|rows| rows.iter().map(|row| row["id"].clone()).collect()).unwrap_or_default() };
+    let ids = |rows: &Value| -> Vec<Value> {
+        rows.as_array()
+            .map(|rows| rows.iter().map(|row| row["id"].clone()).collect())
+            .unwrap_or_default()
+    };
     let page = run_tool(&f, &mut task, "list_routines", json!({})).await?;
     let first_page: Vec<Value> = visible[..10].iter().map(|id| json!(id)).collect();
     ensure!(ids(&page["routines"]) == first_page, "first page: {page}");
     ensure!(page["next_after"] == visible[9].as_str(), "cursor: {page}");
-    ensure!(!page.to_string().contains("Routine prompt"), "list carries prompts");
-    ensure!(!page.to_string().contains("SECRET_MUST_NOT_LEAK"), "list carries secrets");
-    let next = run_tool(&f, &mut task, "list_routines", json!({"after": page["next_after"]})).await?;
-    ensure!(ids(&next["routines"]) == [json!(visible[10])], "second page: {next}");
+    ensure!(
+        !page.to_string().contains("Routine prompt"),
+        "list carries prompts"
+    );
+    ensure!(
+        !page.to_string().contains("SECRET_MUST_NOT_LEAK"),
+        "list carries secrets"
+    );
+    let next = run_tool(
+        &f,
+        &mut task,
+        "list_routines",
+        json!({"after": page["next_after"]}),
+    )
+    .await?;
+    ensure!(
+        ids(&next["routines"]) == [json!(visible[10])],
+        "second page: {next}"
+    );
     ensure!(next["next_after"].is_null(), "last cursor: {next}");
     let plain = run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?;
     ensure!(plain["prompt"] == "Routine prompt", "prompt: {plain}");
-    ensure!(plain["flow"] == json!({"graph": {"root": f.agent, "nodes": [f.agent], "links": []}, "revision": 0}), "default flow: {plain}");
-    ensure!(!plain.to_string().contains("SECRET_MUST_NOT_LEAK"), "read carries secrets");
+    ensure!(
+        plain["flow"]
+            == json!({"graph": {"root": f.agent, "nodes": [f.agent], "links": []}, "revision": 0}),
+        "default flow: {plain}"
+    );
+    ensure!(
+        !plain.to_string().contains("SECRET_MUST_NOT_LEAK"),
+        "read carries secrets"
+    );
     let graph = json!({"root": f.agent, "nodes": [f.agent], "links": []});
-    f.db().execute("INSERT INTO routine_flows VALUES (?,?,2)", [visible[0].clone(), graph.to_string()])?;
-    ensure!(not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?), "unmapped flow readable");
+    f.db().execute(
+        "INSERT INTO routine_flows VALUES (?,?,2)",
+        [visible[0].clone(), graph.to_string()],
+    )?;
+    ensure!(
+        not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?),
+        "unmapped flow readable"
+    );
     f.db().execute(
         "INSERT INTO record_scopes VALUES ('routine_flows',?,?,?,'owner','agent',?)",
-        [json!([visible[0]]).to_string(), owner.clone(), other.clone(), f.agent.clone()],
+        [
+            json!([visible[0]]).to_string(),
+            owner.clone(),
+            other.clone(),
+            f.agent.clone(),
+        ],
     )?;
-    ensure!(not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?), "foreign-project flow readable");
-    f.db().execute("UPDATE record_scopes SET project=? WHERE table_name='routine_flows'", [&f.project])?;
-    ensure!(run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?["flow"] == json!({"graph": graph, "revision": 2}), "mapped flow");
-    f.db().execute("UPDATE record_scopes SET account=? WHERE table_name='routine_flows'", [&f.member.account_id])?;
-    ensure!(not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?), "private flow readable");
+    ensure!(
+        not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?),
+        "foreign-project flow readable"
+    );
+    f.db().execute(
+        "UPDATE record_scopes SET project=? WHERE table_name='routine_flows'",
+        [&f.project],
+    )?;
+    ensure!(
+        run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?["flow"]
+            == json!({"graph": graph, "revision": 2}),
+        "mapped flow"
+    );
+    f.db().execute(
+        "UPDATE record_scopes SET account=? WHERE table_name='routine_flows'",
+        [&f.member.account_id],
+    )?;
+    ensure!(
+        not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?),
+        "private flow readable"
+    );
     for id in [&foreign, &private_routine, &unmapped, &foreign_agent] {
-        ensure!(not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": id})).await?), "{id} readable");
+        ensure!(
+            not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": id})).await?),
+            "{id} readable"
+        );
     }
-    for (name, args) in [("list_routines", json!({"after": "bad"})), ("read_routine", json!({"id": "bad"}))] {
-        ensure!(status_of(&f, &mut task, args, name).await? == 400, "{name} accepted a bad id");
+    for (name, args) in [
+        ("list_routines", json!({"after": "bad"})),
+        ("read_routine", json!({"id": "bad"})),
+    ] {
+        ensure!(
+            status_of(&f, &mut task, args, name).await? == 400,
+            "{name} accepted a bad id"
+        );
     }
     let channel = insert_channel(&f)?;
     let room = start(&f, &f.owner, Some(channel_payload(&channel, "Forced read"))).await?;
-    ensure!(offered_tools(&f, &room).await? == json!([]), "channel tools offered");
+    ensure!(
+        offered_tools(&f, &room).await? == json!([]),
+        "channel tools offered"
+    );
     for name in ["list_routines", "set_routine_flow"] {
-        forced(&f, &room, name, "{}").await?.expect_code("execution_denied")?;
+        forced(&f, &room, name, "{}")
+            .await?
+            .expect_code("execution_denied")?;
     }
     Ok(())
 }
@@ -4463,32 +5231,81 @@ async fn canonical_routine_tools_keep_private_project_mappings_pagination_and_fl
 async fn canonical_routine_edits_require_project_agents_and_assignment_preserve_cas_and_roll_back_with_result_failure(
 ) -> Result<()> {
     let f = TaskFixture::new(&["set_routine_flow"], None).await?;
-    let (recipient, outsider, routine, private_routine, foreign_routine) = (new_id(), new_id(), new_id(), new_id(), new_id());
+    let (recipient, outsider, routine, private_routine, foreign_routine) =
+        (new_id(), new_id(), new_id(), new_id(), new_id());
     let other = new_project(&f, "Other").await?;
     for (id, project) in [(&recipient, &f.project), (&outsider, &other)] {
-        f.human(minarbot_testkit::http::Method::POST, "/api/agents", Some(with(agent_body(id, "Recipient", &f), json!({"projectId": project}))), &f.owner)
-            .await?
-            .expect_ok()?;
+        f.human(
+            minarbot_testkit::http::Method::POST,
+            "/api/agents",
+            Some(with(
+                agent_body(id, "Recipient", &f),
+                json!({"projectId": project}),
+            )),
+            &f.owner,
+        )
+        .await?
+        .expect_ok()?;
     }
-    f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, &f.agent])?;
+    f.db().execute(
+        "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+        [&f.project, &f.member.account_id, &f.agent],
+    )?;
     f.db().execute_batch(
         "CREATE TABLE IF NOT EXISTS routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT);
          CREATE TABLE IF NOT EXISTS routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER);
          CREATE TABLE IF NOT EXISTS flow_runs(root_turn TEXT PRIMARY KEY,graph TEXT);",
     )?;
-    for (id, project, visibility) in [(&routine, &f.project, "project"), (&private_routine, &f.project, "owner"), (&foreign_routine, &other, "project")] {
+    for (id, project, visibility) in [
+        (&routine, &f.project, "project"),
+        (&private_routine, &f.project, "owner"),
+        (&foreign_routine, &other, "project"),
+    ] {
         f.db().execute("INSERT INTO routines(id,agent,name,prompt,next_at,interval_ms,enabled,revision,trigger) VALUES (?,?,'Routine','Prompt',123456,NULL,1,1,'schedule')", [id, &f.agent])?;
         f.db().execute(
             "INSERT INTO record_scopes VALUES ('routines',?,?,?,?,'agent',?)",
-            [json!([id]).to_string(), f.owner.account_id.clone(), project.clone(), visibility.to_owned(), f.agent.clone()],
+            [
+                json!([id]).to_string(),
+                f.owner.account_id.clone(),
+                project.clone(),
+                visibility.to_owned(),
+                f.agent.clone(),
+            ],
         )?;
     }
     let mut task = start(&f, &f.member, None).await?;
     for id in [private_routine.clone(), foreign_routine.clone(), new_id()] {
-        ensure!(not_found(&run_tool(&f, &mut task, "set_routine_flow", json!({"id": id, "revision": 0, "links": []})).await?), "{id} editable");
+        ensure!(
+            not_found(
+                &run_tool(
+                    &f,
+                    &mut task,
+                    "set_routine_flow",
+                    json!({"id": id, "revision": 0, "links": []})
+                )
+                .await?
+            ),
+            "{id} editable"
+        );
     }
-    for revision in [json!(-1), json!(1.5), json!(9_007_199_254_740_991_i64), json!(9_007_199_254_740_992_i64), Value::Null] {
-        ensure!(status_of(&f, &mut task, json!({"id": routine, "revision": revision, "links": []}), "set_routine_flow").await? == 400, "revision {revision} accepted");
+    for revision in [
+        json!(-1),
+        json!(1.5),
+        json!(9_007_199_254_740_991_i64),
+        json!(9_007_199_254_740_992_i64),
+        Value::Null,
+    ] {
+        ensure!(
+            status_of(
+                &f,
+                &mut task,
+                json!({"id": routine, "revision": revision, "links": []}),
+                "set_routine_flow"
+            )
+            .await?
+                == 400,
+            "revision {revision} accepted"
+        );
     }
     let agent = f.agent.clone();
     for links in [
@@ -4497,75 +5314,213 @@ async fn canonical_routine_edits_require_project_agents_and_assignment_preserve_
         json!([{"from": agent, "to": recipient}, {"from": agent, "to": recipient}]),
         Value::Null,
     ] {
-        ensure!(status_of(&f, &mut task, json!({"id": routine, "revision": 0, "links": links}), "set_routine_flow").await? == 400, "links {links} accepted");
+        ensure!(
+            status_of(
+                &f,
+                &mut task,
+                json!({"id": routine, "revision": 0, "links": links}),
+                "set_routine_flow"
+            )
+            .await?
+                == 400,
+            "links {links} accepted"
+        );
     }
     for to in [outsider.clone(), recipient.clone(), new_id()] {
-        ensure!(status_of(&f, &mut task, json!({"id": routine, "revision": 0, "links": [{"from": agent, "to": to}]}), "set_routine_flow").await? == 404, "recipient {to} accepted");
+        ensure!(
+            status_of(
+                &f,
+                &mut task,
+                json!({"id": routine, "revision": 0, "links": [{"from": agent, "to": to}]}),
+                "set_routine_flow"
+            )
+            .await?
+                == 404,
+            "recipient {to} accepted"
+        );
     }
-    ensure!(field(&f, "SELECT count(*) n FROM routine_flows", [], "n")? == 0, "flows saved");
-    f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, &recipient])?;
+    ensure!(
+        field(&f, "SELECT count(*) n FROM routine_flows", [], "n")? == 0,
+        "flows saved"
+    );
+    f.db().execute(
+        "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+        [&f.project, &f.member.account_id, &recipient],
+    )?;
     f.db().execute_batch("CREATE TRIGGER fail_flow_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;")?;
-    let pending = stage(&f, &mut task, &json!({"id": routine, "revision": 0, "links": [{"from": agent, "to": recipient}]}), "set_routine_flow").await?;
+    let pending = stage(
+        &f,
+        &mut task,
+        &json!({"id": routine, "revision": 0, "links": [{"from": agent, "to": recipient}]}),
+        "set_routine_flow",
+    )
+    .await?;
     pending.run(&f).await?.expect_code("storage_failed")?;
-    ensure!(field(&f, "SELECT count(*) n FROM routine_flows", [], "n")? == 0, "flow kept after a failed result");
-    ensure!(field(&f, "SELECT count(*) n FROM record_scopes WHERE table_name='routine_flows'", [], "n")? == 0, "flow scope kept");
+    ensure!(
+        field(&f, "SELECT count(*) n FROM routine_flows", [], "n")? == 0,
+        "flow kept after a failed result"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT count(*) n FROM record_scopes WHERE table_name='routine_flows'",
+            [],
+            "n"
+        )? == 0,
+        "flow scope kept"
+    );
     f.db().execute_batch("DROP TRIGGER fail_flow_result")?;
     let saved = result_content(&pending.run(&f).await?.expect_ok()?);
     let graph = saved["graph"].clone();
-    ensure!(saved == json!({"graph": {"root": agent, "nodes": [agent, recipient], "links": [{"from": agent, "to": recipient}]}, "revision": 1}), "saved: {saved}");
-    let mapping = one(&f, "SELECT account,project,visibility FROM record_scopes WHERE table_name='routine_flows'", [])?;
-    ensure!(mapping == json!({"account": f.owner.account_id, "project": f.project, "visibility": "project"}), "mapping: {mapping}");
-    f.db().execute("INSERT INTO flow_runs(root_turn,graph) VALUES (?,?)", [task.id.clone(), graph.to_string()])?;
-    ensure!(status_of(&f, &mut task, json!({"id": routine, "revision": 0, "links": []}), "set_routine_flow").await? == 409, "stale revision accepted");
-    let pending = stage(&f, &mut task, &json!({"id": routine, "revision": 1, "links": []}), "set_routine_flow").await?;
+    ensure!(
+        saved
+            == json!({"graph": {"root": agent, "nodes": [agent, recipient], "links": [{"from": agent, "to": recipient}]}, "revision": 1}),
+        "saved: {saved}"
+    );
+    let mapping = one(
+        &f,
+        "SELECT account,project,visibility FROM record_scopes WHERE table_name='routine_flows'",
+        [],
+    )?;
+    ensure!(
+        mapping
+            == json!({"account": f.owner.account_id, "project": f.project, "visibility": "project"}),
+        "mapping: {mapping}"
+    );
+    f.db().execute(
+        "INSERT INTO flow_runs(root_turn,graph) VALUES (?,?)",
+        [task.id.clone(), graph.to_string()],
+    )?;
+    ensure!(
+        status_of(
+            &f,
+            &mut task,
+            json!({"id": routine, "revision": 0, "links": []}),
+            "set_routine_flow"
+        )
+        .await?
+            == 409,
+        "stale revision accepted"
+    );
+    let pending = stage(
+        &f,
+        &mut task,
+        &json!({"id": routine, "revision": 1, "links": []}),
+        "set_routine_flow",
+    )
+    .await?;
     let cleared = json!({"graph": {"root": agent, "nodes": [agent], "links": []}, "revision": 2});
-    ensure!(result_content(&pending.run(&f).await?.expect_ok()?) == cleared, "cleared flow");
-    let run_graph: Value = serde_json::from_str(field(&f, "SELECT graph FROM flow_runs", [], "graph")?.as_str().ok_or("graph")?)?;
+    ensure!(
+        result_content(&pending.run(&f).await?.expect_ok()?) == cleared,
+        "cleared flow"
+    );
+    let run_graph: Value = serde_json::from_str(
+        field(&f, "SELECT graph FROM flow_runs", [], "graph")?
+            .as_str()
+            .ok_or("graph")?,
+    )?;
     ensure!(run_graph == graph, "running flow changed: {run_graph}");
-    ensure!(result_content(&pending.run(&f).await?.expect_ok()?) == cleared, "replay");
-    f.db().execute("UPDATE tasks SET state='cancelled',revision=revision+1 WHERE id=?", [&task.id])?;
-    ensure!(result_content(&pending.run(&f).await?.expect_ok()?) == cleared, "replay after cancellation");
-    ensure!(field(&f, "SELECT revision FROM routine_flows WHERE routine=?", [&routine], "revision")? == 2, "flow revision");
+    ensure!(
+        result_content(&pending.run(&f).await?.expect_ok()?) == cleared,
+        "replay"
+    );
+    f.db().execute(
+        "UPDATE tasks SET state='cancelled',revision=revision+1 WHERE id=?",
+        [&task.id],
+    )?;
+    ensure!(
+        result_content(&pending.run(&f).await?.expect_ok()?) == cleared,
+        "replay after cancellation"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT revision FROM routine_flows WHERE routine=?",
+            [&routine],
+            "revision"
+        )? == 2,
+        "flow revision"
+    );
     Ok(())
 }
 
 async fn provider_settings(side: bool) -> Result<()> {
     let f = TaskFixture::new(&["read_provider_settings"], None).await?;
-    let actor = if side { f.member.clone() } else { f.owner.clone() };
+    let actor = if side {
+        f.member.clone()
+    } else {
+        f.owner.clone()
+    };
     let payload = if side {
-        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &actor.account_id, &f.agent])?;
+        f.db().execute(
+            "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+            [&f.project, &actor.account_id, &f.agent],
+        )?;
         side_payload(&insert_thread(&f, &actor.account_id)?, "Read settings")
     } else {
         json!({"v": 1, "kind": "direct", "message": {"text": "Read settings", "files": []}})
     };
     let mut task = start(&f, &actor, Some(payload)).await?;
     let read = run_tool(&f, &mut task, "read_provider_settings", json!({})).await?;
-    ensure!(read == json!({"revision": 1, "providerInstance": "", "model": "fixture", "configured": false}), "unbound: {read}");
-    f.db().execute("UPDATE agents SET provider_instance='codex-owner' WHERE id=?", [&f.agent])?;
+    ensure!(
+        read == json!({"revision": 1, "providerInstance": "", "model": "fixture", "configured": false}),
+        "unbound: {read}"
+    );
+    f.db().execute(
+        "UPDATE agents SET provider_instance='codex-owner' WHERE id=?",
+        [&f.agent],
+    )?;
     let read = run_tool(&f, &mut task, "read_provider_settings", json!({})).await?;
-    ensure!(read == json!({"revision": 1, "providerInstance": "codex-owner", "model": "fixture", "configured": true}), "bound: {read}");
-    forced(&f, &task, "read_provider_settings", &json!({"agentId": new_id()}).to_string()).await?.expect_code("unknown_field")?;
+    ensure!(
+        read == json!({"revision": 1, "providerInstance": "codex-owner", "model": "fixture", "configured": true}),
+        "bound: {read}"
+    );
+    forced(
+        &f,
+        &task,
+        "read_provider_settings",
+        &json!({"agentId": new_id()}).to_string(),
+    )
+    .await?
+    .expect_code("unknown_field")?;
     let channel = insert_channel(&f)?;
     let room = start(&f, &f.owner, Some(channel_payload(&channel, "Forced read"))).await?;
-    ensure!(offered_tools(&f, &room).await? == json!([]), "channel tools offered");
-    forced(&f, &room, "read_provider_settings", "{}").await?.expect_code("execution_denied")?;
+    ensure!(
+        offered_tools(&f, &room).await? == json!([]),
+        "channel tools offered"
+    );
+    forced(&f, &room, "read_provider_settings", "{}")
+        .await?
+        .expect_code("execution_denied")?;
     Ok(())
 }
 
 #[tokio::test]
-async fn canonical_provider_settings_read_binding_metadata_only_in_direct_and_stays_private() -> Result<()> {
+async fn canonical_provider_settings_read_binding_metadata_only_in_direct_and_stays_private(
+) -> Result<()> {
     provider_settings(false).await
 }
 
 #[tokio::test]
-async fn canonical_provider_settings_read_binding_metadata_only_in_side_and_stays_private() -> Result<()> {
+async fn canonical_provider_settings_read_binding_metadata_only_in_side_and_stays_private(
+) -> Result<()> {
     provider_settings(true).await
 }
 
 /// Acquire an admitted task by id; `actor` looks it up.
-async fn begin(f: &TaskFixture, id: &str, actor: &minarbot_testkit::canonical::Account) -> Result<Task> {
+async fn begin(
+    f: &TaskFixture,
+    id: &str,
+    actor: &minarbot_testkit::canonical::Account,
+) -> Result<Task> {
     let (token, ownership, _) = f.acquire_task(id).await?;
-    Ok(Task { id: id.to_owned(), token, ownership, actor: actor.clone(), sequence: 0 })
+    Ok(Task {
+        id: id.to_owned(),
+        token,
+        ownership,
+        actor: actor.clone(),
+        sequence: 0,
+    })
 }
 
 /// Admit a `kind` task for `agent` in `project` as `actor`; side threads and
@@ -4591,29 +5546,49 @@ async fn admit_for(
 
 fn side_thread(f: &TaskFixture, agent: &str, account: &str, project: &str) -> Result<String> {
     let thread = new_id();
-    f.db().execute("INSERT INTO threads(id,agent,name) VALUES (?,?,'Side')", [&thread, agent])?;
+    f.db().execute(
+        "INSERT INTO threads(id,agent,name) VALUES (?,?,'Side')",
+        [&thread, agent],
+    )?;
     f.db().execute(
         "INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)",
-        [json!([thread]).to_string(), account.to_owned(), project.to_owned(), thread.clone()],
+        [
+            json!([thread]).to_string(),
+            account.to_owned(),
+            project.to_owned(),
+            thread.clone(),
+        ],
     )?;
     Ok(thread)
 }
 
 fn lead_channel(f: &TaskFixture, members: &[&str]) -> Result<String> {
     let channel = new_id();
-    f.db().execute("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Room','',?)", [&channel, &f.agent])?;
+    f.db().execute(
+        "INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Room','',?)",
+        [&channel, &f.agent],
+    )?;
     for member in members {
-        f.db().execute("INSERT INTO channel_members VALUES (?,?)", [&channel, *member])?;
+        f.db().execute(
+            "INSERT INTO channel_members VALUES (?,?)",
+            [&channel, *member],
+        )?;
     }
     f.db().execute(
         "INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)",
-        [json!([channel]).to_string(), f.owner.account_id.clone(), f.project.clone(), channel.clone()],
+        [
+            json!([channel]).to_string(),
+            f.owner.account_id.clone(),
+            f.project.clone(),
+            channel.clone(),
+        ],
     )?;
     Ok(channel)
 }
 
 #[tokio::test]
-async fn canonical_setup_restricts_host_actions_and_forced_tools_and_requires_a_complete_profile_edit() -> Result<()> {
+async fn canonical_setup_restricts_host_actions_and_forced_tools_and_requires_a_complete_profile_edit(
+) -> Result<()> {
     let f = TaskFixture::new(&["edit_profile", "ask_user", "read_history"], None).await?;
     let binding = new_id();
     let agent = new_id();
@@ -4631,94 +5606,249 @@ async fn canonical_setup_restricts_host_actions_and_forced_tools_and_requires_a_
     .expect_ok()?;
     let mut task = begin(&f, &agent, &f.owner).await?;
     let context = f
-        .task_op("context", &agent, json!({"requestId": new_id(), "ownership": task.ownership, "expectedTaskRevision": 2}), &task.token)
+        .task_op(
+            "context",
+            &agent,
+            json!({"requestId": new_id(), "ownership": task.ownership, "expectedTaskRevision": 2}),
+            &task.token,
+        )
         .await?
         .expect_ok()?;
     let reference = context.data()["snapshotRef"].clone();
     for kind in ["read", "compute", "local", "browser"] {
         let action = new_id();
         let digest = sha256_hex("forbidden");
-        let intent = digest_command(&json!([agent, action, 0, task.ownership, digest, kind, reference["snapshotId"], reference["digest"], null, null, 1, null, null, null]));
+        let intent = digest_command(&json!([
+            agent,
+            action,
+            0,
+            task.ownership,
+            digest,
+            kind,
+            reference["snapshotId"],
+            reference["digest"],
+            null,
+            null,
+            1,
+            null,
+            null,
+            null
+        ]));
         f.prepare(&agent, &action, json!({"requestId": new_id(), "sequence": 0, "ownership": task.ownership, "payloadDigest": digest, "actionKind": kind,
             "contextSnapshotId": reference["snapshotId"], "contextDigest": reference["digest"], "grantRevision": 1, "expectedTaskRevision": 2,
             "journalSequence": 1, "intentDigest": intent}), &task.token)
             .await?
             .expect_code("execution_denied")?;
     }
-    forced(&f, &task, "read_history", "{}").await?.expect_code("execution_denied")?;
-    ensure!(status_of(&f, &mut task, json!({"revision": 1, "name": "Incomplete"}), "edit_profile").await? == 400, "name-only edit");
-    ensure!(status_of(&f, &mut task, json!({"revision": 1, "instructions": "Incomplete"}), "edit_profile").await? == 400, "instructions-only edit");
-    let edited = run_tool(&f, &mut task, "edit_profile", json!({"revision": 1, "name": "Research partner", "instructions": "Cite evidence"})).await?;
-    ensure!(edited == json!({"name": "Research partner", "role": "", "instructions": "Cite evidence", "revision": 2}), "edit: {edited}");
+    forced(&f, &task, "read_history", "{}")
+        .await?
+        .expect_code("execution_denied")?;
+    ensure!(
+        status_of(
+            &f,
+            &mut task,
+            json!({"revision": 1, "name": "Incomplete"}),
+            "edit_profile"
+        )
+        .await?
+            == 400,
+        "name-only edit"
+    );
+    ensure!(
+        status_of(
+            &f,
+            &mut task,
+            json!({"revision": 1, "instructions": "Incomplete"}),
+            "edit_profile"
+        )
+        .await?
+            == 400,
+        "instructions-only edit"
+    );
+    let edited = run_tool(
+        &f,
+        &mut task,
+        "edit_profile",
+        json!({"revision": 1, "name": "Research partner", "instructions": "Cite evidence"}),
+    )
+    .await?;
+    ensure!(
+        edited
+            == json!({"name": "Research partner", "role": "", "instructions": "Cite evidence", "revision": 2}),
+        "edit: {edited}"
+    );
     Ok(())
 }
 
 async fn profile_edit(side: bool) -> Result<()> {
     let f = TaskFixture::new(&["edit_profile"], None).await?;
-    let actor = if side { f.member.clone() } else { f.owner.clone() };
+    let actor = if side {
+        f.member.clone()
+    } else {
+        f.owner.clone()
+    };
     let payload = if side {
-        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &actor.account_id, &f.agent])?;
+        f.db().execute(
+            "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+            [&f.project, &actor.account_id, &f.agent],
+        )?;
         side_payload(&insert_thread(&f, &actor.account_id)?, "Edit profile")
     } else {
         json!({"v": 1, "kind": "direct", "message": {"text": "Edit profile", "files": []}})
     };
     let mut task = start(&f, &actor, Some(payload)).await?;
     let edit = "edit_profile";
-    let first = run_tool(&f, &mut task, edit, json!({"revision": 1, "name": "Renamed", "role": " Orchestration agent "})).await?;
-    ensure!(first == json!({"name": "Renamed", "role": "Orchestration agent", "instructions": "Research", "revision": 2}), "rename: {first}");
-    let stale = run_tool(&f, &mut task, edit, json!({"revision": 1, "instructions": "Stale"})).await?;
-    ensure!(stale == json!({"error": "Profile changed. Ask the user for guidance before changing it again.", "status": 409}), "stale: {stale}");
-    let mut invalid = vec![json!({"revision": 2}), json!({"revision": 2, "name": ""}), json!({"revision": 2, "name": null})];
-    for role in [Value::Null, json!(42), json!("x".repeat(61)), json!("bad\nrole"), json!("bad\u{85}role"), json!("bad\u{2028}role")] {
+    let first = run_tool(
+        &f,
+        &mut task,
+        edit,
+        json!({"revision": 1, "name": "Renamed", "role": " Orchestration agent "}),
+    )
+    .await?;
+    ensure!(
+        first
+            == json!({"name": "Renamed", "role": "Orchestration agent", "instructions": "Research", "revision": 2}),
+        "rename: {first}"
+    );
+    let stale = run_tool(
+        &f,
+        &mut task,
+        edit,
+        json!({"revision": 1, "instructions": "Stale"}),
+    )
+    .await?;
+    ensure!(
+        stale
+            == json!({"error": "Profile changed. Ask the user for guidance before changing it again.", "status": 409}),
+        "stale: {stale}"
+    );
+    let mut invalid = vec![
+        json!({"revision": 2}),
+        json!({"revision": 2, "name": ""}),
+        json!({"revision": 2, "name": null}),
+    ];
+    for role in [
+        Value::Null,
+        json!(42),
+        json!("x".repeat(61)),
+        json!("bad\nrole"),
+        json!("bad\u{85}role"),
+        json!("bad\u{2028}role"),
+    ] {
         invalid.push(json!({"revision": 2, "role": role}));
     }
     invalid.push(json!({"revision": 2, "name": "x".repeat(81)}));
     for instructions in ["\u{0}".to_owned(), " ".to_owned(), "x".repeat(8001)] {
         invalid.push(json!({"revision": 2, "instructions": instructions}));
     }
-    for revision in [json!(0), json!(-1), json!(1.5), json!(9_007_199_254_740_991_i64)] {
+    for revision in [
+        json!(0),
+        json!(-1),
+        json!(1.5),
+        json!(9_007_199_254_740_991_i64),
+    ] {
         invalid.push(json!({"revision": revision, "name": "No"}));
     }
     for args in invalid {
-        ensure!(status_of(&f, &mut task, args.clone(), edit).await? == 400, "accepted {args}");
+        ensure!(
+            status_of(&f, &mut task, args.clone(), edit).await? == 400,
+            "accepted {args}"
+        );
     }
-    let updated = run_tool(&f, &mut task, edit, json!({"revision": 2, "role": "", "instructions": "  Updated instructions  "})).await?;
-    ensure!(updated == json!({"name": "Renamed", "role": "", "instructions": "Updated instructions", "revision": 3}), "update: {updated}");
+    let updated = run_tool(
+        &f,
+        &mut task,
+        edit,
+        json!({"revision": 2, "role": "", "instructions": "  Updated instructions  "}),
+    )
+    .await?;
+    ensure!(
+        updated
+            == json!({"name": "Renamed", "role": "", "instructions": "Updated instructions", "revision": 3}),
+        "update: {updated}"
+    );
     f.db().execute_batch("CREATE TRIGGER fail_profile_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;")?;
-    let pending = stage(&f, &mut task, &json!({"revision": 3, "name": "Rolled back"}), edit).await?;
+    let pending = stage(
+        &f,
+        &mut task,
+        &json!({"revision": 3, "name": "Rolled back"}),
+        edit,
+    )
+    .await?;
     pending.run(&f).await?.expect_code("storage_failed")?;
-    ensure!(field(&f, "SELECT revision FROM agents WHERE id=?", [&f.agent], "revision")? == 3, "profile kept a failed edit");
+    ensure!(
+        field(
+            &f,
+            "SELECT revision FROM agents WHERE id=?",
+            [&f.agent],
+            "revision"
+        )? == 3,
+        "profile kept a failed edit"
+    );
     f.db().execute_batch("DROP TRIGGER fail_profile_result")?;
     let recovered = pending.run(&f).await?.expect_ok()?;
     ensure!(
-        result_content(&recovered) == json!({"name": "Rolled back", "role": "", "instructions": "Updated instructions", "revision": 4}),
+        result_content(&recovered)
+            == json!({"name": "Rolled back", "role": "", "instructions": "Updated instructions", "revision": 4}),
         "recovered: {}",
         result_content(&recovered)
     );
-    ensure!(canonical_json(&pending.run(&f).await?.expect_ok()?.body) == canonical_json(&recovered.body), "replay changed");
-    for name in ["agentId", "model", "providerAccount", "permissions", "homeDeviceId"] {
+    ensure!(
+        canonical_json(&pending.run(&f).await?.expect_ok()?.body)
+            == canonical_json(&recovered.body),
+        "replay changed"
+    );
+    for name in [
+        "agentId",
+        "model",
+        "providerAccount",
+        "permissions",
+        "homeDeviceId",
+    ] {
         let mut args = json!({"revision": 4, "name": "No"});
         args[name] = json!(new_id());
-        forced(&f, &task, edit, &args.to_string()).await?.expect_code("unknown_field")?;
+        forced(&f, &task, edit, &args.to_string())
+            .await?
+            .expect_code("unknown_field")?;
     }
     let channel = lead_channel(&f, &[&f.agent])?;
     let payload = channel_payload(&channel, "Forced profile edit");
     let command = f.command(json!({"payload": payload, "expectedRevisions": with(expected_revisions(&payload), json!({"agent": 4}))}));
     f.admit(&f.owner, &command).await?.expect_ok()?;
     let room = begin(&f, command["requestId"].as_str().ok_or("task")?, &f.owner).await?;
-    ensure!(offered_tools(&f, &room).await? == json!([]), "channel tools offered");
-    forced(&f, &room, edit, &json!({"revision": 2, "name": "No"}).to_string()).await?.expect_code("execution_denied")?;
-    ensure!(field(&f, "SELECT instructions FROM agents WHERE id=?", [&f.agent], "instructions")? == "Updated instructions", "instructions changed");
+    ensure!(
+        offered_tools(&f, &room).await? == json!([]),
+        "channel tools offered"
+    );
+    forced(
+        &f,
+        &room,
+        edit,
+        &json!({"revision": 2, "name": "No"}).to_string(),
+    )
+    .await?
+    .expect_code("execution_denied")?;
+    ensure!(
+        field(
+            &f,
+            "SELECT instructions FROM agents WHERE id=?",
+            [&f.agent],
+            "instructions"
+        )? == "Updated instructions",
+        "instructions changed"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn canonical_profile_edit_in_direct_keeps_atomic_cas_errors_and_channel_privacy() -> Result<()> {
+async fn canonical_profile_edit_in_direct_keeps_atomic_cas_errors_and_channel_privacy() -> Result<()>
+{
     profile_edit(false).await
 }
 
 #[tokio::test]
-async fn canonical_profile_edit_in_side_keeps_atomic_cas_errors_and_channel_privacy() -> Result<()> {
+async fn canonical_profile_edit_in_side_keeps_atomic_cas_errors_and_channel_privacy() -> Result<()>
+{
     profile_edit(true).await
 }
 
@@ -4752,105 +5882,254 @@ async fn canonical_agent_directory_pages_authorized_teammates_and_scopes_activit
     let foreign = add(other.clone()).await?;
     let unowned = new_id();
     f.db().execute_batch("CREATE TABLE IF NOT EXISTS agent_visibility(agent TEXT PRIMARY KEY,hidden INTEGER,revision INTEGER);")?;
-    f.db().execute("INSERT INTO agent_visibility VALUES (?,1,1)", [&hidden])?;
-    f.db().execute("UPDATE agent_projects SET deleted=1 WHERE agent=?", [&deleted])?;
+    f.db()
+        .execute("INSERT INTO agent_visibility VALUES (?,1,1)", [&hidden])?;
+    f.db().execute(
+        "UPDATE agent_projects SET deleted=1 WHERE agent=?",
+        [&deleted],
+    )?;
     f.db().execute("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Foreign','fixture','PRIVATE_PROFILE')", [&unowned])?;
-    f.db().execute("INSERT INTO agent_projects VALUES (?,?,'','{\"tools\":[]}',1,0)", [&f.project, &unowned])?;
-    f.db().execute("INSERT INTO agent_authority VALUES (?,?,?,NULL,1)", [&unowned, &f.foreign.account_id, &f.home])?;
+    f.db().execute(
+        "INSERT INTO agent_projects VALUES (?,?,'','{\"tools\":[]}',1,0)",
+        [&f.project, &unowned],
+    )?;
+    f.db().execute(
+        "INSERT INTO agent_authority VALUES (?,?,?,NULL,1)",
+        [&unowned, &f.foreign.account_id, &f.home],
+    )?;
     for agent in [&f.agent, &visible[0]] {
-        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, agent])?;
+        f.db().execute(
+            "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+            [&f.project, &f.member.account_id, agent],
+        )?;
     }
-    f.db().execute("INSERT INTO response_policies VALUES (?,?,?,0,1)", [&f.project, &f.member.account_id, &visible[0]])?;
+    f.db().execute(
+        "INSERT INTO response_policies VALUES (?,?,?,0,1)",
+        [&f.project, &f.member.account_id, &visible[0]],
+    )?;
     let channel = lead_channel(&f, &[&f.agent, &visible[0], &foreign, &hidden])?;
     let (owner, member) = (f.owner.clone(), f.member.clone());
-    let ids = |page: &Value| -> Vec<Value> { page["agents"].as_array().map(|rows| rows.iter().map(|row| row["id"].clone()).collect()).unwrap_or_default() };
+    let ids = |page: &Value| -> Vec<Value> {
+        page["agents"]
+            .as_array()
+            .map(|rows| rows.iter().map(|row| row["id"].clone()).collect())
+            .unwrap_or_default()
+    };
     let list = "list_agents";
     let direct = admit_for(&f, &f.agent, &owner, &f.project, "direct", "", "Directory").await?;
     let mut main = begin(&f, &direct, &owner).await?;
     let first = run_tool(&f, &mut main, list, json!({})).await?;
     let first_page: Vec<Value> = visible[..10].iter().map(|id| json!(id)).collect();
     ensure!(ids(&first) == first_page, "first page: {first}");
-    ensure!(first["next_after"] == visible[9].as_str(), "cursor: {first}");
     ensure!(
-        first["agents"].as_array().is_some_and(|rows| rows.iter().all(|row| row["role"] == "Research agent"
-            && row["description"].as_str().map(|text| text.chars().count()) == Some(300)
-            && row["status"] == "idle"
-            && row["queuedMessages"] == 0)),
+        first["next_after"] == visible[9].as_str(),
+        "cursor: {first}"
+    );
+    ensure!(
+        first["agents"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().all(|row| row["role"] == "Research agent"
+                && row["description"].as_str().map(|text| text.chars().count()) == Some(300)
+                && row["status"] == "idle"
+                && row["queuedMessages"] == 0)),
         "rows: {first}"
     );
     let second = run_tool(&f, &mut main, list, json!({"after": first["next_after"]})).await?;
-    ensure!(ids(&second) == [json!(visible[10])], "second page: {second}");
+    ensure!(
+        ids(&second) == [json!(visible[10])],
+        "second page: {second}"
+    );
     ensure!(second["next_after"].is_null(), "last cursor: {second}");
     for after in [json!(""), Value::Null, json!(42), json!("bad")] {
-        ensure!(status_of(&f, &mut main, json!({"after": after}), list).await? == 400, "after {after} accepted");
+        ensure!(
+            status_of(&f, &mut main, json!({"after": after}), list).await? == 400,
+            "after {after} accepted"
+        );
     }
     let peer = visible[0].clone();
     let thread = side_thread(&f, &f.agent, &member.account_id, &f.project)?;
-    let side_id = admit_for(&f, &f.agent, &member, &f.project, "side", &thread, "Directory").await?;
+    let side_id = admit_for(
+        &f,
+        &f.agent,
+        &member,
+        &f.project,
+        "side",
+        &thread,
+        "Directory",
+    )
+    .await?;
     let mut side = begin(&f, &side_id, &member).await?;
-    let room_id = admit_for(&f, &f.agent, &member, &f.project, "channel", &channel, "Directory").await?;
+    let room_id = admit_for(
+        &f,
+        &f.agent,
+        &member,
+        &f.project,
+        "channel",
+        &channel,
+        "Directory",
+    )
+    .await?;
     let mut room = begin(&f, &room_id, &member).await?;
-    ensure!(ids(&run_tool(&f, &mut side, list, json!({})).await?) == [json!(peer)], "side directory");
-    ensure!(ids(&run_tool(&f, &mut room, list, json!({})).await?) == [json!(peer)], "room directory");
+    ensure!(
+        ids(&run_tool(&f, &mut side, list, json!({})).await?) == [json!(peer)],
+        "side directory"
+    );
+    ensure!(
+        ids(&run_tool(&f, &mut room, list, json!({})).await?) == [json!(peer)],
+        "room directory"
+    );
     let private_id = admit_for(&f, &peer, &owner, &f.project, "direct", "", "Directory").await?;
     begin(&f, &private_id, &owner).await?;
-    ensure!(run_tool(&f, &mut side, list, json!({})).await?["agents"][0]["status"] == "idle", "side sees owner work");
-    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["status"] == "idle", "room sees owner work");
-    ensure!(run_tool(&f, &mut main, list, json!({})).await?["agents"][0]["status"] == "working", "owner work hidden");
+    ensure!(
+        run_tool(&f, &mut side, list, json!({})).await?["agents"][0]["status"] == "idle",
+        "side sees owner work"
+    );
+    ensure!(
+        run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["status"] == "idle",
+        "room sees owner work"
+    );
+    ensure!(
+        run_tool(&f, &mut main, list, json!({})).await?["agents"][0]["status"] == "working",
+        "owner work hidden"
+    );
     f.db().execute(
         "INSERT INTO agent_projects SELECT ?,agent,rules,capabilities_json,1,0 FROM agent_projects WHERE project=? AND agent=?",
         [&other, &f.project, &peer],
     )?;
     let elsewhere = admit_for(&f, &peer, &owner, &other, "direct", "", "Directory").await?;
     begin(&f, &elsewhere, &owner).await?;
-    f.control(&owner, &private_id, json!({"requestId": new_id(), "expectedRevision": 2, "operation": "cancel"})).await?.expect_ok()?;
-    ensure!(run_tool(&f, &mut main, list, json!({})).await?["agents"][0]["status"] == "idle", "other-project work counted");
+    f.control(
+        &owner,
+        &private_id,
+        json!({"requestId": new_id(), "expectedRevision": 2, "operation": "cancel"}),
+    )
+    .await?
+    .expect_ok()?;
+    ensure!(
+        run_tool(&f, &mut main, list, json!({})).await?["agents"][0]["status"] == "idle",
+        "other-project work counted"
+    );
     admit_for(&f, &peer, &member, &f.project, "direct", "", "Directory").await?;
     let queued = run_tool(&f, &mut side, list, json!({})).await?;
-    ensure!(queued["agents"][0]["status"] == "waiting", "queued status: {queued}");
-    ensure!(run_tool(&f, &mut side, list, json!({})).await?["agents"][0]["queuedMessages"] == 1, "queued count");
-    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["status"] == "idle", "room sees direct work");
-    let shared_id = admit_for(&f, &peer, &member, &f.project, "channel", &channel, "Directory").await?;
+    ensure!(
+        queued["agents"][0]["status"] == "waiting",
+        "queued status: {queued}"
+    );
+    ensure!(
+        run_tool(&f, &mut side, list, json!({})).await?["agents"][0]["queuedMessages"] == 1,
+        "queued count"
+    );
+    ensure!(
+        run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["status"] == "idle",
+        "room sees direct work"
+    );
+    let shared_id = admit_for(
+        &f,
+        &peer,
+        &member,
+        &f.project,
+        "channel",
+        &channel,
+        "Directory",
+    )
+    .await?;
     begin(&f, &shared_id, &member).await?;
     let working = run_tool(&f, &mut room, list, json!({})).await?;
-    ensure!(working["agents"][0]["status"] == "working", "room work: {working}");
-    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["queuedMessages"] == 0, "room queue");
-    f.control(&member, &shared_id, json!({"requestId": new_id(), "expectedRevision": 2, "operation": "pause"})).await?.expect_ok()?;
-    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["status"] == "waiting", "paused room work");
+    ensure!(
+        working["agents"][0]["status"] == "working",
+        "room work: {working}"
+    );
+    ensure!(
+        run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["queuedMessages"] == 0,
+        "room queue"
+    );
+    f.control(
+        &member,
+        &shared_id,
+        json!({"requestId": new_id(), "expectedRevision": 2, "operation": "pause"}),
+    )
+    .await?
+    .expect_ok()?;
+    ensure!(
+        run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["status"] == "waiting",
+        "paused room work"
+    );
     f.db().execute(
         "UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=? AND agent=?",
         [&f.project, &member.account_id, &peer],
     )?;
-    ensure!(run_tool(&f, &mut side, list, json!({})).await?["agents"] == json!([]), "revoked side directory");
-    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"] == json!([]), "revoked room directory");
-    forced(&f, &main, list, &json!({"projectId": other}).to_string()).await?.expect_code("unknown_field")?;
+    ensure!(
+        run_tool(&f, &mut side, list, json!({})).await?["agents"] == json!([]),
+        "revoked side directory"
+    );
+    ensure!(
+        run_tool(&f, &mut room, list, json!({})).await?["agents"] == json!([]),
+        "revoked room directory"
+    );
+    forced(&f, &main, list, &json!({"projectId": other}).to_string())
+        .await?
+        .expect_code("unknown_field")?;
     let revision = task_revision(&f, &main).await?;
-    f.control(&owner, &main.id, json!({"requestId": new_id(), "expectedRevision": revision, "operation": "pause"})).await?.expect_ok()?;
+    f.control(
+        &owner,
+        &main.id,
+        json!({"requestId": new_id(), "expectedRevision": revision, "operation": "pause"}),
+    )
+    .await?
+    .expect_ok()?;
     let paused = task_revision(&f, &main).await?;
     let moved = f
         .control(&owner, &main.id, json!({"requestId": new_id(), "expectedRevision": paused, "operation": "reassign", "recipientAgentId": peer}))
         .await?
         .expect_ok()?;
-    let mut successor = begin(&f, moved.data()["taskId"].as_str().ok_or("successor")?, &owner).await?;
+    let mut successor = begin(
+        &f,
+        moved.data()["taskId"].as_str().ok_or("successor")?,
+        &owner,
+    )
+    .await?;
     let page = run_tool(&f, &mut successor, list, json!({})).await?;
-    ensure!(!ids(&page).iter().any(|id| *id == f.agent.as_str() || *id == peer.as_str()), "successor directory: {page}");
+    ensure!(
+        !ids(&page)
+            .iter()
+            .any(|id| *id == f.agent.as_str() || *id == peer.as_str()),
+        "successor directory: {page}"
+    );
     Ok(())
 }
 
 fn children(f: &TaskFixture, request: &Value) -> Result<Vec<String>> {
     Ok(f.db()
-        .rows("SELECT turn FROM agent_deliveries WHERE request=? ORDER BY turn", [request.as_str().unwrap_or_default()])?
+        .rows(
+            "SELECT turn FROM agent_deliveries WHERE request=? ORDER BY turn",
+            [request.as_str().unwrap_or_default()],
+        )?
         .iter()
         .filter_map(|row| row["turn"].as_str().map(str::to_owned))
         .collect())
 }
 
-async fn send(f: &TaskFixture, task: &mut Task, recipients: &[&str], expects_reply: bool) -> Result<Vec<String>> {
-    let sent = run_tool(f, task, "send_message", json!({"recipients": recipients, "text": "Explicit work", "expects_reply": expects_reply})).await?;
+async fn send(
+    f: &TaskFixture,
+    task: &mut Task,
+    recipients: &[&str],
+    expects_reply: bool,
+) -> Result<Vec<String>> {
+    let sent = run_tool(
+        f,
+        task,
+        "send_message",
+        json!({"recipients": recipients, "text": "Explicit work", "expects_reply": expects_reply}),
+    )
+    .await?;
     children(f, &sent["request"])
 }
 
-async fn task_state(f: &TaskFixture, actor: &minarbot_testkit::canonical::Account, task: &str) -> Result<Value> {
+async fn task_state(
+    f: &TaskFixture,
+    actor: &minarbot_testkit::canonical::Account,
+    task: &str,
+) -> Result<Value> {
     Ok(lookup_data(f, actor, task).await?["state"].clone())
 }
 
@@ -4863,24 +6142,36 @@ async fn canonical_interruption_isolates_sender_human_and_project_while_preservi
         f.human(
             minarbot_testkit::http::Method::POST,
             "/api/agents",
-            Some(with(agent_body(agent, agent, &f), json!({"instructions": "Teammate"}))),
+            Some(with(
+                agent_body(agent, agent, &f),
+                json!({"instructions": "Teammate"}),
+            )),
             &f.owner,
         )
         .await?
         .expect_ok()?;
     }
     for agent in [&f.agent, &beta, &gamma, &delta, &epsilon] {
-        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, agent])?;
+        f.db().execute(
+            "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+            [&f.project, &f.member.account_id, agent],
+        )?;
     }
     let channel = lead_channel(&f, &[&f.agent, &beta])?;
     let other = new_project(&f, "Other").await?;
-    f.db().execute("INSERT INTO project_members VALUES (?,?,'member',1,0)", [&other, &f.member.account_id])?;
+    f.db().execute(
+        "INSERT INTO project_members VALUES (?,?,'member',1,0)",
+        [&other, &f.member.account_id],
+    )?;
     for agent in [&f.agent, &beta] {
         f.db().execute(
             "INSERT INTO agent_projects SELECT ?,agent,rules,capabilities_json,1,0 FROM agent_projects WHERE project=? AND agent=?",
             [&other, &f.project, agent],
         )?;
-        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&other, &f.member.account_id, agent])?;
+        f.db().execute(
+            "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+            [&other, &f.member.account_id, agent],
+        )?;
     }
     let (owner, member, me) = (f.owner.clone(), f.member.clone(), f.agent.clone());
     let main_id = admit_for(&f, &me, &member, &f.project, "direct", "", "Task").await?;
@@ -4888,44 +6179,122 @@ async fn canonical_interruption_isolates_sender_human_and_project_while_preservi
     let own_id = send(&f, &mut main, &[&beta], true).await?[0].clone();
     let mut own = begin(&f, &own_id, &member).await?;
     ensure!(
-        status_of(&f, &mut own, json!({"recipient": me, "reason": "Cannot interrupt requester"}), "interrupt_agent").await? == 409,
+        status_of(
+            &f,
+            &mut own,
+            json!({"recipient": me, "reason": "Cannot interrupt requester"}),
+            "interrupt_agent"
+        )
+        .await?
+            == 409,
         "requester interrupted"
     );
     let nested = send(&f, &mut own, &[&gamma, &delta, &epsilon], false).await?;
     let mut by_agent = std::collections::HashMap::new();
     for turn in &nested {
-        by_agent.insert(field(&f, "SELECT agent FROM tasks WHERE id=?", [turn], "agent")?.as_str().unwrap_or_default().to_owned(), turn.clone());
+        by_agent.insert(
+            field(&f, "SELECT agent FROM tasks WHERE id=?", [turn], "agent")?
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            turn.clone(),
+        );
     }
     let finished = by_agent.get(&gamma).ok_or("gamma child")?.clone();
     let failed = by_agent.get(&epsilon).ok_or("epsilon child")?.clone();
     let unfinished = by_agent.get(&delta).ok_or("delta child")?.clone();
-    f.db().execute("UPDATE tasks SET state='completed' WHERE id=?", [&finished])?;
-    f.db().execute("UPDATE turns SET status='done',reply='Preserved outcome' WHERE id=?", [&finished])?;
-    f.db().execute("UPDATE tasks SET state='failed' WHERE id=?", [&failed])?;
-    f.db().execute("UPDATE turns SET status='failed',error='Preserved failure' WHERE id=?", [&failed])?;
+    f.db()
+        .execute("UPDATE tasks SET state='completed' WHERE id=?", [&finished])?;
+    f.db().execute(
+        "UPDATE turns SET status='done',reply='Preserved outcome' WHERE id=?",
+        [&finished],
+    )?;
+    f.db()
+        .execute("UPDATE tasks SET state='failed' WHERE id=?", [&failed])?;
+    f.db().execute(
+        "UPDATE turns SET status='failed',error='Preserved failure' WHERE id=?",
+        [&failed],
+    )?;
     let revision = lookup_data(&f, &member, &own_id).await?["revision"].clone();
-    f.control(&member, &own_id, json!({"requestId": new_id(), "expectedRevision": revision, "operation": "pause"})).await?.expect_ok()?;
+    f.control(
+        &member,
+        &own_id,
+        json!({"requestId": new_id(), "expectedRevision": revision, "operation": "pause"}),
+    )
+    .await?
+    .expect_ok()?;
     let delta_task = admit_for(&f, &delta, &member, &f.project, "direct", "", "Task").await?;
-    let sender_other = send(&f, &mut begin(&f, &delta_task, &member).await?, &[&beta], false).await?[0].clone();
+    let sender_other = send(
+        &f,
+        &mut begin(&f, &delta_task, &member).await?,
+        &[&beta],
+        false,
+    )
+    .await?[0]
+        .clone();
     let owner_task = admit_for(&f, &me, &owner, &f.project, "direct", "", "Task").await?;
-    let human_other = send(&f, &mut begin(&f, &owner_task, &owner).await?, &[&beta], false).await?[0].clone();
+    let human_other = send(
+        &f,
+        &mut begin(&f, &owner_task, &owner).await?,
+        &[&beta],
+        false,
+    )
+    .await?[0]
+        .clone();
     let other_task = admit_for(&f, &me, &member, &other, "direct", "", "Task").await?;
-    let project_other = send(&f, &mut begin(&f, &other_task, &member).await?, &[&beta], false).await?[0].clone();
+    let project_other = send(
+        &f,
+        &mut begin(&f, &other_task, &member).await?,
+        &[&beta],
+        false,
+    )
+    .await?[0]
+        .clone();
     let user_work = admit_for(&f, &beta, &member, &f.project, "direct", "", "Task").await?;
     let room_id = admit_for(&f, &me, &member, &f.project, "channel", &channel, "Task").await?;
-    let channel_child = send(&f, &mut begin(&f, &room_id, &member).await?, &[&beta], true).await?[0].clone();
+    let channel_child =
+        send(&f, &mut begin(&f, &room_id, &member).await?, &[&beta], true).await?[0].clone();
     let mut room_child = begin(&f, &channel_child, &member).await?;
     let child_tools = offered_tools(&f, &room_child).await?;
     ensure!(
-        !child_tools.as_array().is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == "interrupt_agent")),
+        !child_tools.as_array().is_some_and(|tools| tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == "interrupt_agent")),
         "channel child offered interrupt_agent"
     );
-    stage(&f, &mut room_child, &json!({"recipient": gamma, "reason": "Private only"}), "interrupt_agent").await?.run(&f).await?.expect_code("execution_denied")?;
+    stage(
+        &f,
+        &mut room_child,
+        &json!({"recipient": gamma, "reason": "Private only"}),
+        "interrupt_agent",
+    )
+    .await?
+    .run(&f)
+    .await?
+    .expect_code("execution_denied")?;
     let caller_id = admit_for(&f, &me, &member, &f.project, "channel", &channel, "Task").await?;
     let mut room_caller = begin(&f, &caller_id, &member).await?;
-    stage(&f, &mut room_caller, &json!({"recipient": beta, "reason": "Private only"}), "interrupt_agent").await?.run(&f).await?.expect_code("execution_denied")?;
+    stage(
+        &f,
+        &mut room_caller,
+        &json!({"recipient": beta, "reason": "Private only"}),
+        "interrupt_agent",
+    )
+    .await?
+    .run(&f)
+    .await?
+    .expect_code("execution_denied")?;
     let mut no_reply = begin(&f, &sender_other, &member).await?;
-    stage(&f, &mut no_reply, &json!({"recipient": gamma, "reason": "No notification loops"}), "interrupt_agent").await?.run(&f).await?.expect_code("execution_denied")?;
+    stage(
+        &f,
+        &mut no_reply,
+        &json!({"recipient": gamma, "reason": "No notification loops"}),
+        "interrupt_agent",
+    )
+    .await?
+    .run(&f)
+    .await?
+    .expect_code("execution_denied")?;
     let thread = side_thread(&f, &me, &member.account_id, &f.project)?;
     let stopper_id = admit_for(&f, &me, &member, &f.project, "side", &thread, "Task").await?;
     let mut stopper = begin(&f, &stopper_id, &member).await?;
@@ -4937,54 +6306,155 @@ async fn canonical_interruption_isolates_sender_human_and_project_while_preservi
         json!({"recipient": new_id(), "reason": "Unavailable"}),
         json!({"recipient": me, "reason": "Self"}),
     ] {
-        ensure!(status_of(&f, &mut stopper, args.clone(), "interrupt_agent").await?.is_number(), "no error status for {args}");
+        ensure!(
+            status_of(&f, &mut stopper, args.clone(), "interrupt_agent")
+                .await?
+                .is_number(),
+            "no error status for {args}"
+        );
     }
     let key = json!([own_id]).to_string();
     let scope = one(&f, "SELECT table_name,key_json,account,project,visibility,root_kind,root_id FROM record_scopes WHERE table_name='agent_deliveries' AND key_json=?", [&key])?;
-    f.db().execute("DELETE FROM record_scopes WHERE table_name='agent_deliveries' AND key_json=?", [&key])?;
-    ensure!(status_of(&f, &mut stopper, json!({"recipient": beta, "reason": "Scope required"}), "interrupt_agent").await? == 403, "unscoped delivery");
-    let values: Vec<String> = ["table_name", "key_json", "account", "project", "visibility", "root_kind", "root_id"]
-        .iter()
-        .map(|column| scope[*column].as_str().unwrap_or_default().to_owned())
-        .collect();
+    f.db().execute(
+        "DELETE FROM record_scopes WHERE table_name='agent_deliveries' AND key_json=?",
+        [&key],
+    )?;
+    ensure!(
+        status_of(
+            &f,
+            &mut stopper,
+            json!({"recipient": beta, "reason": "Scope required"}),
+            "interrupt_agent"
+        )
+        .await?
+            == 403,
+        "unscoped delivery"
+    );
+    let values: Vec<String> = [
+        "table_name",
+        "key_json",
+        "account",
+        "project",
+        "visibility",
+        "root_kind",
+        "root_id",
+    ]
+    .iter()
+    .map(|column| scope[*column].as_str().unwrap_or_default().to_owned())
+    .collect();
     let values: [String; 7] = values.try_into().map_err(|_| "scope row")?;
-    f.db().execute("INSERT INTO record_scopes VALUES (?,?,?,?,?,?,?)", values)?;
-    let interrupt = stage(&f, &mut stopper, &json!({"recipient": beta.to_uppercase(), "reason": "Changed direction"}), "interrupt_agent").await?;
+    f.db()
+        .execute("INSERT INTO record_scopes VALUES (?,?,?,?,?,?,?)", values)?;
+    let interrupt = stage(
+        &f,
+        &mut stopper,
+        &json!({"recipient": beta.to_uppercase(), "reason": "Changed direction"}),
+        "interrupt_agent",
+    )
+    .await?;
     let before = field(&f, "SELECT count(*) n FROM tasks", [], "n")?;
     f.db().execute_batch("CREATE TRIGGER fail_interrupt_notice BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT,'notice failed'); END")?;
     interrupt.run(&f).await?.expect_code("storage_failed")?;
     f.db().execute_batch("DROP TRIGGER fail_interrupt_notice")?;
-    ensure!(task_state(&f, &member, &own_id).await? == "paused", "notice failure kept the cancellation");
-    ensure!(field(&f, "SELECT count(*) n FROM tasks", [], "n")? == before, "notice failure kept tasks");
+    ensure!(
+        task_state(&f, &member, &own_id).await? == "paused",
+        "notice failure kept the cancellation"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM tasks", [], "n")? == before,
+        "notice failure kept tasks"
+    );
     f.db().execute_batch("CREATE TRIGGER fail_interrupt_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END")?;
     interrupt.run(&f).await?.expect_code("storage_failed")?;
     f.db().execute_batch("DROP TRIGGER fail_interrupt_result")?;
-    ensure!(field(&f, "SELECT count(*) n FROM tasks", [], "n")? == before, "result failure kept tasks");
-    ensure!(task_state(&f, &member, &own_id).await? == "paused", "result failure kept the cancellation");
-    ensure!(task_state(&f, &member, &unfinished).await? != "cancelled", "result failure cancelled the descendant");
+    ensure!(
+        field(&f, "SELECT count(*) n FROM tasks", [], "n")? == before,
+        "result failure kept tasks"
+    );
+    ensure!(
+        task_state(&f, &member, &own_id).await? == "paused",
+        "result failure kept the cancellation"
+    );
+    ensure!(
+        task_state(&f, &member, &unfinished).await? != "cancelled",
+        "result failure cancelled the descendant"
+    );
     let result = interrupt.run(&f).await?.expect_ok()?;
     let content = result_content(&result);
     ensure!(content["status"] == "interrupted", "status: {content}");
-    ensure!(content["recipient"] == beta.as_str(), "recipient: {content}");
+    ensure!(
+        content["recipient"] == beta.as_str(),
+        "recipient: {content}"
+    );
     let mut cancelled = vec![own_id.clone(), unfinished.clone()];
     cancelled.sort();
-    ensure!(content["cancelled"] == json!(cancelled), "cancelled: {content}");
-    ensure!(canonical_json(&interrupt.run(&f).await?.expect_ok()?.body) == canonical_json(&result.body), "replay changed");
+    ensure!(
+        content["cancelled"] == json!(cancelled),
+        "cancelled: {content}"
+    );
+    ensure!(
+        canonical_json(&interrupt.run(&f).await?.expect_ok()?.body) == canonical_json(&result.body),
+        "replay changed"
+    );
     for task in [&own_id, &unfinished] {
-        ensure!(task_state(&f, &member, task).await? == "cancelled", "{task} not cancelled");
+        ensure!(
+            task_state(&f, &member, task).await? == "cancelled",
+            "{task} not cancelled"
+        );
     }
-    for task in [&sender_other, &human_other, &project_other, &user_work, &channel_child] {
-        ensure!(field(&f, "SELECT state FROM tasks WHERE id=?", [task], "state")? != "cancelled", "{task} cancelled");
+    for task in [
+        &sender_other,
+        &human_other,
+        &project_other,
+        &user_work,
+        &channel_child,
+    ] {
+        ensure!(
+            field(&f, "SELECT state FROM tasks WHERE id=?", [task], "state")? != "cancelled",
+            "{task} cancelled"
+        );
     }
-    ensure!(task_state(&f, &member, &failed).await? == "failed", "failed outcome");
-    ensure!(field(&f, "SELECT error FROM turns WHERE id=?", [&failed], "error")? == "Preserved failure", "failure text");
-    ensure!(task_state(&f, &member, &finished).await? == "completed", "completed outcome");
-    ensure!(field(&f, "SELECT reply FROM turns WHERE id=?", [&finished], "reply")? == "Preserved outcome", "reply text");
+    ensure!(
+        task_state(&f, &member, &failed).await? == "failed",
+        "failed outcome"
+    );
+    ensure!(
+        field(&f, "SELECT error FROM turns WHERE id=?", [&failed], "error")? == "Preserved failure",
+        "failure text"
+    );
+    ensure!(
+        task_state(&f, &member, &finished).await? == "completed",
+        "completed outcome"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT reply FROM turns WHERE id=?",
+            [&finished],
+            "reply"
+        )? == "Preserved outcome",
+        "reply text"
+    );
     let notice = children(&f, &content["request"])?;
     ensure!(notice.len() == 1, "notice deliveries: {notice:?}");
-    ensure!(field(&f, "SELECT expects_reply FROM agent_requests WHERE id=?", [content["request"].as_str().unwrap_or_default()], "expects_reply")? == 0, "notice expects a reply");
     ensure!(
-        field(&f, "SELECT text FROM turns WHERE id=?", [&notice[0]], "text")?.as_str().is_some_and(|text| text.contains("Changed direction")),
+        field(
+            &f,
+            "SELECT expects_reply FROM agent_requests WHERE id=?",
+            [content["request"].as_str().unwrap_or_default()],
+            "expects_reply"
+        )? == 0,
+        "notice expects a reply"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT text FROM turns WHERE id=?",
+            [&notice[0]],
+            "text"
+        )?
+        .as_str()
+        .is_some_and(|text| text.contains("Changed direction")),
         "notice text"
     );
     let revision = task_revision(&f, &main).await?;
@@ -5011,31 +6481,62 @@ async fn try_acquire(f: &TaskFixture, task: &str) -> Result<Envelope> {
     .await
 }
 
-async fn control_as(f: &TaskFixture, actor: &minarbot_testkit::canonical::Account, task: &str, operation: &str) -> Result<Envelope> {
+async fn control_as(
+    f: &TaskFixture,
+    actor: &minarbot_testkit::canonical::Account,
+    task: &str,
+    operation: &str,
+) -> Result<Envelope> {
     let revision = lookup_data(f, actor, task).await?["revision"].clone();
-    f.control(actor, task, json!({"requestId": new_id(), "expectedRevision": revision, "operation": operation})).await?.expect_ok()
+    f.control(
+        actor,
+        task,
+        json!({"requestId": new_id(), "expectedRevision": revision, "operation": operation}),
+    )
+    .await?
+    .expect_ok()
 }
 
 #[tokio::test]
-async fn canonical_messages_retain_full_assignment_isolated_children_group_waits_and_atomic_cancellation() -> Result<()> {
-    let f = TaskFixture::new(&["send_message", "list_agents", "read_provider_settings", "search_memory"], None).await?;
+async fn canonical_messages_retain_full_assignment_isolated_children_group_waits_and_atomic_cancellation(
+) -> Result<()> {
+    let f = TaskFixture::new(
+        &[
+            "send_message",
+            "list_agents",
+            "read_provider_settings",
+            "search_memory",
+        ],
+        None,
+    )
+    .await?;
     let mut peers: Vec<String> = (0..11).map(|_| new_id()).collect();
     peers.sort();
     let other = new_project(&f, "Other").await?;
     let foreign = new_id();
     for agent in peers.iter().chain([&foreign]) {
-        let project = if *agent == foreign { &other } else { &f.project };
+        let project = if *agent == foreign {
+            &other
+        } else {
+            &f.project
+        };
         f.human(
             minarbot_testkit::http::Method::POST,
             "/api/agents",
-            Some(with(agent_body(agent, agent, &f), json!({"instructions": "Recipient", "projectId": project}))),
+            Some(with(
+                agent_body(agent, agent, &f),
+                json!({"instructions": "Recipient", "projectId": project}),
+            )),
             &f.owner,
         )
         .await?
         .expect_ok()?;
     }
     for agent in std::iter::once(&f.agent).chain(peers.iter()) {
-        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, agent])?;
+        f.db().execute(
+            "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+            [&f.project, &f.member.account_id, agent],
+        )?;
     }
     let member = f.member.clone();
     let new_task = || async {
@@ -5046,21 +6547,59 @@ async fn canonical_messages_retain_full_assignment_isolated_children_group_waits
     let send = "send_message";
     let message = |recipients: &[&String], text: &str, reply: bool| json!({"recipients": recipients, "text": text, "expects_reply": reply});
     let mut main = new_task().await?;
-    let sent = run_tool(&f, &mut main, send, message(&[&peers[10]], "Only explicit text", false)).await?;
+    let sent = run_tool(
+        &f,
+        &mut main,
+        send,
+        message(&[&peers[10]], "Only explicit text", false),
+    )
+    .await?;
     ensure!(sent["status"] == "sent", "sent: {sent}");
     let mut notice = begin(&f, &children(&f, &sent["request"])?[0], &member).await?;
     let notice_snapshot = context_of(&f, &notice).await?.expect_ok()?.data()["snapshot"].clone();
-    ensure!(notice_snapshot["conversation"]["message"] == json!({"text": "Only explicit text", "files": []}), "notice message: {}", notice_snapshot["conversation"]);
-    ensure!(notice_snapshot["conversation"]["history"] == json!([]), "notice history: {}", notice_snapshot["conversation"]);
     ensure!(
-        !notice_snapshot["tools"].as_array().is_some_and(|tools| tools.iter().any(|tool| ["list_agents", "send_message"].contains(&tool["function"]["name"].as_str().unwrap_or_default()))),
+        notice_snapshot["conversation"]["message"]
+            == json!({"text": "Only explicit text", "files": []}),
+        "notice message: {}",
+        notice_snapshot["conversation"]
+    );
+    ensure!(
+        notice_snapshot["conversation"]["history"] == json!([]),
+        "notice history: {}",
+        notice_snapshot["conversation"]
+    );
+    ensure!(
+        !notice_snapshot["tools"]
+            .as_array()
+            .is_some_and(
+                |tools| tools.iter().any(|tool| ["list_agents", "send_message"]
+                    .contains(&tool["function"]["name"].as_str().unwrap_or_default()))
+            ),
         "notice tools: {}",
         notice_snapshot["tools"]
     );
-    stage(&f, &mut notice, &json!({}), "list_agents").await?.run(&f).await?.expect_code("execution_denied")?;
-    let invalid = run_tool(&f, &mut main, send, message(&[&peers[0], &foreign], "No partial delivery", false)).await?;
+    stage(&f, &mut notice, &json!({}), "list_agents")
+        .await?
+        .run(&f)
+        .await?
+        .expect_code("execution_denied")?;
+    let invalid = run_tool(
+        &f,
+        &mut main,
+        send,
+        message(&[&peers[0], &foreign], "No partial delivery", false),
+    )
+    .await?;
     ensure!(invalid["status"] == 404, "foreign recipient: {invalid}");
-    ensure!(field(&f, "SELECT count(*) n FROM agent_requests WHERE turn=?", [&main.id], "n")? == 1, "partial delivery saved");
+    ensure!(
+        field(
+            &f,
+            "SELECT count(*) n FROM agent_requests WHERE turn=?",
+            [&main.id],
+            "n"
+        )? == 1,
+        "partial delivery saved"
+    );
     let upper = peers[0].to_uppercase();
     for args in [
         json!({"recipients": [peers[0], upper], "text": "Duplicate", "expects_reply": false}),
@@ -5068,37 +6607,78 @@ async fn canonical_messages_retain_full_assignment_isolated_children_group_waits
         json!({"recipients": [], "text": "Empty", "expects_reply": false}),
         json!({"recipients": [peers[0]], "text": "Missing flag"}),
     ] {
-        ensure!(status_of(&f, &mut main, args.clone(), send).await?.is_number(), "accepted {args}");
+        ensure!(
+            status_of(&f, &mut main, args.clone(), send)
+                .await?
+                .is_number(),
+            "accepted {args}"
+        );
     }
-    let atomic = stage(&f, &mut main, &message(&[&peers[0], &peers[1]], "Atomic group", true), send).await?;
+    let atomic = stage(
+        &f,
+        &mut main,
+        &message(&[&peers[0], &peers[1]], "Atomic group", true),
+        send,
+    )
+    .await?;
     let before = field(&f, "SELECT count(*) n FROM tasks", [], "n")?;
     f.db().execute_batch("CREATE TRIGGER fail_message_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END")?;
     atomic.run(&f).await?.expect_code("storage_failed")?;
     f.db().execute_batch("DROP TRIGGER fail_message_result")?;
-    ensure!(field(&f, "SELECT count(*) n FROM tasks", [], "n")? == before, "failed group kept tasks");
+    ensure!(
+        field(&f, "SELECT count(*) n FROM tasks", [], "n")? == before,
+        "failed group kept tasks"
+    );
     let group = result_content(&atomic.run(&f).await?.expect_ok()?);
-    ensure!(children(&f, &group["request"])?.len() == 2, "group deliveries");
-    ensure!(result_content(&atomic.run(&f).await?.expect_ok()?) == group, "group replay");
+    ensure!(
+        children(&f, &group["request"])?.len() == 2,
+        "group deliveries"
+    );
+    ensure!(
+        result_content(&atomic.run(&f).await?.expect_ok()?) == group,
+        "group replay"
+    );
     context_of(&f, &main).await?.expect_code("waiting_agents")?;
     let ids = children(&f, &group["request"])?;
     let mut child = begin(&f, &ids[0], &member).await?;
     ensure!(
-        !one(&f, "SELECT 1 x FROM tasks WHERE id=? AND initiator_account=?", [&child.id, &member.account_id])?.is_null(),
+        !one(
+            &f,
+            "SELECT 1 x FROM tasks WHERE id=? AND initiator_account=?",
+            [&child.id, &member.account_id]
+        )?
+        .is_null(),
         "child initiator"
     );
     let roster = run_tool(&f, &mut child, "list_agents", json!({})).await?;
-    ensure!(!roster["agents"].as_array().is_some_and(|rows| rows.iter().any(|row| row["id"] == f.agent.as_str())), "requester listed: {roster}");
+    ensure!(
+        !roster["agents"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["id"] == f.agent.as_str())),
+        "requester listed: {roster}"
+    );
     let old_context = context_of(&f, &child).await?.expect_ok()?;
     control_as(&f, &member, &main.id, "pause").await?;
-    context_of(&f, &child).await?.expect_code("task_not_runnable")?;
-    try_acquire(&f, &ids[1]).await?.expect_code("task_not_runnable")?;
+    context_of(&f, &child)
+        .await?
+        .expect_code("task_not_runnable")?;
+    try_acquire(&f, &ids[1])
+        .await?
+        .expect_code("task_not_runnable")?;
     control_as(&f, &member, &main.id, "resume").await?;
     let old_ref = old_context.data()["snapshotRef"].clone();
     let stale_action = new_id();
     let child_revision = task_revision(&f, &child).await?;
     let stale_payload = sha256_hex("read");
     let sequence = child.sequence;
-    let stale_intent = read_intent(&child.id, &stale_action, sequence, &child.ownership, &stale_payload, &old_ref);
+    let stale_intent = read_intent(
+        &child.id,
+        &stale_action,
+        sequence,
+        &child.ownership,
+        &stale_payload,
+        &old_ref,
+    );
     f.prepare(&child.id, &stale_action, json!({"requestId": new_id(), "sequence": sequence, "ownership": child.ownership, "payloadDigest": stale_payload,
         "actionKind": "read", "contextSnapshotId": old_ref["snapshotId"], "contextDigest": old_ref["digest"], "grantRevision": 1,
         "expectedTaskRevision": child_revision, "journalSequence": sequence + 1, "intentDigest": stale_intent}), &child.token)
@@ -5107,85 +6687,262 @@ async fn canonical_messages_retain_full_assignment_isolated_children_group_waits
     control_as(&f, &member, &child.id, "pause").await?;
     control_as(&f, &member, &main.id, "pause").await?;
     control_as(&f, &member, &main.id, "resume").await?;
-    ensure!(task_state(&f, &member, &child.id).await? == "paused", "main resume resumed a paused child");
+    ensure!(
+        task_state(&f, &member, &child.id).await? == "paused",
+        "main resume resumed a paused child"
+    );
     let paused_context = context_of(&f, &child).await?.expect_ok()?;
     let paused_ref = paused_context.data()["snapshotRef"].clone();
     let paused_revision = task_revision(&f, &child).await?;
     let paused_action = new_id();
-    let paused_call = json!({"id": paused_action, "function": {"name": "list_agents", "arguments": "{}"}});
-    let paused_digest = minarbot_testkit::task_bridge::tool_digest(&paused_call, &json!(paused_revision.as_i64().unwrap_or(0) + 1), None);
-    let paused_intent = digest_command(&json!([child.id, paused_action, child.sequence, child.ownership, paused_digest, "canonical",
-        paused_ref["snapshotId"], paused_ref["digest"], null, null, 1, null, null, null]));
+    let paused_call =
+        json!({"id": paused_action, "function": {"name": "list_agents", "arguments": "{}"}});
+    let paused_digest = minarbot_testkit::task_bridge::tool_digest(
+        &paused_call,
+        &json!(paused_revision.as_i64().unwrap_or(0) + 1),
+        None,
+    );
+    let paused_intent = digest_command(&json!([
+        child.id,
+        paused_action,
+        child.sequence,
+        child.ownership,
+        paused_digest,
+        "canonical",
+        paused_ref["snapshotId"],
+        paused_ref["digest"],
+        null,
+        null,
+        1,
+        null,
+        null,
+        null
+    ]));
     f.prepare(&child.id, &paused_action, json!({"requestId": new_id(), "sequence": child.sequence, "ownership": child.ownership,
         "payloadDigest": paused_digest, "actionKind": "canonical", "contextSnapshotId": paused_ref["snapshotId"], "contextDigest": paused_ref["digest"],
         "grantRevision": 1, "expectedTaskRevision": paused_revision, "journalSequence": child.sequence + 1, "intentDigest": paused_intent}), &child.token)
         .await?
         .expect_code("task_not_runnable")?;
     control_as(&f, &member, &child.id, "resume").await?;
-    let nested = run_tool(&f, &mut child, send, message(&[&peers[2]], "Nested explicit task", true)).await?;
+    let nested = run_tool(
+        &f,
+        &mut child,
+        send,
+        message(&[&peers[2]], "Nested explicit task", true),
+    )
+    .await?;
     let grandchild = children(&f, &nested["request"])?[0].clone();
     for task in &ids {
         control_as(&f, &member, task, "cancel").await?;
     }
-    ensure!(task_state(&f, &member, &grandchild).await? == "cancelled", "grandchild not cancelled");
-    try_acquire(&f, &grandchild).await?.expect_code("execution_denied")?;
-    let coordination = context_of(&f, &main).await?.expect_ok()?.data()["snapshot"]["coordination"].clone();
-    let settled = coordination.as_array().and_then(|rows| rows.iter().find(|row| row["request"] == group["request"])).cloned().unwrap_or_default();
     ensure!(
-        settled["replies"].as_array().is_some_and(|rows| !rows.is_empty() && rows.iter().all(|row| row["status"] == "cancelled" && row["paused"] == 0)),
+        task_state(&f, &member, &grandchild).await? == "cancelled",
+        "grandchild not cancelled"
+    );
+    try_acquire(&f, &grandchild)
+        .await?
+        .expect_code("execution_denied")?;
+    let coordination =
+        context_of(&f, &main).await?.expect_ok()?.data()["snapshot"]["coordination"].clone();
+    let settled = coordination
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["request"] == group["request"]))
+        .cloned()
+        .unwrap_or_default();
+    ensure!(
+        settled["replies"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty()
+                && rows
+                    .iter()
+                    .all(|row| row["status"] == "cancelled" && row["paused"] == 0)),
         "settled replies: {settled}"
     );
-    ensure!(task_state(&f, &member, &main.id).await? == "running", "main state");
+    ensure!(
+        task_state(&f, &member, &main.id).await? == "running",
+        "main state"
+    );
     let channel = lead_channel(&f, &[&f.agent, &peers[0]])?;
     let channel_scope = format!("project:{}/channels:{channel}", f.project);
-    let private_scope = format!("project:{}/agents:{}/human:{}", f.project, peers[0], member.account_id);
-    for (scope, kind, root, value) in [(&channel_scope, "channel", &channel, "SHARED_ROOM_MEMORY"), (&private_scope, "agent", &peers[0], "PRIVATE_AGENT_MEMORY")] {
+    let private_scope = format!(
+        "project:{}/agents:{}/human:{}",
+        f.project, peers[0], member.account_id
+    );
+    for (scope, kind, root, value) in [
+        (&channel_scope, "channel", &channel, "SHARED_ROOM_MEMORY"),
+        (&private_scope, "agent", &peers[0], "PRIVATE_AGENT_MEMORY"),
+    ] {
         let saved = remember(&f, scope, value)?;
-        scope_row(&f, "memories", json!([scope, saved]), &member.account_id, &f.project, if kind == "channel" { "project" } else { "owner" }, root)?;
-        f.db().execute("UPDATE record_scopes SET root_kind=? WHERE table_name='memories' AND key_json=?", [kind, &json!([scope, saved]).to_string()])?;
+        scope_row(
+            &f,
+            "memories",
+            json!([scope, saved]),
+            &member.account_id,
+            &f.project,
+            if kind == "channel" {
+                "project"
+            } else {
+                "owner"
+            },
+            root,
+        )?;
+        f.db().execute(
+            "UPDATE record_scopes SET root_kind=? WHERE table_name='memories' AND key_json=?",
+            [kind, &json!([scope, saved]).to_string()],
+        )?;
     }
     f.db().execute_batch("UPDATE memories SET essential=1")?;
-    let room_id = admit_for(&f, &f.agent, &member, &f.project, "channel", &channel, "Room request").await?;
+    let room_id = admit_for(
+        &f,
+        &f.agent,
+        &member,
+        &f.project,
+        "channel",
+        &channel,
+        "Room request",
+    )
+    .await?;
     let mut room = begin(&f, &room_id, &member).await?;
-    ensure!(run_tool(&f, &mut room, send, message(&[&peers[0], &peers[1]], "Members only", false)).await?["status"] == 404, "non-member recipient");
-    let room_send = run_tool(&f, &mut room, send, message(&[&peers[0]], "Room child", true)).await?;
+    ensure!(
+        run_tool(
+            &f,
+            &mut room,
+            send,
+            message(&[&peers[0], &peers[1]], "Members only", false)
+        )
+        .await?["status"]
+            == 404,
+        "non-member recipient"
+    );
+    let room_send = run_tool(
+        &f,
+        &mut room,
+        send,
+        message(&[&peers[0]], "Room child", true),
+    )
+    .await?;
     let mut room_child = begin(&f, &children(&f, &room_send["request"])?[0], &member).await?;
     let room_snapshot = context_of(&f, &room_child).await?.expect_ok()?.data()["snapshot"].clone();
     ensure!(
-        !room_snapshot["tools"].as_array().is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == "read_provider_settings")),
+        !room_snapshot["tools"].as_array().is_some_and(|tools| tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == "read_provider_settings")),
         "room child offered provider settings"
     );
     ensure!(
-        room_snapshot["memories"].as_array().is_some_and(|rows| rows.iter().any(|row| row["text"] == "SHARED_ROOM_MEMORY")),
+        room_snapshot["memories"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["text"] == "SHARED_ROOM_MEMORY")),
         "room memory: {}",
         room_snapshot["memories"]
     );
-    ensure!(!room_snapshot.to_string().contains("PRIVATE_AGENT_MEMORY"), "private memory in a room");
-    stage(&f, &mut room_child, &json!({}), "read_provider_settings").await?.run(&f).await?.expect_code("execution_denied")?;
-    f.db().execute("DELETE FROM channel_members WHERE channel=? AND agent=?", [&channel, &peers[0]])?;
-    context_of(&f, &room_child).await?.expect_code("execution_denied")?;
+    ensure!(
+        !room_snapshot.to_string().contains("PRIVATE_AGENT_MEMORY"),
+        "private memory in a room"
+    );
+    stage(&f, &mut room_child, &json!({}), "read_provider_settings")
+        .await?
+        .run(&f)
+        .await?
+        .expect_code("execution_denied")?;
+    f.db().execute(
+        "DELETE FROM channel_members WHERE channel=? AND agent=?",
+        [&channel, &peers[0]],
+    )?;
+    context_of(&f, &room_child)
+        .await?
+        .expect_code("execution_denied")?;
     let mut bounded = new_task().await?;
     let eight: Vec<&String> = peers[..8].iter().collect();
     for _ in 0..3 {
-        ensure!(run_tool(&f, &mut bounded, send, message(&eight, "Bounded family", false)).await?["status"] == "sent", "family batch");
+        ensure!(
+            run_tool(
+                &f,
+                &mut bounded,
+                send,
+                message(&eight, "Bounded family", false)
+            )
+            .await?["status"]
+                == "sent",
+            "family batch"
+        );
     }
-    ensure!(run_tool(&f, &mut bounded, send, message(&eight[..7], "Final family slots", false)).await?["status"] == "sent", "final family batch");
-    ensure!(run_tool(&f, &mut bounded, send, message(&[&peers[0]], "Over family bound", false)).await?["status"] == 409, "family bound");
+    ensure!(
+        run_tool(
+            &f,
+            &mut bounded,
+            send,
+            message(&eight[..7], "Final family slots", false)
+        )
+        .await?["status"]
+            == "sent",
+        "final family batch"
+    );
+    ensure!(
+        run_tool(
+            &f,
+            &mut bounded,
+            send,
+            message(&[&peers[0]], "Over family bound", false)
+        )
+        .await?["status"]
+            == 409,
+        "family bound"
+    );
     let mut deep = new_task().await?;
     for peer in &peers[..7] {
         let next = run_tool(&f, &mut deep, send, message(&[peer], "Bounded depth", true)).await?;
         ensure!(next["status"] == "waiting", "depth step: {next}");
         deep = begin(&f, &children(&f, &next["request"])?[0], &member).await?;
     }
-    ensure!(run_tool(&f, &mut deep, send, message(&[&peers[7]], "Over depth bound", false)).await?["status"] == 409, "depth bound");
-    f.db().execute("UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?", [&member.account_id, &peers[3]])?;
-    ensure!(run_tool(&f, &mut main, send, message(&[&peers[3]], "No grant", false)).await?["status"] == 404, "revoked grant");
-    let revoked = run_tool(&f, &mut main, send, message(&[&peers[4]], "Accepted before revoke", true)).await?;
+    ensure!(
+        run_tool(
+            &f,
+            &mut deep,
+            send,
+            message(&[&peers[7]], "Over depth bound", false)
+        )
+        .await?["status"]
+            == 409,
+        "depth bound"
+    );
+    f.db().execute(
+        "UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?",
+        [&member.account_id, &peers[3]],
+    )?;
+    ensure!(
+        run_tool(
+            &f,
+            &mut main,
+            send,
+            message(&[&peers[3]], "No grant", false)
+        )
+        .await?["status"]
+            == 404,
+        "revoked grant"
+    );
+    let revoked = run_tool(
+        &f,
+        &mut main,
+        send,
+        message(&[&peers[4]], "Accepted before revoke", true),
+    )
+    .await?;
     let revoked_child = children(&f, &revoked["request"])?[0].clone();
-    f.db().execute("UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?", [&member.account_id, &peers[4]])?;
-    try_acquire(&f, &revoked_child).await?.expect_code("execution_denied")?;
-    f.db().execute("DELETE FROM record_scopes WHERE table_name='agent_requests' AND key_json=?", [json!([revoked["request"]]).to_string()])?;
-    context_of(&f, &main).await?.expect_code("record_scope_missing")?;
+    f.db().execute(
+        "UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE account=? AND agent=?",
+        [&member.account_id, &peers[4]],
+    )?;
+    try_acquire(&f, &revoked_child)
+        .await?
+        .expect_code("execution_denied")?;
+    f.db().execute(
+        "DELETE FROM record_scopes WHERE table_name='agent_requests' AND key_json=?",
+        [json!([revoked["request"]]).to_string()],
+    )?;
+    context_of(&f, &main)
+        .await?
+        .expect_code("record_scope_missing")?;
     Ok(())
 }
 
@@ -5196,27 +6953,88 @@ async fn context_counts_projected_result_bytes_once_including_escaped_json_conte
     commit(&f, &p).await?;
     let content = json!({"text": "\\".repeat(2 * 1024 * 1024 + 100_000)});
     let (digest, reference) = result_ref(&p.task, &p.action, &content);
-    let reported = reconcile(&f, &p, with(report(&p, "acknowledged", "known", 2), json!({"resultContent": content, "resultDigest": digest, "resultRef": reference})))
-        .await?
-        .expect_ok()?;
+    let reported = reconcile(
+        &f,
+        &p,
+        with(
+            report(&p, "acknowledged", "known", 2),
+            json!({"resultContent": content, "resultDigest": digest, "resultRef": reference}),
+        ),
+    )
+    .await?
+    .expect_ok()?;
     let context = f
         .task_op("context", &p.task, json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": reported.receipt()["recordRevision"]}), &p.token)
         .await?
         .expect_ok()?;
-    ensure!(context.data()["snapshot"]["toolJournal"][0]["result"] == content, "journal result");
-    ensure!(canonical_json(context.data()).len() < 8 * 1024 * 1024, "context counted the result twice");
+    ensure!(
+        context.data()["snapshot"]["toolJournal"][0]["result"] == content,
+        "journal result"
+    );
+    ensure!(
+        canonical_json(context.data()).len() < 8 * 1024 * 1024,
+        "context counted the result twice"
+    );
     Ok(())
 }
 
 /// `recoveryEnvelopeBody(generation, requestId, envelope)`.
 fn envelope_body(generation: &Value, request: &Value, envelope: &Value) -> Value {
-    let entries: Vec<Value> = envelope["entries"].as_array().map(|entries| entries.iter().map(|e| json!([e["taskId"], e["actionId"], e["sequence"],
-        e["executorGeneration"], e["actionKind"], e["payloadDigest"], e["intentDigest"], e.get("bindingId").cloned().unwrap_or(Value::Null),
-        e.get("bindingRevision").cloned().unwrap_or(Value::Null), e["grantRevision"], e["state"], e["effectStatus"],
-        e.get("resultDigest").cloned().unwrap_or(Value::Null), e.get("resultRef").cloned().unwrap_or(Value::Null), e["journalSequence"], e["signature"]])).collect()).unwrap_or_default();
-    let stops: Vec<Value> = envelope["stopEvidence"].as_array().map(|stops| stops.iter().map(|s| json!([s["taskId"], s["actionId"], s["journalDigest"], s["signature"]])).collect()).unwrap_or_default();
-    json!(["minarbot-recovery-envelope-v1", generation, request, envelope["sourceAuthority"], envelope["sourceDeviceId"],
-        envelope["sourceDeviceGeneration"], envelope["watermark"], entries, stops])
+    let entries: Vec<Value> = envelope["entries"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|e| {
+                    json!([
+                        e["taskId"],
+                        e["actionId"],
+                        e["sequence"],
+                        e["executorGeneration"],
+                        e["actionKind"],
+                        e["payloadDigest"],
+                        e["intentDigest"],
+                        e.get("bindingId").cloned().unwrap_or(Value::Null),
+                        e.get("bindingRevision").cloned().unwrap_or(Value::Null),
+                        e["grantRevision"],
+                        e["state"],
+                        e["effectStatus"],
+                        e.get("resultDigest").cloned().unwrap_or(Value::Null),
+                        e.get("resultRef").cloned().unwrap_or(Value::Null),
+                        e["journalSequence"],
+                        e["signature"]
+                    ])
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let stops: Vec<Value> = envelope["stopEvidence"]
+        .as_array()
+        .map(|stops| {
+            stops
+                .iter()
+                .map(|s| {
+                    json!([
+                        s["taskId"],
+                        s["actionId"],
+                        s["journalDigest"],
+                        s["signature"]
+                    ])
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    json!([
+        "minarbot-recovery-envelope-v1",
+        generation,
+        request,
+        envelope["sourceAuthority"],
+        envelope["sourceDeviceId"],
+        envelope["sourceDeviceGeneration"],
+        envelope["watermark"],
+        entries,
+        stops
+    ])
 }
 
 /// Re-sign every entry and the envelope of a recovery `request` with `key`.
@@ -5231,11 +7049,20 @@ fn resign(f: &TaskFixture, request: &mut Value, key: &minarbot_testkit::task_bri
             entry["signature"] = json!(signature);
         }
     }
-    request["signature"] = json!(key.sign_json(&envelope_body(&request["recoveryGeneration"], &request["requestId"], &request["envelope"])));
+    request["signature"] = json!(key.sign_json(&envelope_body(
+        &request["recoveryGeneration"],
+        &request["requestId"],
+        &request["envelope"]
+    )));
 }
 
 /// `recoveryEnvelope(f, requestId, generation, resultContent?)`.
-fn recovery_request(f: &TaskFixture, p: &Prepared, generation: &Value, content: Option<&Value>) -> Result<Value> {
+fn recovery_request(
+    f: &TaskFixture,
+    p: &Prepared,
+    generation: &Value,
+    content: Option<&Value>,
+) -> Result<Value> {
     let action = one(f, "SELECT * FROM task_actions WHERE id=?", [&p.action])?;
     let mut entry = json!({"taskId": p.task, "actionId": p.action, "sequence": action["sequence"], "executorGeneration": p.ownership["executorGeneration"],
         "actionKind": action["action_kind"], "payloadDigest": p.payload_digest, "intentDigest": action["intent_digest"], "grantRevision": action["grant_revision"],
@@ -5265,9 +7092,24 @@ fn without(mut value: Value, key: &str) -> Value {
 /// recovery session; returns `(proof, generation)`.
 async fn revoked_session(f: &TaskFixture, p: &Prepared) -> Result<(String, Value)> {
     commit(f, p).await?;
-    f.revoke_device(&f.owner, &f.home, json!({"requestId": new_id(), "expectedRevision": 1})).await?.expect_ok()?;
-    let session = f.recovery_session(&f.owner, &p.task, session_command(f)).await?.expect_ok()?;
-    Ok((session.data()["session"].as_str().ok_or("session")?.to_owned(), session.data()["recoveryGeneration"].clone()))
+    f.revoke_device(
+        &f.owner,
+        &f.home,
+        json!({"requestId": new_id(), "expectedRevision": 1}),
+    )
+    .await?
+    .expect_ok()?;
+    let session = f
+        .recovery_session(&f.owner, &p.task, session_command(f))
+        .await?
+        .expect_ok()?;
+    Ok((
+        session.data()["session"]
+            .as_str()
+            .ok_or("session")?
+            .to_owned(),
+        session.data()["recoveryGeneration"].clone(),
+    ))
 }
 
 fn session_command(f: &TaskFixture) -> Value {
@@ -5275,23 +7117,40 @@ fn session_command(f: &TaskFixture) -> Value {
 }
 
 #[tokio::test]
-async fn disaster_mixed_batches_reconcile_known_evidence_and_privately_quarantine_only_unknown_actions_atomically() -> Result<()> {
+async fn disaster_mixed_batches_reconcile_known_evidence_and_privately_quarantine_only_unknown_actions_atomically(
+) -> Result<()> {
     let f = TaskFixture::new(&["transfer_task"], None).await?;
     let p = prepared(&f).await?;
     commit(&f, &p).await?;
-    f.db().execute_batch("CREATE TABLE minarbot_backup_authority(generation TEXT,owner_account TEXT)")?;
-    f.db().execute("INSERT INTO minarbot_backup_authority VALUES (?,?)", [&f.principal.authority_generation, &f.owner.account_id])?;
-    f.db().execute("UPDATE authority_state SET generation=?,serving_state='read_only_recovery'", [new_id()])?;
+    f.db().execute_batch(
+        "CREATE TABLE minarbot_backup_authority(generation TEXT,owner_account TEXT)",
+    )?;
+    f.db().execute(
+        "INSERT INTO minarbot_backup_authority VALUES (?,?)",
+        [&f.principal.authority_generation, &f.owner.account_id],
+    )?;
+    f.db().execute(
+        "UPDATE authority_state SET generation=?,serving_state='read_only_recovery'",
+        [new_id()],
+    )?;
     let bootstrap = minarbot_testkit::task_bridge::random_token()?;
     f.db().execute(
         "UPDATE authority_state SET recovery_session_hash=?,recovery_expires_at=?,revision=revision+1 WHERE id=1",
         (sha256_hex(&bootstrap), now_millis()? + 900_000),
     )?;
     let restore = f
-        .human(minarbot_testkit::http::Method::POST, "/api/restore/reconcile", Some(json!({"requestId": new_id(), "bootstrap": bootstrap})), &f.owner)
+        .human(
+            minarbot_testkit::http::Method::POST,
+            "/api/restore/reconcile",
+            Some(json!({"requestId": new_id(), "bootstrap": bootstrap})),
+            &f.owner,
+        )
         .await?
         .expect_ok()?;
-    let proof = restore.data()["session"].as_str().ok_or("restore session")?.to_owned();
+    let proof = restore.data()["session"]
+        .as_str()
+        .ok_or("restore session")?
+        .to_owned();
     let generation = restore.data()["recoveryGeneration"].clone();
     let mut request = recovery_request(&f, &p, &generation, None)?;
     let mut unknown = request["envelope"]["entries"][0].clone();
@@ -5299,125 +7158,371 @@ async fn disaster_mixed_batches_reconcile_known_evidence_and_privately_quarantin
     unknown["sequence"] = json!(1);
     unknown["journalSequence"] = json!(3);
     let unknown_id = unknown["actionId"].clone();
-    let entries = request["envelope"]["entries"].as_array_mut().ok_or("entries")?;
+    let entries = request["envelope"]["entries"]
+        .as_array_mut()
+        .ok_or("entries")?;
     entries.push(unknown);
     entries.sort_by(|a, b| a["actionId"].as_str().cmp(&b["actionId"].as_str()));
     request["envelope"]["watermark"] = json!(3);
-    let known_index = request["envelope"]["entries"].as_array().and_then(|entries| entries.iter().position(|entry| entry["actionId"] == p.action.as_str())).ok_or("known entry")?;
-    request["envelope"]["entries"][known_index]["intentDigest"] = json!(sha256_hex("wrong known intent"));
+    let known_index = request["envelope"]["entries"]
+        .as_array()
+        .and_then(|entries| {
+            entries
+                .iter()
+                .position(|entry| entry["actionId"] == p.action.as_str())
+        })
+        .ok_or("known entry")?;
+    request["envelope"]["entries"][known_index]["intentDigest"] =
+        json!(sha256_hex("wrong known intent"));
     resign(&f, &mut request, &f.signing);
-    f.recovery_import(&f.owner, &p.task, request.clone(), &proof).await?.expect_code("recovery_provenance_invalid")?;
-    ensure!(field(&f, "SELECT count(*) n FROM recovery_quarantine", [], "n")? == 0, "quarantine kept a rejected batch");
-    ensure!(field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 0, "import kept a rejected batch");
+    f.recovery_import(&f.owner, &p.task, request.clone(), &proof)
+        .await?
+        .expect_code("recovery_provenance_invalid")?;
+    ensure!(
+        field(&f, "SELECT count(*) n FROM recovery_quarantine", [], "n")? == 0,
+        "quarantine kept a rejected batch"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 0,
+        "import kept a rejected batch"
+    );
     request["envelope"]["entries"][known_index]["intentDigest"] = p.commit["intentDigest"].clone();
     resign(&f, &mut request, &f.signing);
-    let result = f.recovery_import(&f.owner, &p.task, request.clone(), &proof).await?.expect_ok()?;
-    ensure!(result.data()["importedActionIds"] == json!([p.action]), "imported: {}", result.body);
-    ensure!(result.data()["quarantinedActionIds"] == json!([unknown_id]), "quarantined: {}", result.body);
-    ensure!(result.receipt().get("projectId").is_none(), "receipt names the project: {}", result.body);
-    ensure!(f.recovery_import(&f.owner, &p.task, request.clone(), &proof).await?.body == result.body, "import replay");
-    ensure!(field(&f, "SELECT count(*) n FROM task_actions", [], "n")? == 1, "quarantined action published");
+    let result = f
+        .recovery_import(&f.owner, &p.task, request.clone(), &proof)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        result.data()["importedActionIds"] == json!([p.action]),
+        "imported: {}",
+        result.body
+    );
+    ensure!(
+        result.data()["quarantinedActionIds"] == json!([unknown_id]),
+        "quarantined: {}",
+        result.body
+    );
+    ensure!(
+        result.receipt().get("projectId").is_none(),
+        "receipt names the project: {}",
+        result.body
+    );
+    ensure!(
+        f.recovery_import(&f.owner, &p.task, request.clone(), &proof)
+            .await?
+            .body
+            == result.body,
+        "import replay"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM task_actions", [], "n")? == 1,
+        "quarantined action published"
+    );
     let saved = one(&f, "SELECT * FROM recovery_quarantine", [])?;
-    ensure!(saved["owner_account"] == f.owner.account_id.as_str(), "quarantine owner: {saved}");
-    let envelope: Value = serde_json::from_str(saved["envelope_json"].as_str().ok_or("envelope_json")?)?;
+    ensure!(
+        saved["owner_account"] == f.owner.account_id.as_str(),
+        "quarantine owner: {saved}"
+    );
+    let envelope: Value =
+        serde_json::from_str(saved["envelope_json"].as_str().ok_or("envelope_json")?)?;
     ensure!(envelope == request, "quarantined envelope: {envelope}");
     let previous = result.receipt()["requestId"].clone();
     request["requestId"] = json!(new_id());
     resign(&f, &mut request, &f.signing);
-    f.recovery_import(&f.owner, &p.task, request, &proof).await?.expect_code("recovery_conflict")?;
-    ensure!(field(&f, "SELECT receipt_id FROM task_reports", [], "receipt_id")? == previous, "report receipt replaced");
+    f.recovery_import(&f.owner, &p.task, request, &proof)
+        .await?
+        .expect_code("recovery_conflict")?;
+    ensure!(
+        field(&f, "SELECT receipt_id FROM task_reports", [], "receipt_id")? == previous,
+        "report receipt replaced"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn owner_recovery_session_is_scoped_nonsecret_on_retry_rotates_and_requires_revoked_original_source() -> Result<()> {
+async fn owner_recovery_session_is_scoped_nonsecret_on_retry_rotates_and_requires_revoked_original_source(
+) -> Result<()> {
     let f = TaskFixture::new(&["transfer_task"], None).await?;
     let p = prepared(&f).await?;
     commit(&f, &p).await?;
     let command = session_command(&f);
-    f.recovery_session(&f.owner, &p.task, command.clone()).await?.expect_code("recovery_source_current")?;
-    f.revoke_device(&f.owner, &f.home, json!({"requestId": new_id(), "expectedRevision": 1})).await?.expect_ok()?;
-    f.recovery_session(&f.member, &p.task, command.clone()).await?.expect_code("owner_required")?;
-    let first = f.recovery_session(&f.owner, &p.task, command.clone()).await?.expect_ok()?;
-    let session = first.data()["session"].as_str().ok_or("session")?.to_owned();
-    ensure!(session.len() == 43 && session.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'), "session format");
-    let retry = f.recovery_session(&f.owner, &p.task, command.clone()).await?.expect_ok()?;
-    ensure!(retry.data().get("session").is_none_or(Value::is_null), "retry repeated the session");
-    ensure!(retry.data()["recoveryGeneration"] == first.data()["recoveryGeneration"], "retry generation");
-    ensure!(!f.db().rows("SELECT * FROM receipts", [])?.iter().any(|row| row.to_string().contains(&session)), "session saved in a receipt");
-    let next = f.recovery_session(&f.owner, &p.task, with(command, json!({"requestId": new_id()}))).await?.expect_ok()?;
-    ensure!(next.data()["recoveryGeneration"] != first.data()["recoveryGeneration"], "session not rotated");
-    ensure!(field(&f, "SELECT revoked FROM recovery_evidence_sessions WHERE id_hash=?", [sha256_hex(&session)], "revoked")? == 1, "old session open");
-    ensure!(field(&f, "SELECT serving_state FROM authority_state", [], "serving_state")? == "active", "serving state");
+    f.recovery_session(&f.owner, &p.task, command.clone())
+        .await?
+        .expect_code("recovery_source_current")?;
+    f.revoke_device(
+        &f.owner,
+        &f.home,
+        json!({"requestId": new_id(), "expectedRevision": 1}),
+    )
+    .await?
+    .expect_ok()?;
+    f.recovery_session(&f.member, &p.task, command.clone())
+        .await?
+        .expect_code("owner_required")?;
+    let first = f
+        .recovery_session(&f.owner, &p.task, command.clone())
+        .await?
+        .expect_ok()?;
+    let session = first.data()["session"]
+        .as_str()
+        .ok_or("session")?
+        .to_owned();
+    ensure!(
+        session.len() == 43
+            && session
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+        "session format"
+    );
+    let retry = f
+        .recovery_session(&f.owner, &p.task, command.clone())
+        .await?
+        .expect_ok()?;
+    ensure!(
+        retry.data().get("session").is_none_or(Value::is_null),
+        "retry repeated the session"
+    );
+    ensure!(
+        retry.data()["recoveryGeneration"] == first.data()["recoveryGeneration"],
+        "retry generation"
+    );
+    ensure!(
+        !f.db()
+            .rows("SELECT * FROM receipts", [])?
+            .iter()
+            .any(|row| row.to_string().contains(&session)),
+        "session saved in a receipt"
+    );
+    let next = f
+        .recovery_session(
+            &f.owner,
+            &p.task,
+            with(command, json!({"requestId": new_id()})),
+        )
+        .await?
+        .expect_ok()?;
+    ensure!(
+        next.data()["recoveryGeneration"] != first.data()["recoveryGeneration"],
+        "session not rotated"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT revoked FROM recovery_evidence_sessions WHERE id_hash=?",
+            [sha256_hex(&session)],
+            "revoked"
+        )? == 1,
+        "old session open"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT serving_state FROM authority_state",
+            [],
+            "serving_state"
+        )? == "active",
+        "serving state"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn revoked_source_recovery_retains_signed_evidence_then_publishes_exact_content_without_granting_execution() -> Result<()> {
+async fn revoked_source_recovery_retains_signed_evidence_then_publishes_exact_content_without_granting_execution(
+) -> Result<()> {
     let f = TaskFixture::new(&["transfer_task"], None).await?;
     let p = prepared(&f).await?;
     let (proof, generation) = revoked_session(&f, &p).await?;
     let content = json!({"text": "Recovered original result"});
-    let metadata = without(recovery_request(&f, &p, &generation, Some(&content))?, "resultContent");
-    let imported = f.recovery_import(&f.owner, &p.task, metadata.clone(), &proof).await?.expect_ok()?;
-    ensure!(imported.data()["state"] == "result_missing", "state: {}", imported.body);
-    ensure!(field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 0, "result without content");
-    ensure!(f.recovery_import(&f.owner, &p.task, metadata.clone(), &proof).await?.body == imported.body, "import replay");
-    let zero = minarbot_testkit::base64::Engine::encode(&minarbot_testkit::base64::engine::general_purpose::URL_SAFE_NO_PAD, [0_u8; 64]);
-    f.recovery_import(&f.owner, &p.task, with(metadata.clone(), json!({"signature": zero})), &proof).await?.expect_code("recovery_signature_invalid")?;
+    let metadata = without(
+        recovery_request(&f, &p, &generation, Some(&content))?,
+        "resultContent",
+    );
+    let imported = f
+        .recovery_import(&f.owner, &p.task, metadata.clone(), &proof)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        imported.data()["state"] == "result_missing",
+        "state: {}",
+        imported.body
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 0,
+        "result without content"
+    );
+    ensure!(
+        f.recovery_import(&f.owner, &p.task, metadata.clone(), &proof)
+            .await?
+            .body
+            == imported.body,
+        "import replay"
+    );
+    let zero = minarbot_testkit::base64::Engine::encode(
+        &minarbot_testkit::base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        [0_u8; 64],
+    );
+    f.recovery_import(
+        &f.owner,
+        &p.task,
+        with(metadata.clone(), json!({"signature": zero})),
+        &proof,
+    )
+    .await?
+    .expect_code("recovery_signature_invalid")?;
     let result_request = recovery_request(&f, &p, &generation, Some(&content))?;
-    let published = f.recovery_results(&f.owner, &p.task, result_request.clone(), &proof).await?.expect_ok()?;
-    ensure!(f.recovery_results(&f.owner, &p.task, result_request, &proof).await?.body == published.body, "publish replay");
-    ensure!(lookup_data(&f, &f.owner, &p.task).await?["results"][0]["content"] == content, "published content");
-    ensure!(field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 1, "result count");
-    ensure!(field(&f, "SELECT status FROM devices WHERE id=?", [&f.home], "status")? == "revoked", "device status");
-    ensure!(field(&f, "SELECT executor_generation FROM execution_owners WHERE task=?", [&p.task], "executor_generation")? == 1, "executor generation");
-    ensure!(!f.acquire(json!({"requestId": new_id()}), &p.token).await?.ok(), "revoked source acquired");
-    f.recovery_import(&f.owner, &p.task, with(metadata, json!({"requestId": new_id()})), &proof).await?.expect_code("recovery_signature_invalid")?;
+    let published = f
+        .recovery_results(&f.owner, &p.task, result_request.clone(), &proof)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        f.recovery_results(&f.owner, &p.task, result_request, &proof)
+            .await?
+            .body
+            == published.body,
+        "publish replay"
+    );
+    ensure!(
+        lookup_data(&f, &f.owner, &p.task).await?["results"][0]["content"] == content,
+        "published content"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 1,
+        "result count"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT status FROM devices WHERE id=?",
+            [&f.home],
+            "status"
+        )? == "revoked",
+        "device status"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT executor_generation FROM execution_owners WHERE task=?",
+            [&p.task],
+            "executor_generation"
+        )? == 1,
+        "executor generation"
+    );
+    ensure!(
+        !f.acquire(json!({"requestId": new_id()}), &p.token)
+            .await?
+            .ok(),
+        "revoked source acquired"
+    );
+    f.recovery_import(
+        &f.owner,
+        &p.task,
+        with(metadata, json!({"requestId": new_id()})),
+        &proof,
+    )
+    .await?
+    .expect_code("recovery_signature_invalid")?;
     Ok(())
 }
 
 #[tokio::test]
-async fn recovery_rejects_replacement_keys_expired_proof_changed_content_and_non_advancing_watermarks_atomically() -> Result<()> {
+async fn recovery_rejects_replacement_keys_expired_proof_changed_content_and_non_advancing_watermarks_atomically(
+) -> Result<()> {
     let f = TaskFixture::new(&["transfer_task"], None).await?;
     let p = prepared(&f).await?;
     let (proof, generation) = revoked_session(&f, &p).await?;
     let content = json!({"text": "Signed result"});
     let request = recovery_request(&f, &p, &generation, Some(&content))?;
     let other = minarbot_testkit::task_bridge::SigningKey::generate()?;
-    f.db().execute("UPDATE devices SET signing_public_key=? WHERE id=?", [other.public(), f.home.clone()])?;
+    f.db().execute(
+        "UPDATE devices SET signing_public_key=? WHERE id=?",
+        [other.public(), f.home.clone()],
+    )?;
     let mut substituted = request.clone();
     resign(&f, &mut substituted, &other);
-    f.recovery_results(&f.owner, &p.task, substituted, &proof).await?.expect_code("recovery_signature_invalid")?;
-    f.recovery_results(&f.owner, &p.task, with(request.clone(), json!({"resultContent": {"text": "Altered"}})), &proof).await?.expect_code("result_digest_mismatch")?;
+    f.recovery_results(&f.owner, &p.task, substituted, &proof)
+        .await?
+        .expect_code("recovery_signature_invalid")?;
+    f.recovery_results(
+        &f.owner,
+        &p.task,
+        with(
+            request.clone(),
+            json!({"resultContent": {"text": "Altered"}}),
+        ),
+        &proof,
+    )
+    .await?
+    .expect_code("result_digest_mismatch")?;
     let mut unknown = request.clone();
     let action = json!(new_id());
     unknown["envelope"]["entries"][0]["actionId"] = action.clone();
     unknown["envelope"]["entries"][0]["resultRef"]["actionId"] = action;
     resign(&f, &mut unknown, &f.signing);
-    f.recovery_results(&f.owner, &p.task, unknown, &proof).await?.expect_code("recovery_provenance_invalid")?;
-    ensure!(field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 0, "rejected import saved");
-    ensure!(field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 0, "rejected result saved");
-    let result = f.recovery_results(&f.owner, &p.task, request.clone(), &proof).await?.expect_ok()?;
-    let repeat = without(recovery_request(&f, &p, &generation, Some(&content))?, "resultContent");
-    f.recovery_import(&f.owner, &p.task, repeat, &proof).await?.expect_code("recovery_conflict")?;
-    let mut changed = recovery_request(&f, &p, &generation, Some(&json!({"text": "Different signed result"})))?;
+    f.recovery_results(&f.owner, &p.task, unknown, &proof)
+        .await?
+        .expect_code("recovery_provenance_invalid")?;
+    ensure!(
+        field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 0,
+        "rejected import saved"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 0,
+        "rejected result saved"
+    );
+    let result = f
+        .recovery_results(&f.owner, &p.task, request.clone(), &proof)
+        .await?
+        .expect_ok()?;
+    let repeat = without(
+        recovery_request(&f, &p, &generation, Some(&content))?,
+        "resultContent",
+    );
+    f.recovery_import(&f.owner, &p.task, repeat, &proof)
+        .await?
+        .expect_code("recovery_conflict")?;
+    let mut changed = recovery_request(
+        &f,
+        &p,
+        &generation,
+        Some(&json!({"text": "Different signed result"})),
+    )?;
     changed["envelope"]["watermark"] = json!(3);
     changed["envelope"]["entries"][0]["journalSequence"] = json!(3);
     resign(&f, &mut changed, &f.signing);
-    f.recovery_results(&f.owner, &p.task, changed, &proof).await?.expect_code("recovery_conflict")?;
-    f.db().execute("UPDATE recovery_evidence_sessions SET expires_at=0 WHERE id_hash=?", [sha256_hex(&proof)])?;
-    f.recovery_results(&f.owner, &p.task, request.clone(), &proof).await?.expect_code("recovery_session_invalid")?;
-    f.db().execute("UPDATE recovery_evidence_sessions SET expires_at=? WHERE id_hash=?", (now_millis()? + 60_000, sha256_hex(&proof)))?;
-    f.db().execute("UPDATE authority_state SET generation=?", [new_id()])?;
-    f.recovery_results(&f.owner, &p.task, request, &proof).await?.expect_code("recovery_session_invalid")?;
-    ensure!(field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 1, "import count");
-    ensure!(field(&f, "SELECT receipt_id FROM task_reports", [], "receipt_id")? == result.receipt()["requestId"], "report receipt");
+    f.recovery_results(&f.owner, &p.task, changed, &proof)
+        .await?
+        .expect_code("recovery_conflict")?;
+    f.db().execute(
+        "UPDATE recovery_evidence_sessions SET expires_at=0 WHERE id_hash=?",
+        [sha256_hex(&proof)],
+    )?;
+    f.recovery_results(&f.owner, &p.task, request.clone(), &proof)
+        .await?
+        .expect_code("recovery_session_invalid")?;
+    f.db().execute(
+        "UPDATE recovery_evidence_sessions SET expires_at=? WHERE id_hash=?",
+        (now_millis()? + 60_000, sha256_hex(&proof)),
+    )?;
+    f.db()
+        .execute("UPDATE authority_state SET generation=?", [new_id()])?;
+    f.recovery_results(&f.owner, &p.task, request, &proof)
+        .await?
+        .expect_code("recovery_session_invalid")?;
+    ensure!(
+        field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 1,
+        "import count"
+    );
+    ensure!(
+        field(&f, "SELECT receipt_id FROM task_reports", [], "receipt_id")?
+            == result.receipt()["requestId"],
+        "report receipt"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn recovery_stop_proof_preserves_original_journal_signature_and_rejects_altered_runner_evidence() -> Result<()> {
+async fn recovery_stop_proof_preserves_original_journal_signature_and_rejects_altered_runner_evidence(
+) -> Result<()> {
     let f = TaskFixture::new(&["transfer_task"], None).await?;
     let p = prepared(&f).await?;
     let (proof, generation) = revoked_session(&f, &p).await?;
@@ -5438,36 +7543,111 @@ async fn recovery_stop_proof_preserves_original_journal_signature_and_rejects_al
         "signature": f.signing.sign_json(&envelope_body(&generation, &request_id, &envelope))});
     let mut altered = request.clone();
     altered["envelope"]["stopEvidence"][0]["processStart"] = json!("1000");
-    f.recovery_import(&f.owner, &p.task, altered, &proof).await?.expect_code("recovery_signature_invalid")?;
-    let result = f.recovery_import(&f.owner, &p.task, request.clone(), &proof).await?.expect_ok()?;
-    ensure!(field(&f, "SELECT state FROM task_actions WHERE id=?", [&p.action], "state")? == "not_sent", "action state");
-    let saved: Value = serde_json::from_str(field(&f, "SELECT envelope_json FROM recovery_imports", [], "envelope_json")?.as_str().ok_or("envelope_json")?)?;
-    ensure!(saved["entries"][0]["signature"] == signed["signature"], "journal signature replaced");
-    ensure!(f.recovery_import(&f.owner, &p.task, request, &proof).await?.body == result.body, "import replay");
+    f.recovery_import(&f.owner, &p.task, altered, &proof)
+        .await?
+        .expect_code("recovery_signature_invalid")?;
+    let result = f
+        .recovery_import(&f.owner, &p.task, request.clone(), &proof)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        field(
+            &f,
+            "SELECT state FROM task_actions WHERE id=?",
+            [&p.action],
+            "state"
+        )? == "not_sent",
+        "action state"
+    );
+    let saved: Value = serde_json::from_str(
+        field(
+            &f,
+            "SELECT envelope_json FROM recovery_imports",
+            [],
+            "envelope_json",
+        )?
+        .as_str()
+        .ok_or("envelope_json")?,
+    )?;
+    ensure!(
+        saved["entries"][0]["signature"] == signed["signature"],
+        "journal signature replaced"
+    );
+    ensure!(
+        f.recovery_import(&f.owner, &p.task, request, &proof)
+            .await?
+            .body
+            == result.body,
+        "import replay"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn late_content_completes_a_saved_recovery_batch_without_lowering_newer_evidence_watermark() -> Result<()> {
+async fn late_content_completes_a_saved_recovery_batch_without_lowering_newer_evidence_watermark(
+) -> Result<()> {
     let f = TaskFixture::new(&["transfer_task"], None).await?;
     let p = prepared(&f).await?;
     let (proof, generation) = revoked_session(&f, &p).await?;
     let content = json!({"text": "Late content"});
-    let old = without(recovery_request(&f, &p, &generation, Some(&content))?, "resultContent");
-    f.recovery_import(&f.owner, &p.task, old, &proof).await?.expect_ok()?;
-    let mut newer = without(recovery_request(&f, &p, &generation, Some(&content))?, "resultContent");
+    let old = without(
+        recovery_request(&f, &p, &generation, Some(&content))?,
+        "resultContent",
+    );
+    f.recovery_import(&f.owner, &p.task, old, &proof)
+        .await?
+        .expect_ok()?;
+    let mut newer = without(
+        recovery_request(&f, &p, &generation, Some(&content))?,
+        "resultContent",
+    );
     newer["envelope"]["watermark"] = json!(3);
     newer["envelope"]["entries"][0]["journalSequence"] = json!(3);
     resign(&f, &mut newer, &f.signing);
-    f.recovery_import(&f.owner, &p.task, newer, &proof).await?.expect_ok()?;
+    f.recovery_import(&f.owner, &p.task, newer, &proof)
+        .await?
+        .expect_ok()?;
     let late = recovery_request(&f, &p, &generation, Some(&content))?;
-    let published = f.recovery_results(&f.owner, &p.task, late, &proof).await?.expect_ok()?;
-    ensure!(published.receipt()["recordId"] == p.action.as_str(), "receipt record: {}", published.body);
-    ensure!(field(&f, "SELECT journal_sequence FROM task_reports", [], "journal_sequence")? == 3, "report journal sequence");
-    let payload: Value = serde_json::from_str(field(&f, "SELECT payload_json FROM task_reports", [], "payload_json")?.as_str().ok_or("payload_json")?)?;
+    let published = f
+        .recovery_results(&f.owner, &p.task, late, &proof)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        published.receipt()["recordId"] == p.action.as_str(),
+        "receipt record: {}",
+        published.body
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT journal_sequence FROM task_reports",
+            [],
+            "journal_sequence"
+        )? == 3,
+        "report journal sequence"
+    );
+    let payload: Value = serde_json::from_str(
+        field(
+            &f,
+            "SELECT payload_json FROM task_reports",
+            [],
+            "payload_json",
+        )?
+        .as_str()
+        .ok_or("payload_json")?,
+    )?;
     ensure!(payload["journalSequence"] == 3, "report payload: {payload}");
-    ensure!(field(&f, "SELECT max(watermark) n FROM recovery_imports", [], "n")? == 3, "watermark lowered");
-    ensure!(field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 2, "import count");
-    ensure!(lookup_data(&f, &f.owner, &p.task).await?["results"][0]["content"] == content, "published content");
+    ensure!(
+        field(&f, "SELECT max(watermark) n FROM recovery_imports", [], "n")? == 3,
+        "watermark lowered"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM recovery_imports", [], "n")? == 2,
+        "import count"
+    );
+    ensure!(
+        lookup_data(&f, &f.owner, &p.task).await?["results"][0]["content"] == content,
+        "published content"
+    );
     Ok(())
 }
