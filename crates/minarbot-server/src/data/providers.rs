@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_includes_transcription_receipts() -> crate::db::Result<()> {
+    fn usage_includes_transcription_receipts() -> Result<()> {
         let db = Connection::open_in_memory()?;
         db.execute_batch(
             "CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT NOT NULL);

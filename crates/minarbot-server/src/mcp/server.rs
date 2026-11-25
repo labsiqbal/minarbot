@@ -646,7 +646,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn send_schema_supports_batch_coordination() -> crate::db::Result<()> {
+    fn send_schema_supports_batch_coordination() -> Result<()> {
         let send = tools()
             .as_array()
             .and_then(|items| items.iter().find(|item| item["name"] == "send_message"))
