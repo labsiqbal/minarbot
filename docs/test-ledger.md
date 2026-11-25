@@ -123,6 +123,7 @@ each iteration as a case.
 | `app/agent-visibility.test.ts` | 1 | 1 | 0 | 1 (B1, TS module) |
 | `app/script-discovery.test.ts` | 3 | 3 | 0 | 1 (B2) |
 | `app/script-messages.test.ts` | 1 | 1 | 0 | 1 (B1) |
+| `app/flow-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 
 <!-- fixture-summary -->
 
@@ -170,6 +171,12 @@ each iteration as a case.
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
 | script messages and answers share grants, scope, receipts, redaction and rate admission | `fx_scripts::script_messages_and_answers_share_grants_scope_receipts_redaction_and_rate_admission` | 45 -> 50 | Kept in Node for B1 (`assert.equal(calls, 2)` counts the step after `ask_user`). The fixed clock replaces the mocked `Date`. The 58 admitted messages each run one harness turn, so the drain before the restart waits 2 s per queued turn. |
+
+### `app/flow-tools.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| agent flow edits preserve ownership, revisions and ordered receipts across restart | `fx_tools::agent_flow_edits_preserve_ownership_revisions_and_ordered_receipts_across_restart` | 16 -> 13 | Full. The server's done check asks once more ("One verification reminder"); the Node API runtime kept the tool results in that request, so the model answers it with the final text. The Node count includes two helper asserts. |
 
 <!-- fixture-cases -->
 

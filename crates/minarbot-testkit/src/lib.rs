@@ -28,6 +28,7 @@ pub mod http;
 pub mod image;
 pub mod issuer;
 pub mod model;
+pub mod noise;
 pub mod peer;
 pub mod protocol;
 pub mod providers;

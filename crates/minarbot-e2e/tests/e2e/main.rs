@@ -9,6 +9,7 @@ mod fx_agents;
 mod fx_queues;
 mod fx_scripts;
 mod fx_support;
+mod fx_tools;
 mod goals;
 mod harness;
 mod kit;
