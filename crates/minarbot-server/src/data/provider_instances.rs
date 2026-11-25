@@ -343,6 +343,8 @@ pub(crate) fn configure_test_gateway(state: &AppState) -> Result<()> {
     let Some(gateway) = gateway.as_ref() else {
         return Ok(());
     };
+    crate::data::providers::address(&gateway.base_url)
+        .map_err(|_| error(400, "Invalid provider address."))?;
     let key = gateway.api_key.as_deref().unwrap_or("");
     let encrypted = provider_store::encrypt_secret(state, "codex-test-gateway", key)?;
     let mut environment = vec![
