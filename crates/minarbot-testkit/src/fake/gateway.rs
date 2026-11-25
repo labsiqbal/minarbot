@@ -48,7 +48,9 @@ struct State {
     model: String,
     workspace: PathBuf,
     saved: Option<Vec<Value>>,
-    runs: HashMap<String, AbortHandle>,
+    /// Active run per thread, tagged with its run id so a finished run never
+    /// removes the run that replaced it.
+    runs: HashMap<String, (String, AbortHandle)>,
     next_id: u64,
     request_ids: HashMap<String, String>,
 }
@@ -790,6 +792,8 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                     .collect();
                 let worker = peer.clone();
                 let finished = key.clone();
+                let run_id = Uuid::new_v4().to_string();
+                let own = run_id.clone();
                 let task = super::spawn(async move {
                     if let Err(error) = run(worker.clone(), prompt, additional, images).await {
                         super::log(
@@ -802,9 +806,13 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                             "error": {"message": error.to_string()}}),
                         );
                     }
-                    worker.with(|state| state.runs.remove(&finished));
+                    worker.with(|state| {
+                        if state.runs.get(&finished).is_some_and(|(id, _)| *id == own) {
+                            state.runs.remove(&finished);
+                        }
+                    });
                 });
-                peer.with(|state| state.runs.insert(key, task));
+                peer.with(|state| state.runs.insert(key, (run_id, task)));
             }
             Some("model/list") => {
                 let peer = peer.clone();
@@ -821,7 +829,7 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                 let key = params["threadId"]
                     .as_str()
                     .map_or_else(|| peer.with(|state| state.session.clone()), str::to_owned);
-                if let Some(run) = peer.with(|state| state.runs.remove(&key)) {
+                if let Some((_, run)) = peer.with(|state| state.runs.remove(&key)) {
                     run.abort();
                 }
                 peer.out.send(&json!({"id": id, "result": {}}));

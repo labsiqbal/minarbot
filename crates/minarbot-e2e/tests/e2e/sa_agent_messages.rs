@@ -143,6 +143,9 @@ async fn teammate_messages_correlate_groups_isolate_context_persist_receipts_and
         let mut body = json!({"runtime": "api", "id": new_id(), "name": name, "model": model, "instructions": "Help."});
         if let Some(role) = role {
             body["role"] = json!(role);
+            // Teammates need at most one tool step; a small budget ends the
+            // refused reply loop quickly (H1).
+            body["toolBudget"] = json!(10);
         }
         body
     };
