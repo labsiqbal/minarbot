@@ -120,6 +120,7 @@ each iteration as a case.
 | `app/queue-edits.test.ts` | 3 | 3 | 0 | 0 (deleted) |
 | `app/queue-order.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/agent-delete.test.ts` | 6 | 6 | 0 | 0 (deleted) |
+| `app/agent-visibility.test.ts` | 1 | 1 | 0 | 1 (B1, TS module) |
 
 <!-- fixture-summary -->
 
@@ -147,6 +148,12 @@ each iteration as a case.
 | running provider work must settle before delete; transactional failure preserves agent and desktop for retry | `fx_agents::running_provider_work_must_settle_before_delete_transactional_failure_preserves_agent_and_desktop_for_retry` | 11 -> 8 | Full; `assert(started)` is the parked model request, the Node count includes helper asserts. |
 | paired peer cannot delete owner agents; deletion on owner refreshes peer roster | `fx_agents::paired_peer_cannot_delete_owner_agents_deletion_on_owner_refreshes_peer_roster` | 6 -> 4 | Full: issued token, 403, 404, refreshed roster. Both servers use `peer::PeerBridge` (token issuer and loopback `peer-http`) and start through `server::start_pair`. |
 | owned Git checkpoint refs clean up durably without removing project files; failed cleanup retries | `fx_agents::owned_git_checkpoint_refs_clean_up_durably_without_removing_project_files_failed_cleanup_retries` | 6 -> 6 | Full. |
+
+### `app/agent-visibility.test.ts` (kept: B1)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| hidden agents finish active work, hold queue across restart, reject new work and skip missed schedules | `fx_agents::hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_work_and_skip_missed_schedules` | 33 -> 27 | Kept in Node for B1: `wait_for_event` returns `null` and the harness takes one more model step, so the Rust test fails that step at once and leaves it out of `calls.length === 6`. The 7 `visibilityCommand` asserts test `app/shared/agent-visibility.ts`, a TS module with no importer besides this case, and stay in Node. |
 
 <!-- fixture-cases -->
 
