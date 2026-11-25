@@ -205,9 +205,7 @@ impl GatedModel {
             parked,
             stopping,
         };
-        let app = Router::new()
-            .fallback(dispatch)
-            .with_state(shared.clone());
+        let app = Router::new().fallback(dispatch).with_state(shared.clone());
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let origin = format!("http://{}", listener.local_addr()?);
         let mut stopped = shared.stopping.clone();

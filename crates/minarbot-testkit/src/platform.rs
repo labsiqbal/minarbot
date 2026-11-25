@@ -99,7 +99,11 @@ fn lock(shared: &Arc<Mutex<Shared>>) -> std::sync::MutexGuard<'_, Shared> {
 }
 
 /// Forward a script request to Minarbot (`app_origin`) with its headers.
-pub async fn forward(client: &reqwest::Client, app_origin: &str, request: &StubRequest) -> Result<StubReply> {
+pub async fn forward(
+    client: &reqwest::Client,
+    app_origin: &str,
+    request: &StubRequest,
+) -> Result<StubReply> {
     let method = reqwest::Method::from_bytes(request.method.as_bytes())?;
     let mut builder = client.request(method.clone(), format!("{app_origin}{}", request.target));
     for name in ["authorization", "content-type", "x-file-name"] {
@@ -119,12 +123,17 @@ pub async fn forward(client: &reqwest::Client, app_origin: &str, request: &StubR
         .unwrap_or("application/octet-stream")
         .to_owned();
     let bytes = response.bytes().await?.to_vec();
-    Ok(StubReply::Raw(status, vec![("Content-Type".into(), content_type)], bytes))
+    Ok(StubReply::Raw(
+        status,
+        vec![("Content-Type".into(), content_type)],
+        bytes,
+    ))
 }
 
 impl ConnectorFixture {
     /// Fixture for `agent` whose connector reaches Minarbot at `app_origin`
-    /// with `script_token`.
+    /// with `script_token`. The arguments mirror the Node `rustConnectorFixture`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         kind: Kind,
         root: &Path,
@@ -153,8 +162,14 @@ impl ConnectorFixture {
                 async move { reply }
             },
             move |socket: Socket| {
-                let Socket { mut incoming, outgoing, .. } = socket;
-                let _ = outgoing.send(json!({"type": "hello", "connection_info": {"app_id": "AAPP"}}).to_string());
+                let Socket {
+                    mut incoming,
+                    outgoing,
+                    ..
+                } = socket;
+                let _ = outgoing.send(
+                    json!({"type": "hello", "connection_info": {"app_id": "AAPP"}}).to_string(),
+                );
                 lock(&socket_shared).sockets.push(outgoing);
                 let acks = socket_shared.clone();
                 tokio::spawn(async move {
@@ -177,12 +192,18 @@ impl ConnectorFixture {
         let (app, token) = (app_origin.to_owned(), format!("Bearer {script_token}"));
         let client = reqwest::Client::builder().no_proxy().build()?;
         let local = Stub::start_async(move |request| {
-            let (shared, app, token, client) = (local_shared.clone(), app.clone(), token.clone(), client.clone());
+            let (shared, app, token, client) = (
+                local_shared.clone(),
+                app.clone(),
+                token.clone(),
+                client.clone(),
+            );
             async move {
                 let fault = {
                     let mut state = lock(&shared);
                     let index = state.faults.iter().position(|fault| {
-                        fault.method.is_none_or(|method| method == request.method) && (fault.matches)(&request.target)
+                        fault.method.is_none_or(|method| method == request.method)
+                            && (fault.matches)(&request.target)
                     });
                     index.map(|index| state.faults.remove(index))
                 };
@@ -190,7 +211,10 @@ impl ConnectorFixture {
                     return StubReply::Drop;
                 }
                 if request.header("authorization") != Some(token.as_str()) {
-                    lock(&shared).problems.push(format!("script request without the token: {}", request.target));
+                    lock(&shared).problems.push(format!(
+                        "script request without the token: {}",
+                        request.target
+                    ));
                 }
                 let reply = forward(&client, &app, &request).await;
                 if fault.is_some() {
@@ -206,7 +230,10 @@ impl ConnectorFixture {
         )?;
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(script_directory.join("connection.json"), std::fs::Permissions::from_mode(0o600))?;
+            std::fs::set_permissions(
+                script_directory.join("connection.json"),
+                std::fs::Permissions::from_mode(0o600),
+            )?;
         }
         Ok(Self {
             kind,
@@ -314,7 +341,10 @@ impl ConnectorFixture {
     pub async fn send(&mut self, message: Value) -> Result<()> {
         match self.kind {
             Kind::Slack => {
-                let envelope = message["envelope_id"].as_str().unwrap_or_default().to_owned();
+                let envelope = message["envelope_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
                 let before = self.acks().iter().filter(|id| **id == envelope).count();
                 crate::wait::until("Slack socket open", || async {
                     self.problems()?;
@@ -325,7 +355,10 @@ impl ConnectorFixture {
                 .map_err(|_| "Slack socket closed")?;
                 crate::wait::until("Slack event acknowledged", || async {
                     self.problems()?;
-                    Ok((self.acks().iter().filter(|id| **id == envelope).count() > before).then_some(()))
+                    Ok(
+                        (self.acks().iter().filter(|id| **id == envelope).count() > before)
+                            .then_some(()),
+                    )
                 })
                 .await
             }
@@ -336,7 +369,9 @@ impl ConnectorFixture {
                 crate::wait::until("Telegram update committed", || async {
                     self.problems()?;
                     let offset = crate::db::Inspector::open(&database)
-                        .and_then(|db| db.scalar::<i64>("SELECT offset FROM telegram_binding WHERE id=1", []))
+                        .and_then(|db| {
+                            db.scalar::<i64>("SELECT offset FROM telegram_binding WHERE id=1", [])
+                        })
                         .unwrap_or(0);
                     Ok((offset > update).then_some(()))
                 })
@@ -369,17 +404,29 @@ fn platform(
     hook: Option<&Hook>,
     request: &StubRequest,
 ) -> StubReply {
-    let method = request.path().rsplit('/').next().unwrap_or_default().to_owned();
-    let origin = origin.lock().map(|origin| origin.clone()).unwrap_or_default();
+    let method = request
+        .path()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let origin = origin
+        .lock()
+        .map(|origin| origin.clone())
+        .unwrap_or_default();
     let mut state = lock(shared);
     let value = match method.as_str() {
         "auth.test" => json!({"team_id": "TTEAM", "user_id": "UBOT", "bot_id": "BBOT"}),
-        "apps.connections.open" => json!({"url": format!("{}/socket", origin.replacen("http:", "ws:", 1))}),
+        "apps.connections.open" => {
+            json!({"url": format!("{}/socket", origin.replacen("http:", "ws:", 1))})
+        }
         "getMe" => json!({"id": 123, "is_bot": true}),
         "getUpdates" => {
             let poll = request.json();
             if poll["allowed_updates"] != json!(["message", "callback_query"]) {
-                state.problems.push(format!("allowed_updates {}", poll["allowed_updates"]));
+                state
+                    .problems
+                    .push(format!("allowed_updates {}", poll["allowed_updates"]));
             }
             let offset = poll["offset"].as_i64().unwrap_or(0);
             state.polls.push(offset);
@@ -404,10 +451,14 @@ fn platform(
                 None => {
                     let body = request.json();
                     match kind {
-                        Kind::Slack => json!({"channel": body["channel"], "ts": format!("1700000001.{count:06}")}),
+                        Kind::Slack => {
+                            json!({"channel": body["channel"], "ts": format!("1700000001.{count:06}")})
+                        }
                         Kind::Telegram if method == "answerCallbackQuery" => json!(true),
-                        Kind::Telegram => json!({"chat": {"id": if body["chat_id"].is_null() { json!(4) } else { body["chat_id"].clone() }},
-                            "message_id": 100 + count}),
+                        Kind::Telegram => {
+                            json!({"chat": {"id": if body["chat_id"].is_null() { json!(4) } else { body["chat_id"].clone() }},
+                            "message_id": 100 + count})
+                        }
                     }
                 }
             }
@@ -456,26 +507,37 @@ pub fn artifact_receiver(kind: Kind, uploads: Arc<Mutex<Vec<Vec<u8>>>>) -> Hook 
                 "upload_url": format!("http://{}/uploadFile", request.header("host").unwrap_or_default())}))),
             "uploadFile" => {
                 if request.header("authorization").is_some() {
-                    return Some(HookReply::Raw(StubReply::Json(400, json!({"error": "upload carried credentials"}))));
+                    return Some(HookReply::Raw(StubReply::Json(
+                        400,
+                        json!({"error": "upload carried credentials"}),
+                    )));
                 }
                 push(request.body.clone());
                 Some(HookReply::Raw(StubReply::Raw(200, vec![], b"OK".to_vec())))
             }
-            "files.completeUploadExternal" => Some(HookReply::Value(json!({"files": request.json()["files"]}))),
+            "files.completeUploadExternal" => {
+                Some(HookReply::Value(json!({"files": request.json()["files"]})))
+            }
             "sendDocument" if kind == Kind::Telegram => {
                 let boundary = request
                     .header("content-type")
                     .and_then(|value| value.split("boundary=").nth(1))
                     .map(|value| value.trim_matches('"').to_owned())?;
                 let fields = split_multipart(&request.body, &boundary);
-                let document = fields.iter().find(|(head, _)| head.contains("name=\"document\""))?;
+                let document = fields
+                    .iter()
+                    .find(|(head, _)| head.contains("name=\"document\""))?;
                 push(document.1.clone());
                 let chat = fields
                     .iter()
                     .find(|(head, _)| head.contains("name=\"chat_id\""))
-                    .and_then(|(_, value)| String::from_utf8_lossy(value).trim().parse::<i64>().ok())?;
+                    .and_then(|(_, value)| {
+                        String::from_utf8_lossy(value).trim().parse::<i64>().ok()
+                    })?;
                 let count = uploads.lock().map(|uploads| uploads.len()).unwrap_or(0);
-                Some(HookReply::Value(json!({"chat": {"id": chat}, "message_id": 1000 + count})))
+                Some(HookReply::Value(
+                    json!({"chat": {"id": chat}, "message_id": 1000 + count}),
+                ))
             }
             _ => None,
         }

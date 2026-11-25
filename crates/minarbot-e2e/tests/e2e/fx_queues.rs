@@ -43,13 +43,14 @@ async fn queue_edit_holds_survive_restart_preserve_order_and_original_receipt_re
 ) -> Result<()> {
     let model = blocking_model().await?;
     let root = TestRoot::new()?;
-    let mut app = root
-        .start(gated(&model).concurrency(1))
-        .await?;
+    let mut app = root.start(gated(&model).concurrency(1)).await?;
     let a = id(&api_agent(&app, "A", "fixture").await?)?;
     let b = id(&api_agent(&app, "B", "fixture").await?)?;
     let side = id(&app
-        .post(&format!("/api/agents/{a}/threads"), json!({"id": new_id(), "name": "Side"}))
+        .post(
+            &format!("/api/agents/{a}/threads"),
+            json!({"id": new_id(), "name": "Side"}),
+        )
         .await?)?;
     let channel = id(&app
         .post(
@@ -76,8 +77,13 @@ async fn queue_edit_holds_survive_restart_preserve_order_and_original_receipt_re
         let paginated = path.starts_with("/api/agents/");
         if paginated {
             for n in 0..100 {
-                let status =
-                    upload(&app, &format!("{files}/{}", new_id()), &format!("newer-{n}.txt"), "newer").await?;
+                let status = upload(
+                    &app,
+                    &format!("{files}/{}", new_id()),
+                    &format!("newer-{n}.txt"),
+                    "newer",
+                )
+                .await?;
                 ensure!(status == 200, "newer upload {n}: {status}");
             }
             let first_page = rows(&app, &files).await?;
@@ -106,7 +112,10 @@ async fn queue_edit_holds_survive_restart_preserve_order_and_original_receipt_re
         let hold = json!({"id": new_id(), "editor": editor, "revision": turn["revision"], "action": "hold"});
         let accepted = app.post(&edit_path, hold.clone()).await?;
         ensure!(accepted["files"] == original_files, "hold files {accepted}");
-        ensure!(app.post(&edit_path, hold.clone()).await? == accepted, "hold replay");
+        ensure!(
+            app.post(&edit_path, hold.clone()).await? == accepted,
+            "hold replay"
+        );
         let mut renew = hold.clone();
         renew["id"] = json!(new_id());
         renew["revision"] = accepted["revision"].clone();
@@ -116,7 +125,8 @@ async fn queue_edit_holds_survive_restart_preserve_order_and_original_receipt_re
             "renew revision"
         );
         ensure!(
-            app.post(&edit_path, renew.clone()).await? == app.post(&edit_path, renew.clone()).await?,
+            app.post(&edit_path, renew.clone()).await?
+                == app.post(&edit_path, renew.clone()).await?,
             "renew replay"
         );
         let mut competing = renew.clone();
@@ -127,8 +137,12 @@ async fn queue_edit_holds_survive_restart_preserve_order_and_original_receipt_re
         stale["id"] = json!(new_id());
         stale["revision"] = turn["revision"].clone();
         app.post_expect(&edit_path, stale, 409).await?;
-        app.post_expect(&format!("/api/agents/{b}/turns/{turn_id}/edit"), hold.clone(), 404)
-            .await?;
+        app.post_expect(
+            &format!("/api/agents/{b}/turns/{turn_id}/edit"),
+            hold.clone(),
+            404,
+        )
+        .await?;
         let mut second = hold.clone();
         second["id"] = json!(new_id());
         second["editor"] = json!(new_id());
@@ -184,12 +198,18 @@ async fn queue_edit_holds_survive_restart_preserve_order_and_original_receipt_re
         let save = json!({"id": new_id(), "editor": editor, "revision": accepted["revision"], "action": "save",
             "text": "CHANGED", "files": edited_files});
         let result = app.post(&edit_path, save.clone()).await?;
-        ensure!(app.post(&edit_path, save.clone()).await? == result, "save replay");
+        ensure!(
+            app.post(&edit_path, save.clone()).await? == result,
+            "save replay"
+        );
         settle(&app, &path, &tail, "done").await?;
         let seen = calls(&model);
         let n = seen.len();
         ensure!(n >= 3, "calls {seen:?}");
-        ensure!(seen[n - 3] == "BLOCK" && seen[n - 1] == "TAIL", "order {seen:?}");
+        ensure!(
+            seen[n - 3] == "BLOCK" && seen[n - 1] == "TAIL",
+            "order {seen:?}"
+        );
         if paginated {
             ensure!(
                 seen[n - 2].contains("CHANGED") && seen[n - 2].contains("Saved attachment"),
@@ -203,9 +223,15 @@ async fn queue_edit_holds_survive_restart_preserve_order_and_original_receipt_re
         ensure!(edited["text"] == "CHANGED", "receipt text {edited}");
         let attachments: Value =
             serde_json::from_str(edited["attachments"].as_str().ok_or("attachments")?)?;
-        ensure!(attachments == edited_files, "receipt attachments {attachments}");
+        ensure!(
+            attachments == edited_files,
+            "receipt attachments {attachments}"
+        );
         let (status, bytes) = fetch(&app, &file_path).await?;
-        ensure!(status == 200 && bytes == b"Saved attachment", "file {status}");
+        ensure!(
+            status == 200 && bytes == b"Saved attachment",
+            "file {status}"
+        );
         let mut changed = command.clone();
         changed["text"] = json!("CHANGED");
         app.post_expect(&path, changed, 409).await?;
@@ -219,7 +245,8 @@ async fn queue_edit_holds_survive_restart_preserve_order_and_original_receipt_re
         app.post_expect(&edit_path, cancel, 409).await?;
     }
     let path = format!("/api/agents/{a}/turns");
-    app.post(&path, json!({"id": new_id(), "text": "BLOCK"})).await?;
+    app.post(&path, json!({"id": new_id(), "text": "BLOCK"}))
+        .await?;
     let held = model.parked().await?;
     let turn = app
         .post(&path, json!({"id": new_id(), "text": "UNCHANGED"}))
@@ -233,9 +260,13 @@ async fn queue_edit_holds_survive_restart_preserve_order_and_original_receipt_re
             json!({"id": new_id(), "editor": editor, "revision": turn["revision"], "action": "hold"}),
         )
         .await?;
-    let cancel = json!({"id": new_id(), "editor": editor, "revision": hold["revision"], "action": "cancel"});
+    let cancel =
+        json!({"id": new_id(), "editor": editor, "revision": hold["revision"], "action": "cancel"});
     let result = app.post(&edit_path, cancel.clone()).await?;
-    ensure!(app.post(&edit_path, cancel).await? == result, "cancel replay");
+    ensure!(
+        app.post(&edit_path, cancel).await? == result,
+        "cancel replay"
+    );
     app.post_expect(
         &edit_path,
         json!({"id": new_id(), "editor": editor, "revision": result["revision"], "action": "save",
@@ -258,25 +289,31 @@ async fn abandoned_edit_lease_expires_and_drains_its_message_and_following_queue
 ) -> Result<()> {
     let model = blocking_model().await?;
     let root = TestRoot::new()?;
-    let mut app = root
-        .start(gated(&model))
-        .await?;
+    let mut app = root.start(gated(&model)).await?;
     let agent = id(&api_agent(&app, "Abandoned", "fixture").await?)?;
     let path = format!("/api/agents/{agent}/turns");
     let blocker = new_id();
-    app.post(&path, json!({"id": blocker, "text": "BLOCK"})).await?;
+    app.post(&path, json!({"id": blocker, "text": "BLOCK"}))
+        .await?;
     let turn = app
         .post(&path, json!({"id": new_id(), "text": "ABANDONED"}))
         .await?;
     let turn_id = id(&turn)?;
-    let tail = id(&app.post(&path, json!({"id": new_id(), "text": "TAIL"})).await?)?;
+    let tail = id(&app
+        .post(&path, json!({"id": new_id(), "text": "TAIL"}))
+        .await?)?;
     let editor = new_id();
-    let hold = json!({"id": new_id(), "editor": editor, "revision": turn["revision"], "action": "hold"});
-    app.post(&format!("{path}/{turn_id}/edit"), hold.clone()).await?;
+    let hold =
+        json!({"id": new_id(), "editor": editor, "revision": turn["revision"], "action": "hold"});
+    app.post(&format!("{path}/{turn_id}/edit"), hold.clone())
+        .await?;
     done(model.parked().await?);
     settle(&app, &path, &blocker, "done").await?;
     app.edit_database(|db: &Fixture| {
-        db.execute("UPDATE queue_edits SET expires_at=0 WHERE editor=?", [&editor])?;
+        db.execute(
+            "UPDATE queue_edits SET expires_at=0 WHERE editor=?",
+            [&editor],
+        )?;
         Ok(())
     })
     .await?;
@@ -285,7 +322,10 @@ async fn abandoned_edit_lease_expires_and_drains_its_message_and_following_queue
         row(&app, &path, &turn_id).await?["editing"] == false,
         "Abandoned editor must release its queue hold"
     );
-    ensure!(tail_row["status"] == "done", "Queue must drain after abandoned edit");
+    ensure!(
+        tail_row["status"] == "done",
+        "Queue must drain after abandoned edit"
+    );
     ensure!(
         calls(&model) == ["BLOCK", "ABANDONED", "TAIL"],
         "calls {:?}",
@@ -339,7 +379,11 @@ async fn rust_expires_migrated_permanent_queue_holds_and_fences_the_prior_revisi
         "legacy edit {}",
         edit(&legacy)?
     );
-    ensure!(revision(&legacy)? == 2, "legacy revision {}", revision(&legacy)?);
+    ensure!(
+        revision(&legacy)? == 2,
+        "legacy revision {}",
+        revision(&legacy)?
+    );
     // Queue edit leases use SQLite's wall clock, not the server test clock.
     let deadline = i64::try_from(
         std::time::SystemTime::now()
@@ -364,14 +408,28 @@ async fn rust_expires_migrated_permanent_queue_holds_and_fences_the_prior_revisi
         "current edit {}",
         edit(&current)?
     );
-    ensure!(revision(&current)? == 1, "current revision {}", revision(&current)?);
+    ensure!(
+        revision(&current)? == 1,
+        "current revision {}",
+        revision(&current)?
+    );
     app.edit_database(|db| {
-        db.execute("UPDATE queue_edits SET expires_at=0 WHERE turn=?", [&current])?;
+        db.execute(
+            "UPDATE queue_edits SET expires_at=0 WHERE turn=?",
+            [&current],
+        )?;
         Ok(())
     })
     .await?;
-    ensure!(edit(&current)?["state"] == "cancelled", "current not expired");
-    ensure!(revision(&current)? == 2, "current revision {}", revision(&current)?);
+    ensure!(
+        edit(&current)?["state"] == "cancelled",
+        "current not expired"
+    );
+    ensure!(
+        revision(&current)? == 2,
+        "current revision {}",
+        revision(&current)?
+    );
     Ok(())
 }
 
@@ -396,7 +454,10 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
                     .is_some_and(|content| content.contains("REORDERED SUMMARY"))
             })
         {
-            return Answer::Status(500, json!({"error": "EARLY LAST without reordered summary"}));
+            return Answer::Status(
+                500,
+                json!({"error": "EARLY LAST without reordered summary"}),
+            );
         }
         if text == "FIRST"
             && !messages
@@ -412,12 +473,13 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
         }
     });
     let root = TestRoot::new()?;
-    let mut app = root
-        .start(gated(&model).concurrency(1))
-        .await?;
+    let mut app = root.start(gated(&model).concurrency(1)).await?;
     let a = id(&api_agent(&app, "A", "fixture").await?)?;
     let side = id(&app
-        .post(&format!("/api/agents/{a}/threads"), json!({"id": new_id(), "name": "Side"}))
+        .post(
+            &format!("/api/agents/{a}/threads"),
+            json!({"id": new_id(), "name": "Side"}),
+        )
         .await?)?;
     let channel = id(&app
         .post(
@@ -429,7 +491,11 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
         model
             .requests()
             .iter()
-            .filter(|request| !request.system().starts_with("Summarize conversation history"))
+            .filter(|request| {
+                !request
+                    .system()
+                    .starts_with("Summarize conversation history")
+            })
             .map(|request| request.last_text())
             .collect()
     };
@@ -438,10 +504,15 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
         format!("/api/threads/{side}/turns"),
         format!("/api/channels/{channel}/turns"),
     ] {
-        app.post(&path, json!({"id": new_id(), "text": "BLOCK"})).await?;
+        app.post(&path, json!({"id": new_id(), "text": "BLOCK"}))
+            .await?;
         let held = model.parked().await?;
-        let first = app.post(&path, json!({"id": new_id(), "text": "FIRST"})).await?;
-        let second = app.post(&path, json!({"id": new_id(), "text": "SECOND"})).await?;
+        let first = app
+            .post(&path, json!({"id": new_id(), "text": "FIRST"}))
+            .await?;
+        let second = app
+            .post(&path, json!({"id": new_id(), "text": "SECOND"}))
+            .await?;
         let (first_id, second_id) = (id(&first)?, id(&second)?);
         let endpoint = path.trim_end_matches("/turns").to_owned() + "/queue";
         let editor = new_id();
@@ -462,7 +533,10 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
             .await?;
         swap["revision"] = cancelled["revision"].clone();
         let result = app.post(&endpoint, swap.clone()).await?;
-        ensure!(app.post(&endpoint, swap.clone()).await? == result, "swap replay");
+        ensure!(
+            app.post(&endpoint, swap.clone()).await? == result,
+            "swap replay"
+        );
         let queue = app.get(&endpoint).await?;
         let order: Vec<&Value> = queue["turns"]
             .as_array()
@@ -470,7 +544,10 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
             .iter()
             .map(|row| &row["id"])
             .collect();
-        ensure!(order == [&json!(second_id), &json!(first_id)], "queue {order:?}");
+        ensure!(
+            order == [&json!(second_id), &json!(first_id)],
+            "queue {order:?}"
+        );
         let mut again = swap.clone();
         again["id"] = json!(new_id());
         app.post_expect(&endpoint, again.clone(), 409).await?;
@@ -491,11 +568,18 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
             position(&first_id) < position(&second_id),
             "history order {history:?}"
         );
-        ensure!(app.get(&endpoint).await?["turns"] == json!([]), "queue not empty");
-        ensure!(app.post(&endpoint, swap).await? == result, "swap receipt after restart");
+        ensure!(
+            app.get(&endpoint).await?["turns"] == json!([]),
+            "queue not empty"
+        );
+        ensure!(
+            app.post(&endpoint, swap).await? == result,
+            "swap receipt after restart"
+        );
     }
     let path = format!("/api/agents/{a}/turns");
-    app.post(&path, json!({"id": new_id(), "text": "BLOCK"})).await?;
+    app.post(&path, json!({"id": new_id(), "text": "BLOCK"}))
+        .await?;
     let held = model.parked().await?;
     let early = app
         .post(&path, json!({"id": new_id(), "text": "EARLY LAST"}))
@@ -534,21 +618,26 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
     let last_id = id(&last)?;
     ensure!(
         model.requests().iter().any(|request| {
-            request.system().starts_with("Summarize conversation history")
+            request
+                .system()
+                .starts_with("Summarize conversation history")
                 && request
                     .messages()
                     .get(1)
                     .and_then(|message| message["content"].as_str())
                     .and_then(|content| serde_json::from_str::<Value>(content).ok())
                     .is_some_and(|summary| {
-                        summary["messages"]
-                            .as_array()
-                            .is_some_and(|messages| messages.iter().any(|message| message["id"] == last_id.as_str()))
+                        summary["messages"].as_array().is_some_and(|messages| {
+                            messages
+                                .iter()
+                                .any(|message| message["id"] == last_id.as_str())
+                        })
                     })
         }),
         "no summary covered the reordered last message"
     );
-    app.post(&path, json!({"id": new_id(), "text": "BLOCK"})).await?;
+    app.post(&path, json!({"id": new_id(), "text": "BLOCK"}))
+        .await?;
     let _held = model.parked().await?;
     let b = id(&api_agent(&app, "B", "fixture").await?)?;
     let group = id(&app
@@ -581,7 +670,10 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
     let second_page = app.get(&format!("{group_queue}{cursor}")).await?;
     let second_turns = second_page["turns"].as_array().ok_or("turns")?.clone();
     ensure!(second_turns.len() == 1, "second page {second_page}");
-    ensure!(second_page["next_after"].is_null(), "next_after {second_page}");
+    ensure!(
+        second_page["next_after"].is_null(),
+        "next_after {second_page}"
+    );
     let all: Vec<Value> = first_turns
         .iter()
         .chain(second_turns.iter())
@@ -590,7 +682,10 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
     ensure!(all == ids, "paged ids differ");
     let tail = first_turns.last().ok_or("tail")?;
     ensure!(tail["next"]["id"] == second_turns[0]["id"], "next link");
-    ensure!(second_turns[0]["previous"]["id"] == tail["id"], "previous link");
+    ensure!(
+        second_turns[0]["previous"]["id"] == tail["id"],
+        "previous link"
+    );
     app.get_expect(
         &format!(
             "{group_queue}?after=NaN&snapshot={}",
@@ -599,7 +694,8 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
         400,
     )
     .await?;
-    app.get_expect(&format!("{group_queue}?after=1"), 400).await?;
+    app.get_expect(&format!("{group_queue}?after=1"), 400)
+        .await?;
     app.get_expect(&format!("/api/agents/{b}/queue{cursor}"), 409)
         .await?;
     let (left, right) = (&first_turns[0], &first_turns[1]);
@@ -609,7 +705,8 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
             "revision": left["revision"], "otherRevision": right["revision"]}),
     )
     .await?;
-    app.get_expect(&format!("{group_queue}{cursor}"), 409).await?;
+    app.get_expect(&format!("{group_queue}{cursor}"), 409)
+        .await?;
     let boundary = &second_turns[0];
     let neighbor = &boundary["previous"];
     app.post(
@@ -619,7 +716,14 @@ async fn queue_order_survives_restart_preserves_transcript_order_blocks_edits_an
     )
     .await?;
     let changed = app.get(&group_queue).await?;
-    ensure!(changed["snapshot"] != first_page["snapshot"], "snapshot unchanged");
-    ensure!(changed["turns"][0]["id"] == ids[1], "first after swap {}", changed["turns"][0]);
+    ensure!(
+        changed["snapshot"] != first_page["snapshot"],
+        "snapshot unchanged"
+    );
+    ensure!(
+        changed["turns"][0]["id"] == ids[1],
+        "first after swap {}",
+        changed["turns"][0]
+    );
     Ok(())
 }

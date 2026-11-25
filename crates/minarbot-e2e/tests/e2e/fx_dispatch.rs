@@ -24,7 +24,10 @@ fn source(request: &ModelRequest) -> Option<String> {
         // A streamed tool step folds to `content: ""` (the Node API runtime
         // sent `null`), which is not an answer.
         let answered = messages.get(index + 1).is_some_and(|next| {
-            next["role"] == "assistant" && next["content"].as_str().is_some_and(|text| !text.is_empty())
+            next["role"] == "assistant"
+                && next["content"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty())
         });
         (message["role"] == "user" && tagged && !answered).then(|| content.to_owned())
     })
@@ -51,14 +54,20 @@ fn responder(request: &ModelRequest) -> Answer {
     if last.starts_with("NEW:") {
         return Answer::text("Restart finished");
     }
-    if source.as_deref().is_some_and(|text| text.starts_with("LOOP:")) {
+    if source
+        .as_deref()
+        .is_some_and(|text| text.starts_with("LOOP:"))
+    {
         return match tools {
             0 => Answer::Park,
             1 => Answer::tool("read_provider_settings", json!({})),
             _ => Answer::text("Steered loop finished"),
         };
     }
-    if source.as_deref().is_some_and(|text| text.starts_with("PARTIAL:")) {
+    if source
+        .as_deref()
+        .is_some_and(|text| text.starts_with("PARTIAL:"))
+    {
         if tools == 0 {
             return Answer::Park;
         }
@@ -140,7 +149,10 @@ impl Fixture {
     }
 
     fn calls_with_last(&self, text: &str) -> usize {
-        self.calls().iter().filter(|request| last(request) == text).count()
+        self.calls()
+            .iter()
+            .filter(|request| last(request) == text)
+            .count()
     }
 }
 
@@ -149,8 +161,8 @@ fn mentions(request: Option<&ModelRequest>, text: &str) -> bool {
 }
 
 #[tokio::test]
-async fn startup_failure_reports_child_output_and_releases_the_provider_and_directory(
-) -> Result<()> {
+async fn startup_failure_reports_child_output_and_releases_the_provider_and_directory() -> Result<()>
+{
     let scripts = TempWorkspace::new()?;
     let binary = scripts.write(
         "failing-server",
@@ -171,29 +183,40 @@ async fn startup_failure_reports_child_output_and_releases_the_provider_and_dire
                 .binary(&binary),
         )
         .await?;
-    ensure!(error.contains("exited during startup") && error.contains("17"), "status: {error}");
+    ensure!(
+        error.contains("exited during startup") && error.contains("17"),
+        "status: {error}"
+    );
     ensure!(
         error.contains("stdout tail:\nfixture stdout\nstderr tail:\nfixture stderr"),
         "output tails: {error}"
     );
     ensure!(model.calls() == 0, "failed server reached the provider");
     drop(root);
-    ensure!(!directory.exists(), "test directory kept after the failed start");
+    ensure!(
+        !directory.exists(),
+        "test directory kept after the failed start"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempotent(
-) -> Result<()> {
+async fn steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempotent() -> Result<()>
+{
     let mut f = Fixture::start(false).await?;
     let root = new_id();
     let text = format!("LOOP:{root}");
-    f.app.post(&f.path, json!({"id": root, "text": text})).await?;
+    f.app
+        .post(&f.path, json!({"id": root, "text": text}))
+        .await?;
     let held = f.held(&text).await?;
     let guidance = json!({"id": new_id(), "text": "Use the new constraints", "dispatchMode": "steer", "targetTurn": root});
     let receipt = f.app.post(&f.path, guidance.clone()).await?;
     ensure!(receipt["dispatch_mode"] == "steer", "receipt {receipt}");
-    ensure!(f.app.post(&f.path, guidance.clone()).await? == receipt, "steer replay");
+    ensure!(
+        f.app.post(&f.path, guidance.clone()).await? == receipt,
+        "steer replay"
+    );
     let mut restart = guidance.clone();
     restart["dispatchMode"] = json!("restart");
     f.app.post_expect(&f.path, restart, 409).await?;
@@ -204,17 +227,28 @@ async fn steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempot
             409,
         )
         .await?;
-    ensure!(f.calls().len() == 1, "calls before release {}", f.calls().len());
+    ensure!(
+        f.calls().len() == 1,
+        "calls before release {}",
+        f.calls().len()
+    );
     held.answer(Answer::tool(
         "create_text_file",
         json!({"name": "saved.txt", "text": "Saved once"}),
     ));
     let done = f.turn(&root, |row| row["status"] == "done").await?;
-    ensure!(done["reply"] == "Steered loop finished", "reply {}", done["reply"]);
+    ensure!(
+        done["reply"] == "Steered loop finished",
+        "reply {}",
+        done["reply"]
+    );
     // B7: harness turns cannot take a steer, so the guidance is never
     // delivered ("Delivered" label, one copy per later request, history and
     // fork context); those assertions stay in the Node case.
-    ensure!(done["generatedFiles"].as_array().map(Vec::len) == Some(1), "files");
+    ensure!(
+        done["generatedFiles"].as_array().map(Vec::len) == Some(1),
+        "files"
+    );
     let before = f.calls().len();
     f.app.restart().await?;
     f.app.post(&f.path, guidance.clone()).await?;
@@ -228,13 +262,19 @@ async fn steer_before_final_answer_and_steer_after_completion_each_become_one_qu
     let mut f = Fixture::start(false).await?;
     let root = new_id();
     let text = format!("HOLD:{root}");
-    f.app.post(&f.path, json!({"id": root, "text": text})).await?;
+    f.app
+        .post(&f.path, json!({"id": root, "text": text}))
+        .await?;
     let held = f.held(&text).await?;
     let command = json!({"id": new_id(), "text": "Late safe point guidance", "dispatchMode": "steer", "targetTurn": root});
     f.app.post(&f.path, command.clone()).await?;
     held.answer(Answer::text("Held answer completed"));
-    f.turn(&id(&command)?, |row| row["status"] == "done").await?;
-    ensure!(f.calls_with_last("Late safe point guidance") == 1, "guidance turns");
+    f.turn(&id(&command)?, |row| row["status"] == "done")
+        .await?;
+    ensure!(
+        f.calls_with_last("Late safe point guidance") == 1,
+        "guidance turns"
+    );
     let mut late = command.clone();
     late["id"] = json!(new_id());
     late["text"] = json!("Already finished guidance");
@@ -244,17 +284,31 @@ async fn steer_before_final_answer_and_steer_after_completion_each_become_one_qu
     );
     f.turn(&id(&late)?, |row| row["status"] == "done").await?;
     f.app.post(&f.path, late).await?;
-    ensure!(f.calls_with_last("Already finished guidance") == 1, "late guidance turns");
+    ensure!(
+        f.calls_with_last("Already finished guidance") == 1,
+        "late guidance turns"
+    );
     let fork = f
         .app
         .post(&format!("{}/{root}/fork", f.path), json!({"id": new_id()}))
         .await?;
     let side = format!("/api/threads/{}/turns", id(&fork)?);
     let follow = new_id();
-    f.app.post(&side, json!({"id": follow, "text": "Continue original answer"})).await?;
+    f.app
+        .post(
+            &side,
+            json!({"id": follow, "text": "Continue original answer"}),
+        )
+        .await?;
     f.app.wait_status(&side, &follow, "done").await?;
-    ensure!(!mentions(f.calls().last(), "Late safe point guidance"), "fork saw the steer");
-    ensure!(!mentions(f.calls().last(), "Already finished guidance"), "fork saw the late steer");
+    ensure!(
+        !mentions(f.calls().last(), "Late safe point guidance"),
+        "fork saw the steer"
+    );
+    ensure!(
+        !mentions(f.calls().last(), "Already finished guidance"),
+        "fork saw the late steer"
+    );
     Ok(())
 }
 
@@ -264,7 +318,9 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
     let mut f = Fixture::start(true).await?;
     let root = new_id();
     let text = format!("PARTIAL:{root}");
-    f.app.post(&f.path, json!({"id": root, "text": text})).await?;
+    f.app
+        .post(&f.path, json!({"id": root, "text": text}))
+        .await?;
     let held = f.held(&text).await?;
     let guidance = json!({"id": new_id(), "text": "Keep the delivered constraint", "dispatchMode": "steer", "targetTurn": root});
     f.app.post(&f.path, guidance).await?;
@@ -279,7 +335,12 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
     })
     .await?;
     let queued = new_id();
-    f.app.post(&f.path, json!({"id": queued, "text": "Ordinary queued message"})).await?;
+    f.app
+        .post(
+            &f.path,
+            json!({"id": queued, "text": "Ordinary queued message"}),
+        )
+        .await?;
     let command = json!({"id": new_id(), "text": format!("NEW:{root}"), "dispatchMode": "restart", "targetTurn": root});
     let receipt = f.app.post(&f.path, command.clone()).await?;
     ensure!(
@@ -289,8 +350,14 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
         receipt["dispatch_target"],
         receipt["dispatch_label"]
     );
-    let done = f.turn(&id(&command)?, |row| row["status"] == "done").await?;
-    ensure!(done["reply"] == "Restart finished", "reply {}", done["reply"]);
+    let done = f
+        .turn(&id(&command)?, |row| row["status"] == "done")
+        .await?;
+    ensure!(
+        done["reply"] == "Restart finished",
+        "reply {}",
+        done["reply"]
+    );
     ensure!(
         done["activity"]["dispatch"][0]["source_turn"] == root.as_str(),
         "dispatch link {}",
@@ -312,14 +379,28 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
     ensure!(
         transcript.contains("Partial answer before restart"),
         "partial text not carried: {}",
-        Inspector::open(f.app.database())?.rows("SELECT context FROM dispatch_links", [])?.iter().map(|row| row.to_string()).collect::<Vec<_>>().join(" | ")
+        Inspector::open(f.app.database())?
+            .rows("SELECT context FROM dispatch_links", [])?
+            .iter()
+            .map(|row| row.to_string())
+            .collect::<Vec<_>>()
+            .join(" | ")
     );
-    ensure!(transcript.contains("Do not repeat"), "saved result not carried");
+    ensure!(
+        transcript.contains("Do not repeat"),
+        "saved result not carried"
+    );
     // B7: the steer is stored but never delivered to a harness turn, so the
     // restart context cannot carry it; that assertion stays in Node.
-    ensure!(transcript.contains("Never replay uncertain operations"), "no replay warning");
     ensure!(
-        !restart.messages().iter().any(|message| message["role"] == "tool"),
+        transcript.contains("Never replay uncertain operations"),
+        "no replay warning"
+    );
+    ensure!(
+        !restart
+            .messages()
+            .iter()
+            .any(|message| message["role"] == "tool"),
         "restart replayed tool messages"
     );
     f.turn(&queued, |row| row["status"] == "done").await?;
@@ -331,7 +412,10 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
     ensure!(position < ordinary, "restart ran after the queued message");
     let count = f.calls().len();
     f.app.restart().await?;
-    ensure!(f.app.post(&f.path, command).await? == receipt, "restart receipt");
+    ensure!(
+        f.app.post(&f.path, command).await? == receipt,
+        "restart receipt"
+    );
     ensure!(f.calls().len() == count, "receipt replay ran the model");
     Ok(())
 }
@@ -342,16 +426,22 @@ async fn server_restart_mid_steer_releases_guidance_once_and_never_replays_uncer
     let mut f = Fixture::start(false).await?;
     let root = new_id();
     let text = format!("HOLD:{root}");
-    f.app.post(&f.path, json!({"id": root, "text": text})).await?;
+    f.app
+        .post(&f.path, json!({"id": root, "text": text}))
+        .await?;
     let _held = f.held(&text).await?;
     let command = json!({"id": new_id(), "text": "Survive server restart", "dispatchMode": "steer", "targetTurn": root});
     f.app.post(&f.path, command.clone()).await?;
     f.app.restart().await?;
-    f.turn(&id(&command)?, |row| row["status"] == "done").await?;
+    f.turn(&id(&command)?, |row| row["status"] == "done")
+        .await?;
     f.turn(&root, |row| row["status"] == "interrupted").await?;
     f.app.post(&f.path, command).await?;
     f.app.restart().await?;
-    ensure!(f.calls_with_last("Survive server restart") == 1, "guidance turns");
+    ensure!(
+        f.calls_with_last("Survive server restart") == 1,
+        "guidance turns"
+    );
     ensure!(f.calls_with_last(&text) == 1, "uncertain source replayed");
     Ok(())
 }
@@ -361,40 +451,83 @@ async fn fork_stores_bounded_immutable_cutoff_same_agent_idempotency_and_channel
 ) -> Result<()> {
     let mut f = Fixture::start(false).await?;
     let (first, second) = (new_id(), new_id());
-    f.app.post(&f.path, json!({"id": first, "text": "Fork source"})).await?;
+    f.app
+        .post(&f.path, json!({"id": first, "text": "Fork source"}))
+        .await?;
     f.turn(&first, |row| row["status"] == "done").await?;
-    f.app.post(&f.path, json!({"id": second, "text": "Beyond cutoff"})).await?;
+    f.app
+        .post(&f.path, json!({"id": second, "text": "Beyond cutoff"}))
+        .await?;
     f.turn(&second, |row| row["status"] == "done").await?;
     let fork_path = format!("{}/{first}/fork", f.path);
     let command = json!({"id": new_id()});
     let fork = f.app.post(&fork_path, command.clone()).await?;
     let fork_id = id(&fork)?;
-    ensure!(fork["agent"] == f.agent.as_str(), "fork agent {}", fork["agent"]);
-    ensure!(fork["fork"]["cutoff_turn"] == first.as_str(), "cutoff {}", fork["fork"]);
+    ensure!(
+        fork["agent"] == f.agent.as_str(),
+        "fork agent {}",
+        fork["agent"]
+    );
+    ensure!(
+        fork["fork"]["cutoff_turn"] == first.as_str(),
+        "cutoff {}",
+        fork["fork"]
+    );
     ensure!(fork["name"] == "New conversation", "name {}", fork["name"]);
-    ensure!(fork["fork"]["source_name"] == "Main chat", "source {}", fork["fork"]);
-    let inherited = f.app.get(&format!("/api/threads/{fork_id}/fork-context")).await?;
-    let turns: Vec<&Value> = inherited["turns"].as_array().ok_or("turns")?.iter().map(|turn| &turn["id"]).collect();
+    ensure!(
+        fork["fork"]["source_name"] == "Main chat",
+        "source {}",
+        fork["fork"]
+    );
+    let inherited = f
+        .app
+        .get(&format!("/api/threads/{fork_id}/fork-context"))
+        .await?;
+    let turns: Vec<&Value> = inherited["turns"]
+        .as_array()
+        .ok_or("turns")?
+        .iter()
+        .map(|turn| &turn["id"])
+        .collect();
     ensure!(turns == [&json!(first)], "inherited {turns:?}");
-    ensure!(inherited["turns"][0]["text"] == "Fork source", "inherited text");
+    ensure!(
+        inherited["turns"][0]["text"] == "Fork source",
+        "inherited text"
+    );
     f.app
         .get_expect(&format!("/api/threads/{}/fork-context", new_id()), 404)
         .await?;
-    ensure!(f.app.post(&fork_path, command.clone()).await? == fork, "fork replay");
+    ensure!(
+        f.app.post(&fork_path, command.clone()).await? == fork,
+        "fork replay"
+    );
     f.app
         .post_expect(&format!("{}/{second}/fork", f.path), command.clone(), 409)
         .await?;
     let side = format!("/api/threads/{fork_id}/turns");
     let follow = new_id();
-    f.app.post(&side, json!({"id": follow, "text": "Continue fork"})).await?;
+    f.app
+        .post(&side, json!({"id": follow, "text": "Continue fork"}))
+        .await?;
     f.app.wait_status(&side, &follow, "done").await?;
-    ensure!(mentions(f.calls().last(), "Answer: Fork source"), "fork lost the source answer");
-    ensure!(!mentions(f.calls().last(), "Beyond cutoff"), "fork saw past the cutoff");
-    let threads = f.app.get(&format!("/api/agents/{}/threads", f.agent)).await?;
+    ensure!(
+        mentions(f.calls().last(), "Answer: Fork source"),
+        "fork lost the source answer"
+    );
+    ensure!(
+        !mentions(f.calls().last(), "Beyond cutoff"),
+        "fork saw past the cutoff"
+    );
+    let threads = f
+        .app
+        .get(&format!("/api/agents/{}/threads", f.agent))
+        .await?;
     ensure!(
         threads
             .as_array()
-            .and_then(|threads| threads.iter().find(|thread| thread["id"] == fork_id.as_str()))
+            .and_then(|threads| threads
+                .iter()
+                .find(|thread| thread["id"] == fork_id.as_str()))
             .is_some_and(|thread| thread["name"] == "Continue fork"),
         "fork not named from its first message"
     );
@@ -402,11 +535,21 @@ async fn fork_stores_bounded_immutable_cutoff_same_agent_idempotency_and_channel
         .app
         .post(&format!("{side}/{follow}/fork"), json!({"id": new_id()}))
         .await?;
-    ensure!(nested["fork"]["source_name"] == "Continue fork", "nested source {}", nested["fork"]);
-    f.app.restart().await?;
-    ensure!(f.app.post(&fork_path, command).await? == fork, "fork receipt after restart");
     ensure!(
-        f.app.get(&format!("/api/threads/{fork_id}/fork-context")).await? == inherited,
+        nested["fork"]["source_name"] == "Continue fork",
+        "nested source {}",
+        nested["fork"]
+    );
+    f.app.restart().await?;
+    ensure!(
+        f.app.post(&fork_path, command).await? == fork,
+        "fork receipt after restart"
+    );
+    ensure!(
+        f.app
+            .get(&format!("/api/threads/{fork_id}/fork-context"))
+            .await?
+            == inherited,
         "fork context changed"
     );
     let channel = id(&f
@@ -419,24 +562,50 @@ async fn fork_stores_bounded_immutable_cutoff_same_agent_idempotency_and_channel
     let at = format!("/api/channels/{channel}/turns");
     let channel_turn = new_id();
     f.app
-        .post(&at, json!({"id": channel_turn, "text": "Channel answer", "recipient": f.agent}))
+        .post(
+            &at,
+            json!({"id": channel_turn, "text": "Channel answer", "recipient": f.agent}),
+        )
         .await?;
     f.app.wait_status(&at, &channel_turn, "done").await?;
     let channel_command = json!({"id": new_id()});
     let channel_fork = f
         .app
-        .post(&format!("{at}/{channel_turn}/fork"), channel_command.clone())
+        .post(
+            &format!("{at}/{channel_turn}/fork"),
+            channel_command.clone(),
+        )
         .await?;
-    ensure!(channel_fork["fork"]["source_name"] == "Channel fork", "channel fork {}", channel_fork["fork"]);
-    ensure!(channel_fork["agent"] == f.agent.as_str(), "channel fork agent");
-    ensure!(channel_fork["fork"]["source_kind"] == "channel", "source kind");
-    ensure!(channel_fork["fork"]["source_id"] == channel.as_str(), "source id");
     ensure!(
-        f.app.post(&format!("{at}/{channel_turn}/fork"), channel_command).await? == channel_fork,
+        channel_fork["fork"]["source_name"] == "Channel fork",
+        "channel fork {}",
+        channel_fork["fork"]
+    );
+    ensure!(
+        channel_fork["agent"] == f.agent.as_str(),
+        "channel fork agent"
+    );
+    ensure!(
+        channel_fork["fork"]["source_kind"] == "channel",
+        "source kind"
+    );
+    ensure!(
+        channel_fork["fork"]["source_id"] == channel.as_str(),
+        "source id"
+    );
+    ensure!(
+        f.app
+            .post(&format!("{at}/{channel_turn}/fork"), channel_command)
+            .await?
+            == channel_fork,
         "channel fork replay"
     );
     f.app
-        .post_expect(&format!("{side}/{channel_turn}/fork"), json!({"id": new_id()}), 404)
+        .post_expect(
+            &format!("{side}/{channel_turn}/fork"),
+            json!({"id": new_id()}),
+            404,
+        )
         .await?;
     let cutoff = new_id();
     let (agent, cutoff_id) = (f.agent.clone(), cutoff.clone());
@@ -460,21 +629,37 @@ async fn fork_stores_bounded_immutable_cutoff_same_agent_idempotency_and_channel
         .await?;
     let bounded = f
         .app
-        .post(&format!("{}/{cutoff}/fork", f.path), json!({"id": new_id()}))
+        .post(
+            &format!("{}/{cutoff}/fork", f.path),
+            json!({"id": new_id()}),
+        )
         .await?;
     let transcript: String = Inspector::open(f.app.database())?.scalar(
         "SELECT transcript FROM context_transfers WHERE target_thread=?",
         [&id(&bounded)?],
     )?;
-    ensure!(transcript.len() <= 128 * 1024, "transfer {} bytes", transcript.len());
+    ensure!(
+        transcript.len() <= 128 * 1024,
+        "transfer {} bytes",
+        transcript.len()
+    );
     let snapshot: Value = serde_json::from_str(&transcript)?;
     let snapshot_turns = snapshot["turns"].as_array().ok_or("snapshot turns")?;
     ensure!(
-        snapshot_turns.last().is_some_and(|turn| turn["id"] == cutoff.as_str()),
+        snapshot_turns
+            .last()
+            .is_some_and(|turn| turn["id"] == cutoff.as_str()),
         "cutoff not last"
     );
-    ensure!(snapshot_turns.len() <= 40, "snapshot turns {}", snapshot_turns.len());
-    ensure!(snapshot["truncated"] == true, "snapshot not marked truncated");
+    ensure!(
+        snapshot_turns.len() <= 40,
+        "snapshot turns {}",
+        snapshot_turns.len()
+    );
+    ensure!(
+        snapshot["truncated"] == true,
+        "snapshot not marked truncated"
+    );
     let _ = &mut f;
     Ok(())
 }
@@ -485,7 +670,10 @@ async fn restart_during_uncertain_mcp_effect_keeps_its_receipt_and_never_replays
     let external = crate::fx_mcp::LosingMcp::start().await?;
     let model = GatedModel::start().await?;
     let connection = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-    let (target, failures) = (connection.clone(), std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new())));
+    let (target, failures) = (
+        connection.clone(),
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new())),
+    );
     let problems = failures.clone();
     model.respond(move |request| {
         let restart = last(request) == "Inspect uncertain result";
@@ -521,7 +709,9 @@ async fn restart_during_uncertain_mcp_effect_keeps_its_receipt_and_never_replays
             json!({"id": new_id(), "name": "Effect fixture", "url": external.url(), "token": ""}),
         )
         .await?;
-    let connection_id = id(&app.post("/api/mcp", json!({"id": new_id(), "test": tested["id"]})).await?)?;
+    let connection_id = id(&app
+        .post("/api/mcp", json!({"id": new_id(), "test": tested["id"]}))
+        .await?)?;
     if let Ok(mut target) = connection.lock() {
         target.clone_from(&connection_id);
     }
@@ -532,14 +722,22 @@ async fn restart_during_uncertain_mcp_effect_keeps_its_receipt_and_never_replays
     .await?;
     let path = format!("/api/agents/{agent}/turns");
     let root_turn = new_id();
-    app.post(&path, json!({"id": root_turn, "text": "Begin effect"})).await?;
-    until("effect accepted", || async { Ok((external.effects() == 1).then_some(())) }).await?;
+    app.post(&path, json!({"id": root_turn, "text": "Begin effect"}))
+        .await?;
+    until("effect accepted", || async {
+        Ok((external.effects() == 1).then_some(()))
+    })
+    .await?;
     let command = json!({"id": new_id(), "text": "Inspect uncertain result", "dispatchMode": "restart", "targetTurn": root_turn});
     app.post(&path, command.clone()).await?;
     app.wait_status(&path, &id(&command)?, "done").await?;
     app.restart().await?;
     app.post(&path, command.clone()).await?;
-    ensure!(external.effects() == 1, "external effect replayed: {}", external.effects());
+    ensure!(
+        external.effects() == 1,
+        "external effect replayed: {}",
+        external.effects()
+    );
     app.shutdown().await?;
     let db = Inspector::open(root.database())?;
     ensure!(
@@ -547,11 +745,18 @@ async fn restart_during_uncertain_mcp_effect_keeps_its_receipt_and_never_replays
         "call not marked uncertain"
     );
     ensure!(
-        db.scalar::<String>("SELECT context FROM dispatch_links WHERE target_turn=?", [&id(&command)?])?
-            .contains("uncertain"),
+        db.scalar::<String>(
+            "SELECT context FROM dispatch_links WHERE target_turn=?",
+            [&id(&command)?]
+        )?
+        .contains("uncertain"),
         "dispatch context lacks the uncertain effect"
     );
-    ensure!(failures.lock().map(|f| f.is_empty()).unwrap_or(false), "{:?}", failures.lock().map(|f| f.clone()));
+    ensure!(
+        failures.lock().map(|f| f.is_empty()).unwrap_or(false),
+        "{:?}",
+        failures.lock().map(|f| f.clone())
+    );
     Ok(())
 }
 
@@ -561,10 +766,17 @@ async fn queued_dispatch_rejects_stale_revision_held_editor_cross_conversation_t
     let mut f = Fixture::start(false).await?;
     let root = new_id();
     let text = format!("HOLD:{root}");
-    f.app.post(&f.path, json!({"id": root, "text": text})).await?;
+    f.app
+        .post(&f.path, json!({"id": root, "text": text}))
+        .await?;
     let _held = f.held(&text).await?;
     let queued = new_id();
-    f.app.post(&f.path, json!({"id": queued, "text": "Queue remains unchanged"})).await?;
+    f.app
+        .post(
+            &f.path,
+            json!({"id": queued, "text": "Queue remains unchanged"}),
+        )
+        .await?;
     let command = || json!({"id": new_id(), "revision": 1, "mode": "steer", "targetTurn": root});
     let dispatch = format!("{}/{queued}/dispatch", f.path);
     let mut stale = command();
@@ -579,7 +791,10 @@ async fn queued_dispatch_rejects_stale_revision_held_editor_cross_conversation_t
         .await?)?;
     let wrong = new_id();
     f.app
-        .post(&format!("/api/agents/{other}/turns"), json!({"id": wrong, "text": format!("HOLD:{wrong}")}))
+        .post(
+            &format!("/api/agents/{other}/turns"),
+            json!({"id": wrong, "text": format!("HOLD:{wrong}")}),
+        )
         .await?;
     let mut foreign = command();
     foreign["targetTurn"] = json!(wrong);
@@ -610,28 +825,46 @@ async fn queued_restart_cancels_captured_generation_late_steering_stays_queued_w
     let mut f = Fixture::start(false).await?;
     let root = new_id();
     let text = format!("HOLD:{root}");
-    f.app.post(&f.path, json!({"id": root, "text": text})).await?;
+    f.app
+        .post(&f.path, json!({"id": root, "text": text}))
+        .await?;
     let _held = f.held(&text).await?;
     let queued = new_id();
-    f.app.post(&f.path, json!({"id": queued, "text": "NEW:promoted restart"})).await?;
+    f.app
+        .post(
+            &f.path,
+            json!({"id": queued, "text": "NEW:promoted restart"}),
+        )
+        .await?;
     let command = json!({"id": new_id(), "revision": 1, "mode": "restart", "targetTurn": root});
     let dispatch = format!("{}/{queued}/dispatch", f.path);
     f.app.post(&dispatch, command.clone()).await?;
     f.turn(&root, |row| row["status"] == "cancelled").await?;
     f.turn(&queued, |row| row["status"] == "done").await?;
     f.app.post(&dispatch, command).await?;
-    ensure!(rows(&f.app, &f.path).await?.len() == 2, "restart replay created a turn");
+    ensure!(
+        rows(&f.app, &f.path).await?.len() == 2,
+        "restart replay created a turn"
+    );
     let next = new_id();
     let hold = format!("HOLD:{next}");
-    f.app.post(&f.path, json!({"id": next, "text": hold})).await?;
-    f.held(&hold).await?.answer(Answer::text("Held answer completed"));
+    f.app
+        .post(&f.path, json!({"id": next, "text": hold}))
+        .await?;
+    f.held(&hold)
+        .await?
+        .answer(Answer::text("Held answer completed"));
     f.turn(&next, |row| row["status"] == "done").await?;
     let barrier = new_id();
     let barrier_text = format!("HOLD:{barrier}");
-    f.app.post(&f.path, json!({"id": barrier, "text": barrier_text})).await?;
+    f.app
+        .post(&f.path, json!({"id": barrier, "text": barrier_text}))
+        .await?;
     let barrier_held = f.held(&barrier_text).await?;
     let late = new_id();
-    f.app.post(&f.path, json!({"id": late, "text": "Late guidance"})).await?;
+    f.app
+        .post(&f.path, json!({"id": late, "text": "Late guidance"}))
+        .await?;
     let response = f
         .app
         .post(
@@ -639,11 +872,21 @@ async fn queued_restart_cancels_captured_generation_late_steering_stays_queued_w
             json!({"id": new_id(), "revision": 1, "mode": "steer", "targetTurn": next}),
         )
         .await?;
-    ensure!(response["dispatch_mode"] == "queue", "late steer {response}");
-    ensure!(response["dispatch_label"] == "Queued after active turn", "label {}", response["dispatch_label"]);
+    ensure!(
+        response["dispatch_mode"] == "queue",
+        "late steer {response}"
+    );
+    ensure!(
+        response["dispatch_label"] == "Queued after active turn",
+        "label {}",
+        response["dispatch_label"]
+    );
     barrier_held.answer(Answer::text("Held answer completed"));
     f.turn(&late, |row| row["status"] == "done").await?;
-    ensure!(f.calls_with_last("Late guidance") == 1, "late guidance turns");
+    ensure!(
+        f.calls_with_last("Late guidance") == 1,
+        "late guidance turns"
+    );
     Ok(())
 }
 
@@ -680,7 +923,10 @@ async fn terminal_forks_preserve_partial_answers_untitled_chats_name_from_first_
             .get(&format!("/api/threads/{}/fork-context", id(&fork)?))
             .await?;
         ensure!(
-            context["turns"].as_array().and_then(|turns| turns.last()).is_some_and(|turn| turn["reply"] == text.as_str()),
+            context["turns"]
+                .as_array()
+                .and_then(|turns| turns.last())
+                .is_some_and(|turn| turn["reply"] == text.as_str()),
             "{status} fork context {context}"
         );
     }
@@ -694,10 +940,16 @@ async fn terminal_forks_preserve_partial_answers_untitled_chats_name_from_first_
     let thread_id = id(&thread)?;
     let path = format!("/api/threads/{thread_id}/turns");
     let first = new_id();
-    f.app.post(&path, json!({"id": first, "text": "Plan launch"})).await?;
+    f.app
+        .post(&path, json!({"id": first, "text": "Plan launch"}))
+        .await?;
     f.app.wait_status(&path, &first, "done").await?;
     let named = f.app.get(&format!("/api/threads/{thread_id}")).await?;
-    ensure!(named["name"] == "Plan launch", "auto name {}", named["name"]);
+    ensure!(
+        named["name"] == "Plan launch",
+        "auto name {}",
+        named["name"]
+    );
     f.app
         .post(
             &format!("/api/threads/{thread_id}/edit"),
@@ -705,7 +957,9 @@ async fn terminal_forks_preserve_partial_answers_untitled_chats_name_from_first_
         )
         .await?;
     let second = new_id();
-    f.app.post(&path, json!({"id": second, "text": "Another message"})).await?;
+    f.app
+        .post(&path, json!({"id": second, "text": "Another message"}))
+        .await?;
     f.app.wait_status(&path, &second, "done").await?;
     ensure!(
         f.app.get(&format!("/api/threads/{thread_id}")).await?["name"] == "Manual name",

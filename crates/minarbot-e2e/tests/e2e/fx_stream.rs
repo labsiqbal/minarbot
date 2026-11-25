@@ -24,7 +24,10 @@ fn stream_work(turn: &Value) -> Vec<(String, String)> {
             segment["final"] != true
                 && segment["final"] != 1
                 && (segment["kind"] == "tool"
-                    || (segment["text"].as_str().is_some_and(|text| !text.is_empty()) && !live))
+                    || (segment["text"]
+                        .as_str()
+                        .is_some_and(|text| !text.is_empty())
+                        && !live))
         })
         .map(|segment| {
             (
@@ -38,7 +41,10 @@ fn stream_work(turn: &Value) -> Vec<(String, String)> {
 /// Read snapshots until the root turn's partial text is `text`.
 async fn wait_for_text(stream: &mut SseReader, root: &str, text: &str) -> Result<()> {
     loop {
-        let snapshot = stream.next().await?.ok_or("stream ended before the snapshot")?;
+        let snapshot = stream
+            .next()
+            .await?
+            .ok_or("stream ended before the snapshot")?;
         if snapshot["id"] == root && snapshot["partial"]["text"] == text {
             return Ok(());
         }
@@ -80,7 +86,10 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
                 "tool_calls".into(),
             );
         }
-        if request.last_user_text().starts_with("One verification reminder") {
+        if request
+            .last_user_text()
+            .starts_with("One verification reminder")
+        {
             return Answer::Stream(vec![Chunk::Text("Draft answer.".into())], "stop".into());
         }
         if last["role"] == "tool" {
@@ -127,17 +136,26 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
     let path = format!("/api/channels/{channel}/turns");
     let root_turn = new_id();
     let mut stream = SseReader::connect(&app, &format!("{path}/stream")).await?;
-    app.post(&path, json!({"id": root_turn, "text": "Gated room"})).await?;
+    app.post(&path, json!({"id": root_turn, "text": "Gated room"}))
+        .await?;
     wait_for_text(&mut stream, &root_turn, "Before tool.").await?;
     let current = rows(&app, &path).await?;
     ensure!(current.len() == 3, "room rows {}", current.len());
     ensure!(
-        current.iter().filter(|row| row["partial"]["text"] == "Before tool.").count() == 1,
+        current
+            .iter()
+            .filter(|row| row["partial"]["text"] == "Before tool.")
+            .count()
+            == 1,
         "partial rows"
     );
     ensure!(model.calls() == 1, "model calls {}", model.calls());
     ensure!(
-        current.iter().filter(|row| row["status"] == "running").count() == 1,
+        current
+            .iter()
+            .filter(|row| row["status"] == "running")
+            .count()
+            == 1,
         "running members"
     );
     ensure!(
@@ -163,11 +181,19 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
     let current = rows(&app, &path).await?;
     ensure!(current.len() == 108, "rows with history {}", current.len());
     ensure!(
-        current.iter().filter(|row| row["room"]["root"] == root_turn.as_str()).count() == 3,
+        current
+            .iter()
+            .filter(|row| row["room"]["root"] == root_turn.as_str())
+            .count()
+            == 3,
         "active room rows"
     );
     ensure!(
-        current.iter().filter(|row| row["history_page"].as_i64().is_some_and(|page| page != 0)).count() == 100,
+        current
+            .iter()
+            .filter(|row| row["history_page"].as_i64().is_some_and(|page| page != 0))
+            .count()
+            == 100,
         "history page rows"
     );
     let page_seq = current
@@ -179,14 +205,25 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
         page_seq > current[0]["seq"].as_i64().unwrap_or(i64::MAX),
         "Active rows must not become the history cursor"
     );
-    let oldest = current.last().and_then(|row| row["seq"].as_i64()).ok_or("oldest seq")?;
+    let oldest = current
+        .last()
+        .and_then(|row| row["seq"].as_i64())
+        .ok_or("oldest seq")?;
     ensure!(
-        rows(&app, &format!("{path}?before={}", oldest + 1)).await?.len() == 100,
+        rows(&app, &format!("{path}?before={}", oldest + 1))
+            .await?
+            .len()
+            == 100,
         "older page"
     );
-    ensure!(rows(&app, &format!("{path}?q=unrelated")).await?.is_empty(), "search leak");
     ensure!(
-        rows(&app, &format!("/api/channels/{other}/turns")).await?.is_empty(),
+        rows(&app, &format!("{path}?q=unrelated")).await?.is_empty(),
+        "search leak"
+    );
+    ensure!(
+        rows(&app, &format!("/api/channels/{other}/turns"))
+            .await?
+            .is_empty(),
         "other room leak"
     );
     let member = current
@@ -206,12 +243,21 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
     // #87: a harness turn is one provider call record, so a new model step
     // shows as a new stream segment of the same `seq`, not a new attempt.
     ensure!(
-        empty["partial"]["seq"] == before["seq"] && empty["partial"]["segment"] != before["segment"],
+        empty["partial"]["seq"] == before["seq"]
+            && empty["partial"]["segment"] != before["segment"],
         "new step partial {} after {before}",
         empty["partial"]
     );
-    ensure!(empty["partial"]["text"] == "", "empty attempt text {}", empty["partial"]);
-    ensure!(empty["partial"]["status"] == "pending", "attempt status {}", empty["partial"]);
+    ensure!(
+        empty["partial"]["text"] == "",
+        "empty attempt text {}",
+        empty["partial"]
+    );
+    ensure!(
+        empty["partial"]["status"] == "pending",
+        "attempt status {}",
+        empty["partial"]
+    );
     ensure!(
         empty["partial"]["revision"].as_i64() > before["revision"].as_i64(),
         "attempt revision {}",
@@ -219,7 +265,10 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
     );
     ensure!(
         stream_work(&empty)
-            == [("text".to_owned(), "Before tool.".to_owned()), ("tool".to_owned(), "create_text_file".to_owned())],
+            == [
+                ("text".to_owned(), "Before tool.".to_owned()),
+                ("tool".to_owned(), "create_text_file".to_owned())
+            ],
         "work before draft {:?}",
         stream_work(&empty)
     );
@@ -227,8 +276,16 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
     wait_for_text(&mut stream, &root_turn, "Draft").await?;
     let draft = find(rows(&app, &discussion).await?)?;
     let count = model.calls();
-    ensure!(draft["partial"]["text"] == "Draft", "draft {}", draft["partial"]);
-    ensure!(draft["partial"]["final"] == false, "draft final {}", draft["partial"]);
+    ensure!(
+        draft["partial"]["text"] == "Draft",
+        "draft {}",
+        draft["partial"]
+    );
+    ensure!(
+        draft["partial"]["final"] == false,
+        "draft final {}",
+        draft["partial"]
+    );
     ensure!(
         find(rows(&app, &discussion).await?)?["partial"] == draft["partial"],
         "poll regressed the draft"
@@ -240,8 +297,15 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
     let done = find(rows(&app, &discussion).await?)?;
     ensure!(done["status"] == "done", "status {}", done["status"]);
     ensure!(done["reply"] == "Draft answer.", "reply {}", done["reply"]);
-    ensure!(done["partial"].is_null(), "partial after done {}", done["partial"]);
-    ensure!(done["generatedFiles"].as_array().map(Vec::len) == Some(1), "files");
+    ensure!(
+        done["partial"].is_null(),
+        "partial after done {}",
+        done["partial"]
+    );
+    ensure!(
+        done["generatedFiles"].as_array().map(Vec::len) == Some(1),
+        "files"
+    );
     let segments: Vec<Value> = done["activity"]["stream"]
         .as_array()
         .ok_or("stream")?
@@ -265,8 +329,14 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
             ],
         "segments {segments:?}"
     );
-    let work: Vec<String> = stream_work(&done).into_iter().map(|(_, text)| text).collect();
-    ensure!(work == ["Before tool.", "create_text_file", "Draft answer."], "work {work:?}");
+    let work: Vec<String> = stream_work(&done)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    ensure!(
+        work == ["Before tool.", "create_text_file", "Draft answer."],
+        "work {work:?}"
+    );
     ensure!(
         done["activity"]["stream"]
             .as_array()
@@ -275,6 +345,9 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
         "final segment text"
     );
     let restored = find(rows(&app, &discussion).await?)?;
-    ensure!(restored["activity"]["stream"] == done["activity"]["stream"], "stream changed");
+    ensure!(
+        restored["activity"]["stream"] == done["activity"]["stream"],
+        "stream changed"
+    );
     Ok(())
 }

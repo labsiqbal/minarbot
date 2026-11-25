@@ -40,7 +40,10 @@ fn reminder(request: &ModelRequest) -> bool {
 fn last_result(request: &ModelRequest) -> Option<(String, Value)> {
     request.tool_results().last().map(|message| {
         (
-            message["tool_call_id"].as_str().unwrap_or_default().to_owned(),
+            message["tool_call_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
             tool_json(message),
         )
     })
@@ -124,21 +127,37 @@ async fn agent_flow_edits_preserve_ownership_revisions_and_ordered_receipts_acro
     let turn = new_id();
     app.post(&turns, json!({"id": turn, "text": "Update the flow"}))
         .await?;
-    until("held flow result", || async { Ok(lock(&state).held.then_some(())) }).await?;
-    ensure!(app.get(&settings).await?["revision"] == 1, "flow saved before hold");
+    until("held flow result", || async {
+        Ok(lock(&state).held.then_some(()))
+    })
+    .await?;
+    ensure!(
+        app.get(&settings).await?["revision"] == 1,
+        "flow saved before hold"
+    );
     app.restart().await?;
     lock(&state).hold = false;
     let stopped = row(&app, &turns, &turn).await?;
-    ensure!(stopped["status"] == "interrupted", "after restart: {stopped}");
-    app.post(&settings, json!({"id": new_id(), "revision": 1, "links": []}))
-        .await?;
+    ensure!(
+        stopped["status"] == "interrupted",
+        "after restart: {stopped}"
+    );
+    app.post(
+        &settings,
+        json!({"id": new_id(), "revision": 1, "links": []}),
+    )
+    .await?;
     app.post(
         &format!("{turns}/{turn}/resume"),
         json!({"id": new_id(), "revision": stopped["revision"], "acknowledgeUncertain": true}),
     )
     .await?;
     let done = settle(&app, &turns, &turn, "done").await?;
-    ensure!(lock(&state).last["revision"] == 1, "replayed receipt {}", lock(&state).last);
+    ensure!(
+        lock(&state).last["revision"] == 1,
+        "replayed receipt {}",
+        lock(&state).last
+    );
     ensure!(app.get(&settings).await?["revision"] == 2, "user edit lost");
     ensure!(
         done["generatedFiles"].as_array().map(Vec::len) == Some(2),
@@ -148,18 +167,30 @@ async fn agent_flow_edits_preserve_ownership_revisions_and_ordered_receipts_acro
     for (change, status) in [
         (json!({"id": own, "revision": 0, "links": []}), 409),
         (json!({"id": foreign, "revision": 0, "links": []}), 404),
-        (json!({"id": own, "revision": 2, "links": [{"from": a, "to": a}]}), 400),
+        (
+            json!({"id": own, "revision": 2, "links": [{"from": a, "to": a}]}),
+            400,
+        ),
     ] {
         lock(&state).args = change;
         let turn = new_id();
         app.post(&turns, json!({"id": turn, "text": "Attempt invalid edit"}))
             .await?;
         settle(&app, &turns, &turn, "done").await?;
-        ensure!(lock(&state).last["status"] == status, "result {}", lock(&state).last);
-        ensure!(app.get(&settings).await?["revision"] == 2, "invalid edit saved");
+        ensure!(
+            lock(&state).last["status"] == status,
+            "result {}",
+            lock(&state).last
+        );
+        ensure!(
+            app.get(&settings).await?["revision"] == 2,
+            "invalid edit saved"
+        );
     }
     ensure!(
-        rows(&app, &format!("/api/routines/{own}/runs")).await?.is_empty(),
+        rows(&app, &format!("/api/routines/{own}/runs"))
+            .await?
+            .is_empty(),
         "flow edit ran the routine"
     );
     ensure!(
@@ -172,18 +203,28 @@ async fn agent_flow_edits_preserve_ownership_revisions_and_ordered_receipts_acro
         flow.args = json!({"id": own, "revision": 2, "links": [{"from": a, "to": b}]});
         flow.park = true;
     }
-    app.post(&turns, json!({"id": cancelled, "text": "Cancel before the edit arrives"}))
-        .await?;
+    app.post(
+        &turns,
+        json!({"id": cancelled, "text": "Cancel before the edit arrives"}),
+    )
+    .await?;
     let parked = model.parked().await?;
-    app.post(&format!("{turns}/{cancelled}/cancel"), json!({"id": new_id()}))
-        .await?;
+    app.post(
+        &format!("{turns}/{cancelled}/cancel"),
+        json!({"id": new_id()}),
+    )
+    .await?;
     let args = lock(&state).args.clone();
     parked.answer(Answer::tool("set_routine_flow", args));
     settle(&app, &turns, &cancelled, "cancelled").await?;
     app.restart().await?;
     let flow = app.get(&settings).await?;
     ensure!(flow["revision"] == 2, "cancelled edit saved: {flow}");
-    ensure!(flow["graph"]["links"] == json!([]), "links {}", flow["graph"]);
+    ensure!(
+        flow["graph"]["links"] == json!([]),
+        "links {}",
+        flow["graph"]
+    );
     ensure!(
         row(&app, &turns, &cancelled).await?["generatedFiles"]
             .as_array()
@@ -219,16 +260,18 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
         let previous = results(request);
         let mode = script.mode.clone();
         if mode.starts_with("channel")
-            && request
-                .tool_names()
-                .iter()
-                .any(|name| ["list_routines", "read_routine", "set_routine_flow"].contains(&name.as_str()))
+            && request.tool_names().iter().any(|name| {
+                ["list_routines", "read_routine", "set_routine_flow"].contains(&name.as_str())
+            })
         {
             script.leaked = true;
         }
         let call: Option<(&str, Value)> = match mode.as_str() {
             "channel-transfer" => previous.is_empty().then(|| {
-                ("transfer_task", json!({"recipient": new_id(), "task": "Help"}))
+                (
+                    "transfer_task",
+                    json!({"recipient": new_id(), "task": "Help"}),
+                )
             }),
             "channel" => None,
             "channel-denied" => previous.is_empty().then(|| {
@@ -257,11 +300,15 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
                     },
                 )
             }),
-            "bad-json" | "runtime-fault" => {
-                previous.is_empty().then(|| ("list_routines", json!({"after": ""})))
-            }
+            "bad-json" | "runtime-fault" => previous
+                .is_empty()
+                .then(|| ("list_routines", json!({"after": ""}))),
             _ => previous.is_empty().then(|| {
-                let target = if mode == "foreign" { &script.foreign } else { &script.owned };
+                let target = if mode == "foreign" {
+                    &script.foreign
+                } else {
+                    &script.owned
+                };
                 let mut args = json!({"id": target});
                 if mode == "invalid" {
                     args["extra"] = json!(true);
@@ -293,7 +340,9 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
             }
             app.post(&path, body).await?;
             let row = app
-                .wait_row(&path, &turn, |row| row["status"] == "done" || row["status"] == "failed")
+                .wait_row(&path, &turn, |row| {
+                    row["status"] == "done" || row["status"] == "failed"
+                })
                 .await?;
             ensure!(row["status"] == expected, "expected {expected}: {row}");
             Ok::<_, minarbot_testkit::Error>(())
@@ -309,13 +358,17 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
         let mut body = input.clone();
         body["id"] = json!(new_id());
         body["trigger"] = json!(if index == 0 { "webhook" } else { "schedule" });
-        ids.push(id(&app.post(&format!("/api/agents/{a}/routines"), body).await?)?);
+        ids.push(id(&app
+            .post(&format!("/api/agents/{a}/routines"), body)
+            .await?)?);
     }
     let owned = ids[0].clone();
     let mut foreign_body = input.clone();
     foreign_body["id"] = json!(new_id());
     foreign_body["prompt"] = json!("FOREIGN_SECRET");
-    let foreign = id(&app.post(&format!("/api/agents/{b}/routines"), foreign_body).await?)?;
+    let foreign = id(&app
+        .post(&format!("/api/agents/{b}/routines"), foreign_body)
+        .await?)?;
     {
         let mut script = lock(&state);
         script.owned = owned.clone();
@@ -336,8 +389,14 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
     let direct = format!("/api/agents/{a}/turns");
     run(direct.clone(), None, "done").await?;
     let pages = last(&state);
-    ensure!(pages[0]["routines"].as_array().map(Vec::len) == Some(10), "page one {pages}");
-    ensure!(pages[1]["routines"].as_array().map(Vec::len) == Some(1), "page two {pages}");
+    ensure!(
+        pages[0]["routines"].as_array().map(Vec::len) == Some(10),
+        "page one {pages}"
+    );
+    ensure!(
+        pages[1]["routines"].as_array().map(Vec::len) == Some(1),
+        "page two {pages}"
+    );
     ensure!(pages[1]["next_after"].is_null(), "next_after {}", pages[1]);
     let mut listed: Vec<String> = pages
         .as_array()
@@ -350,20 +409,25 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
     sorted.sort();
     ensure!(listed == sorted, "listing order {listed:?}");
     listed.clear();
-    ensure!(!pages.to_string().contains("PRIVATE_PROMPT"), "list leaked prompts");
+    ensure!(
+        !pages.to_string().contains("PRIVATE_PROMPT"),
+        "list leaked prompts"
+    );
     lock(&state).mode = "bad-after".into();
     for bad in [json!(""), json!(0), json!("Daily sales"), Value::Null] {
         lock(&state).bad_after = bad.clone();
         run(direct.clone(), None, "done").await?;
         let result = last(&state);
         ensure!(
-            result[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("Omit after for the first page, or pass the UUID from next_after")),
+            result[0]["error"].as_str().is_some_and(|error| error
+                .contains("Omit after for the first page, or pass the UUID from next_after")),
             "bad after {bad}: {result}"
         );
         ensure!(result[0]["status"] == 400, "bad after status {result}");
-        ensure!(result[1]["routines"].as_array().map(Vec::len) == Some(10), "recovery {result}");
+        ensure!(
+            result[1]["routines"].as_array().map(Vec::len) == Some(10),
+            "recovery {result}"
+        );
     }
     lock(&state).mode = "bad-json".into();
     // `{` is not JSON: the harness rejects it before Minarbot sees a call
@@ -382,7 +446,11 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
     }
     lock(&state).mode = "runtime-fault".into();
     run(direct.clone(), None, "failed").await?;
-    ensure!(last(&state)[0]["status"] == 400, "fault result {}", last(&state));
+    ensure!(
+        last(&state)[0]["status"] == 400,
+        "fault result {}",
+        last(&state)
+    );
     lock(&state).mode = "read".into();
     run(direct.clone(), None, "done").await?;
     let read = last(&state);
@@ -390,13 +458,23 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
     ensure!(read[0]["flow"] == saved, "read flow {read}");
     for secret in [&hook["secret"], &hook["route"]] {
         let secret = secret.as_str().ok_or("hook field")?;
-        ensure!(!read.to_string().contains(secret), "read leaked webhook {secret}");
+        ensure!(
+            !read.to_string().contains(secret),
+            "read leaked webhook {secret}"
+        );
     }
     let side = id(&app
-        .post(&format!("/api/agents/{a}/threads"), json!({"id": new_id(), "name": "Private side"}))
+        .post(
+            &format!("/api/agents/{a}/threads"),
+            json!({"id": new_id(), "name": "Private side"}),
+        )
         .await?)?;
     run(format!("/api/threads/{side}/turns"), None, "done").await?;
-    ensure!(last(&state)[0]["flow"] == saved, "side read {}", last(&state));
+    ensure!(
+        last(&state)[0]["flow"] == saved,
+        "side read {}",
+        last(&state)
+    );
     lock(&state).mode = "foreign".into();
     run(direct.clone(), None, "done").await?;
     // Over MCP a refusal carries its status (400) next to the Node error text.
@@ -425,7 +503,11 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
     lock(&state).mode = "channel-denied".into();
     // #87: over MCP an unoffered tool is refused (403); the turn goes on.
     run(room_turns, Some(a.clone()), "done").await?;
-    ensure!(last(&state)[0]["status"] == 403, "channel set_routine_flow not refused: {}", last(&state));
+    ensure!(
+        last(&state)[0]["status"] == 403,
+        "channel set_routine_flow not refused: {}",
+        last(&state)
+    );
     ensure!(!lock(&state).leaked, "channel turns offered routine tools");
     lock(&state).mode = "invalid".into();
     run(direct, None, "done").await?;
@@ -435,7 +517,9 @@ async fn routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_k
         last(&state)
     );
     ensure!(
-        rows(&app, &format!("/api/routines/{owned}/runs")).await?.is_empty(),
+        rows(&app, &format!("/api/routines/{owned}/runs"))
+            .await?
+            .is_empty(),
         "routine tools ran the routine"
     );
     Ok(())
@@ -471,11 +555,17 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
                     error == "Attachment not found in sent messages in this conversation.";
                 return Answer::text("Later unrelated file denied.");
             }
-            return Answer::tool_id("read-unrelated", "read_attachment", json!({"id": unrelated}));
+            return Answer::tool_id(
+                "read-unrelated",
+                "read_attachment",
+                json!({"id": unrelated}),
+            );
         }
         if let Some(result) = result {
             let expected = match task.as_str() {
-                "bad-path" => Some(json!({"error": "Invalid text file name or content.", "status": 400})),
+                "bad-path" => {
+                    Some(json!({"error": "Invalid text file name or content.", "status": 400}))
+                }
                 "oversize" => Some(json!({"error": "Text file limit is 32 KiB.", "status": 413})),
                 _ => None,
             };
@@ -487,7 +577,10 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
             if script.hold {
                 return Answer::Park;
             }
-            return Answer::text(format!("Saved {}", result["name"].as_str().unwrap_or_default()));
+            return Answer::text(format!(
+                "Saved {}",
+                result["name"].as_str().unwrap_or_default()
+            ));
         }
         if task == "Late file creation" {
             return Answer::Park;
@@ -502,7 +595,11 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
         } else {
             "<script>literal text</script>\nSYNTHETIC OUTPUT".to_owned()
         };
-        Answer::tool_id("artifact-call", "create_text_file", json!({"name": name, "text": text}))
+        Answer::tool_id(
+            "artifact-call",
+            "create_text_file",
+            json!({"name": name, "text": text}),
+        )
     });
     let root = TestRoot::new()?;
     let mut app = root.start(gated(&model)).await?;
@@ -514,7 +611,10 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
         )
         .await?)?;
     let side = id(&app
-        .post(&format!("/api/agents/{agent}/threads"), json!({"id": new_id(), "name": "Side"}))
+        .post(
+            &format!("/api/agents/{agent}/threads"),
+            json!({"id": new_id(), "name": "Side"}),
+        )
         .await?)?;
     let paths = [
         format!("/api/agents/{agent}"),
@@ -541,15 +641,29 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
                 .unwrap_or_default()
                 .to_owned()
         };
-        ensure!(header("content-type") == "application/octet-stream", "type {}", header("content-type"));
-        ensure!(header("content-disposition").contains("attachment"), "disposition {}", header("content-disposition"));
+        ensure!(
+            header("content-type") == "application/octet-stream",
+            "type {}",
+            header("content-type")
+        );
+        ensure!(
+            header("content-disposition").contains("attachment"),
+            "disposition {}",
+            header("content-disposition")
+        );
         ensure!(
             download.text().await? == "<script>literal text</script>\nSYNTHETIC OUTPUT",
             "download bytes"
         );
         app.post(&turns, request).await?;
-        ensure!(rows(&app, &format!("{path}/files")).await?.len() == 1, "replay created a file");
-        let foreign = paths.iter().find(|other| *other != path).ok_or("foreign path")?;
+        ensure!(
+            rows(&app, &format!("{path}/files")).await?.len() == 1,
+            "replay created a file"
+        );
+        let foreign = paths
+            .iter()
+            .find(|other| *other != path)
+            .ok_or("foreign path")?;
         ensure!(
             fetch(&app, &format!("{foreign}/files/{file}")).await?.0 == 404,
             "file visible from {foreign}"
@@ -562,14 +676,27 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
         app.post(&turns, json!({"id": turn, "text": text})).await?;
         settle(&app, &turns, &turn, "done").await?;
     }
-    ensure!(lock(&state).failures.is_empty(), "rejections {:?}", lock(&state).failures);
-    ensure!(rows(&app, &format!("{path}/files")).await?.len() == 1, "rejected files stored");
+    ensure!(
+        lock(&state).failures.is_empty(),
+        "rejections {:?}",
+        lock(&state).failures
+    );
+    ensure!(
+        rows(&app, &format!("{path}/files")).await?.len() == 1,
+        "rejected files stored"
+    );
     lock(&state).hold = true;
     let held_turn = new_id();
-    app.post(&turns, json!({"id": held_turn, "text": "Retain on restart"}))
-        .await?;
+    app.post(
+        &turns,
+        json!({"id": held_turn, "text": "Retain on restart"}),
+    )
+    .await?;
     let held = model.parked().await?;
-    ensure!(held.request.last_user_text() == "Retain on restart", "held task");
+    ensure!(
+        held.request.last_user_text() == "Retain on restart",
+        "held task"
+    );
     app.restart().await?;
     drop(held);
     let interrupted = settle(&app, &turns, &held_turn, "interrupted").await?;
@@ -589,15 +716,27 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
         resumed["generatedFiles"] == interrupted["generatedFiles"],
         "resume changed files"
     );
-    ensure!(rows(&app, &format!("{path}/files")).await?.len() == 2, "resume duplicated a file");
+    ensure!(
+        rows(&app, &format!("{path}/files")).await?.len() == 2,
+        "resume duplicated a file"
+    );
     lock(&state).hold = true;
     let cancelled = new_id();
-    app.post(&turns, json!({"id": cancelled, "text": "Retain on cancellation"}))
-        .await?;
+    app.post(
+        &turns,
+        json!({"id": cancelled, "text": "Retain on cancellation"}),
+    )
+    .await?;
     let held = model.parked().await?;
-    ensure!(held.request.last_user_text() == "Retain on cancellation", "held task");
-    app.post(&format!("{turns}/{cancelled}/cancel"), json!({"id": new_id()}))
-        .await?;
+    ensure!(
+        held.request.last_user_text() == "Retain on cancellation",
+        "held task"
+    );
+    app.post(
+        &format!("{turns}/{cancelled}/cancel"),
+        json!({"id": new_id()}),
+    )
+    .await?;
     let stopped = settle(&app, &turns, &cancelled, "cancelled").await?;
     drop(held);
     ensure!(
@@ -608,7 +747,10 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
     app.post(&turns, json!({"id": late, "text": "Late file creation"}))
         .await?;
     let release = model.parked().await?;
-    ensure!(release.request.last_user_text() == "Late file creation", "late task");
+    ensure!(
+        release.request.last_user_text() == "Late file creation",
+        "late task"
+    );
     app.post(&format!("{turns}/{late}/cancel"), json!({"id": new_id()}))
         .await?;
     release.answer(Answer::tool_id(
@@ -618,8 +760,11 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
     ));
     lock(&state).hold = false;
     let sentinel = new_id();
-    app.post(&turns, json!({"id": sentinel, "text": "Next task after cancellation"}))
-        .await?;
+    app.post(
+        &turns,
+        json!({"id": sentinel, "text": "Next task after cancellation"}),
+    )
+    .await?;
     settle(&app, &turns, &sentinel, "done").await?;
     ensure!(
         settle(&app, &turns, &late, "cancelled").await?["generatedFiles"]
@@ -628,7 +773,10 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
             == Some(0),
         "late cancelled call created a file"
     );
-    ensure!(rows(&app, &format!("{path}/files")).await?.len() == 4, "file count");
+    ensure!(
+        rows(&app, &format!("{path}/files")).await?.len() == 4,
+        "file count"
+    );
     lock(&state).hold = true;
     let earlier = new_id();
     app.post(&turns, json!({"id": earlier, "text": "Earlier task"}))
@@ -654,7 +802,10 @@ async fn generated_text_artifacts_persist_across_interruption_without_duplicate_
     )
     .await?;
     settle(&app, &turns, &earlier, "done").await?;
-    ensure!(lock(&state).denied_later, "unrelated later file was readable");
+    ensure!(
+        lock(&state).denied_later,
+        "unrelated later file was readable"
+    );
     Ok(())
 }
 
@@ -675,7 +826,11 @@ async fn avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_cha
     use minarbot_testkit::base64::{engine::general_purpose::STANDARD, Engine};
     let png = minarbot_testkit::image::png(32, 32, [0x44, 0x88, 0x66, 0xff])?;
     let generated = minarbot_testkit::noise::noise_png(512, 512, 7)?;
-    ensure!(generated.len() > 512 * 1024, "generated image too small: {}", generated.len());
+    ensure!(
+        generated.len() > 512 * 1024,
+        "generated image too small: {}",
+        generated.len()
+    );
     let state = Arc::new(Mutex::new(Avatar::default()));
     let model = GatedModel::start().await?;
     let encoded = STANDARD.encode(&generated);
@@ -688,12 +843,21 @@ async fn avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_cha
         script.advertised = request.tool_names().iter().any(|name| name == "set_avatar");
         let last = last_result(request);
         if script.generate && last.is_none() {
-            return Answer::tool_id("generate", "generate_image", json!({"prompt": "Synthetic avatar"}));
+            return Answer::tool_id(
+                "generate",
+                "generate_image",
+                json!({"prompt": "Synthetic avatar"}),
+            );
         }
-        if let (true, Some(("generate", file))) =
-            (script.generate, last.as_ref().map(|(id, value)| (id.as_str(), value)))
-        {
-            return Answer::tool_id("avatar", "set_avatar", json!({"image": file["id"], "revision": 5}));
+        if let (true, Some(("generate", file))) = (
+            script.generate,
+            last.as_ref().map(|(id, value)| (id.as_str(), value)),
+        ) {
+            return Answer::tool_id(
+                "avatar",
+                "set_avatar",
+                json!({"image": file["id"], "revision": 5}),
+            );
         }
         if let Some((_, result)) = last {
             script.result = result;
@@ -718,7 +882,10 @@ async fn avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_cha
     let agent = id(&api_agent(&app, "Artist", "fixture").await?)?;
     let other = id(&api_agent(&app, "Other", "fixture").await?)?;
     let side = id(&app
-        .post(&format!("/api/agents/{agent}/threads"), json!({"id": new_id(), "name": "Side"}))
+        .post(
+            &format!("/api/agents/{agent}/threads"),
+            json!({"id": new_id(), "name": "Side"}),
+        )
         .await?)?;
     let room = id(&app
         .post(
@@ -736,11 +903,21 @@ async fn avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_cha
     };
     async fn put(app: &Server, path: &str, bytes: &[u8]) -> Result<String> {
         let file = new_id();
-        let status = upload(app, &format!("{path}/files/{file}"), "image.png", bytes.to_vec()).await?;
+        let status = upload(
+            app,
+            &format!("{path}/files/{file}"),
+            "image.png",
+            bytes.to_vec(),
+        )
+        .await?;
         ensure!(status == 200, "upload {status}");
         Ok(file)
     }
-    async fn run(app: &Server, (turns, turn, body): (String, String, Value), status: &str) -> Result<String> {
+    async fn run(
+        app: &Server,
+        (turns, turn, body): (String, String, Value),
+        status: &str,
+    ) -> Result<String> {
         app.post(&turns, body).await?;
         settle(app, &turns, &turn, status).await?;
         Ok(turn)
@@ -751,10 +928,17 @@ async fn avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_cha
     set_args(&state, json!({"image": image, "revision": 0}));
     run(&app, send(&path, vec![image.clone()]), "done").await?;
     ensure!(lock(&state).advertised, "set_avatar not offered");
-    ensure!(result(&state)["revision"] == 1 && result(&state)["present"] == true, "first {}", result(&state));
+    ensure!(
+        result(&state)["revision"] == 1 && result(&state)["present"] == true,
+        "first {}",
+        result(&state)
+    );
     let (status, bytes) = fetch(&app, &format!("{avatar}/image")).await?;
     ensure!(status == 200, "avatar image {status}");
-    ensure!(minarbot_testkit::image::dimensions(&bytes)?.0 == 256, "avatar not resized");
+    ensure!(
+        minarbot_testkit::image::dimensions(&bytes)?.0 == 256,
+        "avatar not resized"
+    );
     let unsent = put(&app, &path, &png).await?;
     set_args(&state, json!({"image": unsent, "revision": 1}));
     run(&app, send(&path, vec![]), "done").await?;
@@ -764,39 +948,77 @@ async fn avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_cha
     ensure!(result(&state)["status"] == 404, "side {}", result(&state));
     set_args(&state, json!({"image": image, "revision": 0}));
     run(&app, send(&format!("/api/agents/{other}"), vec![]), "done").await?;
-    ensure!(result(&state)["status"] == 404, "other agent {}", result(&state));
+    ensure!(
+        result(&state)["status"] == 404,
+        "other agent {}",
+        result(&state)
+    );
     set_args(&state, json!({"image": image, "revision": 0}));
     run(&app, send(&path, vec![]), "done").await?;
     ensure!(result(&state)["status"] == 409, "stale {}", result(&state));
-    set_args(&state, json!({"image": null, "revision": 1, "agent": other}));
+    set_args(
+        &state,
+        json!({"image": null, "revision": 1, "agent": other}),
+    );
     run(&app, send(&path, vec![]), "done").await?;
-    ensure!(result(&state)["status"] == 400, "extra field {}", result(&state));
+    ensure!(
+        result(&state)["status"] == 400,
+        "extra field {}",
+        result(&state)
+    );
     set_args(&state, json!({"image": null, "revision": 1}));
     // #87: the API runtime failed the turn on an unoffered tool; over MCP the
     // server refuses the call and the turn goes on.
     run(&app, send(&format!("/api/channels/{room}"), vec![]), "done").await?;
     ensure!(!lock(&state).advertised, "set_avatar offered in a channel");
-    ensure!(result(&state)["status"] == 403, "channel call not refused: {}", result(&state));
-    ensure!(app.get(&avatar).await? == json!({"revision": 1, "present": true}), "avatar after denials");
+    ensure!(
+        result(&state)["status"] == 403,
+        "channel call not refused: {}",
+        result(&state)
+    );
+    ensure!(
+        app.get(&avatar).await? == json!({"revision": 1, "present": true}),
+        "avatar after denials"
+    );
     let side_image = put(&app, &side_path, &png).await?;
     set_args(&state, json!({"image": side_image, "revision": 1}));
     run(&app, send(&side_path, vec![side_image.clone()]), "done").await?;
-    ensure!(result(&state)["revision"] == 2, "side avatar {}", result(&state));
+    ensure!(
+        result(&state)["revision"] == 2,
+        "side avatar {}",
+        result(&state)
+    );
     set_args(&state, json!({"image": null, "revision": 2}));
     lock(&state).park = true;
     let (turns, conflict, body) = send(&path, vec![]);
     app.post(&turns, body).await?;
     let parked = model.parked().await?;
-    app.post(&avatar, json!({"id": new_id(), "revision": 2, "image": STANDARD.encode(&png)}))
-        .await?;
-    parked.answer(Answer::tool_id("avatar", "set_avatar", json!({"image": null, "revision": 2})));
+    app.post(
+        &avatar,
+        json!({"id": new_id(), "revision": 2, "image": STANDARD.encode(&png)}),
+    )
+    .await?;
+    parked.answer(Answer::tool_id(
+        "avatar",
+        "set_avatar",
+        json!({"image": null, "revision": 2}),
+    ));
     settle(&app, &turns, &conflict, "done").await?;
-    ensure!(result(&state)["status"] == 409, "conflict {}", result(&state));
+    ensure!(
+        result(&state)["status"] == 409,
+        "conflict {}",
+        result(&state)
+    );
     ensure!(app.get(&avatar).await?["revision"] == 3, "user change lost");
     let journal: Vec<Value> = Inspector::open(root.database())?
-        .rows("SELECT result FROM flow_tool_calls WHERE turn=?", [&conflict])?
+        .rows(
+            "SELECT result FROM flow_tool_calls WHERE turn=?",
+            [&conflict],
+        )?
         .iter()
-        .map(|row| serde_json::from_str(row["result"].as_str().unwrap_or("null")).unwrap_or(Value::Null))
+        .map(|row| {
+            serde_json::from_str(row["result"].as_str().unwrap_or("null")).unwrap_or(Value::Null)
+        })
         .collect();
     ensure!(journal == vec![result(&state)], "journal {journal:?}");
     set_args(&state, json!({"image": null, "revision": 3}));
@@ -806,16 +1028,25 @@ async fn avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_cha
         script.continued = false;
     }
     let interrupted = new_id();
-    app.post(&format!("{path}/turns"), json!({"id": interrupted, "text": "Remove avatar"}))
-        .await?;
+    app.post(
+        &format!("{path}/turns"),
+        json!({"id": interrupted, "text": "Remove avatar"}),
+    )
+    .await?;
     let held = model.parked().await?;
     ensure!(lock(&state).continued, "result not observed");
-    ensure!(app.get(&avatar).await? == json!({"revision": 4, "present": false}), "removal");
+    ensure!(
+        app.get(&avatar).await? == json!({"revision": 4, "present": false}),
+        "removal"
+    );
     app.restart().await?;
     drop(held);
     lock(&state).hold = false;
-    app.post(&avatar, json!({"id": new_id(), "revision": 4, "image": STANDARD.encode(&png)}))
-        .await?;
+    app.post(
+        &avatar,
+        json!({"id": new_id(), "revision": 4, "image": STANDARD.encode(&png)}),
+    )
+    .await?;
     let stopped = settle(&app, &format!("{path}/turns"), &interrupted, "interrupted").await?;
     app.post(
         &format!("{path}/turns/{interrupted}/resume"),
@@ -823,24 +1054,51 @@ async fn avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_cha
     )
     .await?;
     settle(&app, &format!("{path}/turns"), &interrupted, "done").await?;
-    ensure!(result(&state) == json!({"revision": 4, "present": false}), "replayed {}", result(&state));
-    ensure!(app.get(&avatar).await? == json!({"revision": 5, "present": true}), "user upload lost");
+    ensure!(
+        result(&state) == json!({"revision": 4, "present": false}),
+        "replayed {}",
+        result(&state)
+    );
+    ensure!(
+        app.get(&avatar).await? == json!({"revision": 5, "present": true}),
+        "user upload lost"
+    );
     set_args(&state, json!({"image": null, "revision": 5}));
     lock(&state).park = true;
     let cancelled = new_id();
-    app.post(&format!("{path}/turns"), json!({"id": cancelled, "text": "Cancel"}))
-        .await?;
+    app.post(
+        &format!("{path}/turns"),
+        json!({"id": cancelled, "text": "Cancel"}),
+    )
+    .await?;
     let parked = model.parked().await?;
-    app.post(&format!("{path}/turns/{cancelled}/cancel"), json!({"id": new_id()}))
-        .await?;
-    parked.answer(Answer::tool_id("avatar", "set_avatar", json!({"image": null, "revision": 5})));
+    app.post(
+        &format!("{path}/turns/{cancelled}/cancel"),
+        json!({"id": new_id()}),
+    )
+    .await?;
+    parked.answer(Answer::tool_id(
+        "avatar",
+        "set_avatar",
+        json!({"image": null, "revision": 5}),
+    ));
     settle(&app, &format!("{path}/turns"), &cancelled, "cancelled").await?;
-    ensure!(app.get(&avatar).await?["revision"] == 5, "cancelled turn changed the avatar");
+    ensure!(
+        app.get(&avatar).await?["revision"] == 5,
+        "cancelled turn changed the avatar"
+    );
     lock(&state).generate = true;
     run(&app, send(&path, vec![]), "done").await?;
     lock(&state).generate = false;
-    ensure!(model.route_calls("/v1/images/generations") == 1, "image calls");
-    ensure!(result(&state)["revision"] == 6, "generated avatar {}", result(&state));
+    ensure!(
+        model.route_calls("/v1/images/generations") == 1,
+        "image calls"
+    );
+    ensure!(
+        result(&state)["revision"] == 6,
+        "generated avatar {}",
+        result(&state)
+    );
     set_args(&state, json!({"image": null, "revision": 6}));
     app.shutdown().await?;
     Fixture::open(root.database())?.execute_batch(
@@ -850,7 +1108,11 @@ async fn avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_cha
     // #87: the agent loop failed the turn on this storage error; over MCP the
     // harness gets the error result (status 500) and the turn goes on.
     run(&app, send(&path, vec![]), "done").await?;
-    ensure!(result(&state)["status"] == 500, "journal failure result {}", result(&state));
+    ensure!(
+        result(&state)["status"] == 500,
+        "journal failure result {}",
+        result(&state)
+    );
     ensure!(
         app.get(&avatar).await? == json!({"revision": 6, "present": true}),
         "journal failure changed the avatar"
@@ -933,7 +1195,12 @@ async fn site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_o
         app.post(&turns, command).await?;
         Ok(turn)
     }
-    async fn put(app: &Server, path: &str, source: impl Into<Vec<u8>>, name: &str) -> Result<String> {
+    async fn put(
+        app: &Server,
+        path: &str,
+        source: impl Into<Vec<u8>>,
+        name: &str,
+    ) -> Result<String> {
         let file = new_id();
         let status = upload(app, &format!("{path}/files/{file}"), name, source).await?;
         ensure!(status == 200, "upload {name}: {status}");
@@ -944,7 +1211,10 @@ async fn site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_o
     let path = format!("/api/agents/{a}");
     let other = format!("/api/agents/{b}");
     let side = id(&app
-        .post(&format!("{path}/threads"), json!({"id": new_id(), "name": "Side"}))
+        .post(
+            &format!("{path}/threads"),
+            json!({"id": new_id(), "name": "Side"}),
+        )
         .await?)?;
     let side_path = format!("/api/threads/{side}");
     let room = id(&app
@@ -953,31 +1223,67 @@ async fn site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_o
             json!({"id": new_id(), "name": "Room", "members": [a], "lead": a, "instructions": "Help"}),
         )
         .await?)?;
-    let file = put(&app, &path, "<h1>Published</h1><script>bad()</script>", "page.html").await?;
+    let file = put(
+        &app,
+        &path,
+        "<h1>Published</h1><script>bad()</script>",
+        "page.html",
+    )
+    .await?;
     set("publish_site", json!({"file": file, "name": "Report"}));
     run(&app, &path, &[], "done").await?;
-    ensure!(result()["status"] == 404, "unsent upload published: {}", result());
+    ensure!(
+        result()["status"] == 404,
+        "unsent upload published: {}",
+        result()
+    );
     run(&app, &path, &[&file], "done").await?;
     ensure!(lock(&state).advertised, "publish_site not offered");
     let site = result();
     ensure!(site["revision"] == 1, "site {site}");
     ensure!(
-        app.get(&format!("{path}/sites")).await?["sites"].as_array().map(Vec::len) == Some(1),
+        app.get(&format!("{path}/sites")).await?["sites"]
+            .as_array()
+            .map(Vec::len)
+            == Some(1),
         "sites"
     );
     let site_path = site["path"].as_str().ok_or("site path")?.to_owned();
     let (_, page) = fetch(&app, &site_path).await?;
-    ensure!(String::from_utf8_lossy(&page).contains("<h1>Published</h1>"), "published page");
-    set("publish_site", json!({"file": file, "name": "Side cannot use main file"}));
+    ensure!(
+        String::from_utf8_lossy(&page).contains("<h1>Published</h1>"),
+        "published page"
+    );
+    set(
+        "publish_site",
+        json!({"file": file, "name": "Side cannot use main file"}),
+    );
     run(&app, &side_path, &[], "done").await?;
-    ensure!(result()["status"] == 404, "side used main file: {}", result());
+    ensure!(
+        result()["status"] == 404,
+        "side used main file: {}",
+        result()
+    );
     let other_file = put(&app, &other, "<p>Foreign</p>", "page.html").await?;
-    set("publish_site", json!({"file": other_file, "name": "Foreign"}));
+    set(
+        "publish_site",
+        json!({"file": other_file, "name": "Foreign"}),
+    );
     run(&app, &path, &[], "done").await?;
     ensure!(result()["status"] == 404, "foreign file: {}", result());
     for (bytes, name, status, message) in [
-        (vec![255u8], "invalid.html", 415, "Message attachment must be UTF-8 text."),
-        (vec![b'x'; 262_145], "large.html", 413, "Total text attachment limit is 32 KiB per message."),
+        (
+            vec![255u8],
+            "invalid.html",
+            415,
+            "Message attachment must be UTF-8 text.",
+        ),
+        (
+            vec![b'x'; 262_145],
+            "large.html",
+            413,
+            "Total text attachment limit is 32 KiB per message.",
+        ),
     ] {
         let invalid = put(&app, &path, bytes, name).await?;
         let reply = app
@@ -991,21 +1297,41 @@ async fn site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_o
         ensure!(reply.body["error"] == message, "{name}: {}", reply.body);
     }
     let invalid_type = put(&app, &path, "plain", "not-html.txt").await?;
-    set("publish_site", json!({"file": invalid_type, "name": "Invalid"}));
+    set(
+        "publish_site",
+        json!({"file": invalid_type, "name": "Invalid"}),
+    );
     run(&app, &path, &[&invalid_type], "done").await?;
-    ensure!(result()["status"] == 400, "non-HTML published: {}", result());
     ensure!(
-        app.get(&format!("{path}/sites")).await?["sites"].as_array().map(Vec::len) == Some(1),
+        result()["status"] == 400,
+        "non-HTML published: {}",
+        result()
+    );
+    ensure!(
+        app.get(&format!("{path}/sites")).await?["sites"]
+            .as_array()
+            .map(Vec::len)
+            == Some(1),
         "invalid site stored"
     );
     lock(&state).generate = true;
     run(&app, &path, &[], "done").await?;
     lock(&state).generate = false;
-    ensure!(result()["name"] == "Generated site", "generated {}", result());
+    ensure!(
+        result()["name"] == "Generated site",
+        "generated {}",
+        result()
+    );
     let (_, generated) = fetch(&app, result()["path"].as_str().ok_or("generated path")?).await?;
-    ensure!(String::from_utf8_lossy(&generated).contains("Generated page"), "generated page");
+    ensure!(
+        String::from_utf8_lossy(&generated).contains("Generated page"),
+        "generated page"
+    );
     let site_id = id(&site)?;
-    set("publish_site", json!({"file": file, "name": "Changed", "site": site_id, "revision": 1}));
+    set(
+        "publish_site",
+        json!({"file": file, "name": "Changed", "site": site_id, "revision": 1}),
+    );
     run(&app, &path, &[], "done").await?;
     ensure!(result()["revision"] == 2, "update {}", result());
     run(&app, &path, &[], "done").await?;
@@ -1025,18 +1351,36 @@ async fn site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_o
         "own list {}",
         result()
     );
-    set("publish_site", json!({"file": file, "name": "Denied channel"}));
+    set(
+        "publish_site",
+        json!({"file": file, "name": "Denied channel"}),
+    );
     // #87: over MCP an unoffered tool is refused (403); the turn goes on.
     run(&app, &format!("/api/channels/{room}"), &[], "done").await?;
-    ensure!(!lock(&state).advertised, "publish_site offered in a channel");
-    ensure!(result()["status"] == 403, "channel call not refused: {}", result());
+    ensure!(
+        !lock(&state).advertised,
+        "publish_site offered in a channel"
+    );
+    ensure!(
+        result()["status"] == 403,
+        "channel call not refused: {}",
+        result()
+    );
     let side_file = put(&app, &side_path, "<h1>Side</h1>", "page.html").await?;
-    set("publish_site", json!({"file": side_file, "name": "Side site"}));
+    set(
+        "publish_site",
+        json!({"file": side_file, "name": "Side site"}),
+    );
     run(&app, &side_path, &[&side_file], "done").await?;
     ensure!(result()["revision"] == 1, "side site {}", result());
     let side_site = id(&result())?;
     let side_panel = app.get(&format!("{side_path}/panel")).await?;
-    let ids: Vec<&Value> = side_panel["sites"].as_array().ok_or("panel sites")?.iter().map(|row| &row["id"]).collect();
+    let ids: Vec<&Value> = side_panel["sites"]
+        .as_array()
+        .ok_or("panel sites")?
+        .iter()
+        .map(|row| &row["id"])
+        .collect();
     ensure!(ids == [&json!(side_site)], "side panel {ids:?}");
     ensure!(
         !app.get(&format!("{path}/panel")).await?["sites"]
@@ -1045,22 +1389,38 @@ async fn site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_o
         "side site in main panel"
     );
     let (status, scoped) = fetch(&app, &format!("{side_path}/panel/sites/{side_site}")).await?;
-    ensure!(status == 200 && String::from_utf8_lossy(&scoped).contains("Side"), "scoped panel site {status}");
     ensure!(
-        fetch(&app, &format!("{path}/panel/sites/{side_site}")).await?.0 == 404,
+        status == 200 && String::from_utf8_lossy(&scoped).contains("Side"),
+        "scoped panel site {status}"
+    );
+    ensure!(
+        fetch(&app, &format!("{path}/panel/sites/{side_site}"))
+            .await?
+            .0
+            == 404,
         "side site through main panel"
     );
-    set("publish_site", json!({"file": file, "name": "Durable", "site": site_id, "revision": 2}));
+    set(
+        "publish_site",
+        json!({"file": file, "name": "Durable", "site": site_id, "revision": 2}),
+    );
     {
         let mut script = lock(&state);
         script.hold = true;
         script.observed = false;
     }
     let interrupted = new_id();
-    app.post(&format!("{path}/turns"), json!({"id": interrupted, "text": "Hold result"}))
-        .await?;
+    app.post(
+        &format!("{path}/turns"),
+        json!({"id": interrupted, "text": "Hold result"}),
+    )
+    .await?;
     let held = model.parked().await?;
-    ensure!(lock(&state).observed && result()["revision"] == 3, "held result {}", result());
+    ensure!(
+        lock(&state).observed && result()["revision"] == 3,
+        "held result {}",
+        result()
+    );
     app.restart().await?;
     drop(held);
     lock(&state).hold = false;
@@ -1084,12 +1444,22 @@ async fn site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_o
     set("delete_site", json!({"site": site_id, "revision": 4}));
     lock(&state).park = true;
     let cancelled = new_id();
-    app.post(&format!("{path}/turns"), json!({"id": cancelled, "text": "Cancel deletion"}))
-        .await?;
+    app.post(
+        &format!("{path}/turns"),
+        json!({"id": cancelled, "text": "Cancel deletion"}),
+    )
+    .await?;
     let parked = model.parked().await?;
-    app.post(&format!("{path}/turns/{cancelled}/cancel"), json!({"id": new_id()}))
-        .await?;
-    parked.answer(Answer::tool_id("site-call", "delete_site", json!({"site": site_id, "revision": 4})));
+    app.post(
+        &format!("{path}/turns/{cancelled}/cancel"),
+        json!({"id": new_id()}),
+    )
+    .await?;
+    parked.answer(Answer::tool_id(
+        "site-call",
+        "delete_site",
+        json!({"site": site_id, "revision": 4}),
+    ));
     settle(&app, &format!("{path}/turns"), &cancelled, "cancelled").await?;
     ensure!(
         app.get(&format!("{path}/sites/{site_id}")).await?["deleted"] == 0,
@@ -1097,7 +1467,10 @@ async fn site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_o
     );
     run(&app, &path, &[], "done").await?;
     ensure!(result()["deleted"] == 1, "delete {}", result());
-    ensure!(fetch(&app, &site_path).await?.0 == 404, "deleted site still served");
+    ensure!(
+        fetch(&app, &site_path).await?.0 == 404,
+        "deleted site still served"
+    );
     Ok(())
 }
 
@@ -1121,8 +1494,14 @@ fn scenario(request: &ModelRequest, script: &mut Scenario) -> std::result::Resul
             && first_line.contains("through the codex runtime, model fixture"),
         "runtime_info line",
     )?;
-    check(system.contains("ordinary inline Markdown links"), "inline links guidance")?;
-    check(system.contains("Only the user's own messages"), "user message guidance")?;
+    check(
+        system.contains("ordinary inline Markdown links"),
+        "inline links guidance",
+    )?;
+    check(
+        system.contains("Only the user's own messages"),
+        "user message guidance",
+    )?;
     check(
         !system.contains("computer_screenshot") && !system.contains("start_workflow"),
         "unavailable tools described",
@@ -1131,12 +1510,24 @@ fn scenario(request: &ModelRequest, script: &mut Scenario) -> std::result::Resul
     let tools = request.tool_names();
     let result = request.tool_results().last().map(tool_json);
     if user == "plain" {
-        check(tools.iter().any(|tool| tool == "run_shell"), "plain run_shell")?;
-        check(!system.contains("Project convention"), "plain agent got workspace context")?;
+        check(
+            tools.iter().any(|tool| tool == "run_shell"),
+            "plain run_shell",
+        )?;
+        check(
+            !system.contains("Project convention"),
+            "plain agent got workspace context",
+        )?;
         return Ok(Answer::text("Ready."));
     }
-    check(system.contains("Project convention: check native tests"), "workspace context")?;
-    check(tools.iter().any(|tool| tool == "run_shell"), "run_shell offered")?;
+    check(
+        system.contains("Project convention: check native tests"),
+        "workspace context",
+    )?;
+    check(
+        tools.iter().any(|tool| tool == "run_shell"),
+        "run_shell offered",
+    )?;
     check(system.contains("run_shell:"), "run_shell guidance")?;
     if let Some(value) = result {
         check(value["error"].is_null(), &format!("tool error {value}"))?;
@@ -1162,12 +1553,17 @@ fn scenario(request: &ModelRequest, script: &mut Scenario) -> std::result::Resul
         _ => "create_text_file",
     };
     if name == "open_file_in_panel" {
-        check(system.contains("without recreating or rewriting"), "panel guidance")?;
+        check(
+            system.contains("without recreating or rewriting"),
+            "panel guidance",
+        )?;
     }
     script.calls.push(name.to_owned());
     let args = match name {
         "open_file_in_panel" => json!({"id": script.target}),
-        "run_shell" => json!({"command": "echo verified > checked.txt && test \"$(cat checked.txt)\" = verified", "check": true}),
+        "run_shell" => {
+            json!({"command": "echo verified > checked.txt && test \"$(cat checked.txt)\" = verified", "check": true})
+        }
         _ => json!({"name": "hello.html", "text": "<h1>Hello</h1>"}),
     };
     Ok(Answer::tool(name, args))
@@ -1209,9 +1605,16 @@ async fn synthetic_scenarios_record_panel_without_duplicate_writes_inline_links_
         let state = state.clone();
         async move {
             let row = app
-                .wait_row(&turns, &turn, |row| row["status"] == "done" || row["status"] == "failed")
+                .wait_row(&turns, &turn, |row| {
+                    row["status"] == "done" || row["status"] == "failed"
+                })
                 .await?;
-            ensure!(row["status"] == "done", "turn failed: {} ({:?})", row["error"], lock(&state).failures);
+            ensure!(
+                row["status"] == "done",
+                "turn failed: {} ({:?})",
+                row["error"],
+                lock(&state).failures
+            );
             Ok::<_, minarbot_testkit::Error>(row)
         }
     };
@@ -1245,9 +1648,19 @@ async fn synthetic_scenarios_record_panel_without_duplicate_writes_inline_links_
     app.post(&turns, body).await?;
     let opened = settle_ok(opened).await?;
     let target = lock(&state).target.clone();
-    ensure!(opened["panelFile"]["id"] == target.as_str(), "panel {}", opened["panelFile"]);
-    ensure!(opened["generatedFiles"] == json!([]), "panel rewrote the file");
-    ensure!(rows(&app, &format!("{path}/files")).await?.len() == 1, "duplicate file");
+    ensure!(
+        opened["panelFile"]["id"] == target.as_str(),
+        "panel {}",
+        opened["panelFile"]
+    );
+    ensure!(
+        opened["generatedFiles"] == json!([]),
+        "panel rewrote the file"
+    );
+    ensure!(
+        rows(&app, &format!("{path}/files")).await?.len() == 1,
+        "duplicate file"
+    );
     ensure!(
         lock(&state).calls == ["create_text_file", "open_file_in_panel"],
         "calls {:?}",
@@ -1303,7 +1716,12 @@ async fn synthetic_scenarios_record_panel_without_duplicate_writes_inline_links_
     .await?;
     let checked = settle_ok(shell_turn).await?;
     ensure!(
-        lock(&state).calls.iter().filter(|name| *name == "run_shell").count() == 1,
+        lock(&state)
+            .calls
+            .iter()
+            .filter(|name| *name == "run_shell")
+            .count()
+            == 1,
         "run_shell calls {:?}",
         lock(&state).calls
     );
@@ -1312,21 +1730,38 @@ async fn synthetic_scenarios_record_panel_without_duplicate_writes_inline_links_
         "artifacts {}",
         checked["activity"]["artifacts"]
     );
-    ensure!(workspace.read("checked.txt")? == "verified\n", "check output");
+    ensure!(
+        workspace.read("checked.txt")? == "verified\n",
+        "check output"
+    );
     let plain = id(&api_agent(&app, "Plain", "fixture").await?)?;
     let plain_turns = format!("/api/agents/{plain}/turns");
     let turn = new_id();
-    app.post(&plain_turns, json!({"id": turn, "text": "plain"})).await?;
-    let plain_row = app
-        .wait_row(&plain_turns, &turn, |row| row["status"] == "done" || row["status"] == "failed")
+    app.post(&plain_turns, json!({"id": turn, "text": "plain"}))
         .await?;
-    ensure!(plain_row["status"] == "done", "plain failed: {}", plain_row["error"]);
+    let plain_row = app
+        .wait_row(&plain_turns, &turn, |row| {
+            row["status"] == "done" || row["status"] == "failed"
+        })
+        .await?;
+    ensure!(
+        plain_row["status"] == "done",
+        "plain failed: {}",
+        plain_row["error"]
+    );
     let script = lock(&state);
     ensure!(
-        script.prompts.iter().any(|prompt| !prompt.contains("Project convention")),
+        script
+            .prompts
+            .iter()
+            .any(|prompt| !prompt.contains("Project convention")),
         "every prompt had workspace context"
     );
-    ensure!(script.failures.is_empty(), "provider checks {:?}", script.failures);
+    ensure!(
+        script.failures.is_empty(),
+        "provider checks {:?}",
+        script.failures
+    );
     Ok(())
 }
 

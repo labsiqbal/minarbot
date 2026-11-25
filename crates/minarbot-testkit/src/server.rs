@@ -467,7 +467,11 @@ impl TestRoot {
     /// Like [`TestRoot::start_error`] for a test that already holds a server
     /// (running or stopped): the failing start uses that server's slot, so
     /// it never waits for a second one.
-    pub async fn start_error_beside(&self, _holder: &Server, config: ServerConfig) -> Result<String> {
+    pub async fn start_error_beside(
+        &self,
+        _holder: &Server,
+        config: ServerConfig,
+    ) -> Result<String> {
         match spawn(self, &config).await {
             Ok(_) => Err("server started although a startup failure was expected".into()),
             Err(error) => Ok(error.to_string()),

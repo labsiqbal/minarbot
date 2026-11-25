@@ -29,18 +29,16 @@ fn hub_key() -> String {
 }
 
 /// POST with explicit headers (Origin defaults to the server's own origin).
-async fn post_with(
-    app: &Server,
-    path: &str,
-    body: Value,
-    headers: &[(&str, &str)],
-) -> Result<u16> {
+async fn post_with(app: &Server, path: &str, body: Value, headers: &[(&str, &str)]) -> Result<u16> {
     let mut request = app
         .client()?
         .request(Method::POST, app.url(path))
         .header("Content-Type", "application/json")
         .body(body.to_string());
-    if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("origin")) {
+    if !headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("origin"))
+    {
         request = request.header("Origin", app.origin());
     }
     for (name, value) in headers {
@@ -70,7 +68,10 @@ async fn delete_cascades_every_agent_fk_scoped_data_workflows_desktop_and_journa
     let a = create(&app, "Delete me").await?;
     let b = create(&app, "Keep me").await?;
     let thread = id(&app
-        .post(&format!("/api/agents/{a}/threads"), json!({"id": new_id(), "name": "Private"}))
+        .post(
+            &format!("/api/agents/{a}/threads"),
+            json!({"id": new_id(), "name": "Private"}),
+        )
         .await?)?;
     let channel = id(&app
         .post_expect(
@@ -79,8 +80,15 @@ async fn delete_cascades_every_agent_fk_scoped_data_workflows_desktop_and_journa
             201,
         )
         .await?)?;
-    let (direct, room, file, routine, workflow, run, connection) =
-        (new_id(), new_id(), new_id(), new_id(), new_id(), new_id(), new_id());
+    let (direct, room, file, routine, workflow, run, connection) = (
+        new_id(),
+        new_id(),
+        new_id(),
+        new_id(),
+        new_id(),
+        new_id(),
+        new_id(),
+    );
     let desktop = root.database().with_file_name("agent-desktops").join(&a);
     fs::create_dir_all(&desktop)?;
     fs::write(desktop.join("profile"), "synthetic")?;
@@ -125,23 +133,40 @@ async fn delete_cascades_every_agent_fk_scoped_data_workflows_desktop_and_journa
     .await?;
     let command = json!({"id": new_id()});
     let path = format!("/api/agents/{a}/delete");
-    ensure!(app.post(&path, command.clone()).await? == json!({"deleted": true}), "delete");
-    ensure!(app.post(&path, command.clone()).await? == json!({"deleted": true}), "replay");
+    ensure!(
+        app.post(&path, command.clone()).await? == json!({"deleted": true}),
+        "delete"
+    );
+    ensure!(
+        app.post(&path, command.clone()).await? == json!({"deleted": true}),
+        "replay"
+    );
     ensure!(
         app.post(&path, json!({"id": new_id()})).await? == json!({"deleted": true}),
         "fresh command after delete"
     );
     ensure!(!desktop.exists(), "desktop survived");
     let agents = app.get("/api/agents").await?;
-    let ids: Vec<&Value> = agents["agents"].as_array().ok_or("agents")?.iter().map(|agent| &agent["id"]).collect();
+    let ids: Vec<&Value> = agents["agents"]
+        .as_array()
+        .ok_or("agents")?
+        .iter()
+        .map(|agent| &agent["id"])
+        .collect();
     ensure!(ids == [&json!(b)], "agents {ids:?}");
-    app.get_expect(&format!("/api/agents/{a}/turns"), 404).await?;
-    app.get_expect(&format!("/api/threads/{thread}"), 404).await?;
+    app.get_expect(&format!("/api/agents/{a}/turns"), 404)
+        .await?;
+    app.get_expect(&format!("/api/threads/{thread}"), 404)
+        .await?;
     let turns = app.get(&format!("/api/channels/{channel}/turns")).await?;
     let turns = turns.as_array().ok_or("channel turns")?;
     ensure!(turns.len() == 1, "channel turns {turns:?}");
     ensure!(turns[0]["reply"] == "past answer", "reply {}", turns[0]);
-    ensure!(turns[0]["agent_name"] == "Deleted agent", "agent_name {}", turns[0]);
+    ensure!(
+        turns[0]["agent_name"] == "Deleted agent",
+        "agent_name {}",
+        turns[0]
+    );
     ensure!(
         turns[0]["room"]["messages"][0]["name"] == "Deleted agent",
         "room message {}",
@@ -154,7 +179,10 @@ async fn delete_cascades_every_agent_fk_scoped_data_workflows_desktop_and_journa
     )
     .await?;
     let db = Inspector::open(root.database())?;
-    ensure!(db.rows("PRAGMA foreign_key_check", [])?.is_empty(), "foreign key violations");
+    ensure!(
+        db.rows("PRAGMA foreign_key_check", [])?.is_empty(),
+        "foreign key violations"
+    );
     for table in db.rows("SELECT name FROM sqlite_schema WHERE type='table'", [])? {
         let name = table["name"].as_str().unwrap_or_default().to_owned();
         for key in db.rows(&format!("PRAGMA foreign_key_list(\"{name}\")"), [])? {
@@ -169,23 +197,37 @@ async fn delete_cascades_every_agent_fk_scoped_data_workflows_desktop_and_journa
         }
     }
     for table in [
-        "threads", "routines", "workflow_runs", "workflow_steps", "workflow_schedules", "workflows",
-        "files", "memories", "memory_commands", "workspace_checkpoints",
+        "threads",
+        "routines",
+        "workflow_runs",
+        "workflow_steps",
+        "workflow_schedules",
+        "workflows",
+        "files",
+        "memories",
+        "memory_commands",
+        "workspace_checkpoints",
     ] {
         ensure!(db.count(table)? == 0, "{table} not empty");
     }
     ensure!(
-        db.rows("SELECT fingerprint,project FROM composio_policy_projects", [])?
-            == vec![json!({"fingerprint": "shared", "project": "shared-project"})],
+        db.rows(
+            "SELECT fingerprint,project FROM composio_policy_projects",
+            []
+        )? == vec![json!({"fingerprint": "shared", "project": "shared-project"})],
         "policy projects"
     );
     ensure!(
         db.row("SELECT agent FROM composio_policies", [])?["agent"] == b.as_str(),
         "shared policy owner"
     );
-    let sections: Value = serde_json::from_str(&db.scalar::<String>("SELECT sections FROM sidebar", [])?)?;
+    let sections: Value =
+        serde_json::from_str(&db.scalar::<String>("SELECT sections FROM sidebar", [])?)?;
     ensure!(sections[0]["agents"] == json!([b]), "sidebar {sections}");
-    ensure!(db.count("mcp_connections")? == 1, "shared MCP connection removed");
+    ensure!(
+        db.count("mcp_connections")? == 1,
+        "shared MCP connection removed"
+    );
     ensure!(db.count("channels")? == 1, "channel removed");
     Ok(())
 }
@@ -206,11 +248,25 @@ async fn delete_guards_last_agent_active_paused_queued_work_unknown_ids_cross_or
     app.post_expect(&path, command.clone(), 409).await?;
     let b = create(&app, "Other").await?;
     ensure!(
-        post_with(&app, &path, command.clone(), &[("Origin", "https://foreign.test")]).await? == 403,
+        post_with(
+            &app,
+            &path,
+            command.clone(),
+            &[("Origin", "https://foreign.test")]
+        )
+        .await?
+            == 403,
         "cross origin"
     );
     ensure!(
-        post_with(&app, &path, command.clone(), &[("Authorization", "Bearer peer-token")]).await? == 403,
+        post_with(
+            &app,
+            &path,
+            command.clone(),
+            &[("Authorization", "Bearer peer-token")]
+        )
+        .await?
+            == 403,
         "bearer"
     );
     ensure!(
@@ -224,13 +280,21 @@ async fn delete_guards_last_agent_active_paused_queued_work_unknown_ids_cross_or
             == 404,
         "peer view"
     );
-    app.post_expect(&format!("/api/scripts/agents/{a}/delete"), command.clone(), 403)
-        .await?;
+    app.post_expect(
+        &format!("/api/scripts/agents/{a}/delete"),
+        command.clone(),
+        403,
+    )
+    .await?;
     let mut forced = command.clone();
     forced["force"] = json!(true);
     app.post_expect(&path, forced, 400).await?;
-    app.post_expect(&format!("/api/agents/{}/delete", new_id()), command.clone(), 404)
-        .await?;
+    app.post_expect(
+        &format!("/api/agents/{}/delete", new_id()),
+        command.clone(),
+        404,
+    )
+    .await?;
     let turn = new_id();
     let (turn2, a2) = (turn.clone(), a.clone());
     seed(&mut app, move |db| {
@@ -241,13 +305,21 @@ async fn delete_guards_last_agent_active_paused_queued_work_unknown_ids_cross_or
     app.post_expect(&path, command.clone(), 409).await?;
     let turn2 = turn.clone();
     seed(&mut app, move |db| {
-        db.execute("UPDATE turns SET status='cancelled',paused=0 WHERE id=?", [&turn2])?;
+        db.execute(
+            "UPDATE turns SET status='cancelled',paused=0 WHERE id=?",
+            [&turn2],
+        )?;
         Ok(())
     })
     .await?;
     let (project, participation, other_participation) = (new_id(), new_id(), new_id());
-    let (a2, b2, project2, participation2, other2) =
-        (a.clone(), b.clone(), project.clone(), participation.clone(), other_participation.clone());
+    let (a2, b2, project2, participation2, other2) = (
+        a.clone(),
+        b.clone(),
+        project.clone(),
+        participation.clone(),
+        other_participation.clone(),
+    );
     seed(&mut app, move |db| {
         db.execute("INSERT INTO hub_link_grants VALUES (?,?,?,1)", [&project2, &participation2, &json!({"projectId": project2, "participationId": participation2, "localAgentId": a2, "agentId": a2, "revision": 1}).to_string()])?;
         db.execute("INSERT INTO hub_link_grants VALUES (?,?,?,1)", [&project2, &other2, &json!({"projectId": project2, "participationId": other2, "localAgentId": b2, "agentId": b2, "revision": 1}).to_string()])?;
@@ -289,17 +361,24 @@ async fn delete_preserves_coordination_journals_until_another_agent_finishes_its
         if coordination != 1 {
             return Err(format!("coordination rows {coordination}").into());
         }
-        if db.rows("SELECT 1 FROM agents WHERE id=?", [&a2])?.is_empty() {
+        if db
+            .rows("SELECT 1 FROM agents WHERE id=?", [&a2])?
+            .is_empty()
+        {
             return Err("agent deleted despite dependent work".into());
         }
-        db.execute("UPDATE turns SET status='cancelled',paused=0 WHERE id=?", [&turn2])?;
+        db.execute(
+            "UPDATE turns SET status='cancelled',paused=0 WHERE id=?",
+            [&turn2],
+        )?;
         Ok(())
     })
     .await?;
     app.post(&path, command).await?;
     let db = Inspector::open(root.database())?;
     ensure!(
-        !db.rows("SELECT 1 FROM turns WHERE id=?", [&turn])?.is_empty(),
+        !db.rows("SELECT 1 FROM turns WHERE id=?", [&turn])?
+            .is_empty(),
         "dependent turn removed"
     );
     ensure!(db.count("coordination")? == 0, "coordination kept");
@@ -334,7 +413,10 @@ async fn running_provider_work_must_settle_before_delete_transactional_failure_p
     held.answer(Answer::text("Finished"));
     settle(&app, &turns, &turn, "done").await?;
     app.shutdown().await?;
-    let desktop = root.database().with_file_name("agent-desktops").join(&agent);
+    let desktop = root
+        .database()
+        .with_file_name("agent-desktops")
+        .join(&agent);
     fs::create_dir_all(&desktop)?;
     fs::write(desktop.join("synthetic"), "saved")?;
     Fixture::open(root.database())?.execute_batch(
@@ -347,11 +429,15 @@ async fn running_provider_work_must_settle_before_delete_transactional_failure_p
     {
         let retry = Fixture::open(root.database())?;
         ensure!(
-            !retry.rows("SELECT 1 FROM agents WHERE id=?", [&agent])?.is_empty(),
+            !retry
+                .rows("SELECT 1 FROM agents WHERE id=?", [&agent])?
+                .is_empty(),
             "agent removed by a failed delete"
         );
         ensure!(
-            !retry.rows("SELECT 1 FROM turns WHERE id=?", [&turn])?.is_empty(),
+            !retry
+                .rows("SELECT 1 FROM turns WHERE id=?", [&turn])?
+                .is_empty(),
             "turn removed by a failed delete"
         );
         retry.execute_batch("DROP TRIGGER fail_delete")?;
@@ -386,7 +472,9 @@ async fn paired_peer_cannot_delete_owner_agents_deletion_on_owner_refreshes_peer
             )
             .await?;
     }
-    let code = owner.post("/api/pairing-codes", json!({"id": new_id()})).await?;
+    let code = owner
+        .post("/api/pairing-codes", json!({"id": new_id()}))
+        .await?;
     peer.post(
         "/api/machines",
         json!({"id": new_id(), "origin": owner.origin(), "code": code["code"]}),
@@ -426,10 +514,16 @@ async fn paired_peer_cannot_delete_owner_agents_deletion_on_owner_refreshes_peer
             .map(|agents| agents.iter().any(|item| item["id"] == agent.as_str()))
     };
     owner
-        .post(&format!("/api/agents/{agent}/delete"), json!({"id": new_id()}))
+        .post(
+            &format!("/api/agents/{agent}/delete"),
+            json!({"id": new_id()}),
+        )
         .await?;
     let machines = peer.refresh_machines().await?;
-    ensure!(roster(&machines) == Some(false), "peer roster kept the deleted agent: {machines}");
+    ensure!(
+        roster(&machines) == Some(false),
+        "peer roster kept the deleted agent: {machines}"
+    );
     Ok(())
 }
 
@@ -441,7 +535,11 @@ fn git(workspace: &Path, args: &[&str]) -> Result<String> {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()?;
-    ensure!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    ensure!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
 
@@ -458,17 +556,37 @@ async fn owned_git_checkpoint_refs_clean_up_durably_without_removing_project_fil
     git(&workspace, &["add", "."])?;
     git(
         &workspace,
-        &["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "Synthetic"],
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "--quiet",
+            "-m",
+            "Synthetic",
+        ],
     )?;
     let hash = git(&workspace, &["rev-parse", "HEAD"])?;
     let turn = new_id();
     let reference = format!("refs/minarbot/checkpoints/{turn}");
     git(&workspace, &["update-ref", &reference, &hash])?;
     let directory = workspace.to_string_lossy().into_owned();
-    let (a2, turn2, reference2, directory2) = (a.clone(), turn.clone(), reference.clone(), directory.clone());
+    let (a2, turn2, reference2, directory2) = (
+        a.clone(),
+        turn.clone(),
+        reference.clone(),
+        directory.clone(),
+    );
     seed(&mut app, move |db| {
-        db.execute("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,'done','done','fixture')", [&turn2, &a2])?;
-        db.execute("INSERT INTO workspace_checkpoints VALUES (?,?,?,?,?,'done',0)", [&turn2, &a2, &directory2, &reference2, &hash])?;
+        db.execute(
+            "INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,'done','done','fixture')",
+            [&turn2, &a2],
+        )?;
+        db.execute(
+            "INSERT INTO workspace_checkpoints VALUES (?,?,?,?,?,'done',0)",
+            [&turn2, &a2, &directory2, &reference2, &hash],
+        )?;
         Ok(())
     })
     .await?;
@@ -476,7 +594,10 @@ async fn owned_git_checkpoint_refs_clean_up_durably_without_removing_project_fil
     let missing = root.path().join("missing").to_string_lossy().into_owned();
     let a2 = a.clone();
     seed(&mut app, move |db| {
-        db.execute("UPDATE workspace_checkpoints SET directory=? WHERE agent=?", [&missing, &a2])?;
+        db.execute(
+            "UPDATE workspace_checkpoints SET directory=? WHERE agent=?",
+            [&missing, &a2],
+        )?;
         Ok(())
     })
     .await?;
@@ -485,20 +606,36 @@ async fn owned_git_checkpoint_refs_clean_up_durably_without_removing_project_fil
     app.post_expect(&path, command.clone(), 400).await?;
     let a2 = a.clone();
     seed(&mut app, move |db| {
-        if !db.rows("SELECT 1 FROM agents WHERE id=?", [&a2])?.is_empty() {
+        if !db
+            .rows("SELECT 1 FROM agents WHERE id=?", [&a2])?
+            .is_empty()
+        {
             return Err("agent row survived".into());
         }
-        if db.rows("SELECT 1 FROM agent_delete_checkpoints WHERE agent=?", [&a2])?.is_empty() {
+        if db
+            .rows(
+                "SELECT 1 FROM agent_delete_checkpoints WHERE agent=?",
+                [&a2],
+            )?
+            .is_empty()
+        {
             return Err("no pending checkpoint cleanup".into());
         }
-        db.execute("UPDATE agent_delete_checkpoints SET directory=? WHERE agent=?", [&directory, &a2])?;
+        db.execute(
+            "UPDATE agent_delete_checkpoints SET directory=? WHERE agent=?",
+            [&directory, &a2],
+        )?;
         Ok(())
     })
     .await?;
     app.post(&path, command).await?;
     ensure!(workspace.join("keep.txt").exists(), "project file removed");
     ensure!(
-        git(&workspace, &["for-each-ref", "--format=%(refname)", &reference])?.is_empty(),
+        git(
+            &workspace,
+            &["for-each-ref", "--format=%(refname)", &reference]
+        )?
+        .is_empty(),
         "checkpoint ref survived"
     );
     ensure!(
@@ -528,7 +665,11 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
             let result: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
             if let Some(agents) = result["agents"].as_array() {
                 if let Ok(mut seen) = seen.lock() {
-                    seen.extend(agents.iter().filter_map(|agent| agent["id"].as_str().map(str::to_owned)));
+                    seen.extend(
+                        agents
+                            .iter()
+                            .filter_map(|agent| agent["id"].as_str().map(str::to_owned)),
+                    );
                 }
                 return Answer::text("Finished");
             }
@@ -553,7 +694,10 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
     let direct = format!("/api/agents/{a}/turns");
     let visibility = format!("/api/agents/{a}/visibility");
     let side = id(&app
-        .post(&format!("/api/agents/{a}/threads"), json!({"id": new_id(), "name": "Side"}))
+        .post(
+            &format!("/api/agents/{a}/threads"),
+            json!({"id": new_id(), "name": "Side"}),
+        )
         .await?)?;
     let channel = id(&app
         .post(
@@ -571,16 +715,23 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
     let routine_id = id(&routine)?;
     let waiting_id = new_id();
     let channel_path = format!("/api/channels/{channel}/turns");
-    app.post(&channel_path, json!({"id": waiting_id, "text": "WAIT", "recipient": a}))
-        .await?;
+    app.post(
+        &channel_path,
+        json!({"id": waiting_id, "text": "WAIT", "recipient": a}),
+    )
+    .await?;
     app.wait_row(&channel_path, &waiting_id, |turn| {
-        turn["events"].as_array().is_some_and(|events| !events.is_empty())
+        turn["events"]
+            .as_array()
+            .is_some_and(|events| !events.is_empty())
     })
     .await?;
     let (active, queued) = (new_id(), new_id());
-    app.post(&direct, json!({"id": active, "text": "HOLD"})).await?;
+    app.post(&direct, json!({"id": active, "text": "HOLD"}))
+        .await?;
     let held = model.parked().await?;
-    app.post(&direct, json!({"id": queued, "text": "QUEUED"})).await?;
+    app.post(&direct, json!({"id": queued, "text": "QUEUED"}))
+        .await?;
     let channel_queued = new_id();
     app.post(
         &channel_path,
@@ -596,20 +747,35 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
         .await?)?;
     let group_path = format!("/api/channels/{group}/turns");
     let released = new_id();
-    app.post(&group_path, json!({"id": released, "text": "REASSIGNED", "recipient": a}))
-        .await?;
+    app.post(
+        &group_path,
+        json!({"id": released, "text": "REASSIGNED", "recipient": a}),
+    )
+    .await?;
     let hide = json!({"id": new_id(), "revision": 0, "hidden": true});
     let result = app.post(&visibility, hide.clone()).await?;
     ensure!(
         row(&app, &channel_path, &channel_queued).await?["agent"] == b.as_str(),
         "queued channel turn not moved to another member"
     );
-    ensure!(app.post(&visibility, hide.clone()).await? == result, "hide replay");
+    ensure!(
+        app.post(&visibility, hide.clone()).await? == result,
+        "hide replay"
+    );
     let suspended = row(&app, &channel_path, &waiting_id).await?;
-    ensure!(suspended["agent"] == a.as_str(), "waiting turn moved: {suspended}");
-    ensure!(suspended["routing"] != "released", "waiting turn released: {suspended}");
+    ensure!(
+        suspended["agent"] == a.as_str(),
+        "waiting turn moved: {suspended}"
+    );
+    ensure!(
+        suspended["routing"] != "released",
+        "waiting turn released: {suspended}"
+    );
     let waiting = row(&app, &group_path, &released).await?;
-    ensure!(waiting["routing"] == "released", "group turn routing {waiting}");
+    ensure!(
+        waiting["routing"] == "released",
+        "group turn routing {waiting}"
+    );
     app.post(
         &format!("{group_path}/{released}/pause"),
         json!({"id": new_id(), "revision": waiting["revision"]}),
@@ -631,15 +797,23 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
     let mut fresh = hide.clone();
     fresh["id"] = json!(new_id());
     app.post_expect(&visibility, fresh, 409).await?;
-    for path in [direct.clone(), format!("/api/threads/{side}/turns"), channel_path.clone()] {
+    for path in [
+        direct.clone(),
+        format!("/api/threads/{side}/turns"),
+        channel_path.clone(),
+    ] {
         let mut body = json!({"id": new_id(), "text": "Denied"});
         if path.contains("channels") {
             body["recipient"] = json!(a);
         }
         app.post_expect(&path, body, 409).await?;
     }
-    app.post_expect(&channel_path, json!({"id": new_id(), "text": "Hidden lead"}), 202)
-        .await?;
+    app.post_expect(
+        &channel_path,
+        json!({"id": new_id(), "text": "Hidden lead"}),
+        202,
+    )
+    .await?;
     app.post_expect(
         &format!("/api/routines/{routine_id}/test"),
         json!({"id": new_id(), "revision": routine["revision"]}),
@@ -675,7 +849,10 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
         .await?)?;
     held.answer(Answer::text("Finished"));
     settle(&app, &direct, &active, "done").await?;
-    ensure!(row(&app, &direct, &queued).await?["status"] == "queued", "hidden queue ran");
+    ensure!(
+        row(&app, &direct, &queued).await?["status"] == "queued",
+        "hidden queue ran"
+    );
     settle(&app, &channel_path, &channel_queued, "done").await?;
     settle(&app, &group_path, &released, "done").await?;
     app.restart().await?;
@@ -687,11 +864,18 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
             .is_some_and(|agent| agent["hidden"] == true),
         "hidden flag lost: {agents}"
     );
-    ensure!(row(&app, &direct, &queued).await?["status"] == "queued", "queue after restart");
+    ensure!(
+        row(&app, &direct, &queued).await?["status"] == "queued",
+        "queue after restart"
+    );
     let source = new_id();
     let roster_path = format!("/api/agents/{b}/turns");
-    app.post_expect(&roster_path, json!({"id": source, "text": "CHECK ROSTER"}), 202)
-        .await?;
+    app.post_expect(
+        &roster_path,
+        json!({"id": source, "text": "CHECK ROSTER"}),
+        202,
+    )
+    .await?;
     settle(&app, &roster_path, &source, "done").await?;
     {
         let roster = roster.lock().map_err(|_| "roster poisoned")?;
@@ -715,7 +899,11 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
     {
         let calls = calls.lock().map_err(|_| "calls poisoned")?;
         ensure!(
-            calls.iter().filter(|text| *text == "CHANNEL QUEUED").count() == 1,
+            calls
+                .iter()
+                .filter(|text| *text == "CHANNEL QUEUED")
+                .count()
+                == 1,
             "channel queued calls {calls:?}"
         );
         ensure!(
@@ -727,7 +915,8 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
     app.shutdown().await?;
     let check = Inspector::open(root.database())?;
     ensure!(
-        check.scalar::<i64>("SELECT next_at FROM routines WHERE id=?", [&routine_id])? > FIXED_CLOCK,
+        check.scalar::<i64>("SELECT next_at FROM routines WHERE id=?", [&routine_id])?
+            > FIXED_CLOCK,
         "missed routine not moved forward"
     );
     ensure!(check.count("agent_visibility_skips")? == 2, "skips");
@@ -736,16 +925,24 @@ async fn hidden_agents_finish_active_work_hold_queue_across_restart_reject_new_w
         "one-off routine still enabled"
     );
     ensure!(
-        check.scalar::<i64>("SELECT enabled FROM workflow_schedules WHERE workflow=?", [&workflow_id])? == 0,
+        check.scalar::<i64>(
+            "SELECT enabled FROM workflow_schedules WHERE workflow=?",
+            [&workflow_id]
+        )? == 0,
         "workflow schedule still enabled"
     );
     ensure!(
-        check.scalar::<String>("SELECT reason FROM workflow_occurrences WHERE workflow=?", [&workflow_id])?
-            == "hidden",
+        check.scalar::<String>(
+            "SELECT reason FROM workflow_occurrences WHERE workflow=?",
+            [&workflow_id]
+        )? == "hidden",
         "workflow occurrence reason"
     );
     ensure!(
-        check.scalar::<i64>("SELECT count(*) FROM workflow_runs WHERE workflow=?", [&workflow_id])? == 0,
+        check.scalar::<i64>(
+            "SELECT count(*) FROM workflow_runs WHERE workflow=?",
+            [&workflow_id]
+        )? == 0,
         "hidden workflow ran"
     );
     Ok(())

@@ -20,7 +20,9 @@ fn results(request: &ModelRequest) -> Vec<Value> {
 }
 
 fn wake(request: &ModelRequest) -> bool {
-    request.last_user_text().starts_with("Delegated task completed")
+    request
+        .last_user_text()
+        .starts_with("Delegated task completed")
 }
 
 /// One server and model per case (the Node `fixture`): concurrency 12,
@@ -64,14 +66,19 @@ impl Fixture {
     async fn until(&self, path: &str, done: impl Fn(&[Value]) -> bool) -> Result<Vec<Value>> {
         let rows = self
             .app
-            .wait_get(path, |value| value.as_array().is_some_and(|rows| done(rows)))
+            .wait_get(path, |value| {
+                value.as_array().is_some_and(|rows| done(rows))
+            })
             .await?;
         Ok(rows.as_array().cloned().unwrap_or_default())
     }
 
     async fn settled(&self, path: &str, turn: &str) -> Result<Value> {
         let rows = self
-            .until(path, |rows| rows.iter().any(|row| row["id"] == turn && row["status"] == "done"))
+            .until(path, |rows| {
+                rows.iter()
+                    .any(|row| row["id"] == turn && row["status"] == "done")
+            })
             .await?;
         rows.into_iter()
             .find(|row| row["id"] == turn)
@@ -88,18 +95,27 @@ impl Fixture {
 }
 
 fn reply(row: &Value) -> Result<Value> {
-    Ok(serde_json::from_str(row["reply"].as_str().ok_or_else(|| format!("no reply: {row}"))?)?)
+    Ok(serde_json::from_str(
+        row["reply"]
+            .as_str()
+            .ok_or_else(|| format!("no reply: {row}"))?,
+    )?)
 }
 
 #[tokio::test]
-async fn delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly_once(
-) -> Result<()> {
+async fn delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly_once() -> Result<()>
+{
     let target: Arc<Mutex<String>> = Arc::default();
     let wakes = Arc::new(AtomicUsize::new(0));
     let failures: Arc<Mutex<Vec<String>>> = Arc::default();
     let held = Gate::new();
     let model = GatedModel::start().await?;
-    let (child, woken, problems, gate) = (target.clone(), wakes.clone(), failures.clone(), held.clone());
+    let (child, woken, problems, gate) = (
+        target.clone(),
+        wakes.clone(),
+        failures.clone(),
+        held.clone(),
+    );
     model.respond(move |request| {
         let fail = |message: String| {
             if let Ok(mut problems) = problems.lock() {
@@ -119,7 +135,11 @@ async fn delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly
             return Answer::text("Parent received result");
         }
         if results.is_empty() {
-            if !request.tool_names().iter().any(|name| name == "delegate_task") {
+            if !request
+                .tool_names()
+                .iter()
+                .any(|name| name == "delegate_task")
+            {
                 return fail("delegate_task not offered".into());
             }
             let agent = child.lock().map(|value| value.clone()).unwrap_or_default();
@@ -129,7 +149,10 @@ async fn delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly
                 json!({"agent": agent, "task": "Isolated work", "wait": false}),
             );
         }
-        if results.last().is_some_and(|last| last["status"] != "queued") {
+        if results
+            .last()
+            .is_some_and(|last| last["status"] != "queued")
+        {
             return fail(format!("delegation result {:?}", results.last()));
         }
         Answer::text("Child launched")
@@ -155,7 +178,8 @@ async fn delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly
         .await?)?;
     let path = format!("/api/agents/{parent}/turns");
     let turn = new_id();
-    app.post(&path, json!({"id": turn, "text": "PRIVATE_HISTORY"})).await?;
+    app.post(&path, json!({"id": turn, "text": "PRIVATE_HISTORY"}))
+        .await?;
     let done = app.wait_status(&path, &turn, "done").await?;
     ensure!(
         done["agentMessages"].as_array().map(Vec::len) == Some(1),
@@ -164,8 +188,10 @@ async fn delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly
     );
     held.open();
     app.wait_get(&path, |rows| {
-        rows.as_array()
-            .is_some_and(|rows| rows.iter().any(|row| row["reply"] == "Parent received result"))
+        rows.as_array().is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row["reply"] == "Parent received result")
+        })
     })
     .await?;
     app.restart().await?;
@@ -175,8 +201,16 @@ async fn delegation_isolates_child_context_and_durably_wakes_idle_parent_exactly
         .filter(|row| row["reply"] == "Parent received result")
         .count();
     ensure!(received == 1, "wake rows {received}");
-    ensure!(wakes.load(Ordering::SeqCst) == 1, "wakes {}", wakes.load(Ordering::SeqCst));
-    ensure!(failures.lock().map(|f| f.is_empty()).unwrap_or(false), "provider checks {:?}", failures.lock().map(|f| f.clone()));
+    ensure!(
+        wakes.load(Ordering::SeqCst) == 1,
+        "wakes {}",
+        wakes.load(Ordering::SeqCst)
+    );
+    ensure!(
+        failures.lock().map(|f| f.is_empty()).unwrap_or(false),
+        "provider checks {:?}",
+        failures.lock().map(|f| f.clone())
+    );
     Ok(())
 }
 
@@ -233,13 +267,17 @@ async fn durable_task_wait(mode: WaitMode) -> Result<()> {
     let parent = f.agent("Parent").await?;
     let path = format!("/api/agents/{parent}/turns");
     let turn = new_id();
-    f.app.post(&path, json!({"id": turn, "text": "Start task"})).await?;
+    f.app
+        .post(&path, json!({"id": turn, "text": "Start task"}))
+        .await?;
     let waiting_rows = f
         .until(&path, |rows| {
             rows.iter().any(|row| {
                 row["id"] == turn.as_str()
                     && row["status"] == "queued"
-                    && row["agentMessages"].as_array().is_some_and(|items| !items.is_empty())
+                    && row["agentMessages"]
+                        .as_array()
+                        .is_some_and(|items| !items.is_empty())
             })
         })
         .await?;
@@ -248,10 +286,18 @@ async fn durable_task_wait(mode: WaitMode) -> Result<()> {
         .find(|row| row["id"] == turn.as_str())
         .cloned()
         .ok_or("waiting row")?;
-    ensure!(waiting["reply"].is_null(), "reply while waiting: {}", waiting["reply"]);
+    ensure!(
+        waiting["reply"].is_null(),
+        "reply while waiting: {}",
+        waiting["reply"]
+    );
     if mode == WaitMode::Timeout {
         let done = f.settled(&path, &turn).await?;
-        ensure!(reply(&done)?["timedOut"] == true, "timeout reply {}", done["reply"]);
+        ensure!(
+            reply(&done)?["timedOut"] == true,
+            "timeout reply {}",
+            done["reply"]
+        );
         child.open();
         f.until(&path, |rows| {
             rows.iter().any(|row| {
@@ -266,7 +312,10 @@ async fn durable_task_wait(mode: WaitMode) -> Result<()> {
     }
     if mode == WaitMode::RestartWait {
         let item = &waiting["agentMessages"][0];
-        let child_path = format!("/api/threads/{}/turns", item["thread"].as_str().ok_or("thread")?);
+        let child_path = format!(
+            "/api/threads/{}/turns",
+            item["thread"].as_str().ok_or("thread")?
+        );
         let child_rows = f
             .until(&child_path, |rows| {
                 rows.first()
@@ -293,10 +342,14 @@ async fn durable_task_wait(mode: WaitMode) -> Result<()> {
         if mode == WaitMode::RestartChild {
             let child_path = format!(
                 "/api/threads/{}/turns",
-                waiting["agentMessages"][0]["thread"].as_str().ok_or("thread")?
+                waiting["agentMessages"][0]["thread"]
+                    .as_str()
+                    .ok_or("thread")?
             );
-            f.until(&child_path, |rows| rows.first().is_some_and(|row| row["status"] == "running"))
-                .await?;
+            f.until(&child_path, |rows| {
+                rows.first().is_some_and(|row| row["status"] == "running")
+            })
+            .await?;
             // The harness asks the model a moment after the turn starts; the
             // Node API runtime had sent that request by then.
             until("child model request", || async {
@@ -310,7 +363,12 @@ async fn durable_task_wait(mode: WaitMode) -> Result<()> {
     let done = f.settled(&path, &turn).await?;
     let result = reply(&done)?;
     ensure!(
-        result["status"] == if mode == WaitMode::RestartChild { "uncertain" } else { "done" },
+        result["status"]
+            == if mode == WaitMode::RestartChild {
+                "uncertain"
+            } else {
+                "done"
+            },
         "result {result}"
     );
     if mode != WaitMode::RestartChild {
@@ -416,12 +474,18 @@ async fn backend_delegation_limit(limit: Limit) -> Result<()> {
         }
         let first = ids.lock().map_err(|_| "ids")?[0].clone();
         let path = format!("/api/agents/{first}/turns");
-        f.app.post(&path, json!({"id": new_id(), "text": "Start"})).await?;
+        f.app
+            .post(&path, json!({"id": new_id(), "text": "Start"}))
+            .await?;
         let done = f
-            .until(&path, |rows| rows.first().is_some_and(|row| row["status"] == "done"))
+            .until(&path, |rows| {
+                rows.first().is_some_and(|row| row["status"] == "done")
+            })
             .await?;
         ensure!(
-            done[0]["reply"].as_str().is_some_and(|reply| reply.contains("depth")),
+            done[0]["reply"]
+                .as_str()
+                .is_some_and(|reply| reply.contains("depth")),
             "depth reply {}",
             done[0]["reply"]
         );
@@ -436,15 +500,21 @@ async fn backend_delegation_limit(limit: Limit) -> Result<()> {
     }
     let parent = f.agent("Parent").await?;
     let path = format!("/api/agents/{parent}/turns");
-    f.app.post(&path, json!({"id": new_id(), "text": "Start"})).await?;
+    f.app
+        .post(&path, json!({"id": new_id(), "text": "Start"}))
+        .await?;
     if limit == Limit::Children {
         // #87: the agent loop failed the turn on this refusal; over MCP the
         // model gets the 409 and ends the turn with it.
         let done = f
-            .until(&path, |rows| rows.first().is_some_and(|row| row["status"] == "done"))
+            .until(&path, |rows| {
+                rows.first().is_some_and(|row| row["status"] == "done")
+            })
             .await?;
         ensure!(
-            done[0]["reply"].as_str().is_some_and(|reply| reply.contains("Concurrent child")),
+            done[0]["reply"]
+                .as_str()
+                .is_some_and(|reply| reply.contains("Concurrent child")),
             "children error {}",
             done[0]["reply"]
         );
@@ -455,10 +525,14 @@ async fn backend_delegation_limit(limit: Limit) -> Result<()> {
         );
     } else {
         let done = f
-            .until(&path, |rows| rows.first().is_some_and(|row| row["status"] == "done"))
+            .until(&path, |rows| {
+                rows.first().is_some_and(|row| row["status"] == "done")
+            })
             .await?;
         ensure!(
-            done[0]["reply"].as_str().is_some_and(|reply| reply.contains("16,000")),
+            done[0]["reply"]
+                .as_str()
+                .is_some_and(|reply| reply.contains("16,000")),
             "size reply {}",
             done[0]["reply"]
         );
@@ -553,7 +627,9 @@ async fn delegated_task_authority_denies_unrelated_caller_cancel_stops_entire_mi
     let other = f.agent("Other").await?;
     let path = format!("/api/agents/{parent}/turns");
     let turn = new_id();
-    f.app.post(&path, json!({"id": turn, "text": "Start"})).await?;
+    f.app
+        .post(&path, json!({"id": turn, "text": "Start"}))
+        .await?;
     let waiting = f
         .until(&path, |rows| {
             rows.first()
@@ -562,7 +638,10 @@ async fn delegated_task_authority_denies_unrelated_caller_cancel_stops_entire_mi
         .await?[0]
         .clone();
     let item = &waiting["agentMessages"][0];
-    let child_path = format!("/api/threads/{}/turns", item["thread"].as_str().ok_or("thread")?);
+    let child_path = format!(
+        "/api/threads/{}/turns",
+        item["thread"].as_str().ok_or("thread")?
+    );
     let nested = f
         .until(&child_path, |rows| {
             rows.first().is_some_and(|row| {
@@ -575,10 +654,15 @@ async fn delegated_task_authority_denies_unrelated_caller_cancel_stops_entire_mi
         .clone();
     let other_path = format!("/api/agents/{other}/turns");
     f.app
-        .post(&other_path, json!({"id": new_id(), "text": "Try unrelated task"}))
+        .post(
+            &other_path,
+            json!({"id": new_id(), "text": "Try unrelated task"}),
+        )
         .await?;
     let denied = f
-        .until(&other_path, |rows| rows.first().is_some_and(|row| row["status"] == "done"))
+        .until(&other_path, |rows| {
+            rows.first().is_some_and(|row| row["status"] == "done")
+        })
         .await?[0]
         .clone();
     let denied_results = reply(&denied)?;
@@ -590,12 +674,19 @@ async fn delegated_task_authority_denies_unrelated_caller_cancel_stops_entire_mi
     );
     f.app
         .post(
-            &format!("{path}/{turn}/questions/{}/answer", id(&waiting["questions"][0])?),
+            &format!(
+                "{path}/{turn}/questions/{}/answer",
+                id(&waiting["questions"][0])?
+            ),
             json!({"id": new_id(), "text": "Yes"}),
         )
         .await?;
     let done = f.settled(&path, &turn).await?;
-    ensure!(reply(&done)?["status"] == "cancelled", "cancel result {}", done["reply"]);
+    ensure!(
+        reply(&done)?["status"] == "cancelled",
+        "cancel result {}",
+        done["reply"]
+    );
     ensure!(
         rows(&f.app, &child_path).await?[0]["status"] == "cancelled",
         "child not cancelled"
@@ -605,7 +696,9 @@ async fn delegated_task_authority_denies_unrelated_caller_cancel_stops_entire_mi
             &f.app,
             &format!(
                 "/api/threads/{}/turns",
-                nested["agentMessages"][0]["thread"].as_str().ok_or("thread")?
+                nested["agentMessages"][0]["thread"]
+                    .as_str()
+                    .ok_or("thread")?
             )
         )
         .await?[0]["status"]
@@ -617,8 +710,7 @@ async fn delegated_task_authority_denies_unrelated_caller_cancel_stops_entire_mi
 }
 
 #[tokio::test]
-async fn team_awareness_refreshes_role_and_bounded_roster_on_next_provider_request(
-) -> Result<()> {
+async fn team_awareness_refreshes_role_and_bounded_roster_on_next_provider_request() -> Result<()> {
     // #87 removed the provider client that rebuilt the system prompt with the
     // roster before every request. The roster now reaches harness turns
     // through `list_agents`, so the refresh is asserted on that tool's result
@@ -647,7 +739,9 @@ async fn team_awareness_refreshes_role_and_bounded_roster_on_next_provider_reque
     let f = Fixture::start(model, None).await?;
     let parent = f.agent("Parent").await?;
     let path = format!("/api/agents/{parent}/turns");
-    f.app.post(&path, json!({"id": new_id(), "text": "Roster"})).await?;
+    f.app
+        .post(&path, json!({"id": new_id(), "text": "Roster"}))
+        .await?;
     let first = until("first roster", || async {
         Ok(roster.lock().ok().and_then(|seen| seen.first().cloned()))
     })
@@ -669,22 +763,39 @@ async fn team_awareness_refreshes_role_and_bounded_roster_on_next_provider_reque
         )
         .await?;
     advance.open();
-    f.until(&path, |rows| rows.first().is_some_and(|row| row["status"] == "done"))
-        .await?;
-    let second = roster.lock().ok().and_then(|seen| seen.get(1).cloned()).ok_or("second roster")?;
-    ensure!(!first.to_string().contains("New teammate"), "first roster already had the teammate");
+    f.until(&path, |rows| {
+        rows.first().is_some_and(|row| row["status"] == "done")
+    })
+    .await?;
+    let second = roster
+        .lock()
+        .ok()
+        .and_then(|seen| seen.get(1).cloned())
+        .ok_or("second roster")?;
+    ensure!(
+        !first.to_string().contains("New teammate"),
+        "first roster already had the teammate"
+    );
     let listed = second["agents"]
         .as_array()
         .and_then(|agents| agents.iter().find(|agent| agent["id"] == teammate["id"]))
         .cloned()
         .ok_or_else(|| format!("teammate missing from {second}"))?;
     ensure!(listed["role"] == "Research agent", "teammate role {listed}");
-    ensure!(second.to_string().len() < 5000, "roster {} bytes", second.to_string().len());
+    ensure!(
+        second.to_string().len() < 5000,
+        "roster {} bytes",
+        second.to_string().len()
+    );
     Ok(())
 }
 
 async fn rate_error(message_tool: &'static str) -> Result<()> {
-    let rate: usize = if message_tool == "send_message" { 20 } else { 2 };
+    let rate: usize = if message_tool == "send_message" {
+        20
+    } else {
+        2
+    };
     let target: Arc<Mutex<String>> = Arc::default();
     let model = GatedModel::start().await?;
     let recipient = target.clone();
@@ -702,7 +813,10 @@ async fn rate_error(message_tool: &'static str) -> Result<()> {
         if message_tool == "delegate_task" {
             Answer::tool(message_tool, json!({"agent": "Child", "task": "Work"}))
         } else {
-            let child = recipient.lock().map(|value| value.clone()).unwrap_or_default();
+            let child = recipient
+                .lock()
+                .map(|value| value.clone())
+                .unwrap_or_default();
             Answer::tool(
                 message_tool,
                 json!({"recipients": [child], "text": "Work", "expects_reply": false}),
@@ -733,16 +847,29 @@ async fn rate_error(message_tool: &'static str) -> Result<()> {
         };
         let turn = new_id();
         f.app
-            .post(&work_path, json!({"id": turn, "text": format!("Work {index}")}))
+            .post(
+                &work_path,
+                json!({"id": turn, "text": format!("Work {index}")}),
+            )
             .await?;
         let result = reply(&f.settled(&work_path, &turn).await?)?;
         if index < rate {
-            let expected = if message_tool == "delegate_task" { "queued" } else { "sent" };
+            let expected = if message_tool == "delegate_task" {
+                "queued"
+            } else {
+                "sent"
+            };
             ensure!(result["status"] == expected, "work {index}: {result}");
         } else {
-            let expected = if index == rate { "rate limit reached" } else { "cooling down" };
+            let expected = if index == rate {
+                "rate limit reached"
+            } else {
+                "cooling down"
+            };
             ensure!(
-                result["error"].as_str().is_some_and(|error| error.contains(expected)),
+                result["error"]
+                    .as_str()
+                    .is_some_and(|error| error.contains(expected)),
                 "work {index}: {result}"
             );
         }
@@ -762,7 +889,11 @@ async fn rate_error(message_tool: &'static str) -> Result<()> {
         .post(&path, json!({"id": turn, "text": "After cooldown"}))
         .await?;
     let result = reply(&f.settled(&path, &turn).await?)?;
-    let expected = if message_tool == "delegate_task" { "queued" } else { "sent" };
+    let expected = if message_tool == "delegate_task" {
+        "queued"
+    } else {
+        "sent"
+    };
     ensure!(result["status"] == expected, "after cooldown {result}");
     Ok(())
 }
@@ -797,7 +928,10 @@ async fn nested_async_children(cancel: bool) -> Result<()> {
                     return Answer::text("Combined nested result");
                 }
                 return if rs.is_empty() {
-                    Answer::tool("delegate_task", json!({"agent": grandchild, "task": "Nested task"}))
+                    Answer::tool(
+                        "delegate_task",
+                        json!({"agent": grandchild, "task": "Nested task"}),
+                    )
                 } else {
                     Answer::text("Nested task launched")
                 };
@@ -805,7 +939,10 @@ async fn nested_async_children(cancel: bool) -> Result<()> {
             _ => {}
         }
         if cancel && rs.len() == 1 {
-            return Answer::tool("ask_user", json!({"question": "Cancel nested work?", "choices": ["Yes"]}));
+            return Answer::tool(
+                "ask_user",
+                json!({"question": "Cancel nested work?", "choices": ["Yes"]}),
+            );
         }
         if cancel && rs.len() == 2 {
             return Answer::tool("cancel_task", json!({"taskId": rs[0]["taskId"]}));
@@ -831,18 +968,28 @@ async fn nested_async_children(cancel: bool) -> Result<()> {
         .await?;
     let parent_row = f
         .until(&path, |rows| {
-            rows.first()
-                .is_some_and(|row| row["agentMessages"].as_array().is_some_and(|items| !items.is_empty()))
+            rows.first().is_some_and(|row| {
+                row["agentMessages"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+            })
         })
         .await?[0]
         .clone();
     let child_path = format!(
         "/api/threads/{}/turns",
-        parent_row["agentMessages"][0]["thread"].as_str().ok_or("thread")?
+        parent_row["agentMessages"][0]["thread"]
+            .as_str()
+            .ok_or("thread")?
     );
-    f.until(&child_path, |rows| rows.first().is_some_and(|row| row["status"] == "done"))
-        .await?;
-    ensure!(rows(&f.app, &path).await?[0]["status"] == "queued", "parent finished early");
+    f.until(&child_path, |rows| {
+        rows.first().is_some_and(|row| row["status"] == "done")
+    })
+    .await?;
+    ensure!(
+        rows(&f.app, &path).await?[0]["status"] == "queued",
+        "parent finished early"
+    );
     if cancel {
         let waiting = f
             .until(&path, |rows| {
@@ -858,7 +1005,11 @@ async fn nested_async_children(cancel: bool) -> Result<()> {
         );
         f.app
             .post(
-                &format!("{path}/{}/questions/{}/answer", id(&waiting)?, id(&waiting["questions"][0])?),
+                &format!(
+                    "{path}/{}/questions/{}/answer",
+                    id(&waiting)?,
+                    id(&waiting["questions"][0])?
+                ),
                 json!({"id": new_id(), "text": "Yes"}),
             )
             .await?;
@@ -866,15 +1017,25 @@ async fn nested_async_children(cancel: bool) -> Result<()> {
         held.open();
     }
     let done = f
-        .until(&path, |rows| rows.first().is_some_and(|row| row["status"] == "done"))
+        .until(&path, |rows| {
+            rows.first().is_some_and(|row| row["status"] == "done")
+        })
         .await?[0]
         .clone();
     if cancel {
-        ensure!(reply(&done)?["status"] == "cancelled", "cancel result {}", done["reply"]);
+        ensure!(
+            reply(&done)?["status"] == "cancelled",
+            "cancel result {}",
+            done["reply"]
+        );
         f.app.restart().await?;
         let child_rows = rows(&f.app, &child_path).await?;
         ensure!(child_rows.len() == 1, "child rows {}", child_rows.len());
-        ensure!(child_rows[0]["status"] == "cancelled", "child status {}", child_rows[0]["status"]);
+        ensure!(
+            child_rows[0]["status"] == "cancelled",
+            "child status {}",
+            child_rows[0]["status"]
+        );
     } else {
         ensure!(
             reply(&done)?["result"] == "Combined nested result",
@@ -897,8 +1058,8 @@ async fn nested_async_children_cancel_completed_root_with_running_descendants() 
 }
 
 #[tokio::test]
-async fn owner_later_turns_can_inspect_and_wait_without_a_duplicate_completion_wake(
-) -> Result<()> {
+async fn owner_later_turns_can_inspect_and_wait_without_a_duplicate_completion_wake() -> Result<()>
+{
     let state: Arc<Mutex<(String, Value)>> = Arc::default();
     let held = Gate::new();
     let model = GatedModel::start().await?;
@@ -923,7 +1084,10 @@ async fn owner_later_turns_can_inspect_and_wait_without_a_duplicate_completion_w
         }
         match input.as_str() {
             "Inspect" => Answer::tool("task_status", json!({"taskId": state.1})),
-            "Wait" => Answer::tool("wait_task", json!({"taskId": state.1, "timeoutSeconds": 600})),
+            "Wait" => Answer::tool(
+                "wait_task",
+                json!({"taskId": state.1, "timeoutSeconds": 600}),
+            ),
             _ => Answer::tool("delegate_task", json!({"agent": state.0, "task": "Work"})),
         }
     });
@@ -942,7 +1106,9 @@ async fn owner_later_turns_can_inspect_and_wait_without_a_duplicate_completion_w
         ensure!(result["status"] == expected, "{text}: {result}");
     }
     let turn = new_id();
-    f.app.post(&path, json!({"id": turn, "text": "Wait"})).await?;
+    f.app
+        .post(&path, json!({"id": turn, "text": "Wait"}))
+        .await?;
     f.until(&path, |rows| {
         rows.iter()
             .any(|row| row["id"] == turn.as_str() && !row["waiting_for"].is_null())
@@ -950,10 +1116,17 @@ async fn owner_later_turns_can_inspect_and_wait_without_a_duplicate_completion_w
     .await?;
     held.open();
     let result = reply(&f.settled(&path, &turn).await?)?;
-    ensure!(result["result"] == "Later-turn result", "wait result {result}");
+    ensure!(
+        result["result"] == "Later-turn result",
+        "wait result {result}"
+    );
     f.app.restart().await?;
     let all = rows(&f.app, &path).await?;
-    ensure!(all.len() == 3, "duplicate completion wake: {} rows", all.len());
+    ensure!(
+        all.len() == 3,
+        "duplicate completion wake: {} rows",
+        all.len()
+    );
     Ok(())
 }
 
@@ -978,7 +1151,10 @@ async fn completion_wakes_a_parent_waiting_for_user_input_and_preserves_its_pend
             let agent = agent.lock().map(|value| value.clone()).unwrap_or_default();
             Answer::tool("delegate_task", json!({"agent": agent, "task": "Work"}))
         } else {
-            Answer::tool("ask_user", json!({"question": "Choose next work?", "choices": ["Later"]}))
+            Answer::tool(
+                "ask_user",
+                json!({"question": "Choose next work?", "choices": ["Later"]}),
+            )
         }
     });
     let mut f = Fixture::start(model, None).await?;
@@ -989,15 +1165,19 @@ async fn completion_wakes_a_parent_waiting_for_user_input_and_preserves_its_pend
     let parent = f.agent("Parent").await?;
     let path = format!("/api/agents/{parent}/turns");
     let turn = new_id();
-    f.app.post(&path, json!({"id": turn, "text": "Start"})).await?;
+    f.app
+        .post(&path, json!({"id": turn, "text": "Start"}))
+        .await?;
     f.until(&path, |rows| {
         rows.first()
             .is_some_and(|row| row["questions"].as_array().is_some_and(|q| !q.is_empty()))
     })
     .await?;
     held.open();
-    f.until(&path, |rows| rows.iter().any(|row| row["reply"] == "Completion received"))
-        .await?;
+    f.until(&path, |rows| {
+        rows.iter().any(|row| row["reply"] == "Completion received")
+    })
+    .await?;
     f.app.restart().await?;
     let all = rows(&f.app, &path).await?;
     let wakes = all
@@ -1009,15 +1189,25 @@ async fn completion_wakes_a_parent_waiting_for_user_input_and_preserves_its_pend
         })
         .count();
     ensure!(wakes == 1, "wakes {wakes}");
-    let waiting = all.iter().find(|row| row["id"] == turn.as_str()).ok_or("parent row")?;
-    ensure!(waiting["paused"] == 1, "question no longer pauses the parent: {}", waiting["paused"]);
-    ensure!(waiting["questions"][0]["answer"].is_null(), "question answered");
+    let waiting = all
+        .iter()
+        .find(|row| row["id"] == turn.as_str())
+        .ok_or("parent row")?;
+    ensure!(
+        waiting["paused"] == 1,
+        "question no longer pauses the parent: {}",
+        waiting["paused"]
+    );
+    ensure!(
+        waiting["questions"][0]["answer"].is_null(),
+        "question answered"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descendants(
-) -> Result<()> {
+async fn concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descendants() -> Result<()>
+{
     let ids: Arc<Mutex<(String, String, String)>> = Arc::default();
     let spare_started = Arc::new(AtomicUsize::new(0));
     let held = Gate::new();
@@ -1033,7 +1223,10 @@ async fn concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descen
             "Grandchild" => return Answer::after(&gate, Answer::text("Grandchild result")),
             "Child" => {
                 return if rs.is_empty() {
-                    Answer::tool("delegate_task", json!({"agent": grandchild, "task": "Nested work"}))
+                    Answer::tool(
+                        "delegate_task",
+                        json!({"agent": grandchild, "task": "Nested work"}),
+                    )
                 } else {
                     Answer::text("Waiting for nested result")
                 }
@@ -1046,8 +1239,14 @@ async fn concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descen
         }
         match rs.len() {
             0 => Answer::tool("delegate_task", json!({"agent": child, "task": "Work"})),
-            1 => Answer::tool("ask_user", json!({"question": "Start second child?", "choices": ["Yes"]})),
-            2 => Answer::tool("delegate_task", json!({"agent": spare, "task": "More work"})),
+            1 => Answer::tool(
+                "ask_user",
+                json!({"question": "Start second child?", "choices": ["Yes"]}),
+            ),
+            2 => Answer::tool(
+                "delegate_task",
+                json!({"agent": spare, "task": "More work"}),
+            ),
             _ => Answer::text(rs[rs.len() - 1].to_string()),
         }
     });
@@ -1061,7 +1260,9 @@ async fn concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descen
     let parent = f.agent("Parent").await?;
     let path = format!("/api/agents/{parent}/turns");
     let turn = new_id();
-    f.app.post(&path, json!({"id": turn, "text": "Start"})).await?;
+    f.app
+        .post(&path, json!({"id": turn, "text": "Start"}))
+        .await?;
     let parent_row = f
         .until(&path, |rows| {
             rows.first()
@@ -1072,7 +1273,9 @@ async fn concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descen
     f.until(
         &format!(
             "/api/threads/{}/turns",
-            parent_row["agentMessages"][0]["thread"].as_str().ok_or("thread")?
+            parent_row["agentMessages"][0]["thread"]
+                .as_str()
+                .ok_or("thread")?
         ),
         |rows| rows.first().is_some_and(|row| row["status"] == "done"),
     )
@@ -1083,16 +1286,19 @@ async fn concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descen
     );
     f.app
         .post(
-            &format!("{path}/{turn}/questions/{}/answer", id(&parent_row["questions"][0])?),
+            &format!(
+                "{path}/{turn}/questions/{}/answer",
+                id(&parent_row["questions"][0])?
+            ),
             json!({"id": new_id(), "text": "Yes"}),
         )
         .await?;
     let done = f.settled(&path, &turn).await?;
     let result = reply(&done)?;
     ensure!(
-        result["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("Concurrent child limit") && error.contains("1 children")),
+        result["error"].as_str().is_some_and(
+            |error| error.contains("Concurrent child limit") && error.contains("1 children")
+        ),
         "limit error {result}"
     );
     ensure!(
@@ -1100,7 +1306,10 @@ async fn concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descen
         "agent messages {}",
         done["agentMessages"]
     );
-    ensure!(spare_started.load(Ordering::SeqCst) == 0, "denied child started");
+    ensure!(
+        spare_started.load(Ordering::SeqCst) == 0,
+        "denied child started"
+    );
     held.open();
     Ok(())
 }
@@ -1138,15 +1347,51 @@ async fn rust_counts_active_children_of_an_owner_completion_turn_against_its_inh
         target.clone_from(&spare);
     }
     let (root, active, continuation) = (new_id(), new_id(), new_id());
-    let (parent2, child2, root2, active2, continuation2) =
-        (parent.clone(), child.clone(), root.clone(), active.clone(), continuation.clone());
+    let (parent2, child2, root2, active2, continuation2) = (
+        parent.clone(),
+        child.clone(),
+        root.clone(),
+        active.clone(),
+        continuation.clone(),
+    );
     f.app
         .edit_database(move |db| {
             let created = "2026-11-19T07:33:20.000Z";
-            let insert = "INSERT INTO turns(id,agent,parent,text,status,created) VALUES (?,?,?,?,?,?)";
-            db.connection().execute(insert, (&root2, &parent2, None::<String>, "Original task", "done", created))?;
-            db.connection().execute(insert, (&active2, &child2, Some(&root2), "Still working", "queued", created))?;
-            db.connection().execute(insert, (&continuation2, &parent2, Some(&root2), "Completion input", "queued", created))?;
+            let insert =
+                "INSERT INTO turns(id,agent,parent,text,status,created) VALUES (?,?,?,?,?,?)";
+            db.connection().execute(
+                insert,
+                (
+                    &root2,
+                    &parent2,
+                    None::<String>,
+                    "Original task",
+                    "done",
+                    created,
+                ),
+            )?;
+            db.connection().execute(
+                insert,
+                (
+                    &active2,
+                    &child2,
+                    Some(&root2),
+                    "Still working",
+                    "queued",
+                    created,
+                ),
+            )?;
+            db.connection().execute(
+                insert,
+                (
+                    &continuation2,
+                    &parent2,
+                    Some(&root2),
+                    "Completion input",
+                    "queued",
+                    created,
+                ),
+            )?;
             Ok(())
         })
         .await?;
@@ -1154,9 +1399,9 @@ async fn rust_counts_active_children_of_an_owner_completion_turn_against_its_inh
     // #87: over MCP the refusal returns to the model, which ends the turn.
     let done = f.settled(&path, &continuation).await?;
     ensure!(
-        done["reply"]
-            .as_str()
-            .is_some_and(|reply| reply.contains("Concurrent child limit") && reply.contains("1 children")),
+        done["reply"].as_str().is_some_and(
+            |reply| reply.contains("Concurrent child limit") && reply.contains("1 children")
+        ),
         "limit error {}",
         done["reply"]
     );
@@ -1164,7 +1409,10 @@ async fn rust_counts_active_children_of_an_owner_completion_turn_against_its_inh
         Inspector::open(f.app.database())?.count("turns")? == 3,
         "a denied child turn was stored"
     );
-    ensure!(spare_started.load(Ordering::SeqCst) == 0, "denied child started");
+    ensure!(
+        spare_started.load(Ordering::SeqCst) == 0,
+        "denied child started"
+    );
     held.open();
     Ok(())
 }

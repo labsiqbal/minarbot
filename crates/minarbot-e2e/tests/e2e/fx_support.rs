@@ -2,7 +2,6 @@
 //! suites, `docs/test-ledger.md`).
 
 use minarbot_testkit::{gated::GatedModel, http::Method, prelude::*, server::Gateway, Server};
-use std::future::Future;
 
 /// Server config whose gateway peer asks `model` for every step.
 pub fn gated(model: &GatedModel) -> ServerConfig {
@@ -22,35 +21,12 @@ pub fn id(value: &Value) -> Result<String> {
     text(value, "id")
 }
 
-/// Integer field (revisions, sequence numbers).
-pub fn int(value: &Value, field: &str) -> Result<i64> {
-    value[field]
-        .as_i64()
-        .ok_or_else(|| format!("missing integer {field} in {value}").into())
-}
-
 /// `POST /api/agents` with the test-mode `runtime: "api"` shortcut, which
 /// binds the agent to the gateway peer and so to the configured model.
 pub async fn api_agent(app: &Server, name: &str, model: &str) -> Result<Value> {
     app.post_expect(
         "/api/agents",
         json!({"runtime": "api", "id": new_id(), "name": name, "model": model, "instructions": "Help"}),
-        201,
-    )
-    .await
-}
-
-/// Same with an explicit id and instructions.
-pub async fn api_agent_with(
-    app: &Server,
-    id: &str,
-    name: &str,
-    model: &str,
-    instructions: &str,
-) -> Result<Value> {
-    app.post_expect(
-        "/api/agents",
-        json!({"runtime": "api", "id": id, "name": name, "model": model, "instructions": instructions}),
         201,
     )
     .await
@@ -77,19 +53,13 @@ pub async fn settle(app: &Server, path: &str, id: &str, status: &str) -> Result<
     app.wait_status(path, id, status).await
 }
 
-/// Wait until the row reaches a terminal status; fails on an unexpected one.
-pub async fn finish(app: &Server, path: &str, id: &str, status: &str) -> Result<Value> {
-    let row = app
-        .wait_row(path, id, |row| {
-            ["done", "failed", "cancelled", "interrupted"].contains(&row["status"].as_str().unwrap_or(""))
-        })
-        .await?;
-    ensure!(row["status"] == status, "expected {status}: {row}");
-    Ok(row)
-}
-
 /// Upload raw bytes as a conversation file (`POST <scope>/files/<id>`).
-pub async fn upload(app: &Server, path: &str, name: &str, bytes: impl Into<Vec<u8>>) -> Result<u16> {
+pub async fn upload(
+    app: &Server,
+    path: &str,
+    name: &str,
+    bytes: impl Into<Vec<u8>>,
+) -> Result<u16> {
     let response = app
         .request(Method::POST, path)?
         .header("Content-Type", "application/octet-stream")
@@ -107,26 +77,12 @@ pub async fn fetch(app: &Server, path: &str) -> Result<(u16, Vec<u8>)> {
     Ok((status, response.bytes().await?.to_vec()))
 }
 
-/// Poll an async check until it yields `Some`.
-pub async fn eventually<T, F, Fut>(label: &str, check: F) -> Result<T>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<Option<T>>>,
-{
-    until(label, check).await
-}
-
 /// JSON body of a tool result message (`role: tool`).
 pub fn tool_json(message: &Value) -> Value {
     message["content"]
         .as_str()
         .and_then(|content| serde_json::from_str(content).ok())
         .unwrap_or(Value::Null)
-}
-
-/// Last message of a request that has role `user`, as text.
-pub fn last_user(request: &minarbot_testkit::model::ModelRequest) -> String {
-    request.last_user_text()
 }
 
 /// B1 (`docs/test-ledger.md`): `ask_user` and `wait_for_event` pause the
@@ -146,14 +102,17 @@ fn paused_by(request: &minarbot_testkit::model::ModelRequest) -> Option<String> 
         .messages()
         .last()
         .is_some_and(|message| message["role"] == "tool" && message["content"] == "null");
-    (null_result && matches!(last_tool.as_str(), "ask_user" | "wait_for_event")).then_some(last_tool)
+    (null_result && matches!(last_tool.as_str(), "ask_user" | "wait_for_event"))
+        .then_some(last_tool)
 }
 
 /// Answer for the B1 step. After `ask_user` it fails at once (the server
 /// already stopped that turn for the question). After `wait_for_event` it
 /// ends the harness turn with text: a failed harness turn would fail the
 /// waiting Minarbot turn, while a finished one leaves it waiting.
-pub fn pause_reply_for(request: &minarbot_testkit::model::ModelRequest) -> minarbot_testkit::gated::Answer {
+pub fn pause_reply_for(
+    request: &minarbot_testkit::model::ModelRequest,
+) -> minarbot_testkit::gated::Answer {
     match paused_by(request).as_deref() {
         Some("wait_for_event") => minarbot_testkit::gated::Answer::text("Waiting for the event."),
         _ => pause_reply(),
@@ -184,7 +143,12 @@ pub async fn statuses(app: &Server, path: &str) -> Result<Vec<(String, String)>>
         .iter()
         .map(|row| {
             (
-                row["text"].as_str().unwrap_or_default().chars().take(40).collect(),
+                row["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(40)
+                    .collect(),
                 row["status"].as_str().unwrap_or_default().to_owned(),
             )
         })

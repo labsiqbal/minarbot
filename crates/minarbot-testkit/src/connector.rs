@@ -68,7 +68,10 @@ impl Connector {
     }
 
     pub fn stderr(&self) -> String {
-        self.stderr.lock().map(|tail| tail.clone()).unwrap_or_default()
+        self.stderr
+            .lock()
+            .map(|tail| tail.clone())
+            .unwrap_or_default()
     }
 
     /// Exit status if the process already stopped on its own.
@@ -121,7 +124,9 @@ impl Connector {
 pub async fn journal(command_input: &Value) -> Result<Value> {
     let mut child = command("--connector-journal-config")?.spawn()?;
     let mut stdin = child.stdin.take().ok_or("journal stdin")?;
-    stdin.write_all(command_input.to_string().as_bytes()).await?;
+    stdin
+        .write_all(command_input.to_string().as_bytes())
+        .await?;
     drop(stdin);
     let output = child.wait_with_output().await?;
     if !output.status.success() {

@@ -78,7 +78,10 @@ impl PeerBridge {
                 "revoke" if issue => {
                     let id = args["id"].as_str().unwrap_or_default().to_owned();
                     revocations.lock().map_err(poisoned)?.push(id.clone());
-                    tokens.lock().map_err(poisoned)?.retain(|token| token.id != id);
+                    tokens
+                        .lock()
+                        .map_err(poisoned)?
+                        .retain(|token| token.id != id);
                     Ok(Value::Null)
                 }
                 "verify" if issue => Ok(tokens
@@ -86,9 +89,10 @@ impl PeerBridge {
                     .map_err(poisoned)?
                     .iter()
                     .find(|token| args["token"] == token.token.as_str())
-                    .map_or(Value::Null, |token| {
-                        json!({"id": token.id, "scopes": token.scopes})
-                    })),
+                    .map_or(
+                        Value::Null,
+                        |token| json!({"id": token.id, "scopes": token.scopes}),
+                    )),
                 "issue" | "revoke" | "verify" => Ok(Value::Null),
                 other => Err(BridgeError::new(404, format!("peer bridge has no {other}"))),
             }
@@ -107,12 +111,18 @@ impl PeerBridge {
 
     /// Tokens issued so far (still valid ones only).
     pub fn issued(&self) -> Vec<IssuedToken> {
-        self.issued.lock().map(|tokens| tokens.clone()).unwrap_or_default()
+        self.issued
+            .lock()
+            .map(|tokens| tokens.clone())
+            .unwrap_or_default()
     }
 
     /// Token ids revoked so far.
     pub fn revoked(&self) -> Vec<String> {
-        self.revoked.lock().map(|ids| ids.clone()).unwrap_or_default()
+        self.revoked
+            .lock()
+            .map(|ids| ids.clone())
+            .unwrap_or_default()
     }
 }
 

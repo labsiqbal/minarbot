@@ -1,8 +1,8 @@
 //! HTTP replies and Server-Sent Events.
 
 use crate::{Error, Result, Server};
-pub use reqwest::{Client, Method};
 use reqwest::{header, Response};
+pub use reqwest::{Client, Method};
 use serde_json::Value;
 use std::time::Duration;
 

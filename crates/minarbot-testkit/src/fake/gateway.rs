@@ -233,56 +233,56 @@ impl Peer {
                 lines.push(String::from_utf8_lossy(&line).trim_end().to_owned());
             }
             for line in lines.drain(..) {
-            let Some(data) = line.strip_prefix("data:") else {
-                continue;
-            };
-            let data = data.trim();
-            if data.is_empty() || data == "[DONE]" {
-                continue;
-            }
-            let chunk: Value = serde_json::from_str(data)?;
-            let choice = &chunk["choices"][0];
-            let delta = &choice["delta"];
-            if let Some(text) = delta["content"].as_str() {
-                if !text.is_empty() {
-                    self.notify(
-                        "item/agentMessage/delta",
-                        json!({"itemId": item, "delta": text}),
-                    );
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data.is_empty() || data == "[DONE]" {
+                    continue;
                 }
-                deltas.push(text.to_owned());
-                content.push_str(text);
-            }
-            for call in delta["tool_calls"].as_array().into_iter().flatten() {
-                let index = call["index"]
-                    .as_u64()
-                    .and_then(|index| usize::try_from(index).ok())
-                    .unwrap_or(calls.len());
-                while calls.len() <= index {
-                    let position = calls.len();
-                    calls.push(json!({"id": format!("call-{position}"), "type": "function",
-                        "function": {"name": "", "arguments": ""}}));
-                }
-                let item = &mut calls[index];
-                if let Some(id) = call["id"].as_str().filter(|id| !id.is_empty()) {
-                    item["id"] = json!(id);
-                }
-                for field in ["name", "arguments"] {
-                    if let Some(part) = call["function"][field].as_str() {
-                        let joined = format!(
-                            "{}{part}",
-                            item["function"][field].as_str().unwrap_or_default()
+                let chunk: Value = serde_json::from_str(data)?;
+                let choice = &chunk["choices"][0];
+                let delta = &choice["delta"];
+                if let Some(text) = delta["content"].as_str() {
+                    if !text.is_empty() {
+                        self.notify(
+                            "item/agentMessage/delta",
+                            json!({"itemId": item, "delta": text}),
                         );
-                        item["function"][field] = json!(joined);
+                    }
+                    deltas.push(text.to_owned());
+                    content.push_str(text);
+                }
+                for call in delta["tool_calls"].as_array().into_iter().flatten() {
+                    let index = call["index"]
+                        .as_u64()
+                        .and_then(|index| usize::try_from(index).ok())
+                        .unwrap_or(calls.len());
+                    while calls.len() <= index {
+                        let position = calls.len();
+                        calls.push(json!({"id": format!("call-{position}"), "type": "function",
+                        "function": {"name": "", "arguments": ""}}));
+                    }
+                    let item = &mut calls[index];
+                    if let Some(id) = call["id"].as_str().filter(|id| !id.is_empty()) {
+                        item["id"] = json!(id);
+                    }
+                    for field in ["name", "arguments"] {
+                        if let Some(part) = call["function"][field].as_str() {
+                            let joined = format!(
+                                "{}{part}",
+                                item["function"][field].as_str().unwrap_or_default()
+                            );
+                            item["function"][field] = json!(joined);
+                        }
                     }
                 }
-            }
-            if finish.is_null() {
-                finish = choice["finish_reason"].clone();
-            }
-            if usage.is_null() {
-                usage = chunk["usage"].clone();
-            }
+                if finish.is_null() {
+                    finish = choice["finish_reason"].clone();
+                }
+                if usage.is_null() {
+                    usage = chunk["usage"].clone();
+                }
             }
         }
         if finish.is_null() {

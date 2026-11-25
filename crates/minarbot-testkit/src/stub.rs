@@ -11,23 +11,23 @@
 //! Socket Mode fake).
 
 use crate::Result;
-use serde_json::Value;
 use futures_util::{SinkExt, StreamExt};
+use serde_json::Value;
 use std::{
     collections::HashMap,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
 };
-use tokio_tungstenite::{
-    tungstenite::{handshake::derive_accept_key, protocol::Role, Message},
-    WebSocketStream,
-};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::watch,
     task::JoinHandle,
+};
+use tokio_tungstenite::{
+    tungstenite::{handshake::derive_accept_key, protocol::Role, Message},
+    WebSocketStream,
 };
 
 /// One recorded request.
@@ -57,7 +57,9 @@ impl StubRequest {
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.get(&name.to_ascii_lowercase()).map(String::as_str)
+        self.headers
+            .get(&name.to_ascii_lowercase())
+            .map(String::as_str)
     }
 
     /// The body as JSON (`Null` when it is not JSON).
@@ -154,8 +156,13 @@ impl Stub {
         let sockets = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let task = tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                let (handler, log, stopping, socket, sockets) =
-                    (handler.clone(), log.clone(), stopping.clone(), socket.clone(), sockets.clone());
+                let (handler, log, stopping, socket, sockets) = (
+                    handler.clone(),
+                    log.clone(),
+                    stopping.clone(),
+                    socket.clone(),
+                    sockets.clone(),
+                );
                 tokio::spawn(async move {
                     let _ = serve(stream, handler, log, stopping, socket, sockets).await;
                 });
@@ -175,7 +182,10 @@ impl Stub {
     }
 
     pub fn requests(&self) -> Vec<StubRequest> {
-        self.requests.lock().map(|log| log.clone()).unwrap_or_default()
+        self.requests
+            .lock()
+            .map(|log| log.clone())
+            .unwrap_or_default()
     }
 
     /// Requests whose path ends with `suffix`.
@@ -288,7 +298,6 @@ async fn serve(
     if let Ok(mut log) = log.lock() {
         log.push(request.clone());
     }
-    let request = request;
     let (status, headers, bytes) = match handler(request).await {
         StubReply::Json(status, value) => (
             status,
@@ -306,7 +315,10 @@ async fn serve(
     for (name, value) in &headers {
         response.push_str(&format!("{name}: {value}\r\n"));
     }
-    response.push_str(&format!("Content-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()));
+    response.push_str(&format!(
+        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        bytes.len()
+    ));
     stream.write_all(response.as_bytes()).await?;
     stream.write_all(&bytes).await?;
     stream.flush().await?;
@@ -329,7 +341,8 @@ async fn read_chunked(stream: &mut TcpStream, mut raw: Vec<u8>) -> Result<Vec<u8
     let mut body = Vec::new();
     let mut rest = raw.as_slice();
     while let Some(line_end) = rest.windows(2).position(|window| window == b"\r\n") {
-        let size = usize::from_str_radix(String::from_utf8_lossy(&rest[..line_end]).trim(), 16).unwrap_or(0);
+        let size = usize::from_str_radix(String::from_utf8_lossy(&rest[..line_end]).trim(), 16)
+            .unwrap_or(0);
         rest = &rest[line_end + 2..];
         if size == 0 || rest.len() < size {
             break;

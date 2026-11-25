@@ -1,7 +1,9 @@
 //! Script discovery and script messages (ports of
 //! `app/script-discovery.test.ts` and `app/script-messages.test.ts`).
 
-use crate::fx_support::{after_pause, api_agent, gated, id, pause_reply, statuses, terminal, work_calls};
+use crate::fx_support::{
+    after_pause, api_agent, gated, id, pause_reply, statuses, terminal, work_calls,
+};
 use minarbot_testkit::{
     gated::{Answer, GatedModel},
     http::{Method, SplitRequest},
@@ -35,7 +37,10 @@ async fn bearer(
     let response = request.send().await?;
     let status = response.status().as_u16();
     let text = response.text().await?;
-    Ok((status, serde_json::from_str(&text).unwrap_or(Value::String(text))))
+    Ok((
+        status,
+        serde_json::from_str(&text).unwrap_or(Value::String(text)),
+    ))
 }
 
 async fn expect(
@@ -47,7 +52,10 @@ async fn expect(
     status: u16,
 ) -> Result<Value> {
     let (actual, value) = bearer(app, method.clone(), path, token, body).await?;
-    ensure!(actual == status, "{method} {path}: expected {status}, got {actual}: {value}");
+    ensure!(
+        actual == status,
+        "{method} {path}: expected {status}, got {actual}: {value}"
+    );
     Ok(value)
 }
 
@@ -72,9 +80,16 @@ async fn duplicate_discovery_startup_cannot_interrupt_the_owning_server_task() -
     app.post(&path, json!({"id": turn, "text": "Hold"})).await?;
     model.wait_calls(1).await?;
     let error = root.start_error_beside(&app, config).await?;
-    ensure!(error.contains("Minarbot startup failed"), "duplicate start: {error}");
+    ensure!(
+        error.contains("Minarbot startup failed"),
+        "duplicate start: {error}"
+    );
     let rows = app.get(&path).await?;
-    ensure!(rows[0]["status"] == "running", "owning task interrupted: {}", rows[0]);
+    ensure!(
+        rows[0]["status"] == "running",
+        "owning task interrupted: {}",
+        rows[0]
+    );
     app.post(&format!("{path}/{turn}/cancel"), json!({"id": new_id()}))
         .await?;
     Ok(())
@@ -88,17 +103,27 @@ async fn private_script_discovery_follows_live_grants_rotates_on_restart_and_pre
     let file = directory.join("connection.json");
     let config = ServerConfig::new().script_directory(&directory);
     let mut app = root.start(config.clone()).await?;
-    ensure!(mode(&directory)? == 0o700, "directory mode {:o}", mode(&directory)?);
+    ensure!(
+        mode(&directory)? == 0o700,
+        "directory mode {:o}",
+        mode(&directory)?
+    );
     ensure!(!file.exists(), "discovery file before any grant");
     let a = id(&api_agent(&app, "A", "test").await?)?;
     let b = id(&api_agent(&app, "B", "test").await?)?;
     let path = format!("/api/agents/{a}/scripts");
-    ensure!(app.get(&path).await?["configured"] == true, "not configured");
+    ensure!(
+        app.get(&path).await?["configured"] == true,
+        "not configured"
+    );
     let enable = json!({"id": new_id(), "revision": 0, "enabled": true});
     fs::write(&file, "preserve")?;
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600))?;
     app.post_expect(&path, enable.clone(), 500).await?;
-    ensure!(fs::read_to_string(&file)? == "preserve", "foreign file replaced");
+    ensure!(
+        fs::read_to_string(&file)? == "preserve",
+        "foreign file replaced"
+    );
     fs::remove_file(&file)?;
     app.post(&path, enable.clone()).await?;
     let first = connection(&file)?;
@@ -129,9 +154,15 @@ async fn private_script_discovery_follows_live_grants_rotates_on_restart_and_pre
         json!({"id": new_id(), "revision": 0, "enabled": true}),
     )
     .await?;
-    app.post(&path, json!({"id": new_id(), "revision": 1, "enabled": false}))
-        .await?;
-    ensure!(connection(&file)? == first, "file changed while B is granted");
+    app.post(
+        &path,
+        json!({"id": new_id(), "revision": 1, "enabled": false}),
+    )
+    .await?;
+    ensure!(
+        connection(&file)? == first,
+        "file changed while B is granted"
+    );
     app.post(
         &format!("/api/agents/{b}/scripts"),
         json!({"id": new_id(), "revision": 1, "enabled": false}),
@@ -143,11 +174,17 @@ async fn private_script_discovery_follows_live_grants_rotates_on_restart_and_pre
         !file.exists(),
         "historical enabled receipt must not republish revoked access"
     );
-    app.post(&path, json!({"id": new_id(), "revision": 2, "enabled": true}))
-        .await?;
+    app.post(
+        &path,
+        json!({"id": new_id(), "revision": 2, "enabled": true}),
+    )
+    .await?;
     app.shutdown().await?;
     ensure!(!file.exists(), "file kept after shutdown");
-    ensure!(!directory.join("owner.lock").exists(), "lock kept after shutdown");
+    ensure!(
+        !directory.join("owner.lock").exists(),
+        "lock kept after shutdown"
+    );
     app.start_stopped(config.clone()).await?;
     let second = connection(&file)?;
     ensure!(second["token"] != first["token"], "token not rotated");
@@ -163,16 +200,28 @@ async fn private_script_discovery_follows_live_grants_rotates_on_restart_and_pre
     ensure!(status == 403, "stale token accepted: {status}");
     let competing = TestRoot::new()?;
     competing.start_error_beside(&app, config.clone()).await?;
-    ensure!(connection(&file)? == second, "competing server changed discovery");
+    ensure!(
+        connection(&file)? == second,
+        "competing server changed discovery"
+    );
     app.shutdown().await?;
     fs::write(&file, "foreign")?;
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600))?;
     root.start_error_beside(&app, config.clone()).await?;
-    ensure!(fs::read_to_string(&file)? == "foreign", "foreign file replaced at startup");
-    ensure!(!directory.join("owner.lock").exists(), "lock kept after refused startup");
+    ensure!(
+        fs::read_to_string(&file)? == "foreign",
+        "foreign file replaced at startup"
+    );
+    ensure!(
+        !directory.join("owner.lock").exists(),
+        "lock kept after refused startup"
+    );
     fs::remove_file(&file)?;
     app.start_stopped(config).await?;
-    ensure!(connection(&file)?["url"] == app.origin(), "discovery after recovery");
+    ensure!(
+        connection(&file)?["url"] == app.origin(),
+        "discovery after recovery"
+    );
     Ok(())
 }
 
@@ -186,13 +235,19 @@ async fn discovery_rejects_unsafe_directories_and_symlink_destinations_without_c
     let error = root
         .start_error(ServerConfig::new().script_directory(&unsafe_dir))
         .await?;
-    ensure!(error.contains("must be private"), "unsafe directory: {error}");
+    ensure!(
+        error.contains("must be private"),
+        "unsafe directory: {error}"
+    );
     let link = root.path().join("link");
     symlink(&unsafe_dir, &link)?;
     let error = root
         .start_error(ServerConfig::new().script_directory(&link))
         .await?;
-    ensure!(error.contains("must be private"), "linked directory: {error}");
+    ensure!(
+        error.contains("must be private"),
+        "linked directory: {error}"
+    );
     let directory: PathBuf = root.path().join("private");
     let target = root.path().join("target");
     let mut app = root
@@ -213,7 +268,10 @@ async fn discovery_rejects_unsafe_directories_and_symlink_destinations_without_c
         500,
     )
     .await?;
-    ensure!(fs::read_to_string(&target)? == "preserve", "symlink target changed");
+    ensure!(
+        fs::read_to_string(&target)? == "preserve",
+        "symlink target changed"
+    );
     app.shutdown().await?;
     ensure!(
         fs::symlink_metadata(directory.join("connection.json"))?
@@ -257,9 +315,20 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
     let ui_path = format!("/api/agents/{a}/turns");
     let permission = format!("/api/agents/{a}/scripts");
     let command = json!({"id": new_id(), "text": "ASK"});
-    expect(&app, Method::POST, &path, &token, Some(command.clone()), 403).await?;
-    app.post(&permission, json!({"id": new_id(), "revision": 0, "enabled": true}))
-        .await?;
+    expect(
+        &app,
+        Method::POST,
+        &path,
+        &token,
+        Some(command.clone()),
+        403,
+    )
+    .await?;
+    app.post(
+        &permission,
+        json!({"id": new_id(), "revision": 0, "enabled": true}),
+    )
+    .await?;
     let with_origin = app
         .client()?
         .post(app.url(&path))
@@ -272,8 +341,24 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         .status()
         .as_u16();
     ensure!(with_origin == 403, "browser origin accepted: {with_origin}");
-    expect(&app, Method::POST, &path, "wrong", Some(command.clone()), 403).await?;
-    expect(&app, Method::POST, &path, &token, Some(command.clone()), 202).await?;
+    expect(
+        &app,
+        Method::POST,
+        &path,
+        "wrong",
+        Some(command.clone()),
+        403,
+    )
+    .await?;
+    expect(
+        &app,
+        Method::POST,
+        &path,
+        &token,
+        Some(command.clone()),
+        202,
+    )
+    .await?;
     let turn = until("script question", || async {
         let (_, rows) = bearer(&app, Method::GET, &path, &token, None).await?;
         Ok(rows[0]["questions"]
@@ -300,15 +385,46 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         404,
     )
     .await?;
-    app.post(&permission, json!({"id": new_id(), "revision": 1, "enabled": false}))
-        .await?;
-    expect(&app, Method::POST, &answer_path, &token, Some(answer.clone()), 403).await?;
+    app.post(
+        &permission,
+        json!({"id": new_id(), "revision": 1, "enabled": false}),
+    )
+    .await?;
+    expect(
+        &app,
+        Method::POST,
+        &answer_path,
+        &token,
+        Some(answer.clone()),
+        403,
+    )
+    .await?;
     expect(&app, Method::GET, &path, &token, None, 403).await?;
-    app.post(&permission, json!({"id": new_id(), "revision": 2, "enabled": true}))
-        .await?;
-    let accepted = expect(&app, Method::POST, &answer_path, &token, Some(answer.clone()), 200).await?;
+    app.post(
+        &permission,
+        json!({"id": new_id(), "revision": 2, "enabled": true}),
+    )
+    .await?;
+    let accepted = expect(
+        &app,
+        Method::POST,
+        &answer_path,
+        &token,
+        Some(answer.clone()),
+        200,
+    )
+    .await?;
     ensure!(
-        expect(&app, Method::POST, &answer_path, &token, Some(answer.clone()), 200).await? == accepted,
+        expect(
+            &app,
+            Method::POST,
+            &answer_path,
+            &token,
+            Some(answer.clone()),
+            200
+        )
+        .await?
+            == accepted,
         "answer replay"
     );
     let result = until("script answer", || async {
@@ -316,12 +432,37 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         Ok((rows[0]["status"] == "done").then(|| rows[0].clone()))
     })
     .await?;
-    ensure!(result["reply"] == "Done [redacted]", "reply {}", result["reply"]);
-    ensure!(work_count(&model) == 2, "model calls {}", work_count(&model));
-    app.restart().await?;
-    expect(&app, Method::POST, &path, &token, Some(command.clone()), 202).await?;
     ensure!(
-        expect(&app, Method::POST, &answer_path, &token, Some(answer.clone()), 200).await? == accepted,
+        result["reply"] == "Done [redacted]",
+        "reply {}",
+        result["reply"]
+    );
+    ensure!(
+        work_count(&model) == 2,
+        "model calls {}",
+        work_count(&model)
+    );
+    app.restart().await?;
+    expect(
+        &app,
+        Method::POST,
+        &path,
+        &token,
+        Some(command.clone()),
+        202,
+    )
+    .await?;
+    ensure!(
+        expect(
+            &app,
+            Method::POST,
+            &answer_path,
+            &token,
+            Some(answer.clone()),
+            200
+        )
+        .await?
+            == accepted,
         "answer receipt after restart"
     );
     ensure!(work_count(&model) == 2, "replay ran the model");
@@ -352,16 +493,30 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         app.origin(),
         "POST",
         &path,
-        &[("Authorization", &authorization), ("Content-Type", "application/json")],
-        json!({"id": new_id(), "text": "Too late"}).to_string().as_bytes(),
+        &[
+            ("Authorization", &authorization),
+            ("Content-Type", "application/json"),
+        ],
+        json!({"id": new_id(), "text": "Too late"})
+            .to_string()
+            .as_bytes(),
         "\"Too late\"}".len(),
     )
     .await?;
-    app.post(&permission, json!({"id": new_id(), "revision": 3, "enabled": false}))
-        .await?;
-    ensure!(late.finish().await? == 403, "revocation mid-request admitted the message");
-    app.post(&permission, json!({"id": new_id(), "revision": 4, "enabled": true}))
-        .await?;
+    app.post(
+        &permission,
+        json!({"id": new_id(), "revision": 3, "enabled": false}),
+    )
+    .await?;
+    ensure!(
+        late.finish().await? == 403,
+        "revocation mid-request admitted the message"
+    );
+    app.post(
+        &permission,
+        json!({"id": new_id(), "revision": 4, "enabled": true}),
+    )
+    .await?;
     let routine = app
         .post(
             &format!("/api/agents/{a}/routines"),
@@ -398,7 +553,15 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         429,
     )
     .await?;
-    expect(&app, Method::POST, &path, &token, Some(command.clone()), 202).await?;
+    expect(
+        &app,
+        Method::POST,
+        &path,
+        &token,
+        Some(command.clone()),
+        202,
+    )
+    .await?;
     let ui_rows = app.get(&ui_path).await?;
     ensure!(
         ui_rows.as_array().map_or(0, Vec::len) <= 59,
@@ -407,9 +570,26 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
     );
     let threads_path = format!("/api/scripts/agents/{b}/threads");
     let create_side = json!({"id": new_id(), "name": "Script side"});
-    let side = expect(&app, Method::POST, &threads_path, &token, Some(create_side.clone()), 200).await?;
+    let side = expect(
+        &app,
+        Method::POST,
+        &threads_path,
+        &token,
+        Some(create_side.clone()),
+        200,
+    )
+    .await?;
     ensure!(
-        expect(&app, Method::POST, &threads_path, &token, Some(create_side.clone()), 200).await? == side,
+        expect(
+            &app,
+            Method::POST,
+            &threads_path,
+            &token,
+            Some(create_side.clone()),
+            200
+        )
+        .await?
+            == side,
         "side replay"
     );
     let side_id = id(&side)?;
@@ -431,7 +611,15 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         404,
     )
     .await?;
-    expect(&app, Method::POST, &side_path, &token, Some(side_message.clone()), 202).await?;
+    expect(
+        &app,
+        Method::POST,
+        &side_path,
+        &token,
+        Some(side_message.clone()),
+        202,
+    )
+    .await?;
     let side_turn = until("side question", || async {
         let (_, rows) = bearer(&app, Method::GET, &side_path, &token, None).await?;
         Ok(rows[0]["questions"]
@@ -453,7 +641,15 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
     )
     .await?;
     let side_answer_path = format!("{side_path}/{side_turn_id}/questions/{side_question}/answer");
-    expect(&app, Method::POST, &side_answer_path, &token, Some(side_answer.clone()), 200).await?;
+    expect(
+        &app,
+        Method::POST,
+        &side_answer_path,
+        &token,
+        Some(side_answer.clone()),
+        200,
+    )
+    .await?;
     until("side answer", || async {
         let (_, rows) = bearer(&app, Method::GET, &side_path, &token, None).await?;
         Ok((rows[0]["status"] == "done").then_some(()))
@@ -481,16 +677,42 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         std::time::Duration::from_secs(2 * u64::try_from(queued)?),
         || async {
             let rows = statuses(&app, &ui_path).await?;
-            Ok(rows.iter().all(|(_, status)| terminal(status)).then_some(rows))
+            Ok(rows
+                .iter()
+                .all(|(_, status)| terminal(status))
+                .then_some(rows))
         },
     )
     .await;
-    ensure!(drained.is_ok(), "drain: {:?}", statuses(&app, &ui_path).await?);
+    ensure!(
+        drained.is_ok(),
+        "drain: {:?}",
+        statuses(&app, &ui_path).await?
+    );
     let side_calls = work_count(&model);
     app.restart().await?;
-    expect(&app, Method::POST, &side_path, &token, Some(side_message.clone()), 202).await?;
-    expect(&app, Method::POST, &side_answer_path, &token, Some(side_answer), 200).await?;
-    ensure!(work_count(&model) == side_calls, "side replay ran the model");
+    expect(
+        &app,
+        Method::POST,
+        &side_path,
+        &token,
+        Some(side_message.clone()),
+        202,
+    )
+    .await?;
+    expect(
+        &app,
+        Method::POST,
+        &side_answer_path,
+        &token,
+        Some(side_answer),
+        200,
+    )
+    .await?;
+    ensure!(
+        work_count(&model) == side_calls,
+        "side replay ran the model"
+    );
     let stop_turn = json!({"id": new_id(), "text": "ASK"});
     let stop_id = id(&stop_turn)?;
     expect(&app, Method::POST, &side_path, &token, Some(stop_turn), 202).await?;
@@ -520,14 +742,25 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
     )
     .await?;
     for _ in 0..2 {
-        let stopped = expect(&app, Method::POST, &stop_path, &token, Some(stop_body.clone()), 200).await?;
+        let stopped = expect(
+            &app,
+            Method::POST,
+            &stop_path,
+            &token,
+            Some(stop_body.clone()),
+            200,
+        )
+        .await?;
         ensure!(stopped["status"] == "cancelled", "cancel {stopped}");
     }
     let replay = SplitRequest::start(
         app.origin(),
         "POST",
         &side_path,
-        &[("Authorization", &authorization), ("Content-Type", "application/json")],
+        &[
+            ("Authorization", &authorization),
+            ("Content-Type", "application/json"),
+        ],
         side_message.to_string().as_bytes(),
         "\"ASK\"}".len(),
     )
@@ -551,15 +784,34 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         json!({"id": new_id(), "revision": side["revision"].as_i64().unwrap_or(0) + 1}),
     )
     .await?;
-    ensure!(replay.finish().await? == 404, "deleted thread accepted a replay");
+    ensure!(
+        replay.finish().await? == 404,
+        "deleted thread accepted a replay"
+    );
     expect(&app, Method::GET, &side_path, &token, None, 404).await?;
-    expect(&app, Method::POST, &side_path, &token, Some(side_message), 404).await?;
+    expect(
+        &app,
+        Method::POST,
+        &side_path,
+        &token,
+        Some(side_message),
+        404,
+    )
+    .await?;
     app.post(
         &format!("/api/agents/{b}/scripts"),
         json!({"id": new_id(), "revision": 1, "enabled": false}),
     )
     .await?;
-    expect(&app, Method::POST, &threads_path, &token, Some(create_side), 403).await?;
+    expect(
+        &app,
+        Method::POST,
+        &threads_path,
+        &token,
+        Some(create_side),
+        403,
+    )
+    .await?;
     expect(&app, Method::GET, &threads_path, &token, None, 403).await?;
     Ok(())
 }

@@ -166,8 +166,10 @@ async fn key(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response 
     }
     match &shared.kind {
         Kind::Key(key) => Json(json!({"key": key})).into_response(),
-        Kind::KeyCell(key) => Json(json!({"key": key.lock().map(|key| key.clone()).unwrap_or_default()}))
-            .into_response(),
+        Kind::KeyCell(key) => {
+            Json(json!({"key": key.lock().map(|key| key.clone()).unwrap_or_default()}))
+                .into_response()
+        }
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }

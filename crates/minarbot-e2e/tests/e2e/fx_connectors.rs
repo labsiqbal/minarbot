@@ -27,7 +27,9 @@ struct Script {
 
 impl Script {
     fn connection(&self) -> Result<(String, String)> {
-        let value: Value = serde_json::from_str(&std::fs::read_to_string(self.directory.join("connection.json"))?)?;
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(
+            self.directory.join("connection.json"),
+        )?)?;
         Ok((
             value["url"].as_str().ok_or("discovery url")?.to_owned(),
             value["token"].as_str().ok_or("discovery token")?.to_owned(),
@@ -37,12 +39,23 @@ impl Script {
     /// Status and raw body of `GET path` (or POST with `body`).
     async fn call(&self, path: &str, body: Option<Value>) -> Result<(u16, Vec<u8>)> {
         let (url, token) = self.connection()?;
-        let client = minarbot_testkit::http::Client::builder().no_proxy().build()?;
+        let client = minarbot_testkit::http::Client::builder()
+            .no_proxy()
+            .build()?;
         let mut request = client
-            .request(if body.is_some() { Method::POST } else { Method::GET }, format!("{url}{path}"))
+            .request(
+                if body.is_some() {
+                    Method::POST
+                } else {
+                    Method::GET
+                },
+                format!("{url}{path}"),
+            )
             .bearer_auth(token);
         if let Some(body) = body {
-            request = request.header("Content-Type", "application/json").body(body.to_string());
+            request = request
+                .header("Content-Type", "application/json")
+                .body(body.to_string());
         }
         let response = request.send().await?;
         Ok((response.status().as_u16(), response.bytes().await?.to_vec()))
@@ -50,7 +63,11 @@ impl Script {
 
     async fn json(&self, path: &str) -> Result<Value> {
         let (status, bytes) = self.call(path, None).await?;
-        ensure!(status == 200, "GET {path}: {status} {}", String::from_utf8_lossy(&bytes));
+        ensure!(
+            status == 200,
+            "GET {path}: {status} {}",
+            String::from_utf8_lossy(&bytes)
+        );
         Ok(serde_json::from_slice(&bytes)?)
     }
 
@@ -71,7 +88,9 @@ fn table(kind: Kind, name: &str) -> String {
 }
 
 fn journal(fixture: &ConnectorFixture) -> PathBuf {
-    fixture.directory.join(format!("{}.sqlite", fixture.kind.name()))
+    fixture
+        .directory
+        .join(format!("{}.sqlite", fixture.kind.name()))
 }
 
 /// Deliver an incoming chat message and return the newest inbox row.
@@ -83,7 +102,10 @@ async fn incoming(fixture: &mut ConnectorFixture, sequence: &mut u64, text: &str
     };
     fixture.send(message).await?;
     Inspector::open(journal(fixture))?.row(
-        &format!("SELECT * FROM {} ORDER BY rowid DESC LIMIT 1", inbox(fixture.kind)),
+        &format!(
+            "SELECT * FROM {} ORDER BY rowid DESC LIMIT 1",
+            inbox(fixture.kind)
+        ),
         [],
     )
 }
@@ -94,7 +116,10 @@ async fn wait_done(fixture: &mut ConnectorFixture, turn: &str) -> Result<()> {
     poll("connector intake settles", || {
         fixture.check()?;
         let status: Option<String> = Inspector::open(&database)?
-            .rows(&format!("SELECT status FROM {} WHERE turn=?", inbox(kind)), [turn])?
+            .rows(
+                &format!("SELECT status FROM {} WHERE turn=?", inbox(kind)),
+                [turn],
+            )?
             .first()
             .and_then(|row| row["status"].as_str().map(str::to_owned));
         Ok((status.as_deref() == Some("done")).then_some(()))
@@ -107,7 +132,8 @@ async fn deliver(fixture: &mut ConnectorFixture) -> Result<()> {
     let outbox = table(fixture.kind, "outbox");
     poll("Artifacts and text were delivered", || {
         fixture.check()?;
-        let rows = Inspector::open(&database)?.rows(&format!("SELECT status FROM {outbox} ORDER BY rowid"), [])?;
+        let rows = Inspector::open(&database)?
+            .rows(&format!("SELECT status FROM {outbox} ORDER BY rowid"), [])?;
         Ok(rows.iter().all(|row| row["status"] == "sent").then_some(()))
     })
     .await
@@ -130,7 +156,8 @@ async fn poll<T>(label: &str, mut check: impl FnMut() -> Result<Option<T>>) -> R
 
 fn read_fault() -> Fault {
     fn matches(path: &str) -> bool {
-        path.rsplit_once("/files/").is_some_and(|(_, file)| !file.is_empty() && !file.contains(['/', '?']))
+        path.rsplit_once("/files/")
+            .is_some_and(|(_, file)| !file.is_empty() && !file.contains(['/', '?']))
     }
     Fault {
         method: Some("GET"),
@@ -154,13 +181,24 @@ fn metadata_fault() -> Fault {
 
 /// Two injected script failures: the read reply is lost, then the metadata
 /// request never arrives; each stops the connector, which then restarts.
-async fn survive_faults(fixture: &mut ConnectorFixture, uploads: &Arc<Mutex<Vec<Vec<u8>>>>, documents: &str) -> Result<()> {
+async fn survive_faults(
+    fixture: &mut ConnectorFixture,
+    uploads: &Arc<Mutex<Vec<Vec<u8>>>>,
+    documents: &str,
+) -> Result<()> {
     for round in 0..2 {
         let stderr = fixture.expected_failure().await?;
-        ensure!(stderr.contains("Local agent request failed"), "fault {round}: {stderr}");
-        ensure!(uploads.lock().map(|u| u.is_empty()).unwrap_or(false), "upload before recovery");
+        ensure!(
+            stderr.contains("Local agent request failed"),
+            "fault {round}: {stderr}"
+        );
+        ensure!(
+            uploads.lock().map(|u| u.is_empty()).unwrap_or(false),
+            "upload before recovery"
+        );
         if round == 1 {
-            let count: i64 = Inspector::open(journal(fixture))?.scalar(&format!("SELECT count(*) FROM {documents}"), [])?;
+            let count: i64 = Inspector::open(journal(fixture))?
+                .scalar(&format!("SELECT count(*) FROM {documents}"), [])?;
             ensure!(count == 1, "documents {count}");
         }
         fixture.start_connector().await?;
@@ -184,7 +222,11 @@ async fn app_with(model: GatedModel) -> Result<App> {
                 .script_directory(root.path().join("scripts")),
         )
         .await?;
-    Ok(App { app, root, _model: model })
+    Ok(App {
+        app,
+        root,
+        _model: model,
+    })
 }
 
 fn users(kind: Kind) -> Vec<Value> {
@@ -226,7 +268,9 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
         Answer::text("Done")
     });
     let App { app, root, _model } = app_with(model).await?;
-    let script = Script { directory: root.path().join("scripts") };
+    let script = Script {
+        directory: root.path().join("scripts"),
+    };
     let uploads: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
     let mut fixture = ConnectorFixture::start(
         kind,
@@ -254,14 +298,21 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
         .await?;
     }
     for agent in [&owner, &foreign] {
-        app.post(&format!("/api/agents/{agent}/scripts"), json!({"id": new_id(), "revision": 0, "enabled": true}))
-            .await?;
+        app.post(
+            &format!("/api/agents/{agent}/scripts"),
+            json!({"id": new_id(), "revision": 0, "enabled": true}),
+        )
+        .await?;
     }
     fixture.start_connector().await?;
     let documents = table(kind, "documents");
     let mut sequence = 0;
     let mut previous_file = String::new();
-    for cancelled in if expects_reply { vec![false, true] } else { vec![false] } {
+    for cancelled in if expects_reply {
+        vec![false, true]
+    } else {
+        vec![false]
+    } {
         if let Ok(mut partial) = partial.lock() {
             *partial = cancelled;
         }
@@ -270,7 +321,10 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
             fixture.push_fault(metadata_fault());
         }
         let row = incoming(&mut fixture, &mut sequence, "Make file").await?;
-        let (thread, turn) = (row["thread"].as_str().ok_or("thread")?.to_owned(), row["turn"].as_str().ok_or("turn")?.to_owned());
+        let (thread, turn) = (
+            row["thread"].as_str().ok_or("thread")?.to_owned(),
+            row["turn"].as_str().ok_or("turn")?.to_owned(),
+        );
         let to_parent = format!("/api/threads/{thread}/turns?focus={turn}");
         if cancelled {
             until("Task asked for input", || async {
@@ -281,12 +335,19 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
                 let first = reply.ok()?[0].clone();
                 Ok(first["questions"]
                     .as_array()
-                    .is_some_and(|questions| questions.iter().any(|question| question["answer"].is_null()))
+                    .is_some_and(|questions| {
+                        questions
+                            .iter()
+                            .any(|question| question["answer"].is_null())
+                    })
                     .then_some(()))
             })
             .await?;
-            app.post(&format!("/api/threads/{thread}/turns/{turn}/cancel"), json!({"id": new_id()}))
-                .await?;
+            app.post(
+                &format!("/api/threads/{thread}/turns/{turn}/cancel"),
+                json!({"id": new_id()}),
+            )
+            .await?;
         }
         if expects_reply && !cancelled {
             survive_faults(&mut fixture, &uploads, &documents).await?;
@@ -295,19 +356,33 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
         deliver(&mut fixture).await?;
         let parent = rows(&app, &to_parent).await?[0].clone();
         ensure!(
-            parent["agentMessages"][0]["generatedFiles"].as_array().map_or(0, Vec::len) == usize::from(expects_reply),
+            parent["agentMessages"][0]["generatedFiles"]
+                .as_array()
+                .map_or(0, Vec::len)
+                == usize::from(expects_reply),
             "visible files {}",
             parent["agentMessages"][0]
         );
         let child = parent["agentMessages"][0].clone();
-        let child_turns = format!("/api/threads/{}/turns", child["thread"].as_str().ok_or("child thread")?);
+        let child_turns = format!(
+            "/api/threads/{}/turns",
+            child["thread"].as_str().ok_or("child thread")?
+        );
         let child_turn = app
             .wait_get(&child_turns, |rows| rows[0]["status"] == "done")
             .await?[0]
             .clone();
         let file = if mode == "nested" {
-            rows(&app, &format!("/api/threads/{}/turns", child_turn["agentMessages"][0]["thread"].as_str().ok_or("leaf thread")?))
-                .await?[0]["generatedFiles"][0]
+            rows(
+                &app,
+                &format!(
+                    "/api/threads/{}/turns",
+                    child_turn["agentMessages"][0]["thread"]
+                        .as_str()
+                        .ok_or("leaf thread")?
+                ),
+            )
+            .await?[0]["generatedFiles"][0]
                 .clone()
         } else {
             child_turn["generatedFiles"][0].clone()
@@ -317,43 +392,100 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
         let path = format!("{base}/turns/{turn}/files");
         let focused = script.json(&format!("{base}/turns?focus={turn}")).await?;
         ensure!(
-            focused[0]["generatedFiles"].as_array().map_or(0, Vec::len) == usize::from(expects_reply),
+            focused[0]["generatedFiles"].as_array().map_or(0, Vec::len)
+                == usize::from(expects_reply),
             "script files {}",
             focused[0]["generatedFiles"]
         );
         if !expects_reply {
-            ensure!(uploads.lock().map(|u| u.is_empty()).unwrap_or(false), "notice uploaded a file");
-            ensure!(script.json(&path).await? == json!([]), "notice listed files");
-            ensure!(script.status(&format!("{path}/{file_id}"), None).await? == 404, "notice file readable");
+            ensure!(
+                uploads.lock().map(|u| u.is_empty()).unwrap_or(false),
+                "notice uploaded a file"
+            );
+            ensure!(
+                script.json(&path).await? == json!([]),
+                "notice listed files"
+            );
+            ensure!(
+                script.status(&format!("{path}/{file_id}"), None).await? == 404,
+                "notice file readable"
+            );
             continue;
         }
         let visible = &parent["agentMessages"][0]["generatedFiles"][0];
         ensure!(visible["id"] == file_id.as_str(), "visible file {visible}");
         let (status, download) = crate::fx_support::fetch(
             &app,
-            &format!("/api/threads/{}/files/{file_id}", visible["thread"].as_str().unwrap_or_default()),
+            &format!(
+                "/api/threads/{}/files/{file_id}",
+                visible["thread"].as_str().unwrap_or_default()
+            ),
         )
         .await?;
-        ensure!(status == 200 && download == bytes.as_bytes(), "UI download {status}");
-        ensure!(uploads.lock().ok().and_then(|u| u.last().cloned()) == Some(bytes.as_bytes().to_vec()), "uploaded bytes");
-        ensure!(script.call(&format!("{path}/{file_id}"), None).await? == (200, bytes.as_bytes().to_vec()), "script download");
-        ensure!(script.status(&path.replace(&owner, &foreign), None).await? == 404, "foreign agent read files");
-        ensure!(script.status(&format!("{base}/files/{file_id}"), None).await? == 404, "thread file route");
-        ensure!(script.status(&path, Some(json!({"id": new_id()}))).await? == 405, "POST files");
-        let other = app
-            .post(&format!("/api/agents/{owner}/threads"), json!({"id": new_id(), "name": "Unrelated"}))
-            .await?;
-        ensure!(script.status(&path.replace(&thread, &id(&other)?), None).await? == 404, "unrelated thread");
         ensure!(
-            script.status(&format!("{base}/turns/{}/files/{file_id}", new_id()), None).await? == 404,
+            status == 200 && download == bytes.as_bytes(),
+            "UI download {status}"
+        );
+        ensure!(
+            uploads.lock().ok().and_then(|u| u.last().cloned()) == Some(bytes.as_bytes().to_vec()),
+            "uploaded bytes"
+        );
+        ensure!(
+            script.call(&format!("{path}/{file_id}"), None).await?
+                == (200, bytes.as_bytes().to_vec()),
+            "script download"
+        );
+        ensure!(
+            script.status(&path.replace(&owner, &foreign), None).await? == 404,
+            "foreign agent read files"
+        );
+        ensure!(
+            script
+                .status(&format!("{base}/files/{file_id}"), None)
+                .await?
+                == 404,
+            "thread file route"
+        );
+        ensure!(
+            script.status(&path, Some(json!({"id": new_id()}))).await? == 405,
+            "POST files"
+        );
+        let other = app
+            .post(
+                &format!("/api/agents/{owner}/threads"),
+                json!({"id": new_id(), "name": "Unrelated"}),
+            )
+            .await?;
+        ensure!(
+            script
+                .status(&path.replace(&thread, &id(&other)?), None)
+                .await?
+                == 404,
+            "unrelated thread"
+        );
+        ensure!(
+            script
+                .status(&format!("{base}/turns/{}/files/{file_id}", new_id()), None)
+                .await?
+                == 404,
             "unrelated turn"
         );
         if !previous_file.is_empty() {
-            ensure!(script.status(&format!("{path}/{previous_file}"), None).await? == 404, "previous file visible");
+            ensure!(
+                script
+                    .status(&format!("{path}/{previous_file}"), None)
+                    .await?
+                    == 404,
+                "previous file visible"
+            );
         }
         previous_file.clone_from(&file_id);
         if cancelled {
-            let method = if kind == Kind::Slack { "files.completeUploadExternal" } else { "sendDocument" };
+            let method = if kind == Kind::Slack {
+                "files.completeUploadExternal"
+            } else {
+                "sendDocument"
+            };
             ensure!(
                 fixture
                     .posts()
@@ -367,10 +499,22 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
         let count = uploads.lock().map(|u| u.len()).unwrap_or(0);
         fixture.stop().await?;
         fixture.start_connector().await?;
-        let probe = incoming(&mut fixture, &mut sequence, if kind == Kind::Slack { "!status" } else { "/status" }).await?;
+        let probe = incoming(
+            &mut fixture,
+            &mut sequence,
+            if kind == Kind::Slack {
+                "!status"
+            } else {
+                "/status"
+            },
+        )
+        .await?;
         wait_done(&mut fixture, probe["turn"].as_str().ok_or("probe turn")?).await?;
         deliver(&mut fixture).await?;
-        ensure!(uploads.lock().map(|u| u.len()).unwrap_or(0) == count, "restart uploaded again");
+        ensure!(
+            uploads.lock().map(|u| u.len()).unwrap_or(0) == count,
+            "restart uploaded again"
+        );
         if !cancelled {
             continue;
         }
@@ -386,16 +530,26 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
                 json!({"id": new_id(), "revision": side["revision"], "name": side["name"], "archived": true}),
             )
             .await?;
-        app.post(&format!("/api/threads/{child_thread}/delete"), json!({"id": new_id(), "revision": archived["revision"]}))
-            .await?;
-        ensure!(script.json(&path).await? == json!([]), "deleted child files listed");
-        ensure!(script.status(&format!("{path}/{file_id}"), None).await? == 404, "deleted child file readable");
+        app.post(
+            &format!("/api/threads/{child_thread}/delete"),
+            json!({"id": new_id(), "revision": archived["revision"]}),
+        )
+        .await?;
+        ensure!(
+            script.json(&path).await? == json!([]),
+            "deleted child files listed"
+        );
+        ensure!(
+            script.status(&format!("{path}/{file_id}"), None).await? == 404,
+            "deleted child file readable"
+        );
         ensure!(
             rows(&app, &to_parent).await?[0]["agentMessages"][0]["generatedFiles"] == json!([]),
             "deleted file still visible"
         );
         let journal_path = journal(&fixture);
-        let document: String = Inspector::open(&journal_path)?.scalar(&format!("SELECT id FROM {documents} WHERE turn=?"), [&turn])?;
+        let document: String = Inspector::open(&journal_path)?
+            .scalar(&format!("SELECT id FROM {documents} WHERE turn=?"), [&turn])?;
         {
             let db = Fixture::open(&journal_path)?;
             if kind == Kind::Slack {
@@ -405,7 +559,11 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
                 &format!(
                     "UPDATE {} SET status='queued'{} WHERE id=?",
                     table(kind, "outbox"),
-                    if kind == Kind::Telegram { ",part=0" } else { "" }
+                    if kind == Kind::Telegram {
+                        ",part=0"
+                    } else {
+                        ""
+                    }
                 ),
                 [&document],
             )?;
@@ -414,17 +572,38 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
         let outbox = table(kind, "outbox");
         poll("Deleted artifact was revoked", || {
             fixture.check()?;
-            let status: String = Inspector::open(&journal_path)?.scalar(&format!("SELECT status FROM {outbox} WHERE id=?"), [&document])?;
+            let status: String = Inspector::open(&journal_path)?.scalar(
+                &format!("SELECT status FROM {outbox} WHERE id=?"),
+                [&document],
+            )?;
             Ok((status == "revoked").then_some(()))
         })
         .await?;
         ensure!(fixture.posts().len() == sent, "revoked artifact posted");
     }
-    ensure!(rows(&app, &format!("/api/agents/{owner}/turns")).await?.is_empty(), "main chat used");
-    app.post(&format!("/api/agents/{owner}/scripts"), json!({"id": new_id(), "revision": 1, "enabled": false}))
-        .await?;
     ensure!(
-        script.status(&format!("/api/scripts/agents/{owner}/threads/{}/turns/{}/files", new_id(), new_id()), None).await? == 403,
+        rows(&app, &format!("/api/agents/{owner}/turns"))
+            .await?
+            .is_empty(),
+        "main chat used"
+    );
+    app.post(
+        &format!("/api/agents/{owner}/scripts"),
+        json!({"id": new_id(), "revision": 1, "enabled": false}),
+    )
+    .await?;
+    ensure!(
+        script
+            .status(
+                &format!(
+                    "/api/scripts/agents/{owner}/threads/{}/turns/{}/files",
+                    new_id(),
+                    new_id()
+                ),
+                None
+            )
+            .await?
+            == 403,
         "revoked script access"
     );
     fixture.stop().await
@@ -461,7 +640,8 @@ async fn telegram_ordinary_chat_collects_only_requested_teammate_files_nested() 
 }
 
 async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
-    let (owner, worker, teammate, grandchild, foreign) = (new_id(), new_id(), new_id(), new_id(), new_id());
+    let (owner, worker, teammate, grandchild, foreign) =
+        (new_id(), new_id(), new_id(), new_id(), new_id());
     let text = "workflow artifact exact";
     let model = GatedModel::start().await?;
     let (team, grand) = (teammate.clone(), grandchild.clone());
@@ -485,7 +665,9 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
         }
     });
     let App { app, root, _model } = app_with(model).await?;
-    let script = Script { directory: root.path().join("scripts") };
+    let script = Script {
+        directory: root.path().join("scripts"),
+    };
     let uploads: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
     let mut fixture = ConnectorFixture::start(
         kind,
@@ -500,7 +682,11 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
     .await?;
     for agent in [&owner, &worker, &teammate, &grandchild, &foreign] {
         let model = if mode != "step" && *agent == worker {
-            if mode == "notice" { "notice" } else { "delegate" }
+            if mode == "notice" {
+                "notice"
+            } else {
+                "delegate"
+            }
         } else if mode == "nested" && *agent == teammate {
             "nested"
         } else {
@@ -513,18 +699,29 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
         .await?;
     }
     for agent in [&owner, &foreign] {
-        app.post(&format!("/api/agents/{agent}/scripts"), json!({"id": new_id(), "revision": 0, "enabled": true}))
-            .await?;
+        app.post(
+            &format!("/api/agents/{agent}/scripts"),
+            json!({"id": new_id(), "revision": 0, "enabled": true}),
+        )
+        .await?;
     }
     fixture.start_connector().await?;
     let mut sequence = 0;
     let mut previous_file = String::new();
     let prefix = if kind == Kind::Slack { "!" } else { "/" };
-    for partial in if mode == "notice" { vec![false] } else { vec![false, true] } {
-        let mut nodes = vec![json!({"id": "work", "kind": "agent", "agent": worker, "prompt": "Make file",
-            "next": if partial { "ask" } else { "out" }})];
+    for partial in if mode == "notice" {
+        vec![false]
+    } else {
+        vec![false, true]
+    } {
+        let mut nodes = vec![
+            json!({"id": "work", "kind": "agent", "agent": worker, "prompt": "Make file",
+            "next": if partial { "ask" } else { "out" }}),
+        ];
         if partial {
-            nodes.push(json!({"id": "ask", "kind": "approval", "prompt": "Continue?", "yes": "out"}));
+            nodes.push(
+                json!({"id": "ask", "kind": "approval", "prompt": "Continue?", "yes": "out"}),
+            );
         }
         nodes.push(json!({"id": "out", "kind": "output"}));
         let workflow = app
@@ -538,11 +735,18 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
             fixture.push_fault(read_fault());
             fixture.push_fault(metadata_fault());
         }
-        let row = incoming(&mut fixture, &mut sequence, &format!("{prefix}workflow {workflow_id} 1 Work")).await?;
+        let row = incoming(
+            &mut fixture,
+            &mut sequence,
+            &format!("{prefix}workflow {workflow_id} 1 Work"),
+        )
+        .await?;
         let run_id = row["turn"].as_str().ok_or("run")?.to_owned();
         if partial {
             let run = until("Workflow reached approval", || async {
-                let reply = app.call(Method::GET, &format!("/api/workflow-runs/{run_id}"), None).await?;
+                let reply = app
+                    .call(Method::GET, &format!("/api/workflow-runs/{run_id}"), None)
+                    .await?;
                 if reply.status == 404 {
                     return Ok(None);
                 }
@@ -550,8 +754,11 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
                 Ok((run["status"] == "approval").then_some(run))
             })
             .await?;
-            app.post(&format!("/api/workflow-runs/{run_id}/cancel"), json!({"id": new_id(), "revision": run["revision"]}))
-                .await?;
+            app.post(
+                &format!("/api/workflow-runs/{run_id}/cancel"),
+                json!({"id": new_id(), "revision": run["revision"]}),
+            )
+            .await?;
         }
         if mode != "notice" && !partial {
             survive_faults(&mut fixture, &uploads, &table(kind, "document_workflows")).await?;
@@ -561,43 +768,132 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
         let path = format!("/api/scripts/agents/{owner}/workflow-runs/{run_id}");
         let run = script.json(&path).await?;
         if mode == "step" && !partial {
-            ensure!(run["status"] == "done" && run["result"] == "Done", "run {run}");
-            let method = if kind == Kind::Slack { "chat.postMessage" } else { "sendMessage" };
-            ensure!(fixture.json_posts(method).iter().any(|post| post["text"] == "Done"), "result not posted");
+            ensure!(
+                run["status"] == "done" && run["result"] == "Done",
+                "run {run}"
+            );
+            let method = if kind == Kind::Slack {
+                "chat.postMessage"
+            } else {
+                "sendMessage"
+            };
+            ensure!(
+                fixture
+                    .json_posts(method)
+                    .iter()
+                    .any(|post| post["text"] == "Done"),
+                "result not posted"
+            );
         }
         if mode == "notice" {
             let detail = app.get(&format!("/api/workflow-runs/{run_id}")).await?;
-            let step = detail["steps"].as_array().and_then(|steps| steps.iter().find(|step| step["thread"].is_string())).ok_or("step thread")?;
-            let parent = rows(&app, &format!("/api/threads/{}/turns", step["thread"].as_str().unwrap_or_default())).await?[0].clone();
-            let child_turns = format!("/api/threads/{}/turns", parent["agentMessages"][0]["thread"].as_str().ok_or("child")?);
-            let child_turn = app.wait_get(&child_turns, |rows| rows[0]["status"] == "done").await?[0].clone();
-            ensure!(child_turn["generatedFiles"].as_array().map(Vec::len) == Some(1), "teammate file");
-            ensure!(script.json(&path).await?["generatedFiles"] == json!([]), "notice file collected");
-            ensure!(uploads.lock().map(|u| u.is_empty()).unwrap_or(false), "notice file uploaded");
+            let step = detail["steps"]
+                .as_array()
+                .and_then(|steps| steps.iter().find(|step| step["thread"].is_string()))
+                .ok_or("step thread")?;
+            let parent = rows(
+                &app,
+                &format!(
+                    "/api/threads/{}/turns",
+                    step["thread"].as_str().unwrap_or_default()
+                ),
+            )
+            .await?[0]
+                .clone();
+            let child_turns = format!(
+                "/api/threads/{}/turns",
+                parent["agentMessages"][0]["thread"]
+                    .as_str()
+                    .ok_or("child")?
+            );
+            let child_turn = app
+                .wait_get(&child_turns, |rows| rows[0]["status"] == "done")
+                .await?[0]
+                .clone();
             ensure!(
-                script.status(&format!("{path}/files/{}", id(&child_turn["generatedFiles"][0])?), None).await? == 404,
+                child_turn["generatedFiles"].as_array().map(Vec::len) == Some(1),
+                "teammate file"
+            );
+            ensure!(
+                script.json(&path).await?["generatedFiles"] == json!([]),
+                "notice file collected"
+            );
+            ensure!(
+                uploads.lock().map(|u| u.is_empty()).unwrap_or(false),
+                "notice file uploaded"
+            );
+            ensure!(
+                script
+                    .status(
+                        &format!("{path}/files/{}", id(&child_turn["generatedFiles"][0])?),
+                        None
+                    )
+                    .await?
+                    == 404,
                 "notice file readable"
             );
-            app.post(&format!("/api/workflows/{workflow_id}/delete"), json!({"id": new_id(), "revision": 1})).await?;
+            app.post(
+                &format!("/api/workflows/{workflow_id}/delete"),
+                json!({"id": new_id(), "revision": 1}),
+            )
+            .await?;
             continue;
         }
-        ensure!(run["generatedFiles"].as_array().map(Vec::len) == Some(1), "run files {}", run["generatedFiles"]);
-        ensure!(uploads.lock().ok().and_then(|u| u.last().cloned()) == Some(text.as_bytes().to_vec()), "uploaded bytes");
-        let file = id(&run["generatedFiles"][0])?;
-        ensure!(script.call(&format!("{path}/files/{file}"), None).await? == (200, text.as_bytes().to_vec()), "script download");
         ensure!(
-            script.status(&format!("/api/scripts/agents/{foreign}/workflow-runs/{run_id}/files/{file}"), None).await? == 404,
+            run["generatedFiles"].as_array().map(Vec::len) == Some(1),
+            "run files {}",
+            run["generatedFiles"]
+        );
+        ensure!(
+            uploads.lock().ok().and_then(|u| u.last().cloned()) == Some(text.as_bytes().to_vec()),
+            "uploaded bytes"
+        );
+        let file = id(&run["generatedFiles"][0])?;
+        ensure!(
+            script.call(&format!("{path}/files/{file}"), None).await?
+                == (200, text.as_bytes().to_vec()),
+            "script download"
+        );
+        ensure!(
+            script
+                .status(
+                    &format!("/api/scripts/agents/{foreign}/workflow-runs/{run_id}/files/{file}"),
+                    None
+                )
+                .await?
+                == 404,
             "foreign agent read the file"
         );
-        ensure!(script.status(&format!("{path}/files/{}", new_id()), None).await? == 404, "unknown file");
+        ensure!(
+            script
+                .status(&format!("{path}/files/{}", new_id()), None)
+                .await?
+                == 404,
+            "unknown file"
+        );
         if !previous_file.is_empty() {
-            ensure!(script.status(&format!("{path}/files/{previous_file}"), None).await? == 404, "previous file visible");
+            ensure!(
+                script
+                    .status(&format!("{path}/files/{previous_file}"), None)
+                    .await?
+                    == 404,
+                "previous file visible"
+            );
         }
         previous_file.clone_from(&file);
         if partial {
-            let method = if kind == Kind::Slack { "files.completeUploadExternal" } else { "sendDocument" };
+            let method = if kind == Kind::Slack {
+                "files.completeUploadExternal"
+            } else {
+                "sendDocument"
+            };
             ensure!(
-                fixture.posts().iter().rev().find(|post| post.method == method).is_some_and(|post| post.request.text().contains("Partial result")),
+                fixture
+                    .posts()
+                    .iter()
+                    .rev()
+                    .find(|post| post.method == method)
+                    .is_some_and(|post| post.request.text().contains("Partial result")),
                 "partial result not marked"
             );
         }
@@ -607,7 +903,10 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
         let probe = incoming(&mut fixture, &mut sequence, &format!("{prefix}status")).await?;
         wait_done(&mut fixture, probe["turn"].as_str().ok_or("probe")?).await?;
         deliver(&mut fixture).await?;
-        ensure!(uploads.lock().map(|u| u.len()).unwrap_or(0) == count, "restart uploaded again");
+        ensure!(
+            uploads.lock().map(|u| u.len()).unwrap_or(0) == count,
+            "restart uploaded again"
+        );
         let delete_thread = |thread: String, owner_agent: String| {
             let app = &app;
             async move {
@@ -619,7 +918,11 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
                 let archived = app
                     .post(&format!("/api/threads/{thread}/edit"), json!({"id": new_id(), "revision": side["revision"], "name": side["name"], "archived": true}))
                     .await?;
-                app.post(&format!("/api/threads/{thread}/delete"), json!({"id": new_id(), "revision": archived["revision"]})).await?;
+                app.post(
+                    &format!("/api/threads/{thread}/delete"),
+                    json!({"id": new_id(), "revision": archived["revision"]}),
+                )
+                .await?;
                 Ok::<_, minarbot_testkit::Error>(())
             }
         };
@@ -631,66 +934,110 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
             .to_owned();
         if !partial && ["reply", "nested"].contains(&mode) {
             let parent = rows(&app, &format!("/api/threads/{step_thread}/turns")).await?[0].clone();
-            let child = parent["agentMessages"][0]["thread"].as_str().ok_or("child thread")?.to_owned();
+            let child = parent["agentMessages"][0]["thread"]
+                .as_str()
+                .ok_or("child thread")?
+                .to_owned();
             delete_thread(child, teammate.clone()).await?;
-            ensure!(script.status(&format!("{path}/files/{file}"), None).await? == 404, "deleted teammate file readable");
-            ensure!(script.json(&path).await?["generatedFiles"] == json!([]), "deleted teammate file listed");
+            ensure!(
+                script.status(&format!("{path}/files/{file}"), None).await? == 404,
+                "deleted teammate file readable"
+            );
+            ensure!(
+                script.json(&path).await?["generatedFiles"] == json!([]),
+                "deleted teammate file listed"
+            );
         }
         if partial {
             delete_thread(step_thread, worker.clone()).await?;
-            ensure!(script.status(&format!("{path}/files/{file}"), None).await? == 404, "deleted step file readable");
-            ensure!(script.json(&path).await?["generatedFiles"] == json!([]), "deleted step file listed");
+            ensure!(
+                script.status(&format!("{path}/files/{file}"), None).await? == 404,
+                "deleted step file readable"
+            );
+            ensure!(
+                script.json(&path).await?["generatedFiles"] == json!([]),
+                "deleted step file listed"
+            );
         }
-        app.post(&format!("/api/workflows/{workflow_id}/delete"), json!({"id": new_id(), "revision": 1})).await?;
-        ensure!(script.status(&format!("{path}/files/{file}"), None).await? == 404, "deleted workflow file readable");
-    }
-    ensure!(rows(&app, &format!("/api/agents/{owner}/turns")).await?.is_empty(), "main chat used");
-    app.post(&format!("/api/agents/{owner}/scripts"), json!({"id": new_id(), "revision": 1, "enabled": false}))
+        app.post(
+            &format!("/api/workflows/{workflow_id}/delete"),
+            json!({"id": new_id(), "revision": 1}),
+        )
         .await?;
+        ensure!(
+            script.status(&format!("{path}/files/{file}"), None).await? == 404,
+            "deleted workflow file readable"
+        );
+    }
     ensure!(
-        script.status(&format!("/api/scripts/agents/{owner}/workflow-runs/{}", new_id()), None).await? == 403,
+        rows(&app, &format!("/api/agents/{owner}/turns"))
+            .await?
+            .is_empty(),
+        "main chat used"
+    );
+    app.post(
+        &format!("/api/agents/{owner}/scripts"),
+        json!({"id": new_id(), "revision": 1, "enabled": false}),
+    )
+    .await?;
+    ensure!(
+        script
+            .status(
+                &format!("/api/scripts/agents/{owner}/workflow-runs/{}", new_id()),
+                None
+            )
+            .await?
+            == 403,
         "revoked script access"
     );
     fixture.stop().await
 }
 
 #[tokio::test]
-async fn slack_step_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes() -> Result<()> {
+async fn slack_step_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes(
+) -> Result<()> {
     workflow_files(Kind::Slack, "step").await
 }
 
 #[tokio::test]
-async fn slack_reply_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes() -> Result<()> {
+async fn slack_reply_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes(
+) -> Result<()> {
     workflow_files(Kind::Slack, "reply").await
 }
 
 #[tokio::test]
-async fn slack_notice_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes() -> Result<()> {
+async fn slack_notice_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes(
+) -> Result<()> {
     workflow_files(Kind::Slack, "notice").await
 }
 
 #[tokio::test]
-async fn slack_nested_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes() -> Result<()> {
+async fn slack_nested_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes(
+) -> Result<()> {
     workflow_files(Kind::Slack, "nested").await
 }
 
 #[tokio::test]
-async fn telegram_step_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes() -> Result<()> {
+async fn telegram_step_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes(
+) -> Result<()> {
     workflow_files(Kind::Telegram, "step").await
 }
 
 #[tokio::test]
-async fn telegram_reply_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes() -> Result<()> {
+async fn telegram_reply_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes(
+) -> Result<()> {
     workflow_files(Kind::Telegram, "reply").await
 }
 
 #[tokio::test]
-async fn telegram_notice_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes() -> Result<()> {
+async fn telegram_notice_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes(
+) -> Result<()> {
     workflow_files(Kind::Telegram, "notice").await
 }
 
 #[tokio::test]
-async fn telegram_nested_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes() -> Result<()> {
+async fn telegram_nested_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes(
+) -> Result<()> {
     workflow_files(Kind::Telegram, "nested").await
 }
 
@@ -706,48 +1053,96 @@ async fn offline_recovery(kind: Kind) -> Result<()> {
         input
     };
     let initial = connector::journal(&command("status", json!({}))).await?;
-    ensure!(initial["inbox"] == json!([]) && initial["outbox"] == json!([]), "initial {initial}");
+    ensure!(
+        initial["inbox"] == json!([]) && initial["outbox"] == json!([]),
+        "initial {initial}"
+    );
     let database = directory.join(format!("{}.sqlite", kind.name()));
     let db = Fixture::open(&database)?;
     match kind {
         Kind::Slack => db.execute("INSERT INTO slack_outbox(id,channel,sender,root,text,status,part,timestamps) VALUES(?,'DCHAT','UUSER','1700000000.000001','Exact output','uncertain',1,'[\"1700000001.000001\"]')", [&id])?,
         Kind::Telegram => db.execute("INSERT INTO telegram_outbox(id,chat,reply_to,text,status,part,message_ids,error) VALUES(?,4,1,'Exact output','uncertain',1,'[42]','Lost response')", [&id])?,
     };
-    let original = connector::journal(&command("inspect", json!({"id": id}))).await?["reply"].clone();
-    let error = connector::journal(&command("recover", json!({"id": id, "revision": 0, "action": "retry"})))
-        .await
-        .err()
-        .ok_or("retry without confirmation succeeded")?;
+    let original =
+        connector::journal(&command("inspect", json!({"id": id}))).await?["reply"].clone();
+    let error = connector::journal(&command(
+        "recover",
+        json!({"id": id, "revision": 0, "action": "retry"}),
+    ))
+    .await
+    .err()
+    .ok_or("retry without confirmation succeeded")?;
     ensure!(error.to_string().contains("confirmation"), "error {error}");
-    ensure!(connector::journal(&command("inspect", json!({"id": id}))).await?["reply"] == original, "refused retry changed the reply");
+    ensure!(
+        connector::journal(&command("inspect", json!({"id": id}))).await?["reply"] == original,
+        "refused retry changed the reply"
+    );
     let confirmed = connector::journal(&command("recover", json!({"id": id, "revision": 0, "action": "retry", "confirmation": "--accept-duplicate-risk"}))).await?;
-    ensure!(confirmed == json!({"id": id, "status": "queued", "revision": 1}), "retry {confirmed}");
+    ensure!(
+        confirmed == json!({"id": id, "status": "queued", "revision": 1}),
+        "retry {confirmed}"
+    );
     let retry = connector::journal(&command("inspect", json!({"id": id}))).await?;
-    ensure!(retry["reply"]["part"] == 1 && retry["reply"]["text"] == "Exact output", "retry reply {retry}");
-    ensure!(retry["decisions"][0]["status"] == "uncertain", "decision {}", retry["decisions"]);
-    let ids = if kind == Kind::Slack { "timestamps" } else { "message_ids" };
-    ensure!(retry["reply"][ids] == original[ids], "delivered ids changed");
+    ensure!(
+        retry["reply"]["part"] == 1 && retry["reply"]["text"] == "Exact output",
+        "retry reply {retry}"
+    );
+    ensure!(
+        retry["decisions"][0]["status"] == "uncertain",
+        "decision {}",
+        retry["decisions"]
+    );
+    let ids = if kind == Kind::Slack {
+        "timestamps"
+    } else {
+        "message_ids"
+    };
+    ensure!(
+        retry["reply"][ids] == original[ids],
+        "delivered ids changed"
+    );
     let stale = connector::journal(&command("recover", json!({"id": id, "revision": 0, "action": "retry", "confirmation": "--accept-duplicate-risk"})))
         .await
         .err()
         .ok_or("stale retry succeeded")?;
     ensure!(stale.to_string().contains("changed"), "stale error {stale}");
-    db.execute(&format!("UPDATE {}_outbox SET status='failed' WHERE id=?", kind.name()), [&id])?;
-    let discarded = connector::journal(&command("recover", json!({"id": id, "revision": 1, "action": "discard", "confirmation": "--confirm"}))).await?;
-    ensure!(discarded == json!({"id": id, "status": "discarded", "revision": 2}), "discard {discarded}");
-    ensure!(connector::journal(&command("status", json!({}))).await?["outbox"][0]["revision"] == 2, "status revision");
+    db.execute(
+        &format!(
+            "UPDATE {}_outbox SET status='failed' WHERE id=?",
+            kind.name()
+        ),
+        [&id],
+    )?;
+    let discarded = connector::journal(&command(
+        "recover",
+        json!({"id": id, "revision": 1, "action": "discard", "confirmation": "--confirm"}),
+    ))
+    .await?;
+    ensure!(
+        discarded == json!({"id": id, "status": "discarded", "revision": 2}),
+        "discard {discarded}"
+    );
+    ensure!(
+        connector::journal(&command("status", json!({}))).await?["outbox"][0]["revision"] == 2,
+        "status revision"
+    );
     drop(db);
-    ensure!(!directory.join("owner.lock").exists(), "journal left the owner lock");
+    ensure!(
+        !directory.join("owner.lock").exists(),
+        "journal left the owner lock"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn rust_slack_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation() -> Result<()> {
+async fn rust_slack_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation(
+) -> Result<()> {
     offline_recovery(Kind::Slack).await
 }
 
 #[tokio::test]
-async fn rust_telegram_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation() -> Result<()> {
+async fn rust_telegram_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation(
+) -> Result<()> {
     offline_recovery(Kind::Telegram).await
 }
 
@@ -778,7 +1173,10 @@ fn runner_lock(state: &Arc<Mutex<Runner>>) -> std::sync::MutexGuard<'_, Runner> 
 fn approve_command(text: &str, prefix: char) -> Option<String> {
     let start = text.find(&format!("{prefix}approve "))?;
     let rest = &text[start..];
-    let command: String = rest.chars().take(1 + "approve ".len() + 36 + " 1 yes".len()).collect();
+    let command: String = rest
+        .chars()
+        .take(1 + "approve ".len() + 36 + " 1 yes".len())
+        .collect();
     (command.ends_with(" 1 yes") && command.len() == 1 + 8 + 36 + 6).then_some(command)
 }
 
@@ -805,7 +1203,12 @@ fn runner_event(id: u64, text: &str, media: bool) -> Value {
 }
 
 async fn runner(kind: Kind, mode: &'static str) -> Result<()> {
-    let (question, file, workflow, media) = (mode == "question", mode == "file", mode == "workflow", mode == "media");
+    let (question, file, workflow, media) = (
+        mode == "question",
+        mode == "file",
+        mode == "workflow",
+        mode == "media",
+    );
     let agent = new_id();
     let workflow_id = new_id();
     let model = GatedModel::start().await?;
@@ -813,22 +1216,43 @@ async fn runner(kind: Kind, mode: &'static str) -> Result<()> {
         if after_pause(request) {
             return pause_reply_for(request);
         }
-        let tool = (question || file) && !request.messages().iter().any(|message| message["role"] == "tool");
+        let tool = (question || file)
+            && !request
+                .messages()
+                .iter()
+                .any(|message| message["role"] == "tool");
         if !tool {
             return Answer::text("Native connector reply");
         }
         if file {
-            Answer::tool_id("effect", "create_text_file", json!({"name": "fixture.txt", "text": "Exact native file bytes"}))
+            Answer::tool_id(
+                "effect",
+                "create_text_file",
+                json!({"name": "fixture.txt", "text": "Exact native file bytes"}),
+            )
         } else {
-            Answer::tool_id("effect", "ask_user", json!({"question": "Proceed?", "choices": ["Yes", "No"]}))
+            Answer::tool_id(
+                "effect",
+                "ask_user",
+                json!({"question": "Proceed?", "choices": ["Yes", "No"]}),
+            )
         }
     });
     let root = TestRoot::new()?;
-    let app = root.start(ServerConfig::new().gateway(Gateway::new(model.base_url()))).await?;
+    let app = root
+        .start(ServerConfig::new().gateway(Gateway::new(model.base_url())))
+        .await?;
     let state: Arc<Mutex<Runner>> = Arc::default();
     let token = format!("{}{}", new_id().replace('-', ""), new_id().replace('-', ""));
-    let (local_state, app_origin, local_token, owner) = (state.clone(), app.origin().to_owned(), token.clone(), agent.clone());
-    let client = minarbot_testkit::http::Client::builder().no_proxy().build()?;
+    let (local_state, app_origin, local_token, owner) = (
+        state.clone(),
+        app.origin().to_owned(),
+        token.clone(),
+        agent.clone(),
+    );
+    let client = minarbot_testkit::http::Client::builder()
+        .no_proxy()
+        .build()?;
     let local = minarbot_testkit::stub::Stub::start_async(move |request| {
         let (state, app_origin, token, owner, client) =
             (local_state.clone(), app_origin.clone(), local_token.clone(), owner.clone(), client.clone());
@@ -905,23 +1329,52 @@ async fn runner(kind: Kind, mode: &'static str) -> Result<()> {
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&scripts, std::fs::Permissions::from_mode(0o700))?;
-        std::fs::write(scripts.join("connection.json"), json!({"url": local.origin(), "token": token}).to_string())?;
-        std::fs::set_permissions(scripts.join("connection.json"), std::fs::Permissions::from_mode(0o600))?;
+        std::fs::write(
+            scripts.join("connection.json"),
+            json!({"url": local.origin(), "token": token}).to_string(),
+        )?;
+        std::fs::set_permissions(
+            scripts.join("connection.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )?;
     }
-    let first_text = if workflow { format!("!workflow {workflow_id} 1 Exact input") } else { "Native request".to_owned() };
+    let first_text = if workflow {
+        format!("!workflow {workflow_id} 1 Exact input")
+    } else {
+        "Native request".to_owned()
+    };
     let origin_cell: Arc<Mutex<String>> = Arc::default();
     let (remote_state, remote_origin) = (state.clone(), origin_cell.clone());
-    let final_text = if workflow { "Exact input" } else { "Native connector reply" };
+    let final_text = if workflow {
+        "Exact input"
+    } else {
+        "Native connector reply"
+    };
     let socket_state = state.clone();
     let socket_first = first_text.clone();
     let remote = minarbot_testkit::stub::Stub::with_socket(
         move |request| {
-            let reply = runner_remote(kind, &remote_state, &remote_origin, &request, workflow, file, media, final_text, workflow_id.as_str());
+            let reply = runner_remote(
+                kind,
+                &remote_state,
+                &remote_origin,
+                &request,
+                workflow,
+                file,
+                media,
+                final_text,
+                workflow_id.as_str(),
+            );
             async move { reply }
         },
         move |socket| {
-            let minarbot_testkit::stub::Socket { index, mut incoming, outgoing } = socket;
-            let _ = outgoing.send(json!({"type": "hello", "connection_info": {"app_id": "AAPP"}}).to_string());
+            let minarbot_testkit::stub::Socket {
+                index,
+                mut incoming,
+                outgoing,
+            } = socket;
+            let _ = outgoing
+                .send(json!({"type": "hello", "connection_info": {"app_id": "AAPP"}}).to_string());
             let _ = outgoing.send(runner_event(1, &socket_first, media).to_string());
             {
                 let mut runner = runner_lock(&socket_state);
@@ -944,7 +1397,10 @@ async fn runner(kind: Kind, mode: &'static str) -> Result<()> {
                     }
                     runner.acknowledgements += 1;
                     if index == 0 && envelope == "e1" {
-                        let _ = outgoing.send(json!({"type": "disconnect", "reason": "refresh_requested"}).to_string());
+                        let _ = outgoing.send(
+                            json!({"type": "disconnect", "reason": "refresh_requested"})
+                                .to_string(),
+                        );
                     }
                 }
             });
@@ -984,30 +1440,78 @@ async fn runner(kind: Kind, mode: &'static str) -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     process.stop().await?;
     let runner = std::mem::take(&mut *runner_lock(&state));
-    ensure!(runner.problems.is_empty(), "fake checks {:?}", runner.problems);
+    ensure!(
+        runner.problems.is_empty(),
+        "fake checks {:?}",
+        runner.problems
+    );
     let calls = crate::fx_support::work_calls(&model).len();
-    let expected_calls = if workflow { 0 } else if file { 3 } else if question { 2 } else { 1 };
+    let expected_calls = if workflow {
+        0
+    } else if file {
+        3
+    } else if question {
+        2
+    } else {
+        1
+    };
     ensure!(calls == expected_calls, "{mode} model calls {calls}");
-    let expected_deliveries = if question || workflow { 3 } else if file { 2 } else { 1 };
-    ensure!(runner.deliveries == expected_deliveries, "{mode} deliveries {}", runner.deliveries);
+    let expected_deliveries = if question || workflow {
+        3
+    } else if file {
+        2
+    } else {
+        1
+    };
+    ensure!(
+        runner.deliveries == expected_deliveries,
+        "{mode} deliveries {}",
+        runner.deliveries
+    );
     if media {
-        ensure!(runner.downloaded == 1 && runner.uploaded == 1, "media {} {}", runner.downloaded, runner.uploaded);
+        ensure!(
+            runner.downloaded == 1 && runner.uploaded == 1,
+            "media {} {}",
+            runner.downloaded,
+            runner.uploaded
+        );
     }
     if workflow {
-        ensure!(runner.workflow_run["status"] == "done", "workflow {}", runner.workflow_run);
+        ensure!(
+            runner.workflow_run["status"] == "done",
+            "workflow {}",
+            runner.workflow_run
+        );
     }
     let marker = if workflow { "/workflows/" } else { "/turns" };
-    ensure!(runner.requests.iter().any(|path| path.contains(marker)), "no {marker} request: {:?}", runner.requests);
+    ensure!(
+        runner.requests.iter().any(|path| path.contains(marker)),
+        "no {marker} request: {:?}",
+        runner.requests
+    );
     ensure!(!directory.join("owner.lock").exists(), "owner lock kept");
     let outbox = Inspector::open(directory.join(format!("{}.sqlite", kind.name())))?
         .rows(&format!("SELECT status FROM {}_outbox", kind.name()), [])?;
-    ensure!(outbox.iter().all(|row| row["status"] == "sent"), "outbox {outbox:?}");
+    ensure!(
+        outbox.iter().all(|row| row["status"] == "sent"),
+        "outbox {outbox:?}"
+    );
     if kind == Kind::Slack {
-        ensure!(runner.connections >= 2 && runner.acknowledgements >= 2, "socket {} {}", runner.connections, runner.acknowledgements);
+        ensure!(
+            runner.connections >= 2 && runner.acknowledgements >= 2,
+            "socket {} {}",
+            runner.connections,
+            runner.acknowledgements
+        );
     } else {
         ensure!(runner.offset >= 8, "offset {}", runner.offset);
     }
-    ensure!(rows(&app, &format!("/api/agents/{agent}/turns")).await?.is_empty(), "main chat used");
+    ensure!(
+        rows(&app, &format!("/api/agents/{agent}/turns"))
+            .await?
+            .is_empty(),
+        "main chat used"
+    );
     Ok(())
 }
 
@@ -1024,12 +1528,20 @@ fn runner_remote(
     workflow_id: &str,
 ) -> minarbot_testkit::stub::StubReply {
     use minarbot_testkit::stub::StubReply;
-    let origin = origin.lock().map(|origin| origin.clone()).unwrap_or_default();
+    let origin = origin
+        .lock()
+        .map(|origin| origin.clone())
+        .unwrap_or_default();
     let mut runner = runner_lock(state);
     let target = request.target.clone();
     if target == "/download" || target.starts_with("/file/") {
-        if kind == Kind::Slack && request.header("authorization") != Some(format!("Bearer {}", minarbot_testkit::platform::BOT_TOKEN).as_str()) {
-            runner.problems.push("download without the bot token".into());
+        if kind == Kind::Slack
+            && request.header("authorization")
+                != Some(format!("Bearer {}", minarbot_testkit::platform::BOT_TOKEN).as_str())
+        {
+            runner
+                .problems
+                .push("download without the bot token".into());
         }
         runner.downloaded += 1;
         return StubReply::Raw(200, vec![], b"Native media bytes".to_vec());
@@ -1124,7 +1636,10 @@ fn runner_remote(
                 if text.contains("!answer ") {
                     runner.answer = answer_id(&text, '!');
                     if let Some(answer) = runner.answer.clone() {
-                        push(&runner, runner_event(2, &format!("!answer {answer} Yes"), false));
+                        push(
+                            &runner,
+                            runner_event(2, &format!("!answer {answer} Yes"), false),
+                        );
                     }
                 }
                 if text == final_text && !file {
@@ -1149,13 +1664,53 @@ macro_rules! runner_case {
     };
 }
 
-runner_case!(rust_telegram_runner_reply_through_native_turns, Kind::Telegram, "reply");
-runner_case!(rust_telegram_runner_question_through_native_turns, Kind::Telegram, "question");
-runner_case!(rust_telegram_runner_file_through_native_turns, Kind::Telegram, "file");
-runner_case!(rust_telegram_runner_workflow_through_native_turns, Kind::Telegram, "workflow");
-runner_case!(rust_telegram_runner_media_through_native_turns, Kind::Telegram, "media");
-runner_case!(rust_slack_runner_reply_through_native_turns, Kind::Slack, "reply");
-runner_case!(rust_slack_runner_question_through_native_turns, Kind::Slack, "question");
-runner_case!(rust_slack_runner_file_through_native_turns, Kind::Slack, "file");
-runner_case!(rust_slack_runner_workflow_through_native_turns, Kind::Slack, "workflow");
-runner_case!(rust_slack_runner_media_through_native_turns, Kind::Slack, "media");
+runner_case!(
+    rust_telegram_runner_reply_through_native_turns,
+    Kind::Telegram,
+    "reply"
+);
+runner_case!(
+    rust_telegram_runner_question_through_native_turns,
+    Kind::Telegram,
+    "question"
+);
+runner_case!(
+    rust_telegram_runner_file_through_native_turns,
+    Kind::Telegram,
+    "file"
+);
+runner_case!(
+    rust_telegram_runner_workflow_through_native_turns,
+    Kind::Telegram,
+    "workflow"
+);
+runner_case!(
+    rust_telegram_runner_media_through_native_turns,
+    Kind::Telegram,
+    "media"
+);
+runner_case!(
+    rust_slack_runner_reply_through_native_turns,
+    Kind::Slack,
+    "reply"
+);
+runner_case!(
+    rust_slack_runner_question_through_native_turns,
+    Kind::Slack,
+    "question"
+);
+runner_case!(
+    rust_slack_runner_file_through_native_turns,
+    Kind::Slack,
+    "file"
+);
+runner_case!(
+    rust_slack_runner_workflow_through_native_turns,
+    Kind::Slack,
+    "workflow"
+);
+runner_case!(
+    rust_slack_runner_media_through_native_turns,
+    Kind::Slack,
+    "media"
+);

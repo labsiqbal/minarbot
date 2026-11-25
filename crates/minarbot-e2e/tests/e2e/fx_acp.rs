@@ -78,14 +78,16 @@ impl Acp {
 
     /// Answer every pending approval with `decision` until the turn ends.
     async fn complete(&self, turn: &str, decision: &str) -> Result<Value> {
-        let terminal = |row: &Value| ["done", "failed", "cancelled"].contains(&row["status"].as_str().unwrap_or(""));
+        let terminal = |row: &Value| {
+            ["done", "failed", "cancelled"].contains(&row["status"].as_str().unwrap_or(""))
+        };
         loop {
             let row = self
                 .until(turn, |row| {
                     terminal(row)
-                        || row["harnessApprovals"]
-                            .as_array()
-                            .is_some_and(|cards| cards.iter().any(|card| card["state"] == "approval"))
+                        || row["harnessApprovals"].as_array().is_some_and(|cards| {
+                            cards.iter().any(|card| card["state"] == "approval")
+                        })
                 })
                 .await?;
             if terminal(&row) {
@@ -111,7 +113,11 @@ impl Acp {
 
 fn decisions(log: &[Value]) -> Vec<Value> {
     log.iter()
-        .filter_map(|row| row["result"]["outcome"]["optionId"].as_str().map(|id| json!(id)))
+        .filter_map(|row| {
+            row["result"]["outcome"]["optionId"]
+                .as_str()
+                .map(|id| json!(id))
+        })
         .collect()
 }
 
@@ -127,42 +133,84 @@ async fn supervised_session(runtime: &str) -> Result<()> {
         .map(|entry| json!([entry["kind"], entry["text"]]))
         .collect();
     ensure!(
-        stream == vec![json!(["text", "Before tool. "]), json!(["tool", "echo fixture"]), json!(["text", "Final answer."])],
+        stream
+            == vec![
+                json!(["text", "Before tool. "]),
+                json!(["tool", "echo fixture"]),
+                json!(["text", "Final answer."])
+            ],
         "stream {stream:?}"
     );
-    ensure!(done["harnessApprovals"].as_array().map(Vec::len) == Some(1), "approvals");
-    ensure!(done["activity"]["harness"][0]["state"] == "completed", "tool state");
+    ensure!(
+        done["harnessApprovals"].as_array().map(Vec::len) == Some(1),
+        "approvals"
+    );
+    ensure!(
+        done["activity"]["harness"][0]["state"] == "completed",
+        "tool state"
+    );
     let log = f.log()?;
-    let find = |method: &str| log.iter().find(|row| row["method"] == method).cloned().unwrap_or(Value::Null);
+    let find = |method: &str| {
+        log.iter()
+            .find(|row| row["method"] == method)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
     let init = find("initialize");
     let session = find("session/new");
-    ensure!(init["params"]["protocolVersion"] == 1, "protocol {}", init["params"]);
-    ensure!(init["params"]["clientCapabilities"]["terminal"] == false, "terminal capability");
+    ensure!(
+        init["params"]["protocolVersion"] == 1,
+        "protocol {}",
+        init["params"]
+    );
+    ensure!(
+        init["params"]["clientCapabilities"]["terminal"] == false,
+        "terminal capability"
+    );
     ensure!(
         session["params"]["cwd"] == f.workspace.to_string_lossy().as_ref(),
         "cwd {}",
         session["params"]["cwd"]
     );
-    ensure!(session.to_string().contains(SESSION_TOKEN), "session lacks the MCP token");
+    ensure!(
+        session.to_string().contains(SESSION_TOKEN),
+        "session lacks the MCP token"
+    );
     ensure!(
         !json!(log).to_string().contains("MINARBOT_HARNESS_CANARY"),
         "canary leaked to the peer"
     );
     ensure!(
-        log.iter().any(|row| row["method"] == "session/set_mode" && row["params"]["modeId"] == "default"),
+        log.iter()
+            .any(|row| row["method"] == "session/set_mode" && row["params"]["modeId"] == "default"),
         "no default mode"
     );
     ensure!(
-        log.iter().any(|row| row["method"] == "session/set_model" && row["params"]["modelId"] == "fixture-model"),
+        log.iter().any(|row| row["method"] == "session/set_model"
+            && row["params"]["modelId"] == "fixture-model"),
         "no model selection"
     );
-    ensure!(decisions(&log) == vec![json!("once")], "decisions {:?}", decisions(&log));
+    ensure!(
+        decisions(&log) == vec![json!("once")],
+        "decisions {:?}",
+        decisions(&log)
+    );
     let prompt = find("session/prompt");
-    let first = prompt["params"]["prompt"][0]["text"].as_str().unwrap_or_default();
-    let second = prompt["params"]["prompt"][1]["text"].as_str().unwrap_or_default();
-    ensure!(first.starts_with("<minarbot_context>\n<runtime_info>"), "context start");
+    let first = prompt["params"]["prompt"][0]["text"]
+        .as_str()
+        .unwrap_or_default();
+    let second = prompt["params"]["prompt"][1]["text"]
+        .as_str()
+        .unwrap_or_default();
+    ensure!(
+        first.starts_with("<minarbot_context>\n<runtime_info>"),
+        "context start"
+    );
     ensure!(first.ends_with("</minarbot_context>"), "context end");
-    ensure!(second.contains("Minarbot native context."), "instructions missing");
+    ensure!(
+        second.contains("Minarbot native context."),
+        "instructions missing"
+    );
     // The prompt now carries the transcript as `<minarbot-message>` tags; the
     // last one is the user's message (Node matched a trailing `user: hello`).
     let last_message = second
@@ -174,7 +222,10 @@ async fn supervised_session(runtime: &str) -> Result<()> {
         last_message["role"] == "user" && last_message["content"] == "hello",
         "last prompt message {last_message} in {second:?}"
     );
-    ensure!(prompt["params"]["sessionId"] == "fixture-session", "session id");
+    ensure!(
+        prompt["params"]["sessionId"] == "fixture-session",
+        "session id"
+    );
     Ok(())
 }
 
@@ -217,29 +268,41 @@ async fn kiro_initialize_supervised_session_stream_segments_tool_one_use_permiss
 #[tokio::test]
 async fn acp_resume_suppresses_replay_and_keeps_cwd_and_credentials_scoped() -> Result<()> {
     let f = Acp::start("hermes", true, 15_000, "fixture-model").await?;
-    ensure!(f.complete(&f.send("hello").await?, "allow").await?["status"] == "done", "first turn");
+    ensure!(
+        f.complete(&f.send("hello").await?, "allow").await?["status"] == "done",
+        "first turn"
+    );
     let resumed = f.complete(&f.send("hello again").await?, "allow").await?;
     ensure!(resumed["status"] == "done", "resumed: {}", resumed["error"]);
-    ensure!(!resumed.to_string().contains("Historic"), "historic chunk replayed");
+    ensure!(
+        !resumed.to_string().contains("Historic"),
+        "historic chunk replayed"
+    );
     let log = f.log()?;
     let loaded = log
         .iter()
         .find(|row| row["method"] == "session/load")
         .ok_or("no session/load")?;
-    ensure!(loaded["params"]["sessionId"] == "fixture-session", "loaded session");
+    ensure!(
+        loaded["params"]["sessionId"] == "fixture-session",
+        "loaded session"
+    );
     ensure!(
         loaded["params"]["cwd"] == f.workspace.to_string_lossy().as_ref(),
         "loaded cwd"
     );
     ensure!(
-        loaded["params"]["mcpServers"].to_string().contains(SESSION_TOKEN),
+        loaded["params"]["mcpServers"]
+            .to_string()
+            .contains(SESSION_TOKEN),
         "loaded session lacks the MCP token"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn acp_file_requests_reject_outside_paths_and_symlinks_require_write_approval() -> Result<()> {
+async fn acp_file_requests_reject_outside_paths_and_symlinks_require_write_approval() -> Result<()>
+{
     let f = Acp::start("hermes", true, 15_000, "fixture-model").await?;
     let turn = f.send("FILES").await?;
     let pending = f
@@ -253,13 +316,27 @@ async fn acp_file_requests_reject_outside_paths_and_symlinks_require_write_appro
     let outside = f.root.database().parent().ok_or("data dir")?.to_owned();
     fs::write(outside.join("escape.txt"), "Outside workspace fixture")?;
     symlink(&outside, f.workspace.join("outside"))?;
-    ensure!(pending["status"] == "running", "pending status {}", pending["status"]);
+    ensure!(
+        pending["status"] == "running",
+        "pending status {}",
+        pending["status"]
+    );
     let done = f.complete(&turn, "allow").await?;
     ensure!(done["status"] == "done", "files: {}", done["error"]);
-    ensure!(fs::read_to_string(f.workspace.join("hello.txt"))? == "hello\n", "hello.txt");
-    ensure!(done["harnessApprovals"].as_array().map(Vec::len) == Some(2), "approvals");
     ensure!(
-        !f.workspace.parent().ok_or("parent")?.join("escape.txt").exists(),
+        fs::read_to_string(f.workspace.join("hello.txt"))? == "hello\n",
+        "hello.txt"
+    );
+    ensure!(
+        done["harnessApprovals"].as_array().map(Vec::len) == Some(2),
+        "approvals"
+    );
+    ensure!(
+        !f.workspace
+            .parent()
+            .ok_or("parent")?
+            .join("escape.txt")
+            .exists(),
         "wrote outside the workspace"
     );
     Ok(())
@@ -270,8 +347,14 @@ async fn acp_read_only_workspace_rejects_file_writes_without_approval() -> Resul
     let f = Acp::start("hermes", false, 15_000, "fixture-model").await?;
     let done = f.complete(&f.send("READONLY").await?, "allow").await?;
     ensure!(done["status"] == "done", "readonly: {}", done["error"]);
-    ensure!(!f.workspace.join("readonly.txt").exists(), "read-only write succeeded");
-    ensure!(done["harnessApprovals"].as_array().map(Vec::len) == Some(1), "approvals");
+    ensure!(
+        !f.workspace.join("readonly.txt").exists(),
+        "read-only write succeeded"
+    );
+    ensure!(
+        done["harnessApprovals"].as_array().map(Vec::len) == Some(1),
+        "approvals"
+    );
     Ok(())
 }
 
@@ -287,7 +370,10 @@ async fn pi_rpc_streams_requests_tool_approval_selects_model_and_cancels() -> Re
             .is_some_and(|entries| entries.iter().any(|entry| entry["kind"] == "tool")),
         "no tool segment"
     );
-    ensure!(done["harnessApprovals"].as_array().map(Vec::len) == Some(1), "approvals");
+    ensure!(
+        done["harnessApprovals"].as_array().map(Vec::len) == Some(1),
+        "approvals"
+    );
     let choices = f.app.get(&format!("{}/runtimes", f.path)).await?;
     ensure!(
         choices["choices"]
@@ -297,15 +383,23 @@ async fn pi_rpc_streams_requests_tool_approval_selects_model_and_cancels() -> Re
         "pi resume capability {choices}"
     );
     ensure!(
-        f.log()?.iter().any(|row| row["type"] == "set_model" && row["provider"] == "fixture" && row["modelId"] == "model"),
+        f.log()?.iter().any(|row| row["type"] == "set_model"
+            && row["provider"] == "fixture"
+            && row["modelId"] == "model"),
         "no Pi model selection"
     );
     let pending = f.send("WAIT").await?;
-    f.until(&pending, |row| row["partial"]["text"] == "Waiting.").await?;
-    f.app
-        .post(&format!("{}/{pending}/cancel", f.turns()), json!({"id": new_id()}))
+    f.until(&pending, |row| row["partial"]["text"] == "Waiting.")
         .await?;
-    let cancelled = f.until(&pending, |row| row["status"] == "cancelled").await?;
+    f.app
+        .post(
+            &format!("{}/{pending}/cancel", f.turns()),
+            json!({"id": new_id()}),
+        )
+        .await?;
+    let cancelled = f
+        .until(&pending, |row| row["status"] == "cancelled")
+        .await?;
     ensure!(cancelled["status"] == "cancelled", "cancel");
     Ok(())
 }
@@ -315,8 +409,16 @@ async fn acp_denied_permission_never_grants_persistent_option() -> Result<()> {
     let f = Acp::start("hermes", true, 15_000, "fixture-model").await?;
     let done = f.complete(&f.send("hello").await?, "deny").await?;
     ensure!(done["status"] == "done", "denied: {}", done["error"]);
-    ensure!(done["activity"]["harness"][0]["state"] == "failed", "tool state {}", done["activity"]["harness"]);
-    ensure!(decisions(&f.log()?) == vec![json!("deny")], "decisions {:?}", decisions(&f.log()?));
+    ensure!(
+        done["activity"]["harness"][0]["state"] == "failed",
+        "tool state {}",
+        done["activity"]["harness"]
+    );
+    ensure!(
+        decisions(&f.log()?) == vec![json!("deny")],
+        "decisions {:?}",
+        decisions(&f.log()?)
+    );
     Ok(())
 }
 
@@ -324,15 +426,23 @@ async fn bounded_failure(mode: &str) -> Result<()> {
     let f = Acp::start("hermes", true, 5_000, "fixture-model").await?;
     let turn = f.send(mode).await?;
     let failed = f
-        .until(&turn, |row| row["status"] == "done" || row["status"] == "failed")
+        .until(&turn, |row| {
+            row["status"] == "done" || row["status"] == "failed"
+        })
         .await?;
     ensure!(failed["status"] == "failed", "{mode}: {}", failed["status"]);
     let error = failed["error"].as_str().unwrap_or_default().to_lowercase();
     ensure!(
-        ["stopped", "invalid", "timed out"].iter().any(|word| error.contains(word)),
+        ["stopped", "invalid", "timed out"]
+            .iter()
+            .any(|word| error.contains(word)),
         "{mode} error {error}"
     );
-    let prompts = f.log()?.iter().filter(|row| row["method"] == "session/prompt").count();
+    let prompts = f
+        .log()?
+        .iter()
+        .filter(|row| row["method"] == "session/prompt")
+        .count();
     ensure!(prompts == 1, "{mode} prompts {prompts}");
     Ok(())
 }
@@ -364,16 +474,29 @@ async fn acp_cancel_reaches_child_kills_detached_tool_process_and_preserves_insp
 ) -> Result<()> {
     let f = Acp::start("hermes", true, 15_000, "fixture-model").await?;
     let turn = f.send("TREE").await?;
-    f.until(&turn, |row| row["partial"]["text"] == "Waiting.").await?;
-    let pid: u32 = fs::read_to_string(f.workspace.join("child-pid"))?.trim().parse()?;
-    let start = stat(pid).and_then(|fields| fields.get(19).cloned()).ok_or("Detached tool did not start")?;
-    let alive = || stat(pid).is_some_and(|fields| fields.get(19) == Some(&start) && fields[0] != "Z");
+    f.until(&turn, |row| row["partial"]["text"] == "Waiting.")
+        .await?;
+    let pid: u32 = fs::read_to_string(f.workspace.join("child-pid"))?
+        .trim()
+        .parse()?;
+    let start = stat(pid)
+        .and_then(|fields| fields.get(19).cloned())
+        .ok_or("Detached tool did not start")?;
+    let alive =
+        || stat(pid).is_some_and(|fields| fields.get(19) == Some(&start) && fields[0] != "Z");
     ensure!(alive(), "detached tool not running");
     f.app
-        .post(&format!("{}/{turn}/cancel", f.turns()), json!({"id": new_id()}))
+        .post(
+            &format!("{}/{turn}/cancel", f.turns()),
+            json!({"id": new_id()}),
+        )
         .await?;
     let stopped = f.until(&turn, |row| row["status"] == "cancelled").await?;
-    ensure!(stopped["reply"].is_null(), "reply after cancel {}", stopped["reply"]);
+    ensure!(
+        stopped["reply"].is_null(),
+        "reply after cancel {}",
+        stopped["reply"]
+    );
     let received = || f.workspace.join("cancel-received").exists();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while (alive() || !received()) && tokio::time::Instant::now() < deadline {
@@ -393,18 +516,35 @@ async fn acp_cancel_reaches_child_kills_detached_tool_process_and_preserves_insp
         })
         .collect();
     ensure!(
-        notices == vec![json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": "fixture-session"}})],
+        notices
+            == vec![
+                json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": "fixture-session"}})
+            ],
         "cancel notices {notices:?}"
     );
     let inspection = f.app.get(&format!("/api/turns/{turn}/inspect")).await?;
     let step = &inspection["harness"][0];
-    ensure!(inspection["status"] == "cancelled", "inspect status {}", inspection["status"]);
+    ensure!(
+        inspection["status"] == "cancelled",
+        "inspect status {}",
+        inspection["status"]
+    );
     ensure!(step["id"] == "worker", "step {step}");
     ensure!(step["state"] == "in_progress", "step state {step}");
-    ensure!(!step["started"].is_null() && step["started"] != false, "step start");
+    ensure!(
+        !step["started"].is_null() && step["started"] != false,
+        "step start"
+    );
     let arguments: Value = serde_json::from_str(step["arguments"].as_str().unwrap_or("null"))?;
-    ensure!(arguments == json!({"pid": pid}), "step arguments {arguments}");
-    ensure!(step["result"] == "Worker started", "step result {}", step["result"]);
+    ensure!(
+        arguments == json!({"pid": pid}),
+        "step arguments {arguments}"
+    );
+    ensure!(
+        step["result"] == "Worker started",
+        "step result {}",
+        step["result"]
+    );
     ensure!(
         inspection["engineStderr"] == "ACP cancelled [REDACTED]",
         "stderr {}",
@@ -425,7 +565,15 @@ async fn acp_runtimes_work_through_server_approvals_segments_and_runtime_picker(
         .option("timeout", 15_000)
         .workspace(&agent, &workspace, true)
         .issuer(&issuer);
-    for runtime in ["hermes", "antigravity", "grok", "opencode", "gemini", "kiro", "pi"] {
+    for runtime in [
+        "hermes",
+        "antigravity",
+        "grok",
+        "opencode",
+        "gemini",
+        "kiro",
+        "pi",
+    ] {
         config = config.executable(runtime, &executable);
     }
     let app = root.start(config).await?;
@@ -443,7 +591,8 @@ async fn acp_runtimes_work_through_server_approvals_segments_and_runtime_picker(
         )
         .await?;
         let turn = new_id();
-        app.post(&turns, json!({"id": turn, "text": "hello"})).await?;
+        app.post(&turns, json!({"id": turn, "text": "hello"}))
+            .await?;
         let done = until(format!("{runtime} turn"), || async {
             let row = app.row(&turns, &turn).await?.ok_or("turn missing")?;
             for card in row["harnessApprovals"].as_array().into_iter().flatten() {
@@ -462,14 +611,21 @@ async fn acp_runtimes_work_through_server_approvals_segments_and_runtime_picker(
             Ok((row["status"] == "done").then_some(row))
         })
         .await?;
-        ensure!(done["reply"] == "Final answer.", "{runtime} reply {}", done["reply"]);
-        ensure!(done["activity"]["stream"].as_array().map(Vec::len) == Some(3), "{runtime} stream");
+        ensure!(
+            done["reply"] == "Final answer.",
+            "{runtime} reply {}",
+            done["reply"]
+        );
+        ensure!(
+            done["activity"]["stream"].as_array().map(Vec::len) == Some(3),
+            "{runtime} stream"
+        );
     }
     let choices = app.get(&format!("/api/agents/{agent}/runtimes")).await?;
     ensure!(
-        choices["choices"]
-            .as_array()
-            .is_some_and(|choices| choices.iter().any(|choice| choice["runtime"] == "hermes" && choice["available"] == true)),
+        choices["choices"].as_array().is_some_and(|choices| choices
+            .iter()
+            .any(|choice| choice["runtime"] == "hermes" && choice["available"] == true)),
         "hermes not available: {choices}"
     );
     Ok(())
@@ -492,11 +648,24 @@ async fn acp_room_queue_checkpoints_and_stop_preserve_peer_approvals() -> Result
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .output()?;
-        ensure!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        ensure!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(())
     };
     git(&["init", "-q"])?;
-    git(&["-c", "user.name=ACP Test", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "Fixture"])?;
+    git(&[
+        "-c",
+        "user.name=ACP Test",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "Fixture",
+    ])?;
     let issuer = SessionIssuer::start().await?;
     let app = root
         .start(
@@ -534,17 +703,25 @@ async fn acp_room_queue_checkpoints_and_stop_preserve_peer_approvals() -> Result
     }
     let path = format!("/api/channels/{}/turns", id(&project["sections"][0])?);
     let root_turn = new_id();
-    app.post(&path, json!({"id": root_turn, "text": "hello"})).await?;
+    app.post(&path, json!({"id": root_turn, "text": "hello"}))
+        .await?;
     let rows = app
         .wait_get(&path, |rows| {
             rows.as_array().is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row["harnessApprovals"].as_array().is_some_and(|cards| !cards.is_empty()))
+                rows.iter().any(|row| {
+                    row["harnessApprovals"]
+                        .as_array()
+                        .is_some_and(|cards| !cards.is_empty())
+                })
             })
         })
         .await?;
     let rows = rows.as_array().ok_or("rows")?;
-    let active = rows.iter().find(|row| row["status"] == "running").ok_or("no running member")?.clone();
+    let active = rows
+        .iter()
+        .find(|row| row["status"] == "running")
+        .ok_or("no running member")?
+        .clone();
     let queued = rows
         .iter()
         .find(|row| row["status"] == "queued")
@@ -558,20 +735,35 @@ async fn acp_room_queue_checkpoints_and_stop_preserve_peer_approvals() -> Result
     )
     .await?;
     app.wait_row(&path, &queued_id, |row| {
-        row["harnessApprovals"].as_array().is_some_and(|cards| !cards.is_empty())
+        row["harnessApprovals"]
+            .as_array()
+            .is_some_and(|cards| !cards.is_empty())
     })
     .await?;
     let first = app.row(&path, &active_id).await?.ok_or("active row")?;
-    ensure!(first["status"] == "done", "first member {}", first["status"]);
-    ensure!(first["checkpoint"]["restorable"] == true, "checkpoint {}", first["checkpoint"]);
+    ensure!(
+        first["status"] == "done",
+        "first member {}",
+        first["status"]
+    );
+    ensure!(
+        first["checkpoint"]["restorable"] == true,
+        "checkpoint {}",
+        first["checkpoint"]
+    );
     app.post(
         &path.replace("/turns", &format!("/discussions/{root_turn}/stop")),
         json!({"id": new_id(), "generation": root_turn}),
     )
     .await?;
     let stopped = app
-        .wait_row(&path, &queued_id, |row| row["harnessApprovals"][0]["state"] == "expired")
+        .wait_row(&path, &queued_id, |row| {
+            row["harnessApprovals"][0]["state"] == "expired"
+        })
         .await?;
-    ensure!(stopped["harnessApprovals"][0]["state"] == "expired", "peer approval kept");
+    ensure!(
+        stopped["harnessApprovals"][0]["state"] == "expired",
+        "peer approval kept"
+    );
     Ok(())
 }

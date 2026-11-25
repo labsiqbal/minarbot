@@ -102,18 +102,26 @@ async fn serve(
         )
     };
     if head.starts_with("GET ") {
-        stream.write_all(reply("405 Method Not Allowed", None).as_bytes()).await?;
+        stream
+            .write_all(reply("405 Method Not Allowed", None).as_bytes())
+            .await?;
         return Ok(());
     }
     let input: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     if input.get("id").is_none() {
-        stream.write_all(reply("202 Accepted", None).as_bytes()).await?;
+        stream
+            .write_all(reply("202 Accepted", None).as_bytes())
+            .await?;
         return Ok(());
     }
     let result = match input["method"].as_str() {
-        Some("initialize") => json!({"protocolVersion": "2025-03-26", "capabilities": {"tools": {}},
-            "serverInfo": {"name": "uncertain-effect", "version": "1"}}),
-        Some("tools/list") => json!({"tools": [{"name": "effect", "inputSchema": {"type": "object"}}]}),
+        Some("initialize") => {
+            json!({"protocolVersion": "2025-03-26", "capabilities": {"tools": {}},
+            "serverInfo": {"name": "uncertain-effect", "version": "1"}})
+        }
+        Some("tools/list") => {
+            json!({"tools": [{"name": "effect", "inputSchema": {"type": "object"}}]})
+        }
         _ => {
             // Effect accepted; deliberately lose the result.
             effects.fetch_add(1, Ordering::SeqCst);
@@ -122,6 +130,8 @@ async fn serve(
         }
     };
     let response = json!({"jsonrpc": "2.0", "id": input["id"], "result": result});
-    stream.write_all(reply("200 OK", Some(response)).as_bytes()).await?;
+    stream
+        .write_all(reply("200 OK", Some(response)).as_bytes())
+        .await?;
     Ok(())
 }
