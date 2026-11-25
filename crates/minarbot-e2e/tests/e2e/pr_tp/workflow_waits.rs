@@ -19,6 +19,8 @@ use std::sync::{
 pub struct WorkflowHome {
     pub tp: Tp,
     pub options: HostOptions,
+    /// Test-control host on the same database (`workflowConfigurationFixture`).
+    pub host: Arc<minarbot_testkit::device_host::DeviceHost>,
     pub home: Value,
     pub project: String,
     pub other: String,
@@ -47,6 +49,10 @@ impl WorkflowHome {
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
             .collect();
         enroll(&options, &tp.jwt("user_owner")?, "new").await?;
+        let host = Arc::new(minarbot_testkit::device_host::DeviceHost::new(
+            options.clone(),
+        ));
+        super::fixture::locked(&tp.hosts).push(host.clone());
         let home = tp.data("/api/devices").await?[0].clone();
         let (project, other, agent, workflow) = (new_id(), new_id(), new_id(), new_id());
         for id in [&project, &other] {
@@ -71,6 +77,7 @@ impl WorkflowHome {
             graph: json!({"entry": "out", "maxSteps": 1, "nodes": [{"id": "out", "kind": "output"}]}),
             tp,
             options,
+            host,
             home,
             project,
             other,

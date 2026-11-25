@@ -11,3 +11,4 @@ mod fixture;
 mod schedules;
 mod shared;
 mod workflow_waits;
+mod workflows;
