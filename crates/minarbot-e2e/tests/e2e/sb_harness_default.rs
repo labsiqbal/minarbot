@@ -281,8 +281,7 @@ async fn rpc(app: &Server, name: &str, args: Value) -> Result<Value> {
 /// Dropped with the accounts: per-binding harness home rotation and its
 /// `config.toml` (a8cfcac sets `isolated_home = false`); harness turns now
 /// also see the full offered tool set (5528da5), so the "not offered" list
-/// left. The Node case's "workspace checks run without approval" is kept in
-/// Node for B8 (`docs/test-ledger.md`): in test mode every `run_shell` asks.
+/// left.
 #[tokio::test]
 async fn provider_isolation_account_home_rotation_and_mcp_shell_approval_boundaries() -> Result<()>
 {
@@ -405,28 +404,13 @@ async fn provider_isolation_account_home_rotation_and_mcp_shell_approval_boundar
         .await?;
         Ok::<_, minarbot_testkit::Error>(card)
     };
-    // B8: in test mode each workspace check asks; allow it so the check runs.
-    let normal = {
-        let call = rpc(
-            &app,
-            "run_shell",
-            json!({"command": "echo hello > result; cat result"}),
-        );
-        let card = async {
-            let card = approve_next().await?;
-            app.post(
-                &format!(
-                    "{path}/turns/{turn}/harness-approvals/{}",
-                    card["id"].as_str().unwrap_or_default()
-                ),
-                json!({"id": new_id(), "revision": card["revision"], "decision": "allow"}),
-            )
-            .await
-        };
-        let (result, approved) = tokio::join!(call, card);
-        approved?;
-        result?
-    };
+    // Workspace checks on a writable binding run without approval.
+    let normal = rpc(
+        &app,
+        "run_shell",
+        json!({"command": "echo hello > result; cat result"}),
+    )
+    .await?;
     ensure!(
         normal["structuredContent"]["exitCode"] == 0,
         "normal shell: {normal}"
@@ -436,9 +420,33 @@ async fn provider_isolation_account_home_rotation_and_mcp_shell_approval_boundar
             == json!({"recorded": true, "evidenceInWorkLog": true}),
         "verification: {normal}"
     );
+    let custom = rpc(
+        &app,
+        "run_shell",
+        json!({"command": "python3 -c \"assert 2 + 2 == 4\"", "check": true}),
+    )
+    .await?;
+    ensure!(
+        custom["structuredContent"]["exitCode"] == 0,
+        "custom check: {custom}"
+    );
+    ensure!(
+        custom["structuredContent"]["verification"]
+            == json!({"recorded": true, "evidenceInWorkLog": true}),
+        "custom verification: {custom}"
+    );
     ensure!(
         fs::read_to_string(workspace.join("result"))? == "hello\n",
         "shell output file"
+    );
+    let checked = app
+        .row(&format!("{path}/turns"), &turn)
+        .await?
+        .ok_or("turn")?;
+    ensure!(
+        checked["harnessApprovals"].as_array().map(Vec::len) == Some(0),
+        "workspace checks asked for approval: {}",
+        checked["harnessApprovals"]
     );
     let sensitive = rpc(&app, "run_shell", json!({"command": "rm result"}));
     let deny = async {

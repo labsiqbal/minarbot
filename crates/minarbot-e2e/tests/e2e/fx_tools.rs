@@ -1561,8 +1561,10 @@ fn scenario(request: &ModelRequest, script: &mut Scenario) -> std::result::Resul
     script.calls.push(name.to_owned());
     let args = match name {
         "open_file_in_panel" => json!({"id": script.target}),
+        // B8: a writable workspace runs plain commands without approval;
+        // `chmod` keeps this check behind the approval card.
         "run_shell" => {
-            json!({"command": "echo verified > checked.txt && test \"$(cat checked.txt)\" = verified", "check": true})
+            json!({"command": "echo verified > checked.txt && chmod 644 checked.txt && test \"$(cat checked.txt)\" = verified", "check": true})
         }
         _ => json!({"name": "hello.html", "text": "<h1>Hello</h1>"}),
     };

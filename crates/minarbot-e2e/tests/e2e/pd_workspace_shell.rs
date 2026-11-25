@@ -139,6 +139,19 @@ impl Turn<'_> {
         Ok(())
     }
 
+    /// B8: a writable binding runs a non-sensitive command without a card.
+    async fn unapproved(&self) -> Result<()> {
+        let row = self
+            .until(|row| row["status"] != "running" && row["status"] != "queued")
+            .await?;
+        ensure!(
+            row["harnessApprovals"] == json!([]),
+            "approval requested: {}",
+            row["harnessApprovals"]
+        );
+        Ok(())
+    }
+
     async fn cancel(&self) -> Result<()> {
         self.shell
             .app
@@ -196,12 +209,15 @@ async fn rust_shell_confines_cwd_filesystem_and_environment_and_enforces_read_on
             true,
         )
         .await?;
-    checked.decide("allow").await?;
     let checked_result = checked.result().await?;
+    checked.unapproved().await?;
     ensure!(checked_result["exitCode"] == 0, "check: {checked_result}");
     ensure!(checked_result["check"] == true, "check: {checked_result}");
 
-    let denied = shell.send(json!({"command": "touch denied"}), true).await?;
+    // `chmod` still needs approval on a writable binding.
+    let denied = shell
+        .send(json!({"command": "touch denied; chmod 600 denied"}), true)
+        .await?;
     denied.decide("deny").await?;
     let denied_result = denied.result().await?;
     ensure!(
@@ -263,8 +279,9 @@ async fn rust_shell_caps_output_times_out_and_stops_descendants_after_exit_and_c
             let turn = shell
                 .send(json!({"command": command, "timeoutMs": timeout}), true)
                 .await?;
-            turn.decide("allow").await?;
-            turn.result().await
+            let result = turn.result().await?;
+            turn.unapproved().await?;
+            Result::<Value>::Ok(result)
         }
     };
     let bounded = run("yes x", 2000).await?;
@@ -292,7 +309,6 @@ async fn rust_shell_caps_output_times_out_and_stops_descendants_after_exit_and_c
             true,
         )
         .await?;
-    cancelled.decide("allow").await?;
     let started = shell.workspace.join("started");
     until("shell command started", || async {
         Ok(started.exists().then_some(()))
@@ -300,6 +316,7 @@ async fn rust_shell_caps_output_times_out_and_stops_descendants_after_exit_and_c
     .await?;
     cancelled.cancel().await?;
     cancelled.until(|row| row["status"] == "cancelled").await?;
+    cancelled.unapproved().await?;
     let (orphan, aborted) = (
         shell.workspace.join("orphan"),
         shell.workspace.join("aborted"),

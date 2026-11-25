@@ -949,7 +949,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/harness-default.test.ts",
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/sb_harness_default.rs",
       "localPaths": [
         "app/harness-session.ts"
       ]
@@ -965,7 +965,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/harness-default.test.ts",
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/sb_harness_default.rs",
       "localPaths": [
         "app/harness.ts"
       ]
@@ -981,7 +981,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/harness-default.test.ts",
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/sb_harness_default.rs",
       "localPaths": [
         "app/harness.ts"
       ]
