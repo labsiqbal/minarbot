@@ -131,16 +131,23 @@ Behaviour that changed with #87, and how the ports treat it:
 
 - New `control.rs`: `ControlModel` (deferred answers, raw bodies, HTTP
   statuses, a stalled SSE stream, per-answer usage).
+- New `stub.rs`: `HttpStub`, a closure-backed HTTP server for remote MCP
+  servers and similar external fakes, with a lost-reply response.
 - `fake/gateway.rs`: streamed content deltas are forwarded as soon as their
   SSE line arrives (the Node fixture buffered the whole body, so a stalled
-  provider never showed partial text), and an answer without `usage` reports
-  no token usage instead of zeros.
+  provider never showed partial text), an answer without `usage` reports
+  no token usage instead of zeros, and an MCP result with a null
+  `structuredContent` but Minarbot fields (`files`, `omitted`, `uncertain`)
+  reaches the model as its JSON instead of the text `null`.
 
 ### Product bugs fixed
 
 | Bug | Fix |
 | --- | --- |
 | S1 | `crates/shared/skill_files.rs` accepted duplicate `SKILL.md` frontmatter keys (`name: x` then `name: y` kept `y`), because serde_json maps keep the last key. The TypeScript parser rejected them. The frontmatter is now parsed as a YAML mapping first, which rejects duplicates. |
+| S2 | a8cfcac removed the local `read_provider_settings` executor with provider accounts but kept offering the tool in private conversations, so every call failed. `turns/tools.rs` executes it again with the instance binding (`revision`, `providerInstance`, `model`, `configured`), the shape of the canonical executor, private-only and without arguments. |
+| S3 | `turns/harness.rs` (`specs`) offered `edit_profile` to harness turns in channels, where the executor refuses it with 403; the direct client offered it only in private conversations. It is now private-only, like the skill tools (ef64cd9). |
+| S4 | a8cfcac deleted the direct-provider path that appended the team roster (`## Messaging other agents`, capability epoch, teammates) to answer prompts, leaving `messaging::awareness` unused; harness agents no longer saw their teammates. `turns/provider.rs` (`call`) appends it again under the old conditions: answer calls only (not memory, compaction, goal judge or routing), not profile setup, and only when the turn may message teammates. |
 
 ### `app/compaction.test.ts`
 
@@ -183,6 +190,37 @@ Behaviour that changed with #87, and how the ports treat it:
 | --- | --- | ---: | --- |
 | Rust usage returns exact decimal totals, unknown counts and stable pages | `sb_usage::rust_usage_returns_exact_decimal_totals_unknown_counts_and_stable_pages` | 9 -> 8 | Full. |
 | usage records each provider call including tool loops, missing counts and failure | `sb_usage::usage_records_each_provider_call_including_tool_loops_missing_counts_and_failure` | 22 -> 20 | One row per harness call (the tool loop is one row). Dropped: the `finish_reason: length` mode, a direct-client rule. |
+
+### `app/mcp-context.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| MCP resources and prompts require exact grants and remain untrusted journaled data | `sb_mcp_context::mcp_resources_and_prompts_require_exact_grants_and_remain_untrusted_journaled_data` | 66 -> 63 | Refused calls (no grant, wrong agent, target override, bad prompt arguments, drift, revoked template) reach the model as MCP errors and the turn finishes; each step asserts the error result and that the remote saw no read. A lost MCP reply still fails the turn and resumes as uncertain without a second read. The remote MCP server is `stub::HttpStub`. |
+
+### `app/profile-tools.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| profile tool preserves authority, revision conflicts, execution snapshot and durable results | `sb_profile::profile_tool_preserves_authority_revision_conflicts_execution_snapshot_and_durable_results` | 26 -> 36 | Found S3 (`edit_profile` offered in channels). In a channel and after the journal-failure trigger the refusal reaches the model as an MCP error and the turn finishes (Node: failed); the profile stays unchanged in both. The model answers the harness verification reminder without repeating the tool. |
+
+### `app/provider-settings-tools.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| provider settings read stays private and excludes endpoint and credentials | `sb_provider_settings::provider_settings_read_stays_private_and_excludes_endpoint_and_credentials` | 11 -> 11 | Found S2. The result is `{revision, providerInstance, model, configured}`; dropped `providerAccount` and `backupModel` (#87). |
+| model changes preserve execution snapshot, scope and journal across restart | `sb_provider_settings::model_changes_preserve_execution_snapshot_scope_and_journal_across_restart` | 29 -> 16 | Dropped: the `set_provider_model` tool, its validation matrix, backup-model fallback and its journal trigger (all removed by #87). Ported: a held turn keeps its model across a profile edit, the acknowledged resume uses the current model, cancellation before the effect, other agents unchanged, restart. |
+
+### `app/scripts.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| local scripts require token and current agent grant, keep payload and retry identity | `sb_scripts::local_scripts_require_token_and_current_agent_grant_keep_payload_and_retry_identity` | 57 -> 47 | Full. |
+
+### `app/test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 130 | Kept in Node for B6: the two create replays while the provider is gone (`createRetry` and the replay after restart). Rust checks the replay once the instance is back. "No provider" is a disabled instance (the seeded test instance keeps its binary); `configured: false` became `runnable: false` with a `blocked_reason`. Found S4 (teammate roster missing from prompts). The static page is a minimal Leptos shell in a test `dist`. |
 
 <!-- stale-b files -->
 

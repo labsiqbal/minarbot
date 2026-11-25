@@ -82,3 +82,11 @@ fn iso_millis_matches_fixed_clock() -> Result<()> {
     );
     Ok(())
 }
+
+/// Whether a model request is the harness verification reminder that follows
+/// an effectful turn (`turns::harness::reminder`), not the user's request.
+pub fn reminder(request: &minarbot_testkit::model::ModelRequest) -> bool {
+    request
+        .last_user_text()
+        .starts_with("One verification reminder")
+}

@@ -345,9 +345,24 @@ fn tool_error(message: &str, status: Value) -> Value {
 }
 
 /// Text the model sees for a tool result.
+/// Tool result text for the model: structured content when present; a
+/// result with fields beyond `content`/`isError` (Minarbot's `files`,
+/// `omitted`, `uncertain`) as its full JSON, as the Node provider saw it;
+/// otherwise the text content.
 fn tool_text(result: &Value) -> String {
-    if let Some(structured) = result.get("structuredContent") {
+    if let Some(structured) = result
+        .get("structuredContent")
+        .filter(|value| !value.is_null())
+    {
         return structured.to_string();
+    }
+    let extra = result.as_object().is_some_and(|fields| {
+        fields.iter().any(|(key, value)| {
+            !["content", "isError", "structuredContent"].contains(&key.as_str()) && !value.is_null()
+        })
+    });
+    if extra {
+        return result.to_string();
     }
     if let Some(content) = result["content"].as_array() {
         return content

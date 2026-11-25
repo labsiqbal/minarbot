@@ -423,6 +423,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
             "read_history",
             "read_message",
             "search_memory",
+            "read_provider_settings",
             "list_skills",
             "read_skill",
             "read_skill_file",
@@ -488,6 +489,25 @@ pub(super) fn dispatch(
         }
         "read_history" | "read_message" | "read_attachment" => {
             super::history::read(db, turn, name, args)
+        }
+        "read_provider_settings" => {
+            if !turn["channel"].is_null() {
+                return Err(error(
+                    403,
+                    "Provider settings are only available in the agent's private conversation.",
+                ));
+            }
+            if !closed(args, &[]) {
+                return Err(error(
+                    400,
+                    "Reading provider settings does not accept arguments.",
+                ));
+            }
+            let a = data::agents::read(db, agent)?;
+            let instance = string(&a, "provider_instance");
+            Ok(
+                json!({"revision":a["revision"],"providerInstance":instance,"model":a["model"],"configured":!instance.is_empty()}),
+            )
         }
         "search_memory" | "remember_memory" | "remember" | "select_memory" => {
             super::memory::run(db, turn, name, args)

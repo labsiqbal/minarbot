@@ -102,15 +102,19 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
             "inspect_workspace_file",
             "open_file_in_panel",
             "ask_user",
-            "edit_profile",
             "run_shell",
             "project_stack",
             "library_docs",
         ]
         .contains(&string(&t["function"], "name"))
             || (turn["channel"].is_null()
-                && ["list_skills", "read_skill", "read_skill_file"]
-                    .contains(&string(&t["function"], "name")))
+                && [
+                    "edit_profile",
+                    "list_skills",
+                    "read_skill",
+                    "read_skill_file",
+                ]
+                .contains(&string(&t["function"], "name")))
             || (crate::files::rich_html::available(state, turn)
                 && matches!(
                     string(&t["function"], "name"),
