@@ -14,6 +14,7 @@ mod sa_file_output_panel;
 mod sa_memory;
 mod sa_memory_selection;
 mod sa_memory_tools;
+mod sa_models;
 mod sa_routines;
 mod sa_shared_data;
 mod sa_support;

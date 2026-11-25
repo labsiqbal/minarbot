@@ -156,6 +156,7 @@ answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
 | `app/rust-core.test.ts` | 2 | 2 | 0 | 0 |
 | `app/rust-workspace-git-http.test.ts` | 2 | 2 | 0 | 0 |
 | `app/routines.test.ts` | 4 | 4 | 0 | 0 |
+| `app/models.test.ts` | 1 | 1 | 0 | 0 |
 
 ### `app/memory.test.ts`
 
@@ -211,6 +212,12 @@ answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
 | routine occurrences persist once and isolate each run from main history | `sa_routines::routine_occurrences_persist_once_and_isolate_each_run_from_main_history` | 38 -> 49 | Real clock (scheduling). Icon from `sa_support::web_dist`. H1: a direct `no_update` is refused over MCP. |
 | routine hub pages visible local owners, filters safely and never returns secrets | `sa_routines::routine_hub_pages_visible_local_owners_filters_safely_and_never_returns_secrets` | 22 -> 30 | Full. |
 | routine hub delete is revisioned and recoverable, retains runs, revokes webhook and prevents resurrection | `sa_routines::routine_hub_delete_is_revisioned_and_recoverable_retains_runs_revokes_webhook_and_prevents_resurrection` | 15 -> 22 | Full. |
+
+### `app/models.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| model discovery validates catalog and never follows credential redirects | `sa_models::model_discovery_validates_catalog_and_never_follows_credential_redirects` | 13 -> 11 | #87 removed `GET /api/models` (now 404 "Use a provider instance model catalog.") and the server's own provider HTTP client. The test asks the test-gateway instance (`POST /api/provider-instances/codex-test-gateway/models`); `fake-gateway` reads a raw loopback provider (`sa_support::RawProvider`). Kept: bearer key and path on every provider call, deduplicated ids, empty catalog, 502 without the provider detail or key for 401, oversized, malformed, `"\n"` and `" model "` ids. Changed: ids keep the instance's order (`["z","a"]`; the API catalog sorted them) and the default comes from the harness. Dropped (#87 removed the server's provider client and API settings): the redirect mode (the harness fetches models now), `?runtime=api&account=`, startup rejection of an invalid `baseURL`, and 503 without a provider. |
 <!-- stale-a end -->
 
 ## #67 hosted Hub test migration

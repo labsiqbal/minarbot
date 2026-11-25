@@ -228,3 +228,101 @@ pub fn web_dist(root: &minarbot_testkit::TestRoot) -> Result<std::path::PathBuf>
     )?;
     Ok(dist)
 }
+
+/// One request a [`RawProvider`] received.
+#[derive(Clone, Debug)]
+pub struct RawRequest {
+    pub method: String,
+    pub path: String,
+    pub authorization: Option<String>,
+}
+
+/// Reply of a [`RawProvider`]: status, extra headers and body bytes.
+pub type RawReply = (u16, Vec<(String, String)>, Vec<u8>);
+
+/// Loopback HTTP/1.1 provider whose replies a closure decides byte for byte
+/// (redirects, oversized or malformed bodies), for upstream failure modes the
+/// scripted model cannot produce.
+pub struct RawProvider {
+    origin: String,
+    requests: Shared<Vec<RawRequest>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl RawProvider {
+    pub async fn start(
+        reply: impl Fn(&RawRequest) -> RawReply + Send + Sync + 'static,
+    ) -> Result<Self> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let requests: Shared<Vec<RawRequest>> = Shared::default();
+        let log = requests.clone();
+        let reply = std::sync::Arc::new(reply);
+        let task = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let (log, reply) = (log.clone(), reply.clone());
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut byte = [0_u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") && head.len() < 65_536 {
+                        if stream.read(&mut byte).await.unwrap_or(0) == 0 {
+                            return;
+                        }
+                        head.push(byte[0]);
+                    }
+                    let text = String::from_utf8_lossy(&head).into_owned();
+                    let mut lines = text.split("\r\n");
+                    let mut first = lines.next().unwrap_or_default().split(' ');
+                    let request = RawRequest {
+                        method: first.next().unwrap_or_default().to_owned(),
+                        path: first.next().unwrap_or_default().to_owned(),
+                        authorization: lines.find_map(|line| {
+                            line.split_once(':')
+                                .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                                .map(|(_, value)| value.trim().to_owned())
+                        }),
+                    };
+                    if let Ok(mut log) = log.lock() {
+                        log.push(request.clone());
+                    }
+                    let (status, headers, body) = reply(&request);
+                    let mut out = format!(
+                        "HTTP/1.1 {status} X\r\ncontent-length: {}\r\nconnection: close\r\n",
+                        body.len()
+                    );
+                    for (name, value) in headers {
+                        out.push_str(&format!("{name}: {value}\r\n"));
+                    }
+                    out.push_str("\r\n");
+                    let _ = stream.write_all(out.as_bytes()).await;
+                    let _ = stream.write_all(&body).await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+        Ok(Self {
+            origin,
+            requests,
+            task,
+        })
+    }
+
+    /// OpenAI-compatible base URL (`<origin>/v1`).
+    pub fn base_url(&self) -> String {
+        format!("{}/v1", self.origin)
+    }
+
+    pub fn requests(&self) -> Vec<RawRequest> {
+        self.requests
+            .lock()
+            .map(|log| log.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for RawProvider {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
