@@ -40,7 +40,7 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
         let db = &guard.connection;
         let turn = one(
             db,
-            "SELECT * FROM turns WHERE id=? AND status='running'",
+            "SELECT * FROM turns WHERE id=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))))",
             [caller["turn"].as_str()],
         )?
         .ok_or_else(|| error(403, "MCP authorization failed."))?;
@@ -262,7 +262,7 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
             one(
                 &guard.connection,
-                "SELECT * FROM turns WHERE id=? AND status='running'",
+                "SELECT * FROM turns WHERE id=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))))",
                 [string(&caller, "turn")],
             )?
             .ok_or_else(|| error(403, "MCP authorization failed."))?
