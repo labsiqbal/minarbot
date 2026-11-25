@@ -978,13 +978,13 @@ pub async fn start_pair(
             root: first.clone(),
             config: first_config,
             process: Some(first_process),
-            _slot: slot,
+            _slot: Slot::Own(slot),
         },
         Server {
             root: second.clone(),
             config: second_config,
             process: Some(second_process),
-            _slot: other,
+            _slot: Slot::Own(other),
         },
     ))
 }
