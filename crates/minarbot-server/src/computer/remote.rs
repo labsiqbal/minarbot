@@ -406,6 +406,21 @@ mod tests {
             one(&db, "SELECT status,paused FROM turns", [])?,
             Some(json!({"status":"interrupted","paused":0}))
         );
+        db.execute_batch(
+            "CREATE TABLE agent_requests(turn TEXT,expects_reply INTEGER,settled INTEGER);
+             CREATE TABLE delegation_tasks(creator_turn TEXT,delivery TEXT,wake_delivered INTEGER);
+             INSERT INTO turns VALUES('reply','interrupted',0,'stopped');
+             INSERT INTO agent_requests VALUES('reply',1,1);",
+        )?;
+        initialize(&db)?;
+        assert_eq!(
+            one(
+                &db,
+                "SELECT status,paused,error FROM turns WHERE id='reply'",
+                []
+            )?,
+            Some(json!({"status":"queued","paused":0,"error":Value::Null}))
+        );
         db.execute("INSERT INTO peer_revocations VALUES('token')", [])?;
         assert!(!messaging_allowed(&db, "token")?);
         Ok(())
