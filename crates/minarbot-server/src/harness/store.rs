@@ -1764,6 +1764,15 @@ pub async fn run(
             string(&external, "token").to_owned(),
         )
     };
+    if !judging && !external.is_null() {
+        crate::mcp::register_external_session(
+            state,
+            &id,
+            &token,
+            string(&turn, "agent"),
+            turn_id,
+        )?;
+    }
     if !judging && (id.is_empty() || token.is_empty() || token.len() > 4096) {
         return Err(error(
             502,
