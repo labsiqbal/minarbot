@@ -524,21 +524,31 @@ async fn serve(mut stream: TcpStream, handler: Handler) -> Result<()> {
     head.push_str("connection: close\r\n\r\n");
     stream.write_all(head.as_bytes()).await?;
     stream.flush().await?;
-    while let Some(chunk) = body.next().await {
+    let (mut reader, mut writer) = stream.into_split();
+    // A client that goes away ends the reply (and drops the upstream).
+    let mut probe = [0_u8; 1];
+    loop {
+        let chunk = tokio::select! {
+            chunk = body.next() => chunk,
+            read = reader.read(&mut probe) => match read {
+                Ok(0) | Err(_) => return Ok(()),
+                Ok(_) => continue,
+            },
+        };
+        let Some(chunk) = chunk else { break };
         match chunk {
             Ok(bytes) => {
-                if stream.write_all(&bytes).await.is_err() {
+                if writer.write_all(&bytes).await.is_err() {
                     return Ok(());
                 }
-                let _ = stream.flush().await;
+                let _ = writer.flush().await;
             }
             Err(_) => {
                 // Cut mid-body: close before the declared end.
-                drop(stream);
                 return Ok(());
             }
         }
     }
-    let _ = stream.shutdown().await;
+    let _ = writer.shutdown().await;
     Ok(())
 }

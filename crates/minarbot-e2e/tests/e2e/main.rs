@@ -15,6 +15,7 @@ mod pr_peer_transfer;
 mod pr_remote_agents;
 mod pr_room_chat;
 mod pr_support;
+mod pr_tp;
 mod pr_updates;
 mod questions;
 mod support;
