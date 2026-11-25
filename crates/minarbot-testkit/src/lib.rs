@@ -24,6 +24,7 @@ pub mod db;
 pub mod fake;
 pub mod fakes;
 pub mod gate;
+pub mod hmac;
 pub mod http;
 pub mod image;
 pub mod issuer;

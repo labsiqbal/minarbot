@@ -18,6 +18,7 @@ mod sa_models;
 mod sa_routines;
 mod sa_shared_data;
 mod sa_support;
+mod sa_workflows;
 mod sa_workspace_git;
 mod support;
 mod threads;

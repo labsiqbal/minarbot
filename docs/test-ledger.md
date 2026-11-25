@@ -146,6 +146,12 @@ one scripted reply so a test can act between "the model chose a tool" and
 answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
 (`not ported: option hubLink.<name>`), as the Node bridge did.
 
+Product bugs fixed in this slice:
+
+| Bug | Found by | Cause and fix |
+| --- | --- | --- |
+| P1 | workflow-http "parallel webhook ..." | A parallel branch that could not start (here an agent without a provider instance) returned its error out of `automation::workflows::runtime::settle`. That rolled back the whole automation tick every second, so the run stayed `ready` and every other routine, flow and workflow stalled. The branches now start inside a savepoint; a failure rolls them back and fails only that run, as a single step does. |
+
 | Node file | Node runtime cases | Rust tests | Dropped | Kept in Node |
 | --- | ---: | ---: | ---: | ---: |
 | `app/memory.test.ts` | 2 | 2 | 0 | 1 (TS module part) |
@@ -157,6 +163,7 @@ answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
 | `app/rust-workspace-git-http.test.ts` | 2 | 2 | 0 | 0 |
 | `app/routines.test.ts` | 4 | 4 | 0 | 0 |
 | `app/models.test.ts` | 1 | 1 | 0 | 0 |
+| `app/workflow-http.test.ts` | 12 | 12 (+1 regression) | 0 | 1 (TS module) |
 
 ### `app/memory.test.ts`
 
@@ -218,6 +225,23 @@ answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | --- | --- |
 | model discovery validates catalog and never follows credential redirects | `sa_models::model_discovery_validates_catalog_and_never_follows_credential_redirects` | 13 -> 11 | #87 removed `GET /api/models` (now 404 "Use a provider instance model catalog.") and the server's own provider HTTP client. The test asks the test-gateway instance (`POST /api/provider-instances/codex-test-gateway/models`); `fake-gateway` reads a raw loopback provider (`sa_support::RawProvider`). Kept: bearer key and path on every provider call, deduplicated ids, empty catalog, 502 without the provider detail or key for 401, oversized, malformed, `"\n"` and `" model "` ids. Changed: ids keep the instance's order (`["z","a"]`; the API catalog sorted them) and the default comes from the harness. Dropped (#87 removed the server's provider client and API settings): the redirect mode (the harness fetches models now), `?runtime=api&account=`, startup rejection of an invalid `baseURL`, and 503 without a provider. |
+
+### `app/workflow-http.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| legacy unsupported workflow steps fail once without producing output | `sa_workflows::legacy_unsupported_workflow_steps_fail_once_without_producing_output` | 10 -> 9 | Full. |
+| model conditions choose one branch without tools and reject ambiguous answers | `sa_workflows::model_conditions_choose_one_branch_without_tools_and_reject_ambiguous_answers` | 27 -> 25 | Full; "no tools" is asserted on the tools the harness offered the model. |
+| workflow HTTP versions, model steps, approval receipts and cancellation survive restart | `sa_workflows::workflow_http_versions_model_steps_approval_receipts_and_cancellation_survive_restart` | 53 -> 93 | Full. |
+| provider-free workflows continue beyond one batch and configuration listing is bounded | `sa_workflows::provider_free_workflows_continue_beyond_one_batch_and_configuration_listing_is_bounded` | 20 -> 19 | Full (`nextAt` relative to the fixed clock). |
+| workflow webhooks authenticate, deduplicate, ignore busy runs and recover rotation | `sa_workflows::workflow_webhooks_authenticate_deduplicate_ignore_busy_runs_and_recover_rotation` | 27 -> 51 | Full; real clock for signed timestamps and the 8-day receipt window. HMAC from `minarbot_testkit::hmac`. |
+| parallel webhook waits for provider before creating a receipt | `sa_workflows::parallel_webhook_waits_for_provider_before_creating_a_receipt` | 15 -> 12 | Full. After the restart with a provider the agent is bound to the new instance, because #87 agents bind instances instead of using a global provider. Found bug P1 (below); regression test `sa_workflows::parallel_branch_start_failure_fails_only_its_run`. |
+| workspace workflow directory pages across owners and keeps per-agent lists scoped | `sa_workflows::workspace_workflow_directory_pages_across_owners_and_keeps_per_agent_lists_scoped` | 15 -> 27 | Full. |
+| autosave stops after server canonicalizes condition property order | `sa_workflows::autosave_stops_after_server_canonicalizes_condition_property_order` | 4 -> 3 | Server half: the edit ack returns the draft's graph at revision 2. The case stays in Node for `workflowAutosaveDraft` (TS module `app/src/workflow-editor-state.ts`). |
+| workflow deletion revokes triggers, rejects stale commands and retains terminal results | `sa_workflows::workflow_deletion_revokes_triggers_rejects_stale_commands_and_retains_terminal_results` | 13 -> 32 | Full. |
+| workflow output inbox survives restart with stable paging and idempotent read | `sa_workflows::workflow_output_inbox_survives_restart_with_stable_paging_and_idempotent_read` | 11 -> 21 | Full. |
+| workflow channel outputs deliver once and recheck channel availability at completion | `sa_workflows::workflow_channel_outputs_deliver_once_and_recheck_channel_availability_at_completion` | 21 -> 47 | Full. |
+| workflow run pages retain older approvals after restart and validate cursors | `sa_workflows::workflow_run_pages_retain_older_approvals_after_restart_and_validate_cursors` | 6 -> 12 | Full. |
 <!-- stale-a end -->
 
 ## #67 hosted Hub test migration
