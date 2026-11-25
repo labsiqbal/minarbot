@@ -137,6 +137,14 @@ Recurring #87 differences, stated once and referenced per row:
   selected read-only to agents (409 "Memory note was selected by the user").
   Agent edits of such notes now assert that 409; revisions that followed
   them shift down by one.
+- **B1x (null coordination results).** `delegate_task` and `transfer_task`
+  return null like `ask_user` (B1), and the harness takes one more model
+  step before the server parks or stops the turn. Tests answer that step
+  with empty text (delegation) or never (transfer) and leave it out of
+  counts, as stage 1 does for B1.
+- **D1 (harness context).** The harness keeps its own conversation: the
+  server cannot prune older screenshots in it, and a resumed run starts a new
+  harness session that sees the transcript text, not earlier tool results.
 - **W1 (channel workspaces).** 7098b86 (#87) gives a channel without a project
   its lead agent's workspace, so workspace and Git tools are offered there.
 
@@ -150,6 +158,9 @@ Product bugs fixed in this slice:
 
 | Bug | Found by | Cause and fix |
 | --- | --- | --- |
+| P2 | image-attachment | Codex prompts repeated each attached image as a base64 data URL in the text prompt as well as an `input_image` item, and harness stdin accepted at most 2 MiB per message, so valid images above about 1.5 MiB failed the turn ("Coding harness context exceeds 2 MiB", then "input exceeded its buffer limit"). The prompt now carries a note instead of the data URL, the stdin limit covers the 4 MiB image budget plus the prompt (8 MiB), and `read_attachment` of an image already attached to the turn returns the "already included" note again. |
+| P3 | tool-budget | Harness continuations (question answer, transfer to another owner, restart) started with the full `MINARBOT_TOOL_BUDGET` again; `ask_user` and `transfer_task` were never counted because the run stops before reporting them; a transfer left the old owner's run spending the budget on 401 calls; and a run that failed after the budget ran out lost "Stopped after N tool steps. Resume to continue.". The server now passes the remaining budget, counts both tools, stops the old owner's run on transfer (keeping the turn queued for the new owner) and maps the failure. Resume and reassign keep their fresh budget (they reset `tool_budget_used`). |
+| P4 | agent-messages | MCP `tools/list` for a harness session listed private tools (skills, routines, profile) in channel deliveries and `send_message`/`list_agents`/`interrupt_agent` in no-reply notices, unlike `turns::tools::offered`. The session listing now applies the same filters. |
 | P1 | workflow-http "parallel webhook ..." | A parallel branch that could not start (here an agent without a provider instance) returned its error out of `automation::workflows::runtime::settle`. That rolled back the whole automation tick every second, so the run stayed `ready` and every other routine, flow and workflow stalled. The branches now start inside a savepoint; a failure rolls them back and fails only that run, as a single step does. |
 
 | Node file | Node runtime cases | Rust tests | Dropped | Kept in Node |
@@ -171,6 +182,11 @@ Product bugs fixed in this slice:
 | `app/transcription.test.ts` | 6 | 6 | 0 | 0 |
 | `app/mcp.test.ts` | 1 | 1 | 0 | 0 |
 | `app/slack.test.ts` | 8 | 8 | 0 | 0 |
+| `app/image-attachment.test.ts` | 3 | 1 | 2 | 0 |
+| `app/agent-result-files.test.ts` | 2 | 2 | 0 | 0 |
+| `app/tool-budget.test.ts` | 13 | 11 | 2 | 1 (TS module part) |
+| `app/fallback.test.ts` | 1 | 1 | 0 | 0 |
+| `app/coordination.test.ts` | 1 | 1 | 0 | 0 |
 
 ### `app/memory.test.ts`
 
@@ -330,6 +346,55 @@ channels and a record of `Authorization` headers for these cases.
 | Slack startup cancellation releases lock and status retains authentication cooldown | `sa_slack::slack_startup_cancellation_releases_lock_and_status_retains_authentication_cooldown` | 8 -> 7 | Full. |
 | Slack interactive Socket Mode withholds early ACK and commits one decision before redelivery ACK | `sa_slack::slack_interactive_socket_mode_withholds_early_ack_and_commits_one_decision_before_redelivery_ack` | 6 -> 5 | Full. |
 | Slack shared channels require opt-in mention and retain one scoped multi-user thread | `sa_slack::slack_shared_channels_require_opt_in_mention_and_retain_one_scoped_multi_user_thread` | 18 -> 17 | Full. |
+
+### `app/image-attachment.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| openai-compatible image attachments retain scope, bytes, retry identity and bounded rereading | `sa_image_attachment::openai_compatible_image_attachments_retain_scope_bytes_retry_identity_and_bounded_rereading` | 30 -> 32 | Full; found P2. The kit's `fake-gateway` now forwards `input_image` items, and the scripted model and gate accept bodies up to 64 MiB. |
+| anthropic image attachments retain scope, bytes, retry identity and bounded rereading | Dropped | 30 -> 0 | #87 removed the Anthropic wire format (direct provider clients); every family-neutral assertion is in the openai-compatible test. |
+| gemini image attachments retain scope, bytes, retry identity and bounded rereading | Dropped | 30 -> 0 | #87 removed the Gemini API; as above. |
+
+### `app/agent-result-files.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| requester reads returned teammate text artifacts but not private inputs or no-reply outputs | `sa_agent_result_files::requester_reads_returned_teammate_text_artifacts_but_not_private_inputs_or_no_reply_outputs` | 24 -> 20 (shared helper) | Full. `ModelGate::hold_when` replaces the provider's held continuation; H2. |
+| requester reads returned teammate PDF artifacts but not private inputs or no-reply outputs | `sa_agent_result_files::requester_reads_returned_teammate_pdf_artifacts_but_not_private_inputs_or_no_reply_outputs` | 24 -> 20 (shared helper) | Full; the PDF fixture is `sa_support::pdf_fixture` and the extraction hold is the kit PDF bridge (multi-thread runtime, because the bridge blocks). |
+
+### `app/tool-budget.test.ts`
+
+The fake desktop runtime is the kit computer bridge (`desktop-*` operations)
+with `desktop.testRuntime`; its lease directory is kept short so the proxy
+socket path fits `sun_path`.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| nine distinct tools complete before per-task budget requests a final answer without tools | `sa_tool_budget::nine_distinct_tools_complete_before_per_task_budget_requests_a_final_answer_without_tools` | 12 -> 6 | Full (the Node count includes the provider's per-request checks). |
+| budget setting rejects malformed values, survives restart and template recovery | `sa_tool_budget::budget_setting_rejects_malformed_values_survives_restart_and_template_recovery` | 9 -> 11 | Server half; `templateCommand` is built inline. `parseAgentTemplate` and `restoreAgentCreation` stay in the trimmed Node case (TS modules). |
+| resume gets fresh budget without replay; desktop images retain latest three across restart | `sa_tool_budget::resume_gets_fresh_budget_without_replay_desktop_images_retain_latest_three_across_restart` | 17 -> 11 | Kept: stop message, 10 captures, summary without tools, resume once (replayed command), 10 fresh captures, 11 requests, 20 distinct tool ids and screenshots, budget 10. D1: the "latest three images", "omitted" note, 10 earlier results in the resumed context and the per-attempt `budget_summary` call phase are API-runtime context management. |
+| legacy channel transfers share attempt budget beyond eight coordination steps | `sa_tool_budget::legacy_channel_transfers_share_attempt_budget_beyond_eight_coordination_steps` | 5 -> 5 | Full after P3; B1x. |
+| duplicate provider IDs have distinct protocol message (current attempt) | Dropped | 4 -> 0 | Provider tool-call IDs stay inside the harness protocol since #87 (the server's provider client was removed); the server never sees them. |
+| duplicate provider IDs have distinct protocol message (saved call) | Dropped | 4 -> 0 | Same. |
+| workflow uses shared per-task budget and final summary | `sa_tool_budget::workflow_uses_shared_per_task_budget_and_final_summary` | 6 -> 6 (shared helper) | Full. |
+| routine uses shared per-task budget and final summary | `sa_tool_budget::routine_uses_shared_per_task_budget_and_final_summary` | 6 -> 6 (shared helper) | Full. |
+| routine flow uses shared per-task budget and final summary | `sa_tool_budget::routine_flow_uses_shared_per_task_budget_and_final_summary` | 6 -> 6 (shared helper) | Full. |
+| invalid final summary fails clearly and never executes tools (string) | `sa_tool_budget::invalid_final_summary_fails_clearly_and_never_executes_tools_string` | 5 -> 5 (shared helper) | Full after P3. |
+| invalid final summary fails clearly and never executes tools (object) | `sa_tool_budget::invalid_final_summary_fails_clearly_and_never_executes_tools_object` | 5 -> 5 (shared helper) | Full after P3. |
+| reassign gets fresh budget while retaining recorded computer calls | `sa_tool_budget::reassign_gets_fresh_budget_while_retaining_recorded_computer_calls` | 6 -> 6 | Full. |
+| automatic question continuation retains attempt budget across restart | `sa_tool_budget::automatic_question_continuation_retains_attempt_budget_across_restart` | 5 -> 5 | Full after P3; the B1 step (here the first run's budget summary) is left out of the count. |
+
+### `app/fallback.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| backup model is opt-in, bounded, durable and never replays after activity or uncertainty | `sa_fallback::backup_model_is_opt_in_bounded_durable_and_never_replays_after_activity_or_uncertainty` | 37 -> 25 | **Owner decision needed.** The brief records that #87 accepts and ignores `backupModel` (the upgrade drops `agents.backup_model`), so no turn can fall back. The test asserts that: `backupModel` is accepted and not stored; every failure class (429, 503, 403, malformed, lost reply, after a tool) makes exactly one attempt with the agent's model and is never replayed by the same command; usage rows exist and never contain the upstream detail; scoped and workflow turns make one attempt; cancel, uncertain resume and edits behave as before. Dropped: the backup-success branches (`answer_model == "backup"`, `["primary","backup"]` call lists, the question and restart-during-backup flows that only the backup model reached), the template `backupModel` parse (TS module, needs a stored backup), the client-side `timeout` scenario and `truncated` (finish reasons are read by the harness since #87). |
+
+### `app/coordination.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| coordination: durable delegation, transfer, cancellation, rejection and recovery | `sa_coordination::coordination_durable_delegation_transfer_cancellation_rejection_and_recovery` | 55 -> 47 | Full; B1x. Holds use `Reply::hold` and `ModelGate::hold_when`. Children are paused, cancelled or restarted after their first model call (the harness reaches the model shortly after the child starts running). |
 <!-- stale-a end -->
 
 ## #67 hosted Hub test migration

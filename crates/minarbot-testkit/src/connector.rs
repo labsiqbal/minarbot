@@ -287,7 +287,10 @@ impl Connector {
 
     /// Channels the next [`Self::start`] passes to the connector.
     pub fn channels(&self) -> Vec<String> {
-        self.channels.lock().map(|channels| channels.clone()).unwrap_or_default()
+        self.channels
+            .lock()
+            .map(|channels| channels.clone())
+            .unwrap_or_default()
     }
 
     pub fn set_channels(&self, channels: Vec<String>) {
@@ -818,7 +821,9 @@ async fn platform_call(
         if state.script.rate_limit_once.contains(&method) {
             match state.limited.get(&method).copied() {
                 None => {
-                    state.limited.insert(method.clone(), std::time::Instant::now());
+                    state
+                        .limited
+                        .insert(method.clone(), std::time::Instant::now());
                     return (
                         axum::http::StatusCode::TOO_MANY_REQUESTS,
                         [(header::RETRY_AFTER, "1")],
@@ -827,7 +832,9 @@ async fn platform_call(
                         .into_response();
                 }
                 Some(first) if first.elapsed() < Duration::from_secs(1) => {
-                    state.error.get_or_insert(format!("{method} retried before Retry-After"));
+                    state
+                        .error
+                        .get_or_insert(format!("{method} retried before Retry-After"));
                 }
                 Some(_) => {}
             }

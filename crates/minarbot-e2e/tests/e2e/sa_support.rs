@@ -445,3 +445,66 @@ pub fn turn_tool_calls(request: &ModelRequest) -> Vec<String> {
         .filter_map(|call| call["function"]["name"].as_str().map(str::to_owned))
         .collect()
 }
+
+/// Uncompressed one-font PDF with `text` on each of `pages` pages (port of
+/// `app/test-support/pdf-fixture.ts` with `compressed = false`).
+pub fn pdf_fixture(text: &str, pages: usize) -> Vec<u8> {
+    let mut objects: Vec<Vec<u8>> = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        format!(
+            "<< /Type /Pages /Kids [{}] /Count {pages} >>",
+            (0..pages)
+                .map(|i| format!("{} 0 R", 4 + i * 2))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+        .into_bytes(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+    ];
+    let escaped: String = text
+        .chars()
+        .flat_map(|c| {
+            if matches!(c, '\\' | '(' | ')') {
+                vec!['\\', c]
+            } else {
+                vec![c]
+            }
+        })
+        .collect();
+    for i in 0..pages {
+        objects.push(
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10000 10000] /Resources << /Font << /F1 3 0 R >> >> /Contents {} 0 R >>",
+                5 + i * 2
+            )
+            .into_bytes(),
+        );
+        let stream = format!("BT /F1 12 Tf 40 9900 Td ({escaped}) Tj ET");
+        objects.push(
+            format!(
+                "<< /Length {} >>\nstream\n{stream}\nendstream",
+                stream.len()
+            )
+            .into_bytes(),
+        );
+    }
+    let mut out = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, object) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+        out.extend_from_slice(object);
+        out.extend_from_slice(b"\nendobj\n");
+    }
+    let start = out.len();
+    let mut xref = format!("xref\n0 {}\n0000000000 65535 f \n", offsets.len() + 1);
+    for offset in &offsets {
+        xref.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    xref.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF\n",
+        offsets.len() + 1
+    ));
+    out.extend_from_slice(xref.as_bytes());
+    out
+}

@@ -36,11 +36,16 @@ use std::{
 };
 use tokio::{net::TcpListener, sync::Notify, task::JoinHandle};
 
+/// Which completion requests to hold (by request body).
+type Filter = Arc<dyn Fn(&serde_json::Value) -> bool + Send + Sync>;
+
 #[derive(Default)]
 struct Inner {
     armed: bool,
     held: usize,
-    open: bool,
+    /// Incremented by every release; a held reply waits for a newer one.
+    generation: u64,
+    filter: Option<Filter>,
 }
 
 #[derive(Clone)]
@@ -72,6 +77,7 @@ impl ModelGate {
         };
         let app = Router::new()
             .fallback(any(forward))
+            .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
             .with_state(shared.clone());
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let origin = format!("http://{}", listener.local_addr()?);
@@ -104,15 +110,29 @@ impl ModelGate {
 
     /// Hold the reply of the next completion request until [`Self::release`].
     pub fn arm(&self) {
-        self.with(|inner| {
-            inner.armed = true;
-            inner.open = false;
-        });
+        self.with(|inner| inner.armed = true);
     }
 
-    /// Let the held reply (if any) through.
+    /// Hold the reply of every completion request whose JSON body matches
+    /// `filter` until [`Self::release`] (in addition to [`Self::arm`]).
+    pub fn hold_when(&self, filter: impl Fn(&serde_json::Value) -> bool + Send + Sync + 'static) {
+        let filter: Filter = Arc::new(filter);
+        self.with(|inner| inner.filter = Some(filter));
+    }
+
+    /// Stop holding new requests by filter (held ones stay held).
+    pub fn clear_hold(&self) {
+        self.with(|inner| inner.filter = None);
+    }
+
+    /// Replies currently held.
+    pub fn held(&self) -> usize {
+        self.with(|inner| inner.held)
+    }
+
+    /// Let every reply held so far through.
     pub fn release(&self) {
-        self.with(|inner| inner.open = true);
+        self.with(|inner| inner.generation += 1);
         self.shared.notify.notify_waiters();
     }
 
@@ -155,7 +175,10 @@ async fn forward(
         let Ok(mut inner) = shared.inner.lock() else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
-        std::mem::take(&mut inner.armed)
+        let matched = inner.filter.as_ref().is_some_and(|filter| {
+            serde_json::from_slice::<serde_json::Value>(&body).is_ok_and(|value| filter(&value))
+        });
+        std::mem::take(&mut inner.armed) || matched
     };
     let reply = match request.send().await {
         Ok(reply) => reply,
@@ -168,12 +191,20 @@ async fn forward(
         Err(error) => return (StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
     };
     if gated {
-        if let Ok(mut inner) = shared.inner.lock() {
-            inner.held += 1;
-        }
+        let generation = match shared.inner.lock() {
+            Ok(mut inner) => {
+                inner.held += 1;
+                inner.generation
+            }
+            Err(_) => 0,
+        };
         loop {
             let notified = shared.notify.notified();
-            if shared.inner.lock().map_or(true, |inner| inner.open) {
+            if shared
+                .inner
+                .lock()
+                .map_or(true, |inner| inner.generation > generation)
+            {
                 break;
             }
             notified.await;
