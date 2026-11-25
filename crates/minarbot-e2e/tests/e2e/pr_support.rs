@@ -181,10 +181,3 @@ pub fn leaks(directory: &Path, secrets: &[String]) -> Result<Vec<String>> {
 pub async fn pause(millis: u64) {
     tokio::time::sleep(Duration::from_millis(millis)).await;
 }
-
-/// Wall-clock milliseconds.
-pub fn wall_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_millis() as i64)
-}

@@ -11,6 +11,7 @@ mod kit;
 mod pr_machines;
 mod pr_remote_agents;
 mod pr_support;
+mod pr_updates;
 mod questions;
 mod support;
 mod threads;

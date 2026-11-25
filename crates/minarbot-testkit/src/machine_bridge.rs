@@ -335,3 +335,28 @@ async fn peer_http(client: &reqwest::Client, args: &Value) -> Result<Value> {
         .await
         .map_err(|_| crate::Error::from("The operation was aborted due to timeout"))?
 }
+
+/// Decrypt a stored peer credential (`paired_machines.token` with the
+/// machine origin as associated data, or `return_token` with
+/// `<origin>:return`) using the database's `.peer-key` file, as the Node
+/// suites did with `createDecipheriv('aes-256-gcm', ...)`.
+pub fn decrypt_peer_token(database: &std::path::Path, stored: &str, aad: &str) -> Result<String> {
+    use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+    let mut key_path = database.as_os_str().to_owned();
+    key_path.push(".peer-key");
+    let key_bytes = std::fs::read(std::path::PathBuf::from(key_path))?;
+    let key = LessSafeKey::new(
+        UnboundKey::new(&AES_256_GCM, &key_bytes).map_err(|_| "invalid peer key")?,
+    );
+    let data = base64::engine::general_purpose::STANDARD.decode(stored)?;
+    if data.len() < 28 {
+        return Err("stored peer credential is too short".into());
+    }
+    let (iv, sealed) = data.split_at(12);
+    let mut sealed = sealed.to_vec();
+    let nonce = Nonce::try_assume_unique_for_key(iv).map_err(|_| "invalid nonce")?;
+    let plain = key
+        .open_in_place(nonce, Aad::from(aad.as_bytes()), &mut sealed)
+        .map_err(|_| "peer credential does not decrypt")?;
+    Ok(String::from_utf8(plain.to_vec())?)
+}

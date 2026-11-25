@@ -1137,7 +1137,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/updates.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/pr_updates.rs"
     },
     {
       "sourcePath": "apps/server/src/cloud/selfUpdate.ts",
@@ -1151,7 +1151,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/updates.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/pr_updates.rs"
     },
     {
       "sourcePath": "apps/web/src/components/sidebar/UpdateEverythingDialog.tsx",
@@ -1166,7 +1166,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/updates.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/pr_updates.rs"
     },
     {
       "sourcePath": "docs/internals/server-updates.md",
@@ -1182,7 +1182,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/updates.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/pr_updates.rs"
     }
   ],
   "toolBudgetSourceEntries": [

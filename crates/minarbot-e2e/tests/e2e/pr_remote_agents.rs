@@ -634,7 +634,12 @@ async fn delegation_depth_travels_across_machines_and_stops_ping_pong() -> Resul
         .await?;
     let reply = row["reply"].as_str().unwrap_or_default();
     ensure!(reply.contains("depth"), "depth reply: {reply}");
-    let work = f._model.requests().iter().filter(|body| !after_pause(body)).count();
+    let work = f
+        ._model
+        .requests()
+        .iter()
+        .filter(|body| !after_pause(body))
+        .count();
     ensure!(work == 6, "model requests: {work}");
     Ok(())
 }

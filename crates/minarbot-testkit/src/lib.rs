@@ -33,6 +33,7 @@ pub mod protocol;
 pub mod providers;
 pub mod proxy;
 pub mod relay;
+pub mod release_fixture;
 pub mod server;
 pub mod wait;
 pub mod workspace;

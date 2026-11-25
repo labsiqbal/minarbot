@@ -820,3 +820,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tests/peer_sha_mismatch.rs"]
+mod peer_sha_mismatch;
