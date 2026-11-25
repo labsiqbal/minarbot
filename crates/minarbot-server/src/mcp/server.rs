@@ -271,7 +271,13 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
             Err(error(400, "Invalid skill request.")),
         ));
     }
-    if caller["kind"] == "session" && name == "delegate_task" && args["agent"].is_string() {
+    // The native tool takes only {agent, task, wait}; the feature tool needs
+    // the request identity and owning turn.
+    if caller["kind"] == "session"
+        && name == "delegate_task"
+        && decl["native"] != true
+        && args["agent"].is_string()
+    {
         args["requestId"] = json!(uuid::Uuid::new_v4().to_string());
         args["turn"] = caller["turn"].clone();
     }
