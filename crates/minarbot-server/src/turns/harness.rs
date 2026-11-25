@@ -81,6 +81,9 @@ pub fn instructions(
     execution::base_instructions(runtime, model, string(turn, "agent"), &specs)
 }
 pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Value>> {
+    if crate::automation::model(db, string(turn, "id"))?.is_some() {
+        return Ok(Vec::new());
+    }
     let mut specs: Vec<Value> =
         serde_json::from_str(include_str!("tool-specs.json")).map_err(|_| Failure::storage())?;
     specs.retain(|t| {
@@ -95,6 +98,9 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
             "select_memory",
             "create_text_file",
             "read_attachment",
+            "list_skills",
+            "read_skill",
+            "read_skill_file",
             "read_workspace_file",
             "inspect_workspace_file",
             "open_file_in_panel",
@@ -128,6 +134,15 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
             )
         });
     }
+    for offered in crate::turns::tools::offered(state, db, turn)? {
+        let name = string(&offered["function"], "name");
+        if !specs
+            .iter()
+            .any(|spec| string(&spec["function"], "name") == name)
+        {
+            specs.push(offered);
+        }
+    }
     specs.extend(crate::mcp::execution::specs()?);
     if crate::files::rich_html::available(state, turn) {
         specs.push(crate::files::components::spec());
@@ -139,13 +154,7 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
     if crate::connectors::mailbox::available(state, db, turn)? {
         specs.extend(crate::connectors::mailbox::specs()?);
     }
-    specs.extend(
-        crate::computer::actions::tools(state.computer.width, state.computer.height)
-            .as_array()
-            .ok_or_else(Failure::storage)?
-            .iter()
-            .cloned(),
-    );
+    specs.extend(crate::automation::tools(db, turn)?);
     if super::profile::setup(db, turn)? {
         specs.retain(|t| ["edit_profile", "ask_user"].contains(&string(&t["function"], "name")));
         for spec in &mut specs {
@@ -164,6 +173,12 @@ pub async fn tool(
     args: &Value,
     call_id: &str,
 ) -> Result<Value> {
+    if name == "list_skills" && !data::closed(args, &["after"]) {
+        return Err(error(400, "Invalid skill request."));
+    }
+    if name == "read_skill" && !data::closed(args, &["id"]) {
+        return Err(error(400, "Invalid skill request."));
+    }
     let row = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         one(
@@ -178,6 +193,18 @@ pub async fn tool(
     let result = tools::run(state, &row, &call).await;
     drop(clock);
     let mut result = result?;
+    if name == "list_skills" {
+        if let Some(items) = result["items"].as_array_mut() {
+            if items.len() > 10 {
+                let next = items
+                    .get(9)
+                    .map(|item| item["id"].clone())
+                    .unwrap_or(Value::Null);
+                items.truncate(10);
+                result["next_after"] = next;
+            }
+        }
+    }
     if name == "html_preview" && result["screenshot"].is_object() {
         let image = result["screenshot"]
             .as_object_mut()

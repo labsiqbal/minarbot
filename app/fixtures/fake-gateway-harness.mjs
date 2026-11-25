@@ -24,8 +24,8 @@ let stream = env('MINARBOT_GATEWAY_STREAM') === 'true';
 let toolBudget = Number(env('MINARBOT_TOOL_BUDGET')) || 200;
 let workspace = process.cwd();
 let savedMessages;
-const persistSession = Boolean(process.env.MINARBOT_TEST_PARENT);
-const saveSession = messages => { if (persistSession) writeFileSync(`${workspace}/.fake-gateway-${session}.json`, JSON.stringify(messages)); };
+const persistSession = true;
+const saveSession = messages => { if (persistSession) { savedMessages = messages; writeFileSync(`${workspace}/.fake-gateway-${session}.json`, JSON.stringify(messages)); } };
 const activeRuns = new Map();
 let nextId = 1;
 
@@ -41,7 +41,16 @@ const rpc = async (method, params = {}, signal) => {
     body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method, params }),
   });
   const body = await response.json();
-  if (!response.ok || body.error) throw new Error(`MCP request failed (${response.status}): ${JSON.stringify(body)}`);
+  if (!response.ok) {
+    if (response.status >= 500) throw new Error(`MCP request failed (${response.status}): ${JSON.stringify(body)}`);
+    const message = typeof body.error === 'string' ? body.error : body.error?.message ?? 'MCP request failed.';
+    return { isError: true, content: [{ type: 'text', text: message }], structuredContent: { error: message, status: response.status } };
+  }
+  if (body.error) {
+    const message = body.error.message ?? 'MCP request failed.';
+    if (/uncertain/i.test(message)) throw new Error(message);
+    return { isError: true, content: [{ type: 'text', text: message }], structuredContent: { error: message, status: body.error.code } };
+  }
   return body.result ?? {};
 };
 
@@ -118,12 +127,25 @@ const emitText = (id, text) => {
 
 const emitError = error => notify('error', { willRetry: false, error: { message: error instanceof Error ? error.message : 'Gateway request failed.' } });
 
+const transcript = prompt => {
+  const tagged = [...prompt.matchAll(/<minarbot-message>(.*?)<\/minarbot-message>/gs)];
+  if (tagged.length) return tagged.map(match => JSON.parse(match[1]));
+  const markers = [...prompt.matchAll(/(?:^|\n\n)(system|user|assistant|tool): /g)];
+  return markers.map((marker, index) => ({
+    role: marker[1],
+    content: prompt.slice(marker.index + marker[0].length, markers[index + 1]?.index ?? prompt.length),
+  }));
+};
+
 async function run(prompt, additionalContext, signal) {
   const context = Object.values(additionalContext ?? {}).map(value => value?.value ?? '').filter(Boolean).join('\n\n');
-  const messages = savedMessages ? [...savedMessages, { role: 'user', content: prompt }] : [
-    { role: 'system', content: [context, prompt].filter(Boolean).join('\n\n') },
-    { role: 'user', content: prompt },
-  ];
+  const parsed = transcript(prompt);
+  const messages = savedMessages ? [...savedMessages, ...(parsed.length ? parsed : [{ role: 'user', content: prompt }])] : parsed.length
+    ? parsed
+    : [{ role: 'system', content: [context, prompt].filter(Boolean).join('\n\n') }];
+  if (!messages.some(message => message.role === 'user')) {
+    messages.push({ role: 'user', content: parsed.at(-1)?.content ?? prompt });
+  }
   const tools = (await openAITools()).filter(tool => prompt.includes('Initial name:') ? ['ask_user', 'edit_profile'].includes(tool.function.name) : true);
   let calls = 0;
   let exhausted = false;
@@ -156,9 +178,6 @@ async function run(prompt, additionalContext, signal) {
           const normalized = { ...input };
           if (schema.required?.includes('requestId') && !normalized.requestId) normalized.requestId = requestId(generation, id, suffix);
           if (name === 'wait_task' && normalized.timeoutSeconds !== undefined) normalized.timeoutSeconds = Math.min(30, Math.max(1, Number(normalized.timeoutSeconds) || 30));
-          if (schema.properties && normalized) {
-            for (const key of Object.keys(normalized)) if (!(key in schema.properties)) delete normalized[key];
-          }
           return rpc('tools/call', { name, arguments: normalized }, signal);
         };
         let result;
@@ -172,6 +191,7 @@ async function run(prompt, additionalContext, signal) {
             : { structuredContent: { status: 'queued', requests: results.map(value => value.structuredContent ?? value) } };
         } else {
           result = await callOne(args);
+          if (result.isError && /uncertain/i.test(toolText(result))) throw new Error(toolText(result));
           if (legacyWait && result.structuredContent?.taskId) {
             result = await rpc('tools/call', { name: 'wait_task', arguments: {
               requestId: requestId(generation, id, 'wait'),

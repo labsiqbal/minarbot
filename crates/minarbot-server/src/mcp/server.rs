@@ -25,6 +25,7 @@ fn allowed(row: &Value, scope: &str) -> bool {
 }
 fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
     let mut setup = false;
+    let mut automation_model = false;
     let mut web_access = crate::turns::web::Access::default();
     let mut specs = tools().as_array().cloned().unwrap_or_default();
     for t in &mut specs {
@@ -51,6 +52,14 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
             };
         }
         setup = harness::setup(db, &turn)?;
+        automation_model = crate::automation::model(db, string(&turn, "id"))?.is_some()
+            || (turn["workflow_run"].is_string()
+                && one(
+                    db,
+                    "SELECT 1 FROM workflow_steps WHERE turn=? AND model IS NOT NULL",
+                    [string(&turn, "id")],
+                )?
+                .is_some());
         web_access = crate::turns::web::access(state, db, string(caller, "agent"))?;
         for spec in harness::specs(state, db, &turn)? {
             let f = &spec["function"];
@@ -76,11 +85,20 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
             .iter()
             .map(|t| string(t, "name").to_owned())
             .collect();
-    specs.retain(|t| !feature_names.iter().any(|n| t["name"] == *n));
-    specs.extend(
-        serde_json::from_str::<Vec<Value>>(include_str!("feature-tools.json"))
-            .map_err(|_| Failure::storage())?,
-    );
+    if automation_model {
+        specs.clear();
+    }
+    specs.retain(|t| {
+        !feature_names
+            .iter()
+            .any(|n| t["name"] == *n && t["native"] != true)
+    });
+    if !automation_model {
+        specs.extend(
+            serde_json::from_str::<Vec<Value>>(include_str!("feature-tools.json"))
+                .map_err(|_| Failure::storage())?,
+        );
+    }
     specs.retain(|t| {
         allowed(caller, string(t, "scope"))
             && (!setup || ["edit_profile", "ask_user"].contains(&string(t, "name")))
@@ -196,6 +214,12 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
         .into_iter()
         .find(|t| t["name"] == name)
         .ok_or_else(|| error(403, "MCP authorization failed."))?;
+    if name == "read_skill" && !data::closed(&args, &["id"]) {
+        return Ok(reply(
+            &body["id"],
+            Err(error(400, "Invalid skill request.")),
+        ));
+    }
     if caller["kind"] == "session" && caller["agent"] == super::guide::ID {
         let turn = {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -225,7 +249,10 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         features::authorize(state, &guard.connection, &caller, name, &args)?;
     }
-    if !valid(&decl["inputSchema"], &args) {
+    if decl["native"] != true
+        && !(name == "read_history" && caller["kind"] == "session")
+        && !valid(&decl["inputSchema"], &args)
+    {
         return Err(error(400, "Invalid MCP tool call."));
     }
     if name == "render_component" && super::secrets::reflected(args.to_string().as_bytes(), &bearer)
@@ -241,11 +268,6 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
             &uuid::Uuid::new_v4().to_string(),
         )
         .await;
-        if let Err(e) = &result {
-            if e.status == 403 {
-                return Err(error(403, "MCP authorization failed."));
-            }
-        }
         let result = result.and_then(|v| {
             if v["error"].is_string() {
                 Err(error(400, string(&v, "error")))

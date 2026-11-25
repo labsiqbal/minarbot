@@ -307,7 +307,13 @@ fn test_runtime_instance(state: &AppState, db: &Connection, v: &Value) -> Result
     if !state.config.harness.test_mode {
         return Ok(None);
     }
-    let runtime = v.get("runtime").and_then(Value::as_str);
+    let runtime = v.get("runtime").and_then(Value::as_str).map(|runtime| {
+        if runtime == "api" {
+            "codex"
+        } else {
+            runtime
+        }
+    });
     let Some(runtime) = runtime.filter(|runtime| crate::harness::RUNTIMES.contains(runtime)) else {
         return Ok(None);
     };
@@ -465,6 +471,9 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
                 "providerInstance",
                 "modelOptions",
                 "confirmRuntime",
+                "runtime",
+                "providerAccount",
+                "backupModel",
             ],
         ) {
             return Err(error(

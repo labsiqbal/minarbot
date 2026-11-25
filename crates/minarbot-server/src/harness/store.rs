@@ -585,20 +585,28 @@ async fn execute(
             None => None,
         }
     };
-    let mut prompt = messages
-        .iter()
-        .map(|v| {
-            format!(
-                "{}: {}",
-                string(v, "role"),
-                v["content"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| v["content"].to_string())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let mut prompt = if state.config.harness.test_mode {
+        messages
+            .iter()
+            .map(|v| format!("<minarbot-message>{}</minarbot-message>", v))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    } else {
+        messages
+            .iter()
+            .map(|v| {
+                format!(
+                    "{}: {}",
+                    string(v, "role"),
+                    v["content"]
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| v["content"].to_string())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
     prompt = redact(&prompt, &secrets, false);
     if !judging {
         prompt = format!(
@@ -1141,7 +1149,12 @@ async fn execute(
                     break;
                 }
                 if method == "error" && p["willRetry"] != true {
-                    return Err(process::stopped());
+                    let message = p["error"]["message"].as_str().unwrap_or("");
+                    return Err(if message.is_empty() {
+                        process::stopped()
+                    } else {
+                        error(502, message)
+                    });
                 }
             } else if runtime == "claude" {
                 match string(&value, "type") {

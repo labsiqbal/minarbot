@@ -85,7 +85,10 @@ async fn approval(
     command: &str,
     args: &Value,
 ) -> Result<bool> {
-    if binding.write && !COMMAND_REQUIRING_APPROVAL.is_match(command) {
+    if !state.config.harness.test_mode
+        && binding.write
+        && !COMMAND_REQUIRING_APPROVAL.is_match(command)
+    {
         return Ok(true);
     }
     return crate::harness::approve(

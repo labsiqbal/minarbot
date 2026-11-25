@@ -54,7 +54,7 @@ pub fn workspace(
             [project],
         )?;
         let Some(first) = folders.first() else {
-            return data::agent_folders::effective(state, db, string(turn, "agent")).map(Some);
+            return Ok(None);
         };
         let directory = context["folder"]
             .as_str()
@@ -132,10 +132,8 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         | "copy_skill_file"
         | "delete_workspace_file"
         | "replace_workspace_file"
-        | "restore_workspace_file"
-        | "git_commit"
-        | "git_create_branch"
-        | "git_create_worktree" => writable,
+        | "restore_workspace_file" => bound,
+        "git_commit" | "git_create_branch" | "git_create_worktree" => writable,
         _ => false,
     });
     specs.extend(crate::automation::tools(db, turn)?);
@@ -614,8 +612,9 @@ fn skill(db: &Connection, agent: &str, name: &str, args: &Value) -> Result<Value
         } else {
             None
         };
-        rows.truncate(10);
-        return Ok(json!({"items":rows,"next_after":next}));
+        let limit = 10.min(rows.len());
+        let items = rows.drain(..limit).collect::<Vec<_>>();
+        return Ok(json!({"items":items,"next_after":next}));
     }
     let Some(mut row)=one(db,"SELECT a.skill AS id,a.version,v.name,v.description,v.content FROM agent_skills a JOIN skill_versions v ON v.skill=a.skill AND v.revision=a.version WHERE a.agent=? AND a.enabled=1 AND a.removed=0 AND a.skill=?",[agent,string(args,key)])? else{return Ok(json!({"error":"Enabled installed skill not found."}));};
     let files = one(
