@@ -122,6 +122,25 @@ struct Record {
     offset: i64,
     error: Option<String>,
     socket: Option<mpsc::UnboundedSender<String>>,
+    connections: usize,
+    authorizations: Vec<String>,
+    limited: std::collections::HashMap<String, std::time::Instant>,
+    script: SocketScript,
+}
+
+/// Slack Socket Mode behaviour of the fake platform.
+#[derive(Clone, Default)]
+pub struct SocketScript {
+    /// Methods whose first call is answered 429 with `Retry-After: 1`; a
+    /// retry sooner than one second is a fixture error.
+    pub rate_limit_once: Vec<String>,
+    /// Envelopes pushed right after `hello` on every connection.
+    pub on_connect: Vec<Value>,
+    /// After the first acknowledgement on the first connection, ask the
+    /// client to reconnect (`disconnect`, `refresh_requested`).
+    pub disconnect_after_first_ack: bool,
+    /// Called with each acknowledged envelope id.
+    pub on_ack: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 }
 
 type Shared = Arc<Mutex<Record>>;
@@ -154,7 +173,7 @@ pub struct Connector {
     /// Fake platform API origin.
     pub origin: String,
     agent: String,
-    channels: Vec<String>,
+    channels: Mutex<Vec<String>>,
     users: Vec<Value>,
     state: Shared,
     process: Mutex<Option<Process>>,
@@ -232,7 +251,7 @@ impl Connector {
             script_directory,
             origin,
             agent: agent.into(),
-            channels,
+            channels: Mutex::new(channels),
             users,
             state,
             process: Mutex::new(None),
@@ -246,7 +265,7 @@ impl Connector {
     pub fn options(&self) -> Value {
         let mut options = json!({"platform": self.platform.name(), "directory": self.directory,
             "scriptDirectory": self.script_directory, "agent": self.agent,
-            "origin": self.origin, "channels": self.channels, "users": self.users});
+            "origin": self.origin, "channels": self.channels(), "users": self.users});
         match self.platform {
             Platform::Slack => {
                 options["team"] = json!("TTEAM");
@@ -264,6 +283,32 @@ impl Connector {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         }
+    }
+
+    /// Channels the next [`Self::start`] passes to the connector.
+    pub fn channels(&self) -> Vec<String> {
+        self.channels.lock().map(|channels| channels.clone()).unwrap_or_default()
+    }
+
+    pub fn set_channels(&self, channels: Vec<String>) {
+        if let Ok(mut current) = self.channels.lock() {
+            *current = channels;
+        }
+    }
+
+    /// Socket Mode behaviour for the following connections.
+    pub fn set_socket_script(&self, script: SocketScript) {
+        lock(&self.state).script = script;
+    }
+
+    /// Socket Mode connections so far.
+    pub fn connections(&self) -> usize {
+        lock(&self.state).connections
+    }
+
+    /// `Authorization` headers of every platform call.
+    pub fn authorizations(&self) -> Vec<String> {
+        lock(&self.state).authorizations.clone()
     }
 
     /// Start the connector process.
@@ -674,11 +719,22 @@ pub fn slack_envelope(n: u32, text: &str, user: &str, root: Option<&str>, channe
 async fn socket(State(api): State<Api>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move |mut socket| async move {
         let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
-        lock(&api.state).socket = Some(sender);
+        let (connection, script) = {
+            let mut state = lock(&api.state);
+            state.socket = Some(sender);
+            state.connections += 1;
+            (state.connections, state.script.clone())
+        };
         let hello = json!({"type": "hello", "connection_info": {"app_id": "AAPP"}}).to_string();
         if socket.send(Message::Text(hello.into())).await.is_err() {
             return;
         }
+        for envelope in &script.on_connect {
+            if socket.send(Message::Text(envelope.to_string().into())).await.is_err() {
+                return;
+            }
+        }
+        let mut acknowledged = false;
         loop {
             tokio::select! {
                 outgoing = receiver.recv() => match outgoing {
@@ -690,6 +746,16 @@ async fn socket(State(api): State<Api>, upgrade: WebSocketUpgrade) -> Response {
                         if let Ok(value) = serde_json::from_str::<Value>(&text) {
                             if let Some(id) = value["envelope_id"].as_str() {
                                 lock(&api.state).acks.push(id.to_owned());
+                                if let Some(hook) = &script.on_ack {
+                                    hook(id);
+                                }
+                                if script.disconnect_after_first_ack && connection == 1 && !acknowledged {
+                                    let notice = json!({"type": "disconnect", "reason": "refresh_requested"});
+                                    if socket.send(Message::Text(notice.to_string().into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                acknowledged = true;
                             }
                         }
                     }
@@ -744,6 +810,29 @@ async fn platform_call(
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
     };
+    {
+        let mut state = lock(&api.state);
+        if let Some(authorization) = text(header::AUTHORIZATION) {
+            state.authorizations.push(authorization);
+        }
+        if state.script.rate_limit_once.contains(&method) {
+            match state.limited.get(&method).copied() {
+                None => {
+                    state.limited.insert(method.clone(), std::time::Instant::now());
+                    return (
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        [(header::RETRY_AFTER, "1")],
+                        "Wait",
+                    )
+                        .into_response();
+                }
+                Some(first) if first.elapsed() < Duration::from_secs(1) => {
+                    state.error.get_or_insert(format!("{method} retried before Retry-After"));
+                }
+                Some(_) => {}
+            }
+        }
+    }
     match method.as_str() {
         "auth.test" => {
             return platform_json(

@@ -170,6 +170,7 @@ Product bugs fixed in this slice:
 | `app/telegram-output.test.ts` | 1 | 1 | 0 | 0 |
 | `app/transcription.test.ts` | 6 | 6 | 0 | 0 |
 | `app/mcp.test.ts` | 1 | 1 | 0 | 0 |
+| `app/slack.test.ts` | 8 | 8 | 0 | 0 |
 
 ### `app/memory.test.ts`
 
@@ -312,6 +313,23 @@ harness, so these cases port one to one; the provider is `sa_support::RawProvide
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | --- | --- |
 | MCP tests before save, protects credentials/grants and journals success or uncertainty without replay | `sa_mcp::mcp_tests_before_save_protects_credentials_grants_and_journals_success_or_uncertainty_without_replay` | 43 -> 47 | H1: the ungranted, other-agent, channel, drifted-schema, revoked and missing-host-key calls reach the model as MCP errors and the turn finishes (the Node case expected failed turns); each still asserts the server was not called. Lost and invalid-output calls still fail the turn as uncertain. The backup is restored with `restore workspace` through `minarbot_testkit::restore`. |
+
+### `app/slack.test.ts`
+
+`minarbot_testkit::connector` gained `SocketScript` (rate-limit-once methods,
+envelopes on connect, disconnect after the first ack, an ack hook), mutable
+channels and a record of `Authorization` headers for these cases.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Slack actual agent API retries one task and isolates requester question answers (buttons=false) | `sa_slack::slack_actual_agent_api_retries_one_task_and_isolates_requester_question_answers_buttons_false` | 20 -> 19 (shared helper) | Full; model calls exclude the B1 step (the Node case failed on it). |
+| Slack actual agent API retries one task and isolates requester question answers (buttons=true) | `sa_slack::slack_actual_agent_api_retries_one_task_and_isolates_requester_question_answers_buttons_true` | 20 -> 19 (shared helper) | Same. |
+| Slack Socket Mode runner acknowledges journaled event and delivers once after reconnect | `sa_slack::slack_socket_mode_runner_acknowledges_journaled_event_and_delivers_once_after_reconnect` | 16 -> 8 | Full; the fake's checks (429 Retry-After, ack only after journaling, delivery fields) are collected and asserted once. The connector reaches the server through the kit proxy instead of the server's own `connection.json`. |
+| Slack status and stop scope to requester root and preserve cancellation identity after lost responses | `sa_slack::slack_status_and_stop_scope_to_requester_root_and_preserve_cancellation_identity_after_lost_responses` | 17 -> 16 | Full; B1 step left out of model counts. |
+| Slack offline recovery pins revisions, retains confirmed chunks and requires explicit CLI confirmation | `sa_slack::slack_offline_recovery_pins_revisions_retains_confirmed_chunks_and_requires_explicit_cli_confirmation` | 27 -> 27 | Full. |
+| Slack startup cancellation releases lock and status retains authentication cooldown | `sa_slack::slack_startup_cancellation_releases_lock_and_status_retains_authentication_cooldown` | 8 -> 7 | Full. |
+| Slack interactive Socket Mode withholds early ACK and commits one decision before redelivery ACK | `sa_slack::slack_interactive_socket_mode_withholds_early_ack_and_commits_one_decision_before_redelivery_ack` | 6 -> 5 | Full. |
+| Slack shared channels require opt-in mention and retain one scoped multi-user thread | `sa_slack::slack_shared_channels_require_opt_in_mention_and_retain_one_scoped_multi_user_thread` | 18 -> 17 | Full. |
 <!-- stale-a end -->
 
 ## #67 hosted Hub test migration
