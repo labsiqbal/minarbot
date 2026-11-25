@@ -3900,3 +3900,341 @@ async fn canonical_transfer_keeps_channel_only_tool_boundary_for_private_tasks()
     );
     Ok(())
 }
+
+/// `initializeMemory` + `rememberMemory(db, scope, {text})`: a new automatic
+/// note; returns its id.
+fn remember(f: &TaskFixture, scope: &str, text: &str) -> Result<String> {
+    f.db().execute_batch(
+        "CREATE TABLE IF NOT EXISTS memories(scope TEXT NOT NULL,id TEXT NOT NULL,text TEXT NOT NULL,essential INTEGER NOT NULL,revision INTEGER NOT NULL,removed INTEGER NOT NULL,PRIMARY KEY(scope,id)) STRICT;
+         CREATE TABLE IF NOT EXISTS memory_commands(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;",
+    )?;
+    let columns = f.db().rows("PRAGMA table_info(memories)", [])?;
+    if !columns.iter().any(|column| column["name"] == "selection_locked") {
+        f.db().execute_batch("ALTER TABLE memories ADD COLUMN selection_locked INTEGER NOT NULL DEFAULT 1 CHECK(selection_locked IN (0,1))")?;
+    }
+    let id = new_id();
+    f.db().execute(
+        "INSERT INTO memories(scope,id,text,essential,revision,removed,selection_locked) VALUES (?,?,?,0,1,0,0)",
+        [scope, &id, text],
+    )?;
+    Ok(id)
+}
+
+/// `seedSkillVersion(db, id, {revision, name, description, content})`.
+fn save_skill(f: &TaskFixture, id: &str, revision: i64, name: &str, description: &str, content: &str) -> Result<()> {
+    let next = revision + 1;
+    f.db().execute(
+        "INSERT INTO skills VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,revision=excluded.revision",
+        (id, name, next),
+    )?;
+    f.db().execute("INSERT INTO skill_versions VALUES (?,?,?,?,?)", (id, next, name, description, content))?;
+    Ok(())
+}
+
+fn scope_row(f: &TaskFixture, table: &str, key: Value, account: &str, project: &str, visibility: &str, root: &str) -> Result<()> {
+    f.db().execute(
+        "INSERT INTO record_scopes VALUES (?,?,?,?,?,?,?)",
+        [table, &key.to_string(), account, project, visibility, "agent", root],
+    )?;
+    Ok(())
+}
+
+fn read_intent(task: &str, action: &str, sequence: i64, ownership: &Value, digest: &str, reference: &Value) -> String {
+    digest_command(&json!([task, action, sequence, ownership, digest, "read", reference["snapshotId"], reference["digest"], null, null, 1, null, null, null]))
+}
+
+#[tokio::test]
+async fn context_projects_authorized_memory_pinned_skills_and_byte_free_asset_refs_invalidating_changed_sources(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    let scope = format!("project:{}/agents:{}/human:{}", f.project, f.agent, f.owner.account_id);
+    let memory = remember(&f, &scope, "Project A decision")?;
+    f.db().execute("UPDATE memories SET essential=1 WHERE scope=? AND id=?", [&scope, &memory])?;
+    scope_row(&f, "memories", json!([scope, memory]), &f.owner.account_id, &f.project, "owner", &f.agent)?;
+    let private_scope = format!("private:{}", f.member.account_id);
+    let private_memory = remember(&f, &private_scope, "PRIVATE_OTHER_HUMAN")?;
+    f.db().execute("UPDATE memories SET essential=1 WHERE scope=? AND id=?", [&private_scope, &private_memory])?;
+    scope_row(&f, "memories", json!([private_scope, private_memory]), &f.member.account_id, &f.project, "owner", &f.agent)?;
+    remember(&f, &format!("agents:{}", f.agent), "UNMAPPED_LEGACY_PRIVATE")?;
+    let skill = new_id();
+    save_skill(&f, &skill, 0, "Pinned skill", "Reference configuration", "Use project rules")?;
+    save_skill(&f, &skill, 1, "Latest skill", "Must not substitute", "UNINSTALLED_LATEST_VERSION")?;
+    f.db().execute("INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,7,0)", [&f.agent, &skill])?;
+    let raw = b"PRIVATE_ASSET_BYTES";
+    let encoded_raw = minarbot_testkit::base64::Engine::encode(&minarbot_testkit::base64::engine::general_purpose::STANDARD, raw);
+    f.db().execute(
+        "INSERT INTO skill_files VALUES (?,1,?)",
+        [skill.clone(), json!([{"path": "asset.bin", "content": encoded_raw, "encoding": "base64"}]).to_string()],
+    )?;
+    for (table, key) in [("skills", json!([skill])), ("skill_versions", json!([skill, 1])), ("agent_skills", json!([f.agent, skill])), ("skill_files", json!([skill, 1]))] {
+        scope_row(&f, table, key, &f.owner.account_id, &f.project, "owner", &f.agent)?;
+    }
+    f.db().execute("UPDATE task_actions SET state='not_sent',effect_status='none' WHERE id=?", [&p.action])?;
+    let context = f
+        .task_op("context", &p.task, json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": 2}), &p.token)
+        .await?
+        .expect_ok()?;
+    let snapshot = context.data()["snapshot"].clone();
+    ensure!(snapshot["memories"][0]["text"] == "Project A decision", "memories: {}", snapshot["memories"]);
+    ensure!(snapshot["memories"].as_array().map(Vec::len) == Some(1), "memory count: {}", snapshot["memories"]);
+    ensure!(snapshot["skills"][0]["id"] == skill.as_str(), "skill: {}", snapshot["skills"]);
+    ensure!(snapshot["skills"][0]["revision"] == 1, "pinned revision: {}", snapshot["skills"]);
+    ensure!(snapshot["skills"][0]["installationRevision"] == 7, "installation revision: {}", snapshot["skills"]);
+    ensure!(
+        snapshot["skillAssets"] == json!([{"skillId": skill, "skillRevision": 1, "installationRevision": 7, "source": "asset.bin",
+            "digest": sha256_hex(raw), "size": raw.len()}]),
+        "assets: {}",
+        snapshot["skillAssets"]
+    );
+    ensure!(snapshot["tools"] == json!([]), "tools: {}", snapshot["tools"]);
+    let encoded = canonical_json(&snapshot);
+    for secret in ["PRIVATE_OTHER_HUMAN", "UNMAPPED_LEGACY_PRIVATE", "UNINSTALLED_LATEST_VERSION", "PRIVATE_ASSET_BYTES", encoded_raw.as_str()] {
+        ensure!(!encoded.contains(secret), "snapshot contains {secret}");
+    }
+    ensure!(context.data()["snapshotRef"]["digest"] == sha256_hex(&encoded).as_str(), "snapshot digest");
+    f.db().execute("UPDATE memories SET text=?,revision=revision+1 WHERE scope=? AND id=?", ["Changed decision", &scope, &memory])?;
+    let action = new_id();
+    let digest = sha256_hex("next");
+    let reference = context.data()["snapshotRef"].clone();
+    let prepare = json!({"requestId": new_id(), "sequence": 1, "ownership": p.ownership, "payloadDigest": digest, "actionKind": "read",
+        "contextSnapshotId": reference["snapshotId"], "contextDigest": reference["digest"], "grantRevision": 1, "expectedTaskRevision": 2,
+        "journalSequence": 2, "intentDigest": read_intent(&p.task, &action, 1, &p.ownership, &digest, &reference)});
+    f.prepare(&p.task, &action, prepare.clone(), &p.token).await?.expect_code("context_stale")?;
+    let next = f
+        .task_op("context", &p.task, json!({"requestId": new_id(), "ownership": p.ownership, "expectedTaskRevision": 2}), &p.token)
+        .await?
+        .expect_ok()?;
+    let next_ref = next.data()["snapshotRef"].clone();
+    f.db().execute("UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE agent=? AND skill=?", [&f.agent, &skill])?;
+    f.prepare(&p.task, &action, with(prepare, json!({"contextSnapshotId": next_ref["snapshotId"], "contextDigest": next_ref["digest"],
+        "intentDigest": read_intent(&p.task, &action, 1, &p.ownership, &digest, &next_ref)})), &p.token)
+        .await?
+        .expect_code("context_stale")?;
+    Ok(())
+}
+
+fn context_tables(f: &TaskFixture) -> Result<()> {
+    f.db().execute_batch(
+        "CREATE TABLE IF NOT EXISTS questions(id TEXT PRIMARY KEY,turn TEXT NOT NULL REFERENCES turns(id),call_id TEXT NOT NULL,call TEXT NOT NULL,prompt TEXT NOT NULL,choices TEXT NOT NULL,answer TEXT,after_output INTEGER NOT NULL,after_action INTEGER NOT NULL,UNIQUE(turn,call_id)) STRICT;
+         CREATE TABLE IF NOT EXISTS question_answers(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL) STRICT;
+         CREATE TABLE IF NOT EXISTS queue_positions(turn TEXT PRIMARY KEY,position INTEGER NOT NULL);
+         CREATE TABLE IF NOT EXISTS compactions(scope TEXT PRIMARY KEY,version TEXT NOT NULL,through INTEGER NOT NULL,summary TEXT NOT NULL) STRICT;
+         CREATE TABLE IF NOT EXISTS compaction_sources(scope TEXT NOT NULL,seq INTEGER NOT NULL REFERENCES turns(seq),revision INTEGER NOT NULL,status TEXT NOT NULL,PRIMARY KEY(scope,seq)) STRICT;
+         CREATE TABLE IF NOT EXISTS compaction_attempts(turn TEXT PRIMARY KEY REFERENCES turns(id),status TEXT NOT NULL,created TEXT NOT NULL) STRICT;
+         CREATE TABLE IF NOT EXISTS routines(id TEXT PRIMARY KEY,agent TEXT);
+         CREATE TABLE IF NOT EXISTS coordination(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,owner TEXT,target TEXT,kind TEXT,prompt TEXT,call TEXT,child TEXT);
+         CREATE TABLE IF NOT EXISTS files(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,scope TEXT,name TEXT,digest TEXT,bytes BLOB,created TEXT);
+         CREATE TABLE IF NOT EXISTS generated_files(seq INTEGER PRIMARY KEY AUTOINCREMENT,turn TEXT,file TEXT,call_id TEXT,call TEXT,after_action INTEGER);",
+    )
+}
+
+/// A done turn mapped to `(account, project, root)` (or unmapped); returns
+/// `(id, seq)`.
+fn seed_turn(f: &TaskFixture, text: &str, reply: &str, project: &str, account: &str, root: &str, mapped: bool) -> Result<(String, i64)> {
+    let id = new_id();
+    f.db().execute(
+        "INSERT INTO turns(id,agent,text,reply,status,created) VALUES (?,?,?,?,'done','fixture')",
+        [&id, &f.agent, text, reply],
+    )?;
+    let seq = f.db().connection().last_insert_rowid();
+    if mapped {
+        f.db().execute(
+            "INSERT INTO record_scopes VALUES ('turns',?,?,?,'owner','agent',?)",
+            [json!([id]).to_string(), account.to_owned(), project.to_owned(), root.to_owned()],
+        )?;
+    }
+    Ok((id, seq))
+}
+
+#[tokio::test]
+async fn context_preserves_scoped_history_questions_compaction_and_child_evidence_without_foreign_records_or_file_bytes(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    context_tables(&f)?;
+    let other_project = new_id();
+    f.human(minarbot_testkit::http::Method::POST, "/api/projects", Some(json!({"requestId": new_id(), "id": other_project, "name": "Other"})), &f.owner)
+        .await?;
+    let (owner, member, agent, project) = (f.owner.account_id.clone(), f.member.account_id.clone(), f.agent.clone(), f.project.clone());
+    let turn = |text: &str, project: &str, account: &str, root: &str| -> Result<String> {
+        Ok(seed_turn(&f, text, &format!("{text} reply"), project, account, root, true)?.0)
+    };
+    let mut old = Vec::new();
+    for index in 0..42 {
+        old.push(turn(&format!("History {index}"), &project, &owner, &agent)?);
+    }
+    let private_turn = turn("PRIVATE_HUMAN", &project, &member, &agent)?;
+    let foreign_turn = turn("FOREIGN_PROJECT", &other_project, &owner, &agent)?;
+    turn("OTHER_CONVERSATION", &project, &owner, &new_id())?;
+    let scope = format!("project:{project}/agent:{agent}/human:{owner}");
+    let through = field(&f, "SELECT seq FROM turns WHERE id=?", [&old[0]], "seq")?;
+    f.db().execute("INSERT INTO compactions VALUES (?,?,?,?)", (scope.clone(), new_id(), through.as_i64(), "Earlier summary"))?;
+    f.db().execute("INSERT INTO compaction_sources VALUES (?,?,1,'done')", (scope.clone(), through.as_i64()))?;
+    scope_row(&f, "compactions", json!([scope]), &owner, &project, "owner", &agent)?;
+    let command = f.command(json!({}));
+    let task = command["requestId"].as_str().ok_or("task")?.to_owned();
+    f.admit(&f.owner, &command).await?.expect_ok()?;
+    let child = turn("Visible child", &project, &owner, &new_id())?;
+    let call = |id: &str| json!({"id": id, "function": {"name": "search_memory", "arguments": "{}"}});
+    for target in [&child, &private_turn, &foreign_turn] {
+        f.db().execute(
+            "INSERT INTO coordination(turn,owner,target,kind,prompt,call,child) VALUES (?,?,?,?,?,?,?)",
+            [task.as_str(), &agent, &agent, "delegate_task", "Subtask", &call(target).to_string(), target],
+        )?;
+    }
+    for (id, result) in [(&task, "Parent result"), (&child, "Child result"), (&private_turn, "PRIVATE_TOOL"), (&foreign_turn, "FOREIGN_TOOL")] {
+        f.db().execute(
+            "INSERT INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES (?,?,?,?,0,0)",
+            [id.as_str(), id, &call(id).to_string(), &json!({"text": result}).to_string()],
+        )?;
+    }
+    let file = new_id();
+    let raw = b"ATTACHMENT_BYTES".to_vec();
+    f.db().execute(
+        "INSERT INTO files(id,scope,name,digest,bytes,created) VALUES (?,'legacy-private','result.txt',?,?,'fixture')",
+        (file.clone(), sha256_hex(&raw), raw.clone()),
+    )?;
+    f.db().execute(
+        "INSERT INTO record_scopes VALUES ('files',?,?,?,'owner','agent',?)",
+        [json!([file]).to_string(), owner.clone(), project.clone(), agent.clone()],
+    )?;
+    f.db().execute(
+        "INSERT INTO generated_files(turn,file,call_id,call,after_action) VALUES (?,?,?,?,0)",
+        [child.as_str(), &file, "output", &call("output").to_string()],
+    )?;
+    let question = new_id();
+    f.db().execute(
+        "INSERT INTO questions VALUES (?,?,?,?,?,?,?,0,0)",
+        [question.as_str(), &old[5], "question", &call("question").to_string(), "Keep scope?", &json!(["Yes"]).to_string(), "Yes"],
+    )?;
+    let (token, ownership, _) = f.acquire_task(&task).await?;
+    let request = json!({"requestId": new_id(), "ownership": ownership, "expectedTaskRevision": 2});
+    let context = f.task_op("context", &task, request.clone(), &token).await?.expect_ok()?;
+    let snapshot = context.data()["snapshot"].clone();
+    let history = snapshot["conversation"]["history"].as_array().cloned().unwrap_or_default();
+    ensure!(history.len() == 40, "history length: {}", history.len());
+    ensure!(history[0]["text"] == "History 2", "oldest history: {}", history[0]);
+    ensure!(snapshot["conversation"]["compaction"]["summary"] == "Earlier summary", "compaction: {}", snapshot["conversation"]["compaction"]);
+    ensure!(snapshot["conversation"]["questions"][0]["id"] == question.as_str(), "questions: {}", snapshot["conversation"]["questions"]);
+    let coordination = snapshot["coordination"].as_array().cloned().unwrap_or_default();
+    ensure!(coordination.len() == 1 && coordination.iter().filter(|row| !row["child"].is_null()).count() == 1, "coordination: {coordination:?}");
+    ensure!(coordination[0]["child"]["reply"] == "Visible child reply", "child reply: {}", coordination[0]);
+    let journal = snapshot["toolJournal"].as_array().cloned().unwrap_or_default();
+    let texts: Vec<Value> = journal.iter().filter_map(|row| row["result"]["text"].as_str().map(|text| json!(text))).collect();
+    ensure!(texts == [json!("Parent result"), json!("Child result")], "tool journal: {texts:?}");
+    ensure!(journal.last().is_some_and(|row| row["kind"] == "generated_output"), "last journal entry: {:?}", journal.last());
+    ensure!(
+        snapshot["artifacts"] == json!([{"id": file, "name": "result.txt", "digest": sha256_hex(&raw), "size": raw.len()}]),
+        "artifacts: {}",
+        snapshot["artifacts"]
+    );
+    let encoded = canonical_json(&snapshot);
+    for secret in ["PRIVATE_HUMAN", "FOREIGN_PROJECT", "OTHER_CONVERSATION", "PRIVATE_TOOL", "FOREIGN_TOOL", "ATTACHMENT_BYTES", "legacy-private"] {
+        ensure!(!encoded.contains(secret), "snapshot contains {secret}");
+    }
+    f.db().execute("UPDATE flow_tool_calls SET result=? WHERE turn=?", [json!({"text": "Changed child"}).to_string(), child.clone()])?;
+    let action = new_id();
+    let digest = sha256_hex("read");
+    let reference = context.data()["snapshotRef"].clone();
+    f.prepare(&task, &action, json!({"requestId": new_id(), "sequence": 0, "ownership": ownership, "payloadDigest": digest, "actionKind": "read",
+        "contextSnapshotId": reference["snapshotId"], "contextDigest": reference["digest"], "grantRevision": 1, "expectedTaskRevision": 2,
+        "journalSequence": 1, "intentDigest": read_intent(&task, &action, 0, &ownership, &digest, &reference)}), &token)
+        .await?
+        .expect_code("context_stale")?;
+    ensure!(
+        canonical_json(f.task_op("context", &task, request.clone(), &token).await?.expect_ok()?.data()) == canonical_json(context.data()),
+        "context receipt changed"
+    );
+    let private_seq = field(&f, "SELECT seq FROM turns WHERE id=?", [&private_turn], "seq")?;
+    f.db().execute("INSERT INTO compaction_sources VALUES (?,?,1,'done')", (scope.clone(), private_seq.as_i64()))?;
+    let fresh = f.task_op("context", &task, with(request.clone(), json!({"requestId": new_id()})), &token).await?.expect_ok()?;
+    ensure!(fresh.data()["snapshot"]["conversation"]["compaction"].is_null(), "foreign-sourced compaction kept");
+    let snapshots = field(&f, "SELECT count(*) n FROM task_context_snapshots", [], "n")?;
+    f.db().execute("UPDATE flow_tool_calls SET result=? WHERE turn=?", [json!({"text": "x".repeat(9 * 1024 * 1024)}).to_string(), child.clone()])?;
+    f.task_op("context", &task, with(request.clone(), json!({"requestId": new_id()})), &token).await?.expect_code("context_too_large")?;
+    ensure!(
+        canonical_json(f.task_op("context", &task, request, &token).await?.expect_ok()?.data()) == canonical_json(context.data()),
+        "context receipt after a too-large snapshot"
+    );
+    ensure!(field(&f, "SELECT count(*) n FROM task_context_snapshots", [], "n")? == snapshots, "too-large snapshot saved");
+    ensure!(field(&f, "SELECT count(*) n FROM task_actions", [], "n")? == 0, "actions");
+    Ok(())
+}
+
+#[tokio::test]
+async fn canonical_history_retains_sequence_cursors_and_excludes_unmapped_foreign_private_and_future_originals(
+) -> Result<()> {
+    let f = TaskFixture::new(&["read_history", "read_message"], None).await?;
+    context_tables(&f)?;
+    let other = new_id();
+    f.human(minarbot_testkit::http::Method::POST, "/api/projects", Some(json!({"requestId": new_id(), "id": other, "name": "Other"})), &f.owner)
+        .await?;
+    let (owner, member, agent, project) = (f.owner.account_id.clone(), f.member.account_id.clone(), f.agent.clone(), f.project.clone());
+    let seed = |text: &str, project: &str, account: &str, root: &str, mapped: bool| seed_turn(&f, text, "Saved original reply", project, account, root, mapped);
+    let mut originals = Vec::new();
+    for index in 0..8 {
+        originals.push(seed(&format!("Original {index}"), &project, &owner, &agent, true)?);
+    }
+    let private_turn = seed("PRIVATE", &project, &member, &agent, true)?;
+    let foreign = seed("FOREIGN", &other, &owner, &agent, true)?;
+    let other_root = seed("OTHER_ROOT", &project, &owner, &new_id(), true)?;
+    let unmapped = seed("UNMAPPED", &project, &owner, &agent, false)?;
+    f.db().execute("INSERT INTO queue_positions VALUES (?,?)", (originals[5].0.clone(), originals[4].1))?;
+    f.db().execute("INSERT INTO queue_positions VALUES (?,?)", (originals[4].0.clone(), originals[5].1))?;
+    f.db().execute("UPDATE turns SET status='failed' WHERE id=?", [&originals[0].0])?;
+    let file = new_id();
+    let blocked = new_id();
+    let raw = b"SOURCE_DEVICE_BYTES".to_vec();
+    for (id, account) in [(&file, &owner), (&blocked, &member)] {
+        f.db().execute(
+            "INSERT INTO files(id,scope,name,digest,bytes,created) VALUES (?,'legacy-private','original.txt',?,?,'fixture')",
+            (id.clone(), sha256_hex(&raw), raw.clone()),
+        )?;
+        f.db().execute(
+            "INSERT INTO record_scopes VALUES ('files',?,?,?,'owner','agent',?)",
+            [json!([id]).to_string(), account.clone(), project.clone(), agent.clone()],
+        )?;
+    }
+    f.db().execute("UPDATE turns SET attachments=? WHERE id=?", [json!([file, blocked]).to_string(), originals[0].0.clone()])?;
+    f.db().execute(
+        "INSERT INTO generated_files(turn,file,call_id,call,after_action) VALUES (?,?,?,?,0)",
+        [originals[0].0.as_str(), &file, "file", &json!({"function": {"name": "create_text_file"}}).to_string()],
+    )?;
+    f.db().execute(
+        "INSERT INTO questions VALUES (?,?,?,?,?,?,?,0,0)",
+        [new_id().as_str(), &originals[0].0, "question", "{}", "Keep original?", &json!(["Yes"]).to_string(), "Yes"],
+    )?;
+    let command = f.command(json!({}));
+    f.admit(&f.owner, &command).await?.expect_ok()?;
+    let task_id = command["requestId"].as_str().ok_or("task")?.to_owned();
+    let (token, ownership, _) = f.acquire_task(&task_id).await?;
+    let future = seed("FUTURE", &project, &owner, &agent, true)?;
+    let mut task = Task { id: task_id.clone(), token, ownership, actor: f.owner.clone(), sequence: 0 };
+    let ids = |rows: &Value| -> Vec<Value> { rows.as_array().map(|rows| rows.iter().map(|row| row["id"].clone()).collect()).unwrap_or_default() };
+    let page = result_content(&stage(&f, &mut task, &json!({}), "read_history").await?.run(&f).await?.expect_ok()?);
+    let expected: Vec<Value> = originals[3..].iter().rev().map(|row| json!(row.0)).collect();
+    ensure!(ids(&page["messages"]) == expected, "first page: {page}");
+    ensure!(page["next_before"] == originals[3].1, "cursor: {page}");
+    let next = result_content(&stage(&f, &mut task, &json!({"before": page["next_before"]}), "read_history").await?.run(&f).await?.expect_ok()?);
+    let expected: Vec<Value> = originals[..3].iter().rev().map(|row| json!(row.0)).collect();
+    ensure!(ids(&next["messages"]) == expected, "second page: {next}");
+    ensure!(next["next_before"].is_null(), "last cursor: {next}");
+    let read = stage(&f, &mut task, &json!({"id": originals[0].0}), "read_message").await?;
+    let read_result = read.run(&f).await?.expect_ok()?;
+    let content = result_content(&read_result);
+    ensure!(ids(&content["attachments"]) == [json!(file)], "attachments: {content}");
+    ensure!(ids(&content["generatedFiles"]) == [json!(file)], "generated files: {content}");
+    ensure!(content["questions"][0]["answer"] == "Yes", "questions: {content}");
+    ensure!(content["status"] == "failed", "status: {content}");
+    ensure!(!content.to_string().contains("SOURCE_DEVICE_BYTES"), "file bytes in the message");
+    for id in [&private_turn.0, &foreign.0, &other_root.0, &unmapped.0, &future.0, &task_id] {
+        let result = result_content(&stage(&f, &mut task, &json!({"id": id}), "read_message").await?.run(&f).await?.expect_ok()?);
+        ensure!(result["error"].as_str().is_some_and(|error| error.contains("not found")), "{id} readable: {result}");
+    }
+    ensure!(status_of(&f, &mut task, json!({"before": 0}), "read_history").await? == 400, "zero cursor");
+    ensure!(status_of(&f, &mut task, json!({"id": originals[0].0, "offset": -1}), "read_message").await? == 400, "negative offset");
+    f.db().execute("UPDATE turns SET text=?,revision=revision+1 WHERE id=?", ["Changed original", &originals[0].0])?;
+    let replay = read.run(&f).await?.expect_ok()?;
+    ensure!(canonical_json(&replay.body) == canonical_json(&read_result.body), "read receipt changed");
+    Ok(())
+}
