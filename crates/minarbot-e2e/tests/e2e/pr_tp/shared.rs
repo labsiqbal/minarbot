@@ -5,7 +5,7 @@ use minarbot_testkit::{device_host::is_code, http::Method, prelude::*};
 
 /// Run a canonical action; with `lose`, lose its `/context-mutations` reply,
 /// restart and wait for recovery to acknowledge it (the Node `run`).
-async fn run(
+pub async fn run(
     tp: &mut Tp,
     home: &Home,
     owned: &mut Owned,

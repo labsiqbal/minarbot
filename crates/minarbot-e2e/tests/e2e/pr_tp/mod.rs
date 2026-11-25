@@ -13,6 +13,7 @@ mod journal;
 #[allow(dead_code)]
 mod fixture;
 mod routines;
+mod rpc;
 mod schedules;
 mod shared;
 mod sync;
