@@ -963,7 +963,17 @@ async fn execute(
         let prompt_id;
         if runtime == "codex" {
             let context = additional_context(&instructions);
-            let result=rpc(process,&mut seq,"turn/start",json!({"threadId":session,"additionalContext":context,"input":[{"type":"text","text":prompt}],"cwd":workspace,"approvalPolicy":if judging{"never"}else{"on-request"},"sandboxPolicy":if binding.write{json!({"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})}else{json!({"type":"readOnly"})}})).await?;
+            let mut input = vec![json!({"type":"text","text":prompt})];
+            for part in messages
+                .iter()
+                .filter_map(|message| message["content"].as_array())
+                .flatten()
+            {
+                if let Some(url) = part["image_url"]["url"].as_str() {
+                    input.push(json!({"type":"input_image","image_url":url}));
+                }
+            }
+            let result=rpc(process,&mut seq,"turn/start",json!({"threadId":session,"additionalContext":context,"input":input,"cwd":workspace,"approvalPolicy":if judging{"never"}else{"on-request"},"sandboxPolicy":if binding.write{json!({"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})}else{json!({"type":"readOnly"})}})).await?;
             if !result["turn"]["id"].is_string() {
                 return Err(process::stopped());
             }
