@@ -183,7 +183,7 @@ name) and, where listed, end to end by an e2e module.
 | G16 | `model/list` returns the provider's `GET /models` as one page. The Node fixture had none. | cli |
 | G17 | Provider requests carry `MINARBOT_PROVIDER_KEY` as a bearer token and the thread's model. | goals |
 | G18 | `fake-gateway-log.jsonl`: method, ID, thread and run stage (`tools`, `provider`, `error`). | - |
-| G19 | Every extra `mcp_servers.<name>` entry with a `command` (CodeGraph) is mounted as a stdio MCP server: its tools are offered and called next to Minarbot's. | `pd_local_projects::built_in_codegraph...` |
+| G19 | Every extra `mcp_servers.<name>` entry with a `command` (CodeGraph) is mounted as a stdio MCP server: its tools are offered and called next to Minarbot's. Proven end to end only. | `pd_local_projects::built_in_codegraph...` |
 
 When stdin closes, a peer finishes its pending work (timers, gates,
 requests) before it exits, as the Node fixtures did.
