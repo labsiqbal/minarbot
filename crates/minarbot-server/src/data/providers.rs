@@ -309,3 +309,47 @@ pub(crate) fn format_timeout(timeout: Duration) -> String {
         format!("{millis} ms")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_address_rejects_credentials_and_public_http() {
+        assert!(address("http://127.0.0.1:4317/v1").is_ok());
+        for value in [
+            "http://example.test/v1",
+            "https://user:password@example.test/v1",
+            "https://example.test/v1?token=secret",
+        ] {
+            assert!(address(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn usage_includes_transcription_receipts() -> crate::db::Result<()> {
+        let db = Connection::open_in_memory()?;
+        db.execute_batch(
+            "CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT NOT NULL);
+             CREATE TABLE provider_calls(seq INTEGER PRIMARY KEY,agent TEXT,status TEXT,input_tokens INTEGER,output_tokens INTEGER,total_tokens INTEGER);
+             CREATE TABLE transcriptions(status TEXT,usage TEXT);",
+        )?;
+        db.execute("INSERT INTO agents VALUES('agent','Agent')", [])?;
+        db.execute(
+            "INSERT INTO provider_calls VALUES(1,'agent','received',2,3,5)",
+            [],
+        )?;
+        db.execute(
+            "INSERT INTO transcriptions VALUES('done','{\"input_tokens\":7,\"output_tokens\":11,\"total_tokens\":18,\"seconds\":2.5}')",
+            [],
+        )?;
+
+        let result = usage(&db, &[])?;
+        assert_eq!(result["summary"]["calls"], 1);
+        assert_eq!(result["transcription"]["calls"], 1);
+        assert_eq!(result["transcription"]["input_tokens"], "7");
+        assert_eq!(result["transcription"]["total_tokens"], "18");
+        assert_eq!(result["transcription"]["seconds"], 2.5);
+        Ok(())
+    }
+}
