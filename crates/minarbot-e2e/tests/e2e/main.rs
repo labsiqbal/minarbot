@@ -8,6 +8,7 @@ mod cli;
 mod fx_acp;
 mod fx_agents;
 mod fx_composio;
+mod fx_connectors;
 mod fx_delegation;
 mod fx_dispatch;
 mod fx_mcp;

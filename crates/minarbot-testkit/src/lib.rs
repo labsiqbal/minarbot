@@ -20,6 +20,7 @@
 pub mod bridge;
 pub mod canonical;
 pub mod cli;
+pub mod connector;
 pub mod db;
 pub mod fake;
 pub mod fakes;
@@ -30,6 +31,7 @@ pub mod issuer;
 pub mod model;
 pub mod noise;
 pub mod peer;
+pub mod platform;
 pub mod protocol;
 pub mod providers;
 pub mod proxy;

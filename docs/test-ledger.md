@@ -135,6 +135,9 @@ each iteration as a case.
 | `app/composio.test.ts` | 3 | 3 | 0 | 1 (TS module, split out) |
 | `app/dispatch.test.ts` | 11 | 10 | 0 | 3 (B7 x2, TS module) |
 | `app/turn-stream.test.ts` | 2 | 1 | 0 | 1 (TS module) |
+| `app/connector-task-files.test.ts` | 6 | 6 | 0 | 0 (deleted) |
+| `app/workflow-files.test.ts` | 8 | 8 | 0 | 0 (deleted) |
+| `app/rust-connectors.test.ts` | 13 | 13 | 0 | 2 (B1) |
 
 <!-- fixture-summary -->
 
@@ -305,6 +308,48 @@ each iteration as a case.
 | --- | --- | ---: | --- |
 | snapshot merge rejects stale calls, duplicate reconnects and late polling regressions | Kept in Node | 14 -> 0 | Tests `app/shared/turn-stream.ts`. |
 | room polling retains active members beyond full history and orders prose/tool/final by attempt | `fx_stream::room_polling_retains_active_members_beyond_full_history_and_orders_prose_tool_final_by_attempt` | 31 -> 29 | Changed by #87: a harness turn is one provider call record, so the second model step is a new stream segment of the same `seq` (ordinals 0-3) instead of a new attempt with its own `seq`, and its revision grows instead of restarting at 0. `streamWork` is reimplemented in the test. Needs the gateway's live stream forwarding (G4). |
+
+### `app/connector-task-files.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| slack ordinary chat collects only requested teammate files (reply) | `fx_connectors::slack_ordinary_chat_collects_only_requested_teammate_files_reply` | 24 -> 23 | Full (shared helper `task_files`). The connector fixture is `platform::ConnectorFixture` (fake Slack API with Socket Mode, fault-injecting script proxy, `minarbot-server --connector-config`). |
+| slack ordinary chat collects only requested teammate files (notice) | `fx_connectors::slack_ordinary_chat_collects_only_requested_teammate_files_notice` | 24 -> 23 | Full. |
+| slack ordinary chat collects only requested teammate files (nested) | `fx_connectors::slack_ordinary_chat_collects_only_requested_teammate_files_nested` | 24 -> 23 | Full. |
+| telegram ordinary chat collects only requested teammate files (reply) | `fx_connectors::telegram_ordinary_chat_collects_only_requested_teammate_files_reply` | 24 -> 23 | Full. |
+| telegram ordinary chat collects only requested teammate files (notice) | `fx_connectors::telegram_ordinary_chat_collects_only_requested_teammate_files_notice` | 24 -> 23 | Full. |
+| telegram ordinary chat collects only requested teammate files (nested) | `fx_connectors::telegram_ordinary_chat_collects_only_requested_teammate_files_nested` | 24 -> 23 | Full. |
+
+### `app/workflow-files.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| slack step workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::slack_step_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| slack reply workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::slack_reply_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| slack notice workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::slack_notice_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| slack nested workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::slack_nested_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| telegram step workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_step_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| telegram reply workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_reply_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| telegram notice workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_notice_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+| telegram nested workflow artifacts are scoped to owned run and retain partial bytes | `fx_connectors::telegram_nested_workflow_artifacts_are_scoped_to_owned_run_and_retain_partial_bytes` | 19 -> 21 | Full (shared helper `workflow_files`). |
+
+### `app/rust-connectors.test.ts` (kept: B1, question runs)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced | `fx_composio::rust_composio_approval_recovery_revocation_schema_checks_and_uncertain_writes_remain_fenced` | 21 -> 19 | Full; the remote that accepts and holds or drops the write is a `stub::Stub` (`Hang`, `Drop`). |
+| Rust slack offline recovery preserves confirmed delivery and requires confirmation | `fx_connectors::rust_slack_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation` | 10 -> 11 | Full; journal commands run through `connector::journal`. |
+| Rust telegram offline recovery preserves confirmed delivery and requires confirmation | `fx_connectors::rust_telegram_offline_recovery_preserves_confirmed_delivery_and_requires_confirmation` | 10 -> 11 | Full; journal commands run through `connector::journal`. |
+| Rust telegram runner reply through native turns | `fx_connectors::rust_telegram_runner_reply_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust telegram runner question through native turns | `fx_connectors::rust_telegram_runner_question_through_native_turns` | 20 -> 22 | Kept in Node for B1: `calls === 2` leaves out the model step after `ask_user`; the Rust count excludes it. Everything else is full. |
+| Rust telegram runner file through native turns | `fx_connectors::rust_telegram_runner_file_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust telegram runner workflow through native turns | `fx_connectors::rust_telegram_runner_workflow_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust telegram runner media through native turns | `fx_connectors::rust_telegram_runner_media_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust slack runner reply through native turns | `fx_connectors::rust_slack_runner_reply_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust slack runner question through native turns | `fx_connectors::rust_slack_runner_question_through_native_turns` | 20 -> 22 | Kept in Node for B1: `calls === 2` leaves out the model step after `ask_user`; the Rust count excludes it. Everything else is full. |
+| Rust slack runner file through native turns | `fx_connectors::rust_slack_runner_file_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust slack runner workflow through native turns | `fx_connectors::rust_slack_runner_workflow_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
+| Rust slack runner media through native turns | `fx_connectors::rust_slack_runner_media_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
 
 <!-- fixture-cases -->
 
