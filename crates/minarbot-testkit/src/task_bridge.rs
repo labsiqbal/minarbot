@@ -135,6 +135,11 @@ pub struct Principal {
     pub authority_generation: String,
 }
 
+/// An open device event stream (closes on drop).
+pub struct DeviceStream {
+    _response: reqwest::Response,
+}
+
 /// Who sends a request.
 pub enum Actor<'a> {
     Human(&'a Account),
@@ -380,6 +385,26 @@ impl TaskFixture {
         token: Option<&str>,
         recovery: Option<&str>,
     ) -> Result<Envelope> {
+        let response = self
+            .builder(method, path, body.as_ref(), actor, token, recovery)
+            .await?
+            .send()
+            .await?;
+        let status = response.status().as_u16();
+        let text = response.text().await?;
+        let body = serde_json::from_str(&text).unwrap_or(Value::String(text));
+        Ok(Envelope { status, body })
+    }
+
+    async fn builder(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&Value>,
+        actor: Actor<'_>,
+        token: Option<&str>,
+        recovery: Option<&str>,
+    ) -> Result<reqwest::RequestBuilder> {
         let wait = {
             let mut last = self.pacing.lock().map_err(|_| "pacing")?;
             let now = Instant::now();
@@ -388,9 +413,8 @@ impl TaskFixture {
             due.saturating_duration_since(now)
         };
         tokio::time::sleep(wait).await;
-        let raw = body.as_ref().map(Value::to_string).unwrap_or_default();
+        let raw = body.map(Value::to_string).unwrap_or_default();
         let request_id = body
-            .as_ref()
             .and_then(|body| body["requestId"].as_str().map(str::to_owned))
             .unwrap_or_else(new_id);
         let server = self.server()?;
@@ -400,8 +424,7 @@ impl TaskFixture {
             .header(header::ORIGIN, server.origin())
             .header(header::CONTENT_TYPE, "application/json")
             .header("X-Minarbot-Protocol", "1")
-            .header("X-Minarbot-Request-Id", &request_id)
-            .timeout(Duration::from_secs(30));
+            .header("X-Minarbot-Request-Id", &request_id);
         match actor {
             Actor::Human(account) => {
                 request = request.header(
@@ -448,11 +471,54 @@ impl TaskFixture {
         if body.is_some() {
             request = request.body(raw);
         }
-        let response = request.send().await?;
-        let status = response.status().as_u16();
-        let text = response.text().await?;
-        let body = serde_json::from_str(&text).unwrap_or(Value::String(text));
-        Ok(Envelope { status, body })
+        Ok(request)
+    }
+
+    /// Open the device event stream, wait for its `connected` frame and send
+    /// the first heartbeat (Node `devices.connect`). The stream stays open
+    /// until the returned value is dropped.
+    pub async fn connect(&self, zone: &str, zone_revision: i64) -> Result<DeviceStream> {
+        let path = format!("/api/devices/{}/stream", self.principal.device_id);
+        let mut response = self
+            .builder(
+                Method::GET,
+                &path,
+                None,
+                Actor::Device(&self.principal),
+                None,
+                None,
+            )
+            .await?
+            .timeout(Duration::from_secs(3600))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(format!("Device stream failed with HTTP {}", response.status()).into());
+        }
+        let mut data = Vec::new();
+        while !data.contains(&b'\n') {
+            let chunk = tokio::time::timeout(Duration::from_secs(5), response.chunk())
+                .await
+                .map_err(|_| "device stream timed out")??
+                .ok_or("Device stream closed before the connected frame.")?;
+            data.extend_from_slice(&chunk);
+        }
+        let line = data.split(|byte| *byte == b'\n').next().unwrap_or_default();
+        let frame: Value = serde_json::from_slice(line)?;
+        if frame["kind"] != "connected" {
+            return Err(format!("Rust did not acknowledge the device connection: {frame}").into());
+        }
+        self.device(
+            &format!("/api/devices/{}/heartbeat", self.principal.device_id),
+            json!({"requestId": new_id(), "connectionGeneration": frame["connectionGeneration"], "zone": zone,
+                "zoneRevision": zone_revision, "journalWatermark": 0}),
+            None,
+        )
+        .await?
+        .expect_ok()?;
+        Ok(DeviceStream {
+            _response: response,
+        })
     }
 
     // Task routes (Node `tasks.*`).
