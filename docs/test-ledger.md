@@ -105,6 +105,87 @@ the bug is fixed.
 
 No product hook was added; `crates/minarbot-server/src` is unchanged.
 
+## #89 stale-b ports
+
+The Node suites of the stale-b slice broke when #87 removed the direct API
+runtime. They were rewritten case by case in `crates/minarbot-e2e/tests/e2e/sb_*.rs`.
+Agent turns run through the gateway instance (`ServerConfig::gateway`), whose
+model is the kit's `ControlModel` (`crates/minarbot-testkit/src/control.rs`):
+it can hold a request and answer it later with a chosen body, as the Node
+provider servers did. Assertion counts are static assertion sites (Node
+`assert*` calls and expected-status requests; Rust `ensure!`, `*_expect`,
+`wait_status`); assertions in loops count once.
+
+Behaviour that changed with #87, and how the ports treat it:
+
+- One harness call is one usage row and one `activity.calls` entry; a tool
+  loop inside it is not a separate provider request.
+- A tool the turn is not offered, or a tool error, reaches the model as an MCP
+  tool error and the turn finishes; the direct client failed the turn.
+- A harness CLI always exposes its MCP tools, also to summary and routing
+  requests.
+- Backup-model fallback, provider accounts, direct provider HTTP error
+  mapping, `/api/models` discovery and provider families are removed.
+
+### Kit changes
+
+- New `control.rs`: `ControlModel` (deferred answers, raw bodies, HTTP
+  statuses, a stalled SSE stream, per-answer usage).
+- `fake/gateway.rs`: streamed content deltas are forwarded as soon as their
+  SSE line arrives (the Node fixture buffered the whole body, so a stalled
+  provider never showed partial text), and an answer without `usage` reports
+  no token usage instead of zeros.
+
+### Product bugs fixed
+
+| Bug | Fix |
+| --- | --- |
+| S1 | `crates/shared/skill_files.rs` accepted duplicate `SKILL.md` frontmatter keys (`name: x` then `name: y` kept `y`), because serde_json maps keep the last key. The TypeScript parser rejected them. The frontmatter is now parsed as a YAML mapping first, which rejects duplicates. |
+
+### `app/compaction.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| incremental compaction keeps source scopes, originals, provenance and failure fallback | `sb_compaction::incremental_compaction_keeps_source_scopes_originals_provenance_and_failure_fallback` | 24 -> 20 | Dropped: `data.tools === undefined` on the summary request (a harness CLI always exposes MCP tools). The 1 s `timeout` still bounds each harness call, so a stalled summary falls back to history. |
+| Rust compaction fences stale responses, changed sources, cancelled turns and future watermarks | `sb_compaction::rust_compaction_fences_stale_responses_changed_sources_cancelled_turns_and_future_watermarks` | 14 -> 17 | Full. |
+
+### `app/crash.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| workflow SIGKILL preserves uncertain step without replay across two restarts | `sb_crash::workflow_sigkill_preserves_uncertain_step_without_replay_across_two_restarts` | 16 -> 13 | Full; `Server::crash` replaces the killed bridge child process. |
+| SIGKILL after delegated provider acceptance does not replay parent or child | `sb_crash::sigkill_after_delegated_provider_acceptance_does_not_replay_parent_or_child` | 11 -> 8 | The harness parent also takes its step after the delegation receipt, so 3 requests are in flight at the crash (Node: 2); none is repeated after restart. |
+
+### `app/flows.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| routine flow graph rejects cycles, foreign agents and disconnected branches | `sb_flows::routine_flow_graph_rejects_cycles_foreign_agents_and_disconnected_branches` | 4 -> 6 | The Node case called `app/src/flows.ts`; the same graphs go through `POST /api/routines/{id}/flow` (Rust `automation/flows.rs`). |
+| routine flow fan-in waits for every input and settles all-failed branches | `sb_flows::routine_flow_fan_in_waits_for_every_input_and_settles_all_failed_branches` | 18 -> 14 | Full. Step model counts exclude the harness step after a `report_failure` result. |
+
+### `app/skill-files.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| skill folders preserve exact files and reject invalid or unsupported inputs as a whole | `sb_skills::skill_folders_preserve_exact_files_and_reject_invalid_or_unsupported_inputs_as_a_whole` | 11 -> 7 | The parser checks go through `POST /api/skills` (`crates/shared/skill_files.rs`); found S1. Dropped: the export-bundle and draft-restore checks of the browser modules `exportedSkillFiles`/`restoreSkillCommand`, replaced by the Leptos importer. |
+| folder revisions, receipts and pinned file tools survive reload without foreign or revoked access | `sb_skills::folder_revisions_receipts_and_pinned_file_tools_survive_reload_without_foreign_or_revoked_access` | 33 -> 27 | In a channel `read_skill_file` is not offered and a call returns no content; the turn finishes instead of failing. |
+
+### `app/transcript.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| turn list exposes scoped read-only activity metadata in direct, thread and channel views | `sb_transcript::turn_list_exposes_scoped_read_only_activity_metadata_in_direct_thread_and_channel_views` | 16 -> 11 | Dropped: `activity.fallback_model` (#87). One harness call per turn, so `activity.calls` has 1 entry (Node: 3 HTTP requests). |
+| Stop timestamps survive repeated cancellation and server restart | `sb_transcript::stop_timestamps_survive_repeated_cancellation_and_server_restart` | 9 -> 5 | Full, on the real clock. Needed the gateway streaming fix (the Node case failed on the buffering fixture). |
+
+### `app/usage.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| Rust usage returns exact decimal totals, unknown counts and stable pages | `sb_usage::rust_usage_returns_exact_decimal_totals_unknown_counts_and_stable_pages` | 9 -> 8 | Full. |
+| usage records each provider call including tool loops, missing counts and failure | `sb_usage::usage_records_each_provider_call_including_tool_loops_missing_counts_and_failure` | 22 -> 20 | One row per harness call (the tool loop is one row). Dropped: the `finish_reason: length` mode, a direct-client rule. |
+
+<!-- stale-b files -->
+
 ## #67 hosted Hub test migration
 
 The app test runner discovers Hub Link once and starts the Rust hosted listener.

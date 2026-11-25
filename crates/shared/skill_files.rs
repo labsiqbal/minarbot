@@ -116,6 +116,10 @@ pub fn parse_files(value: &Value) -> Result<Value, String> {
     {
         return Err("Invalid SKILL.md frontmatter.".to_owned());
     }
+    // A YAML mapping keeps duplicate keys as an error; serde_json's map would
+    // silently keep the last one.
+    serde_yaml::from_str::<serde_yaml::Value>(yaml)
+        .map_err(|_| "Invalid SKILL.md frontmatter.".to_owned())?;
     let meta: Value =
         serde_yaml::from_str(yaml).map_err(|_| "Invalid SKILL.md frontmatter.".to_owned())?;
     let content = source[start..].trim();
