@@ -3090,3 +3090,813 @@ async fn late_known_result_rejects_risk_retry_and_historical_accepted_receipt_st
     );
     Ok(())
 }
+
+use minarbot_testkit::task_bridge::{lock_proof, random_token, tool_digest, Actor};
+
+#[tokio::test]
+async fn offline_task_admission_is_durable_scoped_immutable_and_exact_without_provider_binding(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let command = f.command(json!({}));
+    let accepted = f.admit(&f.owner, &command).await?.expect_ok()?;
+    ensure!(accepted.status == 202, "status: {}", accepted.status);
+    ensure!(
+        accepted.data()["state"] == "waiting_device",
+        "state: {}",
+        accepted.body
+    );
+    ensure!(
+        accepted.data()["taskId"] == command["requestId"],
+        "task id: {}",
+        accepted.body
+    );
+    ensure!(
+        f.admit(&f.owner, &command).await?.status == 200,
+        "replay status"
+    );
+    f.admit(
+        &f.owner,
+        &with(command.clone(), json!({"payloadDigest": "0".repeat(64)})),
+    )
+    .await?
+    .expect_code("payload_digest_mismatch")?;
+    f.admit(&f.foreign, &command)
+        .await?
+        .expect_code("resource_not_found")?;
+    f.admit(&f.member, &command)
+        .await?
+        .expect_code("execution_denied")?;
+    let mut revisions = command["expectedRevisions"].clone();
+    revisions["capability"] = json!(2);
+    f.admit(
+        &f.owner,
+        &f.command(json!({"expectedRevisions": revisions})),
+    )
+    .await?
+    .expect_code("stale_revision")?;
+    f.admit(
+        &f.owner,
+        &with(command.clone(), json!({"secret": "forbidden"})),
+    )
+    .await?
+    .expect_code("unknown_field")?;
+    let mut payload = command["payload"].clone();
+    payload["role"] = json!("admin");
+    f.admit(
+        &f.owner,
+        &with(command.clone(), json!({"payload": payload})),
+    )
+    .await?
+    .expect_code("unknown_field")?;
+    f.db().execute(
+        "UPDATE agent_projects SET revision=2 WHERE project=? AND agent=?",
+        [&f.project, &f.agent],
+    )?;
+    ensure!(
+        f.admit(&f.owner, &command).await?.status == 200,
+        "replay after a revision change"
+    );
+    let task = command["requestId"].as_str().ok_or("task")?;
+    ensure!(
+        lookup_data(&f, &f.owner, task).await?["currentTaskId"] == task,
+        "current task"
+    );
+    let mutated = f.db().execute(
+        "UPDATE tasks SET home_device=? WHERE id=?",
+        [&new_id(), &task.to_owned()],
+    );
+    ensure!(
+        mutated.is_err_and(|error| error.to_string().contains("immutable task admission")),
+        "admission mutable"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) AS n FROM turns", [], "n")? == 1,
+        "turns"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) AS n FROM task_actions", [], "n")? == 0,
+        "actions"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn assigned_collaborator_executes_owner_home_binding_and_revoked_scope_blocks_receipt_replay(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    f.db().execute(
+        "INSERT INTO collaborator_agents VALUES (?,?,?,1,1)",
+        [&f.project, &f.member.account_id, &f.agent],
+    )?;
+    f.db().execute(
+        "INSERT INTO response_policies VALUES (?,?,?,1,1)",
+        [&f.project, &f.member.account_id, &f.agent],
+    )?;
+    let command = f.command(json!({}));
+    ensure!(
+        f.admit(&f.member, &command).await?.expect_ok()?.status == 202,
+        "collaborator admission"
+    );
+    f.db().execute(
+        "UPDATE project_members SET deleted=1,grant_revision=2 WHERE project=? AND account=?",
+        [&f.project, &f.member.account_id],
+    )?;
+    f.admit(&f.member, &command)
+        .await?
+        .expect_code("resource_not_found")?;
+    f.lookup(&f.member, command["requestId"].as_str().ok_or("task")?)
+        .await?
+        .expect_code("resource_not_found")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_messages_require_files_preserve_line_breaks_and_closed_union_rejects_mixed_routing(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let command = f.command(json!({"payload": {"v": 1, "kind": "direct", "message": {"text": "First\nSecond\tIndented", "files": []}}}));
+    ensure!(
+        f.admit(&f.owner, &command).await?.expect_ok()?.status == 202,
+        "line breaks"
+    );
+    f.admit(
+        &f.owner,
+        &f.command(json!({"payload": {"v": 1, "kind": "direct", "message": {"text": "No files"}}})),
+    )
+    .await?
+    .expect_code("invalid_attachments")?;
+    let mut revisions = command["expectedRevisions"].clone();
+    revisions["channel"] = json!(1);
+    f.admit(&f.owner, &f.command(json!({"payload": {"v": 1, "kind": "channel", "channelId": new_id(), "threadId": new_id(), "routing": "assigned",
+        "message": {"text": "Mixed", "files": []}}, "expectedRevisions": revisions})))
+        .await?
+        .expect_code("invalid_task_payload")?;
+    f.admit(&f.owner, &f.command(json!({"payload": {"v": 1, "kind": "direct", "message": {"text": "Foreign attachment", "files": [new_id()]}}})))
+        .await?
+        .expect_code("resource_not_found")?;
+    ensure!(
+        field(&f, "SELECT count(*) AS n FROM tasks", [], "n")? == 1,
+        "refused admissions stored"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_admission_requires_scoped_conversation_matching_revisions_and_exact_attachment_conversation(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let thread = new_id();
+    let channel = new_id();
+    f.db().execute(
+        "INSERT INTO threads(id,agent,name) VALUES (?,?,?)",
+        [&thread, &f.agent, &"Side".to_owned()],
+    )?;
+    f.db().execute(
+        "INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)",
+        [
+            &channel,
+            &"Room".to_owned(),
+            &"Room rules".to_owned(),
+            &f.agent,
+        ],
+    )?;
+    f.db().execute(
+        "INSERT INTO channel_members VALUES (?,?)",
+        [&channel, &f.agent],
+    )?;
+    let direct = f.command(json!({}));
+    let mut thread_revisions = direct["expectedRevisions"].clone();
+    thread_revisions["thread"] = json!(1);
+    let side = f.command(
+        json!({"payload": side_payload(&thread, "Private"), "expectedRevisions": thread_revisions}),
+    );
+    f.admit(&f.owner, &side)
+        .await?
+        .expect_code("resource_not_found")?;
+    f.db().execute(
+        "INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)",
+        [
+            json!([thread]).to_string(),
+            f.owner.account_id.clone(),
+            f.project.clone(),
+            thread.clone(),
+        ],
+    )?;
+    ensure!(
+        f.admit(&f.owner, &side).await?.expect_ok()?.status == 202,
+        "scoped side admission"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT thread FROM turns WHERE id=?",
+            [side["requestId"].as_str().unwrap_or_default()],
+            "thread"
+        )? == thread.as_str(),
+        "turn thread"
+    );
+    let mut stale = side["expectedRevisions"].clone();
+    stale["thread"] = json!(2);
+    f.admit(
+        &f.owner,
+        &f.command(json!({"payload": side["payload"], "expectedRevisions": stale})),
+    )
+    .await?
+    .expect_code("stale_revision")?;
+    let mut channel_revisions = direct["expectedRevisions"].clone();
+    channel_revisions["channel"] = json!(1);
+    let room = f.command(json!({"payload": {"v": 1, "kind": "channel", "channelId": channel, "routing": "automatic", "message": {"text": "Room", "files": []}},
+        "expectedRevisions": channel_revisions}));
+    f.db().execute(
+        "INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)",
+        [
+            json!([channel]).to_string(),
+            f.owner.account_id.clone(),
+            f.project.clone(),
+            channel.clone(),
+        ],
+    )?;
+    ensure!(
+        f.admit(&f.owner, &room).await?.expect_ok()?.status == 202,
+        "room admission"
+    );
+    f.db().execute(
+        "UPDATE channels SET archived=1,revision=2 WHERE id=?",
+        [&channel],
+    )?;
+    ensure!(
+        f.admit(&f.owner, &room).await?.status == 200,
+        "archived room replay"
+    );
+    f.admit(
+        &f.owner,
+        &f.command(
+            json!({"payload": room["payload"], "expectedRevisions": room["expectedRevisions"]}),
+        ),
+    )
+    .await?
+    .expect_code("conversation_archived")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn provider_provenance_is_captured_from_owner_same_home_binding_and_never_caller_fields(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let binding = new_id();
+    f.db().execute(
+        "INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','fixture','Fixture','ready',1)",
+        [&binding, &f.home, &f.owner.account_id],
+    )?;
+    f.db().execute(
+        "UPDATE agent_authority SET provider_binding=? WHERE agent=?",
+        [&binding, &f.agent],
+    )?;
+    let command = f.command(json!({}));
+    f.admit(&f.owner, &command).await?.expect_ok()?;
+    let task = one(&f, "SELECT provider_binding_id,provider_binding_revision,provider_binding_owner FROM tasks WHERE id=?", [command["requestId"].as_str().unwrap_or_default()])?;
+    ensure!(
+        task["provider_binding_id"] == binding.as_str(),
+        "binding: {task}"
+    );
+    ensure!(
+        task["provider_binding_revision"] == 1,
+        "binding revision: {task}"
+    );
+    ensure!(
+        task["provider_binding_owner"] == f.owner.account_id.as_str(),
+        "binding owner: {task}"
+    );
+    f.db().execute(
+        "UPDATE provider_bindings SET owner_account=? WHERE id=?",
+        [&f.foreign.account_id, &binding],
+    )?;
+    f.admit(&f.owner, &f.command(json!({})))
+        .await?
+        .expect_code("resource_not_found")?;
+    ensure!(f.admit(&f.owner, &command).await?.status == 200, "receipt");
+    Ok(())
+}
+
+#[tokio::test]
+async fn acquire_requires_stopped_reconciled_owner_exact_token_and_fenced_generation() -> Result<()>
+{
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let command = f.command(json!({}));
+    f.admit(&f.owner, &command).await?.expect_ok()?;
+    let token = random_token()?;
+    let proof = lock_proof();
+    let acquire = json!({"requestId": new_id(), "taskId": command["requestId"], "previousExecutorGeneration": 0,
+        "executorTokenHash": sha256_hex(&token), "lockProof": proof});
+    let owned = f.acquire(acquire.clone(), &token).await?.expect_ok()?;
+    ensure!(
+        owned.data()["ownership"]["executorGeneration"] == 1,
+        "generation: {}",
+        owned.body
+    );
+    ensure!(
+        f.acquire(acquire.clone(), &token)
+            .await?
+            .expect_ok()?
+            .data()
+            == owned.data(),
+        "acquire receipt"
+    );
+    f.acquire(
+        with(acquire.clone(), json!({"requestId": new_id()})),
+        &token,
+    )
+    .await?
+    .expect_code("ownership_conflict")?;
+    f.acquire(
+        with(
+            acquire.clone(),
+            json!({"requestId": new_id(), "previousExecutorGeneration": 1,
+        "lockProof": with(proof.clone(), json!({"previousOwnerStopped": false}))}),
+        ),
+        &token,
+    )
+    .await?
+    .expect_code("ownership_conflict")?;
+    f.acquire(acquire.clone(), &random_token()?)
+        .await?
+        .expect_code("executor_invalid")?;
+    let successor = random_token()?;
+    let next = f
+        .acquire(with(acquire, json!({"requestId": new_id(), "previousExecutorGeneration": 1, "executorTokenHash": sha256_hex(&successor),
+            "lockProof": with(proof, json!({"lockId": new_id()}))})), &successor)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        next.data()["ownership"]["executorGeneration"] == 2,
+        "successor generation: {}",
+        next.body
+    );
+    ensure!(
+        !owned.body.to_string().contains(&token),
+        "receipt leaked the executor token"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn context_snapshot_is_immutable_exact_project_scoped_and_requires_current_executor_token(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let c = f.command(json!({}));
+    f.admit(&f.owner, &c).await?.expect_ok()?;
+    let task = c["requestId"].as_str().ok_or("task")?.to_owned();
+    let (token, ownership, revision) = f.acquire_task(&task).await?;
+    let command =
+        json!({"requestId": new_id(), "ownership": ownership, "expectedTaskRevision": revision});
+    let context = f
+        .task_op("context", &task, command.clone(), &token)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        f.task_op("context", &task, command.clone(), &token)
+            .await?
+            .expect_ok()?
+            .data()
+            == context.data(),
+        "context receipt"
+    );
+    let snapshot = &context.data()["snapshot"];
+    ensure!(
+        snapshot["projectId"] == f.project.as_str(),
+        "project: {snapshot}"
+    );
+    ensure!(
+        snapshot["profile"]["instructions"] == "Research",
+        "instructions: {snapshot}"
+    );
+    ensure!(
+        context.data()["snapshotRef"]["digest"] == sha256_hex(canonical_json(snapshot)).as_str(),
+        "snapshot digest"
+    );
+    f.task_op(
+        "context",
+        &task,
+        with(command, json!({"requestId": new_id()})),
+        &random_token()?,
+    )
+    .await?
+    .expect_code("executor_invalid")?;
+    let mutated = f
+        .db()
+        .execute("UPDATE task_context_snapshots SET snapshot_json='{}'", []);
+    ensure!(
+        mutated.is_err_and(|error| error.to_string().contains("immutable task context")),
+        "snapshot mutable"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn action_prepare_grants_no_dispatch_commit_has_one_live_grant_and_stale_context_blocks_new_work(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let c = f.command(json!({}));
+    f.admit(&f.owner, &c).await?.expect_ok()?;
+    let task = c["requestId"].as_str().ok_or("task")?.to_owned();
+    let (token, ownership, revision) = f.acquire_task(&task).await?;
+    let context = f
+        .task_op("context", &task, json!({"requestId": new_id(), "ownership": ownership, "expectedTaskRevision": revision}), &token)
+        .await?
+        .expect_ok()?;
+    let reference = context.data()["snapshotRef"].clone();
+    let action = new_id();
+    let digest = sha256_hex("compute");
+    let intent = digest_command(&json!([
+        task,
+        action,
+        0,
+        ownership,
+        digest,
+        "compute",
+        reference["snapshotId"],
+        reference["digest"],
+        null,
+        null,
+        1,
+        null,
+        null,
+        null
+    ]));
+    let prepare = json!({"requestId": new_id(), "sequence": 0, "ownership": ownership, "payloadDigest": digest, "actionKind": "compute",
+        "contextSnapshotId": reference["snapshotId"], "contextDigest": reference["digest"], "grantRevision": 1,
+        "expectedTaskRevision": revision, "journalSequence": 1, "intentDigest": intent});
+    let prepared_action = f
+        .prepare(&task, &action, prepare.clone(), &token)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        prepared_action.data()["state"] == "prepared",
+        "prepare: {}",
+        prepared_action.body
+    );
+    ensure!(
+        prepared_action.data().get("dispatchable").is_none(),
+        "prepare granted dispatch: {}",
+        prepared_action.body
+    );
+    ensure!(
+        f.prepare(&task, &action, prepare, &token)
+            .await?
+            .expect_ok()?
+            .data()
+            == prepared_action.data(),
+        "prepare receipt"
+    );
+    let reacquire = || json!({"requestId": new_id(), "taskId": task, "previousExecutorGeneration": 1, "executorTokenHash": sha256_hex(&token), "lockProof": lock_proof()});
+    f.acquire(reacquire(), &token)
+        .await?
+        .expect_code("ownership_conflict")?;
+    let commit = json!({"requestId": new_id(), "ownership": ownership, "intentDigest": intent, "expectedTaskRevision": revision, "journalSequence": 1});
+    let committed = f
+        .commit(&task, &action, commit.clone(), &token)
+        .await?
+        .expect_ok()?;
+    ensure!(
+        committed.data()["dispatchable"] == true,
+        "commit: {}",
+        committed.body
+    );
+    ensure!(
+        f.commit(&task, &action, commit.clone(), &token)
+            .await?
+            .expect_ok()?
+            .data()["dispatchable"]
+            == false,
+        "commit replay dispatchable"
+    );
+    let stored: Value = serde_json::from_str(
+        field(
+            &f,
+            "SELECT result_json FROM receipts WHERE request_id=?",
+            [commit["requestId"].as_str().unwrap_or_default()],
+            "result_json",
+        )?
+        .as_str()
+        .ok_or("receipt")?,
+    )?;
+    ensure!(
+        stored["data"]["dispatchable"] == false,
+        "stored receipt dispatchable: {stored}"
+    );
+    f.commit(
+        &task,
+        &action,
+        with(commit, json!({"requestId": new_id()})),
+        &token,
+    )
+    .await?
+    .expect_code("action_conflict")?;
+    f.acquire(reacquire(), &token)
+        .await?
+        .expect_code("ownership_conflict")?;
+    Ok(())
+}
+
+struct Transfer {
+    task: String,
+    recipient: String,
+    token: String,
+    ownership: Value,
+    action: String,
+    commit: Value,
+    mutation: Value,
+}
+
+async fn canonical_transfer(f: &TaskFixture) -> Result<Transfer> {
+    let recipient = new_id();
+    f.human(
+        minarbot_testkit::http::Method::POST,
+        "/api/agents",
+        Some(agent_body(&recipient, "Recipient", f)),
+        &f.owner,
+    )
+    .await?
+    .expect_ok()?;
+    let channel = new_id();
+    f.db().execute(
+        "INSERT INTO channels(id,name,instructions,lead) VALUES (?,?,?,?)",
+        [
+            &channel,
+            &"Transfer".to_owned(),
+            &"Project work".to_owned(),
+            &f.agent,
+        ],
+    )?;
+    for agent in [&f.agent, &recipient] {
+        f.db().execute(
+            "INSERT INTO channel_members VALUES (?,?)",
+            [&channel, agent],
+        )?;
+    }
+    f.db().execute(
+        "INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)",
+        [
+            json!([channel]).to_string(),
+            f.owner.account_id.clone(),
+            f.project.clone(),
+            channel.clone(),
+        ],
+    )?;
+    let command = f.command(json!({"payload": channel_payload(&channel, "Research this"),
+        "expectedRevisions": {"project": 1, "agent": 1, "homeBinding": 1, "membership": 1, "assignment": 1, "capability": 1, "channel": 1}}));
+    f.admit(&f.owner, &command).await?.expect_ok()?;
+    let task = command["requestId"].as_str().ok_or("task")?.to_owned();
+    let (token, ownership, revision) = f.acquire_task(&task).await?;
+    let context = f
+        .task_op("context", &task, json!({"requestId": new_id(), "ownership": ownership, "expectedTaskRevision": revision}), &token)
+        .await?
+        .expect_ok()?;
+    let reference = context.data()["snapshotRef"].clone();
+    let action = new_id();
+    let tool_call = json!({"id": "transfer", "function": {"name": "transfer_task",
+        "arguments": json!({"recipient": recipient, "task": "Continue from saved evidence"}).to_string()}});
+    let expected = json!(revision.as_i64().unwrap_or(0) + 1);
+    let payload_digest = tool_digest(&tool_call, &expected, None);
+    let intent = digest_command(&json!([
+        task,
+        action,
+        0,
+        ownership,
+        payload_digest,
+        "canonical",
+        reference["snapshotId"],
+        reference["digest"],
+        null,
+        null,
+        1,
+        null,
+        null,
+        null
+    ]));
+    f.prepare(&task, &action, json!({"requestId": new_id(), "sequence": 0, "ownership": ownership, "payloadDigest": payload_digest,
+        "actionKind": "canonical", "contextSnapshotId": reference["snapshotId"], "contextDigest": reference["digest"], "grantRevision": 1,
+        "expectedTaskRevision": revision, "journalSequence": 1, "intentDigest": intent}), &token)
+        .await?
+        .expect_ok()?;
+    let commit = json!({"requestId": new_id(), "ownership": ownership, "intentDigest": intent, "expectedTaskRevision": revision, "journalSequence": 1});
+    let mutation = json!({"toolCall": tool_call, "expectedRevision": expected, "requestId": new_id(), "actionId": action,
+        "ownership": ownership, "payloadDigest": payload_digest});
+    Ok(Transfer {
+        task,
+        recipient,
+        token,
+        ownership,
+        action,
+        commit,
+        mutation,
+    })
+}
+
+#[tokio::test]
+async fn canonical_transfer_commits_one_successor_and_immutable_result_fences_old_executor_and_retries_without_mutation(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let t = canonical_transfer(&f).await?;
+    let wrong = with(
+        t.mutation.clone(),
+        json!({"expectedRevision": 2, "payloadDigest": tool_digest(&t.mutation["toolCall"], &json!(2), None)}),
+    );
+    f.task_op("context-mutations", &t.task, wrong, &t.token)
+        .await?
+        .expect_code("action_conflict")?;
+    f.commit(&t.task, &t.action, t.commit.clone(), &t.token)
+        .await?
+        .expect_ok()?;
+    let result = f
+        .task_op("context-mutations", &t.task, t.mutation.clone(), &t.token)
+        .await?
+        .expect_ok()?;
+    let content = result_content(&result);
+    let successor = content["taskId"].as_str().ok_or("successor")?.to_owned();
+    ensure!(successor != t.task, "successor reuses the task");
+    ensure!(
+        content["homeDeviceId"] == f.home.as_str(),
+        "home: {content}"
+    );
+    let original = lookup_data(&f, &f.owner, &t.task).await?;
+    ensure!(
+        original["state"] == "transferred" && original["currentTaskId"] == successor.as_str(),
+        "original: {original}"
+    );
+    ensure!(
+        lookup_data(&f, &f.owner, &successor).await?["agentId"] == t.recipient.as_str(),
+        "successor agent"
+    );
+    let payload: Value = serde_json::from_str(
+        field(
+            &f,
+            "SELECT payload_json FROM tasks WHERE id=?",
+            [&successor],
+            "payload_json",
+        )?
+        .as_str()
+        .ok_or("payload")?,
+    )?;
+    ensure!(
+        payload["message"]["text"] == "Continue from saved evidence",
+        "successor payload: {payload}"
+    );
+    ensure!(
+        f.task_op("context-mutations", &t.task, t.mutation.clone(), &t.token)
+            .await?
+            .body
+            == result.body,
+        "transfer receipt"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT count(*) n FROM tasks WHERE logical_turn=?",
+            [&t.task],
+            "n"
+        )? == 2,
+        "logical turn tasks"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT count(*) n FROM task_results WHERE action=?",
+            [&t.action],
+            "n"
+        )? == 1,
+        "results"
+    );
+    f.task_op(
+        "context-mutations",
+        &t.task,
+        with(t.mutation.clone(), json!({"actionId": new_id()})),
+        &t.token,
+    )
+    .await?
+    .expect_code("payload_conflict")?;
+    f.task_op(
+        "context-mutations",
+        &t.task,
+        t.mutation.clone(),
+        &"x".repeat(43),
+    )
+    .await?
+    .expect_code("executor_invalid")?;
+    let mut stranger = f.principal.clone();
+    stranger.device_id = new_id();
+    let forged = f
+        .request(
+            minarbot_testkit::http::Method::POST,
+            &format!("/api/tasks/{}/context-mutations", t.task),
+            Some(t.mutation.clone()),
+            Actor::Device(&stranger),
+            Some(&t.token),
+            None,
+        )
+        .await?;
+    ensure!(!forged.ok(), "foreign device accepted: {}", forged.body);
+    f.task_op(
+        "context-mutations",
+        &t.task,
+        with(t.mutation.clone(), json!({"requestId": new_id()})),
+        &t.token,
+    )
+    .await?
+    .expect_code("ownership_conflict")?;
+    f.db().execute(
+        "UPDATE project_members SET deleted=1 WHERE project=? AND account=?",
+        [&f.project, &f.owner.account_id],
+    )?;
+    f.task_op("context-mutations", &t.task, t.mutation.clone(), &t.token)
+        .await?
+        .expect_code("execution_denied")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn canonical_rpc_rejects_changed_input_stale_grants_and_fabricated_results_without_partial_transfer(
+) -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let t = canonical_transfer(&f).await?;
+    let committed = f
+        .commit(&t.task, &t.action, t.commit.clone(), &t.token)
+        .await?
+        .expect_ok()?;
+    let mut changed_call = t.mutation["toolCall"].clone();
+    changed_call["function"]["arguments"] =
+        json!(json!({"recipient": t.recipient, "task": "Changed"}).to_string());
+    f.task_op(
+        "context-mutations",
+        &t.task,
+        with(t.mutation.clone(), json!({"toolCall": changed_call})),
+        &t.token,
+    )
+    .await?
+    .expect_code("payload_digest_mismatch")?;
+    let digest = tool_digest(&changed_call, &t.mutation["expectedRevision"], None);
+    f.task_op(
+        "context-mutations",
+        &t.task,
+        with(
+            t.mutation.clone(),
+            json!({"toolCall": changed_call, "payloadDigest": digest}),
+        ),
+        &t.token,
+    )
+    .await?
+    .expect_code("action_conflict")?;
+    let content = json!({"text": "Forged"});
+    let (digest, reference) = result_ref(&t.task, &t.action, &content);
+    f.task_op("reconcile", &t.task, json!({"requestId": new_id(), "actionId": t.action, "ownership": t.ownership,
+        "payloadDigest": t.mutation["payloadDigest"], "state": "reported", "effectStatus": "known", "journalSequence": 2,
+        "resultContent": content, "resultDigest": digest, "resultRef": reference}), &t.token)
+        .await?
+        .expect_code("canonical_result_required")?;
+    f.edit_agent_rules(&f.owner, &f.project, &f.agent, json!({"requestId": new_id(), "expectedParticipationRevision": 1, "rules": "Changed after commit"}))
+        .await?
+        .expect_ok()?;
+    f.task_op("context-mutations", &t.task, t.mutation.clone(), &t.token)
+        .await?
+        .expect_code("context_stale")?;
+    ensure!(
+        lookup_data(&f, &f.owner, &t.task).await?["revision"]
+            == committed.receipt()["recordRevision"],
+        "task revision moved"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM task_results", [], "n")? == 0,
+        "partial result"
+    );
+    ensure!(
+        field(&f, "SELECT count(*) n FROM tasks", [], "n")? == 1,
+        "partial transfer"
+    );
+    ensure!(
+        field(
+            &f,
+            "SELECT stopped FROM execution_owners WHERE task=?",
+            [&t.task],
+            "stopped"
+        )? == 0,
+        "executor stopped"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn canonical_transfer_keeps_channel_only_tool_boundary_for_private_tasks() -> Result<()> {
+    let f = TaskFixture::new(&["transfer_task"], None).await?;
+    let p = prepared(&f).await?;
+    let tool_call = json!({"id": "transfer", "function": {"name": "transfer_task", "arguments": json!({"recipient": new_id(), "task": "Handoff"}).to_string()}});
+    let digest = tool_digest(&tool_call, &json!(2), None);
+    f.task_op("context-mutations", &p.task, json!({"toolCall": tool_call, "expectedRevision": 2, "requestId": new_id(), "actionId": new_id(),
+        "ownership": p.ownership, "payloadDigest": digest}), &p.token)
+        .await?
+        .expect_code("execution_denied")?;
+    ensure!(
+        field(&f, "SELECT count(*) n FROM tasks", [], "n")? == 1,
+        "private transfer created a task"
+    );
+    Ok(())
+}
