@@ -7,7 +7,8 @@
 //! 1. lists Minarbot's MCP tools (`tools/list`) and offers them as OpenAI
 //!    functions (none for goal judges, which run without an MCP session;
 //!    only `ask_user` and `edit_profile` for profile setup turns
-//!    whose prompt contains `Initial name:`);
+//!    whose prompt contains `Initial name:`), plus the tools of every extra
+//!    stdio server in `mcp_servers` (such as CodeGraph), as Codex mounts them;
 //! 2. rebuilds the conversation from `<minarbot-message>` tags or
 //!    `role: ` markers in the prompt, else from the saved session file
 //!    `.fake-gateway-<thread>.json` (resume), else from additional context;
@@ -27,7 +28,7 @@
 //! aborts the running turn without further output. Each input message's
 //! method, id and thread are appended to `fake-gateway-log.jsonl`.
 
-use super::{Args, Out, Result};
+use super::{stdio_mcp::StdioServer, Args, Out, Result};
 use serde_json::{json, Map, Value};
 use std::{
     collections::HashMap,
@@ -51,6 +52,9 @@ struct State {
     runs: HashMap<String, AbortHandle>,
     next_id: u64,
     request_ids: HashMap<String, String>,
+    /// Extra stdio MCP servers from `thread/start` and which serves each tool.
+    stdio: Vec<StdioServer>,
+    stdio_tools: HashMap<String, usize>,
 }
 
 #[derive(Clone)]
@@ -161,26 +165,36 @@ impl Peer {
             return Ok(Vec::new());
         }
         let result = self.rpc("tools/list", json!({})).await?;
-        Ok(result["tools"]
+        let mut tools: Vec<Value> = result["tools"]
             .as_array()
-            .map(|tools| {
-                tools
-                    .iter()
-                    .map(|tool| {
-                        let parameters = match tool.get("inputSchema") {
-                            Some(schema) if !schema.is_null() => schema.clone(),
-                            _ => json!({"type": "object"}),
-                        };
-                        let mut function = json!({"name": tool["name"]});
-                        if let Some(description) = tool.get("description") {
-                            function["description"] = description.clone();
-                        }
-                        function["parameters"] = parameters;
-                        json!({"type": "function", "function": function})
-                    })
-                    .collect()
-            })
-            .unwrap_or_default())
+            .map(|tools| tools.iter().map(function).collect())
+            .unwrap_or_default();
+        let (servers, cwd) = self.with(|state| (state.stdio.clone(), state.workspace.clone()));
+        for (index, server) in servers.iter().enumerate() {
+            for tool in server.tools(&cwd).await? {
+                if let Some(name) = tool["name"].as_str() {
+                    self.with(|state| state.stdio_tools.insert(name.to_owned(), index));
+                }
+                tools.push(function(&tool));
+            }
+        }
+        Ok(tools)
+    }
+
+    /// `tools/call` on the stdio server that offered `name`, if any.
+    async fn stdio_call(&self, name: &str, arguments: &Value) -> Result<Option<Value>> {
+        let (server, cwd) = self.with(|state| {
+            let server = state
+                .stdio_tools
+                .get(name)
+                .and_then(|index| state.stdio.get(*index))
+                .cloned();
+            (server, state.workspace.clone())
+        });
+        match server {
+            Some(server) => Ok(Some(server.call(&cwd, name, arguments.clone()).await?)),
+            None => Ok(None),
+        }
     }
 
     /// One provider request; streamed responses are folded into a
@@ -305,6 +319,25 @@ impl Peer {
             .collect();
         Ok(json!({"data": data, "nextCursor": null}))
     }
+}
+
+/// An MCP tool declaration as an OpenAI function.
+fn function(tool: &Value) -> Value {
+    let parameters = match tool.get("inputSchema") {
+        Some(schema) if !schema.is_null() => schema.clone(),
+        _ => json!({"type": "object"}),
+    };
+    let mut function = json!({"name": tool["name"]});
+    if let Some(description) = tool.get("description") {
+        function["description"] = description.clone();
+    }
+    function["parameters"] = parameters;
+    json!({"type": "function", "function": function})
+}
+
+/// `isError` tool result, also for stdio servers.
+pub(super) fn tool_error_value(message: &str, status: Value) -> Value {
+    tool_error(message, status)
 }
 
 fn tool_error(message: &str, status: Value) -> Value {
@@ -533,6 +566,9 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
                     let peer = peer.clone();
                     let name = name.clone();
                     async move {
+                        if let Some(result) = peer.stdio_call(&name, &normalized).await? {
+                            return Ok(result);
+                        }
                         peer.rpc("tools/call", json!({"name": name, "arguments": normalized}))
                             .await
                     }
@@ -700,6 +736,8 @@ pub async fn main(args: Args) -> Result<ExitCode> {
             runs: HashMap::new(),
             next_id: 1,
             request_ids: HashMap::new(),
+            stdio: Vec::new(),
+            stdio_tools: HashMap::new(),
         })),
     };
     let mut lines = super::stdin_lines();
@@ -738,6 +776,8 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                     if let Some(model) = params["model"].as_str() {
                         state.model = model.to_owned();
                     }
+                    state.stdio = StdioServer::from_config(config);
+                    state.stdio_tools.clear();
                     if method == "thread/resume" {
                         let saved = state
                             .workspace

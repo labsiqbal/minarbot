@@ -17,6 +17,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod backup;
 pub mod bridge;
 pub mod canonical;
 pub mod cli;
@@ -25,13 +26,19 @@ pub mod fake;
 pub mod fakes;
 pub mod http;
 pub mod image;
+pub mod images;
 pub mod issuer;
+pub mod mcp_server;
 pub mod model;
+pub mod parked;
+pub mod pdf;
 pub mod protocol;
 pub mod providers;
 pub mod proxy;
 pub mod server;
+pub mod upload;
 pub mod wait;
+pub mod webhook;
 pub mod workspace;
 
 /// Boxed error used by every kit helper and by tests (`Result<()>` + `?`).

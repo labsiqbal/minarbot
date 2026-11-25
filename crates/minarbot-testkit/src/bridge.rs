@@ -55,11 +55,16 @@ impl BridgeError {
 
 type Operations = dyn Fn(&str, &Value) -> Result<Value, BridgeError> + Send + Sync;
 type Pdf = dyn Fn(&[u8]) -> Option<(u16, String)> + Send + Sync;
+/// Future of an asynchronous PDF fault handler.
+pub type PdfFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Option<(u16, String)>> + Send>>;
+type PdfAsync = dyn Fn(Bytes) -> PdfFuture + Send + Sync;
 
 enum Kind {
     Operations(Arc<Operations>),
     Paths(Arc<Operations>),
     Pdf(Arc<Pdf>),
+    PdfAsync(Arc<PdfAsync>),
     Key(String),
 }
 
@@ -122,15 +127,20 @@ async fn operation(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: 
                 &body["args"],
             ))
         }
-        Kind::Pdf(handler) => match handler(&body) {
-            None => StatusCode::NO_CONTENT.into_response(),
-            Some((status, error)) => (
-                StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                Json(json!({"error": error})),
-            )
-                .into_response(),
-        },
+        Kind::Pdf(handler) => pdf_answer(handler(&body)),
+        Kind::PdfAsync(handler) => pdf_answer(handler(body).await),
         _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn pdf_answer(result: Option<(u16, String)>) -> Response {
+    match result {
+        None => StatusCode::NO_CONTENT.into_response(),
+        Some((status, error)) => (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Json(json!({"error": error})),
+        )
+            .into_response(),
     }
 }
 
@@ -210,6 +220,14 @@ impl Bridge {
         handler: impl Fn(&[u8]) -> Option<(u16, String)> + Send + Sync + 'static,
     ) -> Result<Self> {
         Self::start(Kind::Pdf(Arc::new(handler))).await
+    }
+
+    /// PDF fault bridge whose handler may wait. The server dropping the
+    /// request (shutdown, timeout) drops the handler's future.
+    pub async fn pdf_async(
+        handler: impl Fn(Bytes) -> PdfFuture + Send + Sync + 'static,
+    ) -> Result<Self> {
+        Self::start(Kind::PdfAsync(Arc::new(handler))).await
     }
 
     /// Composio key bridge that serves `key`.
