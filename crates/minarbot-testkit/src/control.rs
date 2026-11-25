@@ -44,6 +44,9 @@ pub enum Answer {
         name: String,
         arguments: Value,
     },
+    /// One tool call whose `arguments` string is sent verbatim (for
+    /// arguments JSON cannot model, such as a lone UTF-16 surrogate escape).
+    RawTool { name: String, arguments: String },
     /// HTTP status with a JSON body.
     Status(u16, Value),
     /// Raw body text with status 200 (for malformed provider output).
@@ -85,6 +88,9 @@ impl Answer {
             } => json!({"index": 0, "finish_reason": "tool_calls", "message": {"role": "assistant",
                 "content": null, "tool_calls": [{"id": id, "type": "function",
                 "function": {"name": name, "arguments": arguments.to_string()}}]}}),
+            Self::RawTool { name, arguments } => json!({"index": 0, "finish_reason": "tool_calls",
+                "message": {"role": "assistant", "content": null, "tool_calls": [{"id": format!("call-{name}"),
+                "type": "function", "function": {"name": name, "arguments": arguments}}]}}),
             Self::Status(status, body) => {
                 let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
                 return (status, Json(body)).into_response();

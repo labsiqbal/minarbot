@@ -130,7 +130,7 @@ Behaviour that changed with #87, and how the ports treat it:
 ### Kit changes
 
 - New `control.rs`: `ControlModel` (deferred answers, raw bodies, HTTP
-  statuses, a stalled SSE stream, per-answer usage).
+  statuses, verbatim tool arguments, a stalled SSE stream, per-answer usage).
 - New `stub.rs`: `HttpStub`, a closure-backed HTTP server for remote MCP
   servers and similar external fakes, with a lost-reply response.
 - `fake/gateway.rs`: streamed content deltas are forwarded as soon as their
@@ -221,6 +221,19 @@ Behaviour that changed with #87, and how the ports treat it:
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | ---: | --- |
 | HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 130 | Kept in Node for B6: the two create replays while the provider is gone (`createRetry` and the replay after restart). Rust checks the replay once the instance is back. "No provider" is a disabled instance (the seeded test instance keeps its binary); `configured: false` became `runnable: false` with a `blocked_reason`. Found S4 (teammate roster missing from prompts). The static page is a minimal Leptos shell in a test `dist`. |
+
+### `app/rust-workspace-writes-http.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| restored incomplete workspace intent resumes with uncertainty without replaying the write | `sb_workspace_writes::restored_incomplete_workspace_intent_resumes_with_uncertainty_without_replaying_the_write` | 14 -> 11 | Full. The backup is `VACUUM INTO` plus the `minarbot_backup` row, restored with `minarbot-server restore workspace`; the restored database replaces the root database because the kit always starts on it. |
+| write grant creates file once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_file_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 (shared `write_grant`, `check_effect`) | Changed by #87 on purpose: legacy channels get the agent's managed workspace (dcaab7f), so the write is offered there and the journal refuses the duplicate; read-only bindings offer the write tools and refuse the call (5528da5). Both replace the Node "not offered, turn failed" checks; bytes stay unchanged. |
+| write grant creates directory once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_directory_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above. |
+| write grant creates skill once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_skill_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above; the disabled skill's copy is refused. |
+| write grant creates delete once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_delete_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above. |
+| write grant creates restore once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_restore_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above, with the 2048-byte recovery input. |
+| write grant creates replace once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_replace_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above. |
+| provider workspace writes reject malformed Unicode without changing bytes or path | `sb_workspace_writes::provider_workspace_writes_reject_malformed_unicode_without_changing_bytes_or_path` | 8 -> 6 | Full; the lone-surrogate arguments are sent verbatim (`Answer::RawTool`). |
 
 <!-- stale-b files -->
 
