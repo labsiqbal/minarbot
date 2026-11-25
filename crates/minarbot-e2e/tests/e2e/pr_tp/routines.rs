@@ -74,7 +74,7 @@ pub async fn wait_first_run(
     .await
 }
 
-fn events<'a>(page: &'a Value, kind: impl Fn(&str) -> bool + 'a) -> impl Iterator<Item = &'a Value> + 'a {
+pub fn events<'a>(page: &'a Value, kind: impl Fn(&str) -> bool + 'a) -> impl Iterator<Item = &'a Value> + 'a {
     page["page"]["events"]
         .as_array()
         .into_iter()
@@ -95,7 +95,7 @@ async fn raw(
 }
 
 /// `raw` as `subject`, with the response headers.
-async fn raw_as(
+pub async fn raw_as(
     w: &WorkflowHome,
     subject: &str,
     method: Method,
