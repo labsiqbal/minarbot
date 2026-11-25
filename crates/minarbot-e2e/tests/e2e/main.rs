@@ -30,6 +30,8 @@ mod sb_scripts;
 mod sb_skills;
 mod sb_slack_output;
 mod sb_support;
+mod sb_task_recovery;
+mod sb_task_support;
 mod sb_transcript;
 mod sb_usage;
 mod sb_workspace_writes;

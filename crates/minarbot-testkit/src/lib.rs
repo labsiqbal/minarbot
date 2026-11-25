@@ -34,6 +34,7 @@ pub mod providers;
 pub mod proxy;
 pub mod server;
 pub mod stub;
+pub mod task_bridge;
 pub mod wait;
 pub mod workspace;
 
