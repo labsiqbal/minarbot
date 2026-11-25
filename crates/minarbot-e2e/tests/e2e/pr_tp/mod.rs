@@ -8,6 +8,7 @@ mod crypto;
 mod events;
 #[allow(dead_code)]
 mod fixture;
+mod routines;
 mod schedules;
 mod shared;
 mod workflow_runs;
