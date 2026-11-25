@@ -184,8 +184,15 @@ impl Peer {
     }
 
     /// One provider request; streamed responses are folded into a
-    /// non-streamed completion plus the original content deltas.
-    async fn provider(&self, body: &Value) -> Result<(Value, Vec<String>)> {
+    /// non-streamed completion plus the original content deltas. Each
+    /// streamed content delta also goes to `forward` as soon as its SSE line
+    /// arrives, like the real Codex app-server, so a stalled provider leaves
+    /// visible partial text.
+    async fn provider(
+        &self,
+        body: &Value,
+        forward: &(dyn Fn(&str) + Sync),
+    ) -> Result<(Value, Vec<String>)> {
         let mut request = self
             .client
             .post(format!(
@@ -209,13 +216,37 @@ impl Peer {
         if body["stream"] != true {
             return Ok((response.json().await?, Vec::new()));
         }
-        let text = response.text().await?;
+        let mut response = response;
+        let mut pending: Vec<u8> = Vec::new();
+        let mut lines: Vec<String> = Vec::new();
         let mut content = String::new();
         let mut deltas = Vec::new();
         let mut calls: Vec<Value> = Vec::new();
         let mut finish = Value::Null;
         let mut usage = Value::Null;
-        for line in text.lines() {
+        let mut ended = false;
+        loop {
+            if lines.is_empty() {
+                if ended {
+                    break;
+                }
+                match response.chunk().await? {
+                    Some(chunk) => pending.extend_from_slice(&chunk),
+                    None => {
+                        ended = true;
+                        pending.push(b'\n');
+                    }
+                }
+                while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                    let line: Vec<u8> = pending.drain(..=end).collect();
+                    lines.push(String::from_utf8_lossy(&line).trim_end().to_owned());
+                }
+                lines.reverse();
+                continue;
+            }
+            let Some(line) = lines.pop() else {
+                continue;
+            };
             let Some(data) = line.strip_prefix("data:") else {
                 continue;
             };
@@ -227,6 +258,7 @@ impl Peer {
             let choice = &chunk["choices"][0];
             let delta = &choice["delta"];
             if let Some(text) = delta["content"].as_str() {
+                forward(text);
                 deltas.push(text.to_owned());
                 content.push_str(text);
             }
@@ -475,7 +507,16 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
             LOG,
             &json!({"stage": "provider", "pid": std::process::id(), "messages": body["messages"].as_array().map_or(0, Vec::len)}),
         );
-        let (value, deltas) = peer.provider(&body).await?;
+        let id = Uuid::new_v4().to_string();
+        let forward = |text: &str| {
+            if !text.is_empty() {
+                peer.notify(
+                    "item/agentMessage/delta",
+                    json!({"itemId": id, "delta": text}),
+                );
+            }
+        };
+        let (value, deltas) = peer.provider(&body, &forward).await?;
         let choice = &value["choices"][0];
         let message = &choice["message"];
         if !choice.is_object() || !message.is_object() {
@@ -607,32 +648,26 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
         if !tool_calls.is_empty() {
             return Err("Gateway provider returned tools after budget exhaustion".into());
         }
-        let id = Uuid::new_v4().to_string();
         let content = message["content"].as_str().unwrap_or_default().to_owned();
-        let emit = |text: &str| {
-            if !text.is_empty() {
-                peer.notify(
-                    "item/agentMessage/delta",
-                    json!({"itemId": id, "delta": text}),
-                );
-            }
-        };
+        // Streamed deltas were forwarded while they arrived.
         if deltas.is_empty() {
-            emit(&content);
-        } else {
-            deltas.iter().for_each(|delta| emit(delta));
+            forward(&content);
         }
         peer.notify(
             "item/completed",
             json!({"item": {"id": id, "type": "agentMessage", "text": content}}),
         );
+        // A provider answer without usage leaves the counts unknown, so the
+        // peer reports no token usage for it.
         let usage = &value["usage"];
-        peer.notify(
-            "thread/tokenUsage/updated",
-            json!({"tokenUsage": {"last": {
-            "inputTokens": usage["prompt_tokens"].as_u64().unwrap_or(0),
-            "outputTokens": usage["completion_tokens"].as_u64().unwrap_or(0)}}}),
-        );
+        if usage.is_object() {
+            peer.notify(
+                "thread/tokenUsage/updated",
+                json!({"tokenUsage": {"last": {
+                "inputTokens": usage["prompt_tokens"].as_u64().unwrap_or(0),
+                "outputTokens": usage["completion_tokens"].as_u64().unwrap_or(0)}}}),
+            );
+        }
         peer.notify(
             "turn/completed",
             json!({"turn": {"id": "fake-turn", "status": "completed"}}),

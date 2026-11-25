@@ -1,0 +1,313 @@
+//! OpenAI-compatible model whose held requests the test answers later.
+//!
+//! [`crate::model::ScriptedModel`] answers every request at once (or holds it
+//! until the model stops). Some Node cases held one provider response, changed
+//! server state, and then finished that same response with a chosen body (for
+//! example a stale compaction summary). [`ControlModel`] keeps that ability:
+//! its responder returns [`Answer::Defer`] for such a request, and the test
+//! takes it with [`ControlModel::deferred`] and answers it with
+//! [`Deferred::answer`] whenever it wants.
+//!
+//! Like `ScriptedModel` it serves `POST /v1/chat/completions` and
+//! `GET /v1/models`, records every completion request, and the kit's
+//! `fake-gateway` peer reaches it through `ServerConfig::gateway`.
+
+use crate::{model::ModelRequest, server::Gateway, Result};
+use axum::{
+    body::Body,
+    extract::State,
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use futures_util::StreamExt;
+use serde_json::{json, Value};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
+use tokio::{
+    net::TcpListener,
+    sync::{oneshot, watch},
+    task::JoinHandle,
+};
+
+/// One completion answer.
+#[derive(Clone, Debug)]
+pub enum Answer {
+    /// Assistant text, `finish_reason: stop`.
+    Text(String),
+    /// One tool call with JSON arguments, `finish_reason: tool_calls`.
+    Tool {
+        id: String,
+        name: String,
+        arguments: Value,
+    },
+    /// HTTP status with a JSON body.
+    Status(u16, Value),
+    /// Raw body text with status 200 (for malformed provider output).
+    Raw(String),
+    /// Keep the request open until the test answers it.
+    Defer,
+    /// Stream one SSE content delta, then keep the response open with no
+    /// further bytes (a provider that stalls mid-answer). Ends when the
+    /// client disconnects or the model stops.
+    Stall(String),
+}
+
+impl Answer {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text(text.into())
+    }
+
+    pub fn tool(name: &str, arguments: Value) -> Self {
+        Self::Tool {
+            id: format!("call-{name}"),
+            name: name.into(),
+            arguments,
+        }
+    }
+
+    fn response(self, usage: Option<(u64, u64)>) -> Response {
+        let usage = usage.map(|(prompt, completion)| {
+            json!({"prompt_tokens": prompt, "completion_tokens": completion,
+                "total_tokens": prompt + completion})
+        });
+        let choice = match self {
+            Self::Text(text) => {
+                json!({"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": text}})
+            }
+            Self::Tool {
+                id,
+                name,
+                arguments,
+            } => json!({"index": 0, "finish_reason": "tool_calls", "message": {"role": "assistant",
+                "content": null, "tool_calls": [{"id": id, "type": "function",
+                "function": {"name": name, "arguments": arguments.to_string()}}]}}),
+            Self::Status(status, body) => {
+                let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+                return (status, Json(body)).into_response();
+            }
+            Self::Raw(body) => return (StatusCode::OK, body).into_response(),
+            Self::Stall(text) => {
+                let frame = json!({"choices": [{"index": 0, "delta": {"role": "assistant",
+                    "content": text}, "finish_reason": null}]});
+                let first = futures_util::stream::once(async move {
+                    Ok::<_, std::convert::Infallible>(format!("data: {frame}\n\n"))
+                });
+                let body = Body::from_stream(first.chain(futures_util::stream::pending()));
+                return ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response();
+            }
+            Self::Defer => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "deferred twice").into_response()
+            }
+        };
+        let mut body = json!({"choices": [choice]});
+        if let Some(usage) = usage {
+            body["usage"] = usage;
+        }
+        Json(body).into_response()
+    }
+}
+
+type Responder = Arc<dyn Fn(&ModelRequest) -> Answer + Send + Sync>;
+
+/// A request the responder deferred. Dropping it without an answer fails the
+/// request with HTTP 500, like a provider that closes the connection.
+pub struct Deferred {
+    pub request: ModelRequest,
+    sender: oneshot::Sender<Answer>,
+}
+
+impl Deferred {
+    /// Finish the held request with `answer`.
+    pub fn answer(self, answer: Answer) {
+        let _ = self.sender.send(answer);
+    }
+}
+
+struct Script {
+    responder: Option<Responder>,
+    requests: Vec<ModelRequest>,
+    deferred: VecDeque<Deferred>,
+    catalog: Vec<String>,
+    usage: Option<(u64, u64)>,
+}
+
+#[derive(Clone)]
+struct Shared {
+    state: Arc<Mutex<Script>>,
+}
+
+impl Shared {
+    fn with<T>(&self, change: impl FnOnce(&mut Script) -> T) -> T {
+        match self.state.lock() {
+            Ok(mut state) => change(&mut state),
+            Err(poisoned) => change(&mut poisoned.into_inner()),
+        }
+    }
+}
+
+/// Running control model. Dropping it stops the listener.
+pub struct ControlModel {
+    origin: String,
+    shared: Shared,
+    stop: watch::Sender<bool>,
+    task: JoinHandle<()>,
+}
+
+impl ControlModel {
+    pub async fn start() -> Result<Self> {
+        let (stop, mut stopping) = watch::channel(false);
+        let shared = Shared {
+            state: Arc::new(Mutex::new(Script {
+                responder: None,
+                requests: Vec::new(),
+                deferred: VecDeque::new(),
+                catalog: vec!["fixture".into()],
+                usage: None,
+            })),
+        };
+        let app = Router::new()
+            .route("/v1/chat/completions", post(completion))
+            .route("/v1/models", get(models))
+            .with_state(shared.clone());
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = stopping.wait_for(|stop| *stop).await;
+                })
+                .await;
+        });
+        Ok(Self {
+            origin,
+            shared,
+            stop,
+            task,
+        })
+    }
+
+    /// OpenAI-compatible base URL (`<origin>/v1`).
+    pub fn base_url(&self) -> String {
+        format!("{}/v1", self.origin)
+    }
+
+    /// Gateway options pointing `fake-gateway` at this model.
+    pub fn gateway(&self) -> Gateway {
+        Gateway::new(self.base_url())
+    }
+
+    /// Answer every completion request.
+    pub fn respond(&self, responder: impl Fn(&ModelRequest) -> Answer + Send + Sync + 'static) {
+        let responder: Responder = Arc::new(responder);
+        self.shared.with(|state| state.responder = Some(responder));
+    }
+
+    /// Usage attached to every text and tool answer.
+    pub fn usage(&self, prompt: u64, completion: u64) {
+        self.set_usage(Some((prompt, completion)));
+    }
+
+    /// Usage attached to later answers; `None` omits the `usage` field.
+    pub fn set_usage(&self, usage: Option<(u64, u64)>) {
+        self.shared.with(|state| state.usage = usage);
+    }
+
+    /// Model ids listed by `GET /v1/models`.
+    pub fn catalog<I, S>(&self, ids: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let ids = ids.into_iter().map(Into::into).collect();
+        self.shared.with(|state| state.catalog = ids);
+    }
+
+    /// Every completion request so far.
+    pub fn requests(&self) -> Vec<ModelRequest> {
+        self.shared.with(|state| state.requests.clone())
+    }
+
+    pub fn calls(&self) -> usize {
+        self.shared.with(|state| state.requests.len())
+    }
+
+    /// Requests currently deferred and not yet taken.
+    pub fn pending(&self) -> usize {
+        self.shared.with(|state| state.deferred.len())
+    }
+
+    /// Wait for the next deferred request and take it.
+    pub async fn deferred(&self) -> Result<Deferred> {
+        crate::wait::until("a deferred model request", || async {
+            Ok(self.shared.with(|state| state.deferred.pop_front()))
+        })
+        .await
+    }
+
+    /// Wait until at least `count` completion requests arrived.
+    pub async fn wait_calls(&self, count: usize) -> Result<Vec<ModelRequest>> {
+        crate::wait::until(format!("{count} model requests"), || async {
+            let requests = self.requests();
+            Ok((requests.len() >= count).then_some(requests))
+        })
+        .await
+    }
+}
+
+impl Drop for ControlModel {
+    fn drop(&mut self) {
+        let _ = self.stop.send(true);
+        self.task.abort();
+    }
+}
+
+async fn completion(
+    State(shared): State<Shared>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let authorization = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (request, responder, usage) = shared.with(|state| {
+        let request = ModelRequest {
+            index: state.requests.len(),
+            body,
+            authorization,
+        };
+        state.requests.push(request.clone());
+        (request, state.responder.clone(), state.usage)
+    });
+    let answer = responder.map_or_else(|| Answer::text("ok"), |responder| responder(&request));
+    match answer {
+        Answer::Defer => {
+            let (sender, receiver) = oneshot::channel();
+            shared.with(|state| state.deferred.push_back(Deferred { request, sender }));
+            match receiver.await {
+                Ok(answer) => answer.response(usage),
+                Err(_) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "deferred request dropped",
+                )
+                    .into_response(),
+            }
+        }
+        answer => answer.response(usage),
+    }
+}
+
+async fn models(State(shared): State<Shared>) -> Response {
+    let data: Vec<Value> = shared.with(|state| {
+        state
+            .catalog
+            .iter()
+            .map(|id| json!({"id": id, "object": "model"}))
+            .collect()
+    });
+    Json(json!({"object": "list", "data": data})).into_response()
+}
