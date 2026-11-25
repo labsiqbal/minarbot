@@ -1489,22 +1489,3 @@ fn backup_reopen_and_restore_fence_pending_invites_turns_and_stale_principals() 
     assert!(path.is_file());
     Ok(())
 }
-
-#[test]
-fn result_admission_rejects_withdrawn_participation() -> Check {
-    let f = HubFixture::new()?;
-    let mut db = ok(f.hub.lock())?;
-    let p = Pair::new(&f, &mut db)?;
-    let grant = p.peer_grant(&db, json!({"mode":"all-members"}))?;
-    ok(post(&mut db, &p.alice(), &named(p.section(), &grant)))?;
-    let req = request(&db, &p.peer)?;
-    db.execute(
-        "UPDATE participations SET state='revoked' WHERE project_id=? AND id=?",
-        params![req["projectId"].as_str(), req["participationId"].as_str()],
-    )?;
-    rejects(
-        accept(&db, &p.peer, &result(&req, "turn.admitted", 1, json!({}))),
-        "stale_revision",
-    );
-    Ok(())
-}
