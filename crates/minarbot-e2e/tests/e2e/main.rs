@@ -8,6 +8,7 @@ mod cli;
 mod goals;
 mod harness;
 mod kit;
+mod pr_fanout;
 mod pr_machines;
 mod pr_remote_agents;
 mod pr_support;

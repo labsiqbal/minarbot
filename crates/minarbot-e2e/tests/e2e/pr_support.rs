@@ -181,3 +181,25 @@ pub fn leaks(directory: &Path, secrets: &[String]) -> Result<Vec<String>> {
 pub async fn pause(millis: u64) {
     tokio::time::sleep(Duration::from_millis(millis)).await;
 }
+
+/// Browser call with its own time budget, for replies the Node suites
+/// waited on longer than the kit's 30 s client timeout (slow peer applies).
+pub async fn call_within(
+    app: &Server,
+    path: &str,
+    body: Option<Value>,
+    status: u16,
+    budget: Duration,
+) -> Result<Value> {
+    let client = HttpClient::builder()
+        .no_proxy()
+        .redirect(minarbot_testkit::relay::redirect_none())
+        .timeout(budget)
+        .build()?;
+    let (got, value) = send_to(&client, app.origin(), path, body.as_ref(), None, true).await?;
+    ensure!(
+        got == status,
+        "{path}: expected {status}, got {got}: {value}"
+    );
+    Ok(value)
+}

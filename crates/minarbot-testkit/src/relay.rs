@@ -29,6 +29,11 @@ pub use bytes::Bytes;
 /// direct `reqwest` dependency.
 pub use reqwest::Client as HttpClient;
 
+/// Redirect policy that never follows, for [`HttpClient`] builders.
+pub fn redirect_none() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::none()
+}
+
 /// One received request.
 #[derive(Clone, Debug)]
 pub struct Exchange {

@@ -565,3 +565,9 @@ same peer requests with a `MachineBridge` extra operation.
 | peer SHA-256 mismatch rejects download before publication | `crates/minarbot-server/src/updates/tests/peer_sha_mismatch.rs` `peer_sha256_mismatch_rejects_download_before_publication` | 2 -> 2 | Node exercised a TypeScript stand-in (`app/rust-update-test.ts`); the Rust test drives the server's own `archive::receive`. |
 | Rust trial gates owner work until matching private socket commit | `pr_updates::rust_trial_gates_owner_work_until_matching_private_socket_commit` | 0 -> 5 | Node checked statuses inside `api()`; the Rust test states each one. |
 | real release build, HTTP update, broken trial rollback and intact workspace | Not ported | - | Opt-in (`MINARBOT_UPDATE_IT=1`), not a default runtime case. It patches `app/server.ts`, which the Rust server replaced, so it could no longer run. The native trial and rollback flow is covered by `crates/minarbot-launcher/tests/launcher.rs` (`native_trial_commits_and_restores_feature_data`, `exited_candidate_rolls_back`). |
+
+### `app/fanout-older-peer.test.ts` (1 case, 1 Rust test, file deleted)
+
+| Node case | Rust test (`pr_fanout::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| fan-out serves one verified executable archive to a peer without apply polling and waits beyond its former apply deadline | `fan_out_serves_one_verified_executable_archive_to_a_peer_without_apply_polling_and_waits_beyond_its_former_apply_deadline` | 16 -> 16 | A `relay::Relay` bound to the peer's paired port hides the apply-polling capability, holds the apply reply for 125 s and can replace its body. The slow call uses its own 170 s client budget. |
