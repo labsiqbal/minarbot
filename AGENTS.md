@@ -21,6 +21,10 @@ Run `cargo clippy --workspace --all-targets -- -D warnings`.
 Rust tests return `Result` and propagate errors with `?`. Avoid `unwrap` and `expect`.
 On shared hosts, run Cargo and heavy test commands through `~/.cache/minarbot-cargo-slot.sh`.
 
+## Tests
+
+Before writing or changing a test, pick its layer, seam and commands from [docs/testing.md](docs/testing.md).
+
 ## Release tooling
 
 Run `cargo xtask release` from the repository root. Use `npm ci` in `app/` and, for `--desktop`, in `desktop/` before running the release gate. Pass `--issues <numbers>` and keep all locally claimed branches until release verification finishes.
