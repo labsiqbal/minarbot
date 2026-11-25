@@ -70,7 +70,8 @@ async fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
         for spec in native_specs {
             let f = &spec["function"];
             let name = string(f, "name");
-            if ["list_agents", "send_message", "read_history"].contains(&name) {
+            // `wait_task` is served by the blocking feature tool (see below).
+            if ["list_agents", "send_message", "read_history", "wait_task"].contains(&name) {
                 continue;
             }
             let scope = if crate::computer::actions::is_computer_tool(name) {
@@ -126,13 +127,15 @@ async fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
         }
         for spec in crate::turns::tools::offered(state, &guard.connection, &turn)? {
             let name = string(&spec["function"], "name");
+            // `wait_task` stays the feature tool: it blocks the MCP call and
+            // records a durable wait, while the native shortcut only pauses
+            // the turn and nothing resumes it.
             if [
                 "list_agents",
                 "send_message",
                 "delegate_task",
                 "transfer_task",
                 "task_status",
-                "wait_task",
                 "cancel_task",
                 "interrupt_agent",
             ]
