@@ -255,6 +255,10 @@ impl Peer {
                     continue;
                 }
                 let chunk: Value = serde_json::from_str(data)?;
+                // A provider `error` event ends the stream as a failure.
+                if chunk.get("error").is_some_and(|error| !error.is_null()) {
+                    return Err("Gateway provider stream failed".into());
+                }
                 let choice = &chunk["choices"][0];
                 let delta = &choice["delta"];
                 if let Some(text) = delta["content"].as_str() {
@@ -370,9 +374,24 @@ fn tool_error(message: &str, status: Value) -> Value {
 }
 
 /// Text the model sees for a tool result.
+/// Tool result text for the model: structured content when present; a
+/// result with fields beyond `content`/`isError` (Minarbot's `files`,
+/// `omitted`, `uncertain`) as its full JSON, as the Node provider saw it;
+/// otherwise the text content.
 fn tool_text(result: &Value) -> String {
-    if let Some(structured) = result.get("structuredContent") {
+    if let Some(structured) = result
+        .get("structuredContent")
+        .filter(|value| !value.is_null())
+    {
         return structured.to_string();
+    }
+    let extra = result.as_object().is_some_and(|fields| {
+        fields.iter().any(|(key, value)| {
+            !["content", "isError", "structuredContent"].contains(&key.as_str()) && !value.is_null()
+        })
+    });
+    if extra {
+        return result.to_string();
     }
     if let Some(content) = result["content"].as_array() {
         return content
@@ -694,13 +713,17 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
             "item/completed",
             json!({"item": {"id": id, "type": "agentMessage", "text": content}}),
         );
+        // A provider answer without usage leaves the counts unknown, so the
+        // peer reports no token usage for it.
         let usage = &value["usage"];
-        peer.notify(
-            "thread/tokenUsage/updated",
-            json!({"tokenUsage": {"last": {
-            "inputTokens": usage["prompt_tokens"].as_u64().unwrap_or(0),
-            "outputTokens": usage["completion_tokens"].as_u64().unwrap_or(0)}}}),
-        );
+        if usage.is_object() {
+            peer.notify(
+                "thread/tokenUsage/updated",
+                json!({"tokenUsage": {"last": {
+                "inputTokens": usage["prompt_tokens"].as_u64().unwrap_or(0),
+                "outputTokens": usage["completion_tokens"].as_u64().unwrap_or(0)}}}),
+            );
+        }
         peer.notify(
             "turn/completed",
             json!({"turn": {"id": "fake-turn", "status": "completed"}}),

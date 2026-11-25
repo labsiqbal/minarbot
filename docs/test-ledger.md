@@ -495,6 +495,370 @@ B1 also covers `wait_for_event`: it returns `null` at once and the harness takes
 
 Open finding (not fixed, #87 behaviour change): a Composio call held across a key reset is offered again for the new installation over MCP, because harness calls resolve tools per request; the Node API runtime refused it with its turn-start tool list. The Rust test asserts that the call waits for approval and is never dispatched.
 
+## #89 stale-b ports
+
+The Node suites of the stale-b slice broke when #87 removed the direct API
+runtime. They were rewritten case by case in `crates/minarbot-e2e/tests/e2e/sb_*.rs`.
+Agent turns run through the gateway instance (`ServerConfig::gateway`), whose
+model is the kit's `ControlModel` (`crates/minarbot-testkit/src/control.rs`):
+it can hold a request and answer it later with a chosen body, as the Node
+provider servers did. Assertion counts are static assertion sites (Node
+`assert*` calls and expected-status requests; Rust `ensure!`, `*_expect`,
+`wait_status`); assertions in loops count once.
+
+Behaviour that changed with #87, and how the ports treat it:
+
+- One harness call is one usage row and one `activity.calls` entry; a tool
+  loop inside it is not a separate provider request.
+- A tool the turn is not offered, or a tool error, reaches the model as an MCP
+  tool error and the turn finishes; the direct client failed the turn.
+- A harness CLI always exposes its MCP tools, also to summary and routing
+  requests.
+- Backup-model fallback, provider accounts, direct provider HTTP error
+  mapping, `/api/models` discovery and provider families are removed.
+
+### Kit changes
+
+- New `control.rs`: `ControlModel` (deferred answers, raw bodies, HTTP
+  statuses, verbatim tool arguments, a stalled SSE stream, per-answer usage).
+- New `stub.rs`: `HttpStub`, a closure-backed HTTP server for remote MCP
+  servers and similar external fakes, with a lost-reply response.
+- New `connector_fixture.rs`: `SlackFixture` (fake Slack Web API and Socket
+  Mode WebSocket, `--connector-config` runner) and `journal` for
+  `--connector-journal-config`. The kit's `axum` dependency gains the `ws`
+  feature the server already uses.
+- `control.rs` also answers streamed requests with SSE, scripts
+  `GET /v1/models` (`respond_catalog`, redirects, held catalog requests) and
+  has stream error and cut answers; `fake/gateway.rs` fails on an SSE `error`
+  event.
+- `fake/native.rs`: `ENV_PRESENT` / `ENV_ABSENT` check `PROJECT_TEST_TOKEN`
+  in the harness process (the Node `project-integrations` fixture patch).
+- `fake/gateway.rs`: streamed content deltas are forwarded as soon as their
+  SSE line arrives (the Node fixture buffered the whole body, so a stalled
+  provider never showed partial text), an answer without `usage` reports
+  no token usage instead of zeros, and an MCP result with a null
+  `structuredContent` but Minarbot fields (`files`, `omitted`, `uncertain`)
+  reaches the model as its JSON instead of the text `null`.
+
+### Product bugs fixed
+
+| Bug | Fix |
+| --- | --- |
+| S1 | `crates/shared/skill_files.rs` accepted duplicate `SKILL.md` frontmatter keys (`name: x` then `name: y` kept `y`), because serde_json maps keep the last key. The TypeScript parser rejected them. The frontmatter is now parsed as a YAML mapping first, which rejects duplicates. |
+| S2 | a8cfcac removed the local `read_provider_settings` executor with provider accounts but kept offering the tool in private conversations, so every call failed. `turns/tools.rs` executes it again with the instance binding (`revision`, `providerInstance`, `model`, `configured`), the shape of the canonical executor, private-only and without arguments. |
+| S3 | `turns/harness.rs` (`specs`) offered `edit_profile` to harness turns in channels, where the executor refuses it with 403; the direct client offered it only in private conversations. It is now private-only, like the skill tools (ef64cd9). |
+| S4 | a8cfcac deleted the direct-provider path that appended the team roster (`## Messaging other agents`, capability epoch, teammates) to answer prompts, leaving `messaging::awareness` unused; harness agents no longer saw their teammates. `turns/provider.rs` (`call`) appends it again under the old conditions: answer calls only (not memory, compaction, goal judge or routing), not profile setup, and only when the turn may message teammates. |
+| S5 | `harness/store.rs` (`run`, f89f751) treated a turn that is not `running` as paused and returned an empty reply. Background memory calls run on finished turns, so every extraction and consolidation got an empty answer and failed after retries. The check now skips memory phases, whose turn lookup already allows finished turns. |
+| S6 | Harness turns run without an isolated home, so a mise shim launch got the owner's `HOME` and `configure_mise` never set `MISE_STATE_DIR`; mise would record trust in the owner's state dir, which the probe path avoids. Mise launches without a home now get a private one per binding under the harness homes root. |
+| S7 | A paused turn whose provider instance was disabled still ran on it when its question was answered (`ready()` checks only at admission). `harness/store.rs` refuses a disabled instance before launch. |
+| S8 | Instance model discovery returned a catalog that contained the instance's secret (the provider key as a model id) to the browser. `model_catalog::models_for_instance` rejects such a catalog as invalid (502), as the direct client did; `provider_instances::secret_values` lists the decrypted secrets. |
+
+### `app/compaction.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| incremental compaction keeps source scopes, originals, provenance and failure fallback | `sb_compaction::incremental_compaction_keeps_source_scopes_originals_provenance_and_failure_fallback` | 24 -> 20 | Dropped: `data.tools === undefined` on the summary request (a harness CLI always exposes MCP tools). The 1 s `timeout` still bounds each harness call, so a stalled summary falls back to history. |
+| Rust compaction fences stale responses, changed sources, cancelled turns and future watermarks | `sb_compaction::rust_compaction_fences_stale_responses_changed_sources_cancelled_turns_and_future_watermarks` | 14 -> 17 | Full. |
+
+### `app/crash.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| workflow SIGKILL preserves uncertain step without replay across two restarts | `sb_crash::workflow_sigkill_preserves_uncertain_step_without_replay_across_two_restarts` | 16 -> 13 | Full; `Server::crash` replaces the killed bridge child process. |
+| SIGKILL after delegated provider acceptance does not replay parent or child | `sb_crash::sigkill_after_delegated_provider_acceptance_does_not_replay_parent_or_child` | 11 -> 8 | The harness parent also takes its step after the delegation receipt, so 3 requests are in flight at the crash (Node: 2); none is repeated after restart. |
+
+### `app/flows.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| routine flow graph rejects cycles, foreign agents and disconnected branches | `sb_flows::routine_flow_graph_rejects_cycles_foreign_agents_and_disconnected_branches` | 4 -> 6 | The Node case called `app/src/flows.ts`; the same graphs go through `POST /api/routines/{id}/flow` (Rust `automation/flows.rs`). |
+| routine flow fan-in waits for every input and settles all-failed branches | `sb_flows::routine_flow_fan_in_waits_for_every_input_and_settles_all_failed_branches` | 18 -> 14 | Full. Step model counts exclude the harness step after a `report_failure` result. |
+
+### `app/skill-files.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| skill folders preserve exact files and reject invalid or unsupported inputs as a whole | `sb_skills::skill_folders_preserve_exact_files_and_reject_invalid_or_unsupported_inputs_as_a_whole` | 11 -> 7 | The parser checks go through `POST /api/skills` (`crates/shared/skill_files.rs`); found S1. Dropped: the export-bundle and draft-restore checks of the browser modules `exportedSkillFiles`/`restoreSkillCommand`, replaced by the Leptos importer. |
+| folder revisions, receipts and pinned file tools survive reload without foreign or revoked access | `sb_skills::folder_revisions_receipts_and_pinned_file_tools_survive_reload_without_foreign_or_revoked_access` | 33 -> 27 | In a channel `read_skill_file` is not offered and a call returns no content; the turn finishes instead of failing. |
+
+### `app/transcript.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| turn list exposes scoped read-only activity metadata in direct, thread and channel views | `sb_transcript::turn_list_exposes_scoped_read_only_activity_metadata_in_direct_thread_and_channel_views` | 16 -> 11 | Dropped: `activity.fallback_model` (#87). One harness call per turn, so `activity.calls` has 1 entry (Node: 3 HTTP requests). |
+| Stop timestamps survive repeated cancellation and server restart | `sb_transcript::stop_timestamps_survive_repeated_cancellation_and_server_restart` | 9 -> 5 | Full, on the real clock. Needed the gateway streaming fix (the Node case failed on the buffering fixture). |
+
+### `app/usage.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| Rust usage returns exact decimal totals, unknown counts and stable pages | `sb_usage::rust_usage_returns_exact_decimal_totals_unknown_counts_and_stable_pages` | 9 -> 8 | Full. |
+| usage records each provider call including tool loops, missing counts and failure | `sb_usage::usage_records_each_provider_call_including_tool_loops_missing_counts_and_failure` | 22 -> 20 | One row per harness call (the tool loop is one row). Dropped: the `finish_reason: length` mode, a direct-client rule. |
+
+### `app/mcp-context.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| MCP resources and prompts require exact grants and remain untrusted journaled data | `sb_mcp_context::mcp_resources_and_prompts_require_exact_grants_and_remain_untrusted_journaled_data` | 66 -> 63 | Refused calls (no grant, wrong agent, target override, bad prompt arguments, drift, revoked template) reach the model as MCP errors and the turn finishes; each step asserts the error result and that the remote saw no read. A lost MCP reply still fails the turn and resumes as uncertain without a second read. The remote MCP server is `stub::HttpStub`. |
+
+### `app/profile-tools.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| profile tool preserves authority, revision conflicts, execution snapshot and durable results | `sb_profile::profile_tool_preserves_authority_revision_conflicts_execution_snapshot_and_durable_results` | 26 -> 36 | Found S3 (`edit_profile` offered in channels). In a channel and after the journal-failure trigger the refusal reaches the model as an MCP error and the turn finishes (Node: failed); the profile stays unchanged in both. The model answers the harness verification reminder without repeating the tool. |
+
+### `app/provider-settings-tools.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| provider settings read stays private and excludes endpoint and credentials | `sb_provider_settings::provider_settings_read_stays_private_and_excludes_endpoint_and_credentials` | 11 -> 11 | Found S2. The result is `{revision, providerInstance, model, configured}`; dropped `providerAccount` and `backupModel` (#87). |
+| model changes preserve execution snapshot, scope and journal across restart | `sb_provider_settings::model_changes_preserve_execution_snapshot_scope_and_journal_across_restart` | 29 -> 16 | Dropped: the `set_provider_model` tool, its validation matrix, backup-model fallback and its journal trigger (all removed by #87). Ported: a held turn keeps its model across a profile edit, the acknowledged resume uses the current model, cancellation before the effect, other agents unchanged, restart. |
+
+### `app/scripts.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| local scripts require token and current agent grant, keep payload and retry identity | `sb_scripts::local_scripts_require_token_and_current_agent_grant_keep_payload_and_retry_identity` | 57 -> 47 | Full. |
+
+### `app/test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 130 | Kept in Node for B6: the two create replays while the provider is gone (`createRetry` and the replay after restart). Rust checks the replay once the instance is back. "No provider" is a disabled instance (the seeded test instance keeps its binary); `configured: false` became `runnable: false` with a `blocked_reason`. Found S4 (teammate roster missing from prompts). The static page is a minimal Leptos shell in a test `dist`. |
+
+### `app/rust-workspace-writes-http.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| restored incomplete workspace intent resumes with uncertainty without replaying the write | `sb_workspace_writes::restored_incomplete_workspace_intent_resumes_with_uncertainty_without_replaying_the_write` | 14 -> 11 | Full. The backup is `VACUUM INTO` plus the `minarbot_backup` row, restored with `minarbot-server restore workspace`; the restored database replaces the root database because the kit always starts on it. |
+| write grant creates file once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_file_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 (shared `write_grant`, `check_effect`) | Changed by #87 on purpose: legacy channels get the agent's managed workspace (dcaab7f), so the write is offered there and the journal refuses the duplicate; read-only bindings offer the write tools and refuse the call (5528da5). Both replace the Node "not offered, turn failed" checks; bytes stay unchanged. |
+| write grant creates directory once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_directory_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above. |
+| write grant creates skill once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_skill_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above; the disabled skill's copy is refused. |
+| write grant creates delete once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_delete_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above. |
+| write grant creates restore once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_restore_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above, with the 2048-byte recovery input. |
+| write grant creates replace once through provider and result journal survives restart | `sb_workspace_writes::write_grant_creates_replace_once_through_provider_and_result_journal_survives_restart` | 26 -> 22 | As above. |
+| provider workspace writes reject malformed Unicode without changing bytes or path | `sb_workspace_writes::provider_workspace_writes_reject_malformed_unicode_without_changing_bytes_or_path` | 8 -> 6 | Full; the lone-surrogate arguments are sent verbatim (`Answer::RawTool`). |
+
+### `app/gemini.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| Gemini HTTP streaming, signed tool recovery, models and cancellation | `sb_gemini::gemini_http_streaming_signed_tool_recovery_models_and_cancellation` | 18 -> 18 | Dropped with the Gemini API client (#87): `x-goog-api-key`, `generateContent` payloads, `thoughtSignature` replay, `maxOutputTokens`, `MAX_TOKENS` failure, catalog paging. Ported against the instance: catalog, text and tool turns, the held tool step resumed after restart without a second tool call, cancel, streamed and unary requests. |
+
+### `app/provider.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| native Anthropic messages, catalog, tools, resume, cancellation and fallback use one explicit provider | `sb_provider::native_anthropic_messages_catalog_tools_resume_cancellation_and_fallback_use_one_explicit_provider` | 39 -> 20 | Dropped with the Anthropic client (#87): `/v1/messages` shape, headers, `tool_choice`, catalog pagination/cycle/redirect errors, `max_tokens` partial failure, parallel tool rejection, redirect, `backupModel` fallback, `family: anthropic`. An unknown tool reaches the model as an MCP error (turn done). Ported: replies, artifact tool result pairing, provider failures without fallback, receipts, question across restart, empty workflow output, routing, delegate/transfer coordination, cancel, usage redaction. |
+
+### `app/provider-accounts.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| agents bind isolated provider accounts across channels, side threads, edit and restart | `sb_provider_accounts::agents_bind_isolated_provider_accounts_across_channels_side_threads_edit_and_restart` | 36 -> 29 | Accounts became provider instances created through `/api/provider-instances` (gateway binary, own model, own secret key). Dropped: provider families, `/api/models?account=`, `usage.account`. Removing an account is deleting or disabling the instance; found S7. |
+
+### `app/provider-account-change.test.ts`
+
+All nine cases are dropped: they test the agent tools `set_provider_account`, `list_provider_accounts`, `list_provider_models` and the browser consent flow for account switches, which #87 removed with provider accounts (a8cfcac). The surviving parts are ported elsewhere: carrying history to a new endpoint without foreign history or keys is `sb_handoff`; private provider settings are `sb_provider_settings`; instance model discovery is `sb_provider_matrix`.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| provider account switch requires scoped browser consent and survives restart without replay | - | 34 -> 0 | Dropped: `set_provider_account` consent flow (#87). |
+| provider account metadata tool redacts credentials and paths | - | 11 -> 0 | Dropped: `list_provider_accounts` (#87). |
+| private model discovery uses selected account, pages results and cancels without continuation | - | 21 -> 0 | Dropped: `list_provider_models` (#87). |
+| confirmed account switch openai-compatible to anthropic retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch openai-compatible to gemini retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch anthropic to openai-compatible retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch anthropic to gemini retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch gemini to openai-compatible retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+| confirmed account switch gemini to anthropic retains consent across restart | - | 29 -> 0 | Dropped: account switch consent and families (#87); handoff in `sb_handoff`. |
+
+### `app/provider-handoff.test.ts`
+
+Provider families and their payload conversions left with #87, so each family pair collapses onto its scope's test: the instance is re-pointed at a different model endpoint across a restart while the question waits.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| provider handoff openai-compatible to openai-compatible in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to gemini in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to gemini in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to openai-compatible in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to anthropic in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to anthropic in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to openai-compatible in direct retains completed effects and question recovery | `sb_handoff::provider_handoff_in_direct_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to openai-compatible in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to gemini in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to gemini in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to openai-compatible in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to anthropic in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to anthropic in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to openai-compatible in channel retains completed effects and question recovery | `sb_handoff::provider_handoff_in_channel_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to openai-compatible in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to gemini in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to gemini in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to openai-compatible in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff gemini to anthropic in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff openai-compatible to anthropic in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+| provider handoff anthropic to openai-compatible in side retains completed effects and question recovery | `sb_handoff::provider_handoff_in_side_retains_completed_effects_and_question_recovery` | 23 -> 19 | Family pair dropped (#87); the handoff, artifact, history, foreign-scope isolation and answer receipt are ported. Gemini signature checks dropped. |
+
+### `app/provider-matrix.test.ts`
+
+One parent case with 34 subtests; each subtest is its own Rust test against the test gateway instance. Every test ends with `scan` (the key absent from responses, server output and files). The exact direct-client error texts per status, backup-model fallback and named accounts left with #87; what remains is a key-free failure, one request and no replay.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| loading remains pending; empty catalog succeeds without inventing models | `sb_provider_matrix::loading_remains_pending_empty_catalog_succeeds_without_inventing_models` | 6 -> 8 | Instance catalog (`/api/provider-instances/{id}/models`). |
+| discovery http-401 | `sb_provider_matrix::discovery_http_401` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery http-403 | `sb_provider_matrix::discovery_http_403` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery catalog-secret | `sb_provider_matrix::discovery_catalog_secret` | 5 -> 8 | Found S8 (the key came back as a model id). |
+| discovery non-json | `sb_provider_matrix::discovery_non_json` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery oversize | `sb_provider_matrix::discovery_oversize` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery invalid-catalog | `sb_provider_matrix::discovery_invalid_catalog` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery redirect | `sb_provider_matrix::discovery_redirect` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery http-408 | `sb_provider_matrix::discovery_http_408` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery http-429 | `sb_provider_matrix::discovery_http_429` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery http-503 | `sb_provider_matrix::discovery_http_503` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| discovery catalog-timeout | `sb_provider_matrix::discovery_catalog_timeout` | 5 -> 8 | Exact error text dropped (#87 direct client). |
+| missing named account cannot use configured default | `sb_provider_matrix::missing_named_account_cannot_use_configured_default` | 3 -> 5 | A missing instance id (404), no provider request. |
+| turn http-401 does not fall back or replay | `sb_provider_matrix::turn_http_401_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-403 does not fall back or replay | `sb_provider_matrix::turn_http_403_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-404 does not fall back or replay | `sb_provider_matrix::turn_http_404_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-408 does not fall back or replay | `sb_provider_matrix::turn_http_408_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn timeout does not fall back or replay | `sb_provider_matrix::turn_timeout_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-500 does not fall back or replay | `sb_provider_matrix::turn_http_500_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn http-502 does not fall back or replay | `sb_provider_matrix::turn_http_502_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn text-secret does not fall back or replay | `sb_provider_matrix::turn_text_secret_does_not_fall_back_or_replay` | 7 -> 10 | An echoed key is redacted. |
+| turn malformed does not fall back or replay | `sb_provider_matrix::turn_malformed_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn tools does not fall back or replay | `sb_provider_matrix::turn_tools_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn other-400 does not fall back or replay | `sb_provider_matrix::turn_other_400_does_not_fall_back_or_replay` | 7 -> 10 | Exact error text dropped (#87 direct client). |
+| turn 429 falls back once on same account | `sb_provider_matrix::turn_429_falls_back_once_on_same_account` | 6 -> 10 | Fallback removed (#87): one request, turn failed. |
+| turn 503 falls back once on same account | `sb_provider_matrix::turn_503_falls_back_once_on_same_account` | 6 -> 10 | As above. |
+| fallback failure ends after two requests | `sb_provider_matrix::fallback_failure_ends_after_two_requests` | 4 -> 10 | As above: one request. |
+| rate limit without fallback stays failed | `sb_provider_matrix::rate_limit_without_fallback_stays_failed` | 4 -> 7 | Exact error text dropped. |
+| completed tool effect blocks automatic fallback; acknowledged resume retains artifact | `sb_provider_matrix::completed_tool_effect_blocks_automatic_fallback_acknowledged_resume_retains_artifact` | 9 -> 10 | Full apart from the error text. |
+| turn stream-cut retains partial text without fallback or replay on restart | `sb_provider_matrix::turn_stream_cut_retains_partial_text_without_fallback_or_replay_on_restart` | 9 -> 12 | Exact error text dropped. |
+| turn stream-socket-cut retains partial text without fallback or replay on restart | `sb_provider_matrix::turn_stream_socket_cut_retains_partial_text_without_fallback_or_replay_on_restart` | 9 -> 12 | Exact error text dropped. |
+| streamed credential echo never reaches partial storage | `sb_provider_matrix::streamed_credential_echo_never_reaches_partial_storage` | 7 -> 6 | Exact error text dropped. |
+| unconfigured default is distinct from missing named account | `sb_provider_matrix::unconfigured_default_is_distinct_from_missing_named_account` | 4 -> 7 | A disabled instance: turns 503, no provider request. |
+| unreachable loopback host reports connection problem | `sb_provider_matrix::unreachable_loopback_host_reports_connection_problem` | 4 -> 7 | Exact error text dropped. |
+
+### `app/memory-reflect.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| scoped auto-recall, history, reflection and standing answer refresh | `sb_memory::scoped_auto_recall_history_reflection_and_standing_answer_refresh` | 22 -> 25 | Found S5 (background memory calls always got an empty answer). The Node case minted an MCP session and called `recall`/`remember` directly; here the turn's own MCP session runs them. |
+| background learning uses the binding catalog unless Memory model is set | `sb_memory::background_learning_uses_the_binding_catalog_unless_memory_model_is_set` | 10 -> 12 | Dropped: the cheapest-model default from the API account catalog (`/api/models?runtime=api`, `api_memory_default`), removed by #87; learning now uses the Memory model, else the agent's model. Per-phase calls, models and usage rows carry over. |
+
+### `app/slack-output.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| Slack artifacts retain exact bytes and upload stages across uncertain completion and grant recovery | `sb_slack_output::slack_artifacts_retain_exact_bytes_and_upload_stages_across_uncertain_completion_and_grant_recovery` | 24 -> 21 | Full; the fake Slack Web API and Socket Mode server is `connector_fixture::SlackFixture`. |
+
+### `app/rust-harness.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| mise shim probes and launches with trusted mise paths and an isolated home | `sb_rust_harness::mise_shim_probes_and_launches_with_trusted_mise_paths_and_an_isolated_home` | 5 -> 3 | Full (the stand-in `mise` script checks the environment itself). Found S6. |
+| Rust ACP and Pi execute fake protocols with model selection and approvals | `sb_rust_harness::rust_acp_and_pi_execute_fake_protocols_with_model_selection_and_approvals` | 6 -> 6 | Full. |
+| Rust MCP feature receipts, scopes, cursors and stdio forwarding | `sb_rust_harness::rust_mcp_feature_receipts_scopes_cursors_and_stdio_forwarding` | 17 -> 15 | Full; peer tokens come from `/api/mcp-server/peer-tokens`. |
+
+### `app/harness-default.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| new agents default to Codex with a managed workspace; API agents keep runtime and switch in one saved command | `sb_harness_default::new_agents_default_to_codex_with_a_managed_workspace_api_agents_keep_runtime_and_switch_in_one_saved_command` | 11 -> 9 | Dropped (#87): `runtime` on create and the implicit default binding; a new agent is unbound until an instance is chosen. Ported: runtime choices, the confirmed one-command switch with its receipt, the managed workspace, restart, `defaultRuntime`. |
+| agents on this machine's Codex sign-in use the CLI folder without writing to it | `sb_harness_default::agents_on_this_machines_codex_sign_in_use_the_cli_folder_without_writing_to_it` | 11 -> 6 | The `device` account became an instance with `homePath` (sets `CODEX_HOME`). Dropped (#87, a8cfcac): the isolated `HOME` for device turns and the API-runtime 400. |
+| agents on this machine's Claude Code sign-in run with the real HOME and add nothing to ~/.claude | `sb_harness_default::agents_on_this_machines_claude_code_sign_in_run_with_the_real_home_and_add_nothing_to_claude` | 6 -> 4 | Full; the agent is bound through the runtime edit. |
+| provider isolation, account home rotation and MCP shell approval boundaries | `sb_harness_default::provider_isolation_account_home_rotation_and_mcp_shell_approval_boundaries` | 24 -> 11 | Kept in Node for B8 (`harnessApprovals.length === 0` for workspace checks); Rust allows the B8 card and checks the rest. Accounts became instances with secret keys. Dropped (#87): per-binding home rotation and `config.toml` (a8cfcac), the "not offered" tool list (5528da5 offers the full set). |
+| default harness setup saves its profile through MCP and cannot use unrelated tools (codex) | `sb_harness_default::default_harness_setup_saves_its_profile_through_mcp_and_cannot_use_unrelated_tools_codex` | 6 -> 6 | Full; bound to an explicit instance. |
+| default harness setup saves its profile through MCP and cannot use unrelated tools (claude) | `sb_harness_default::default_harness_setup_saves_its_profile_through_mcp_and_cannot_use_unrelated_tools_claude` | 6 -> 6 | Full. |
+| new agents fall back to the API runtime when Codex is not installed | `sb_harness_default::new_agents_fall_back_to_the_api_runtime_when_codex_is_not_installed` | 2 -> 3 | `runtime: api` left with #87: the agent stays unbound and not runnable. |
+
+### `app/project-integrations.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| Rust project environment validates names and UTF-8 byte bounds | `sb_project_integrations::rust_project_environment_validates_names_and_utf_8_byte_bounds` | 3 -> 4 | Full. |
+| project environment settings and removal preserve consent, replay and stale-write fences | `sb_project_integrations::project_environment_settings_and_removal_preserve_consent_replay_and_stale_write_fences` | 11 -> 11 | Full. |
+| codex: project environment encryption, harness shell, routine and direct-chat isolation | `sb_project_integrations::codex_project_environment_encryption_harness_shell_routine_and_direct_chat_isolation` | 24 -> 22 (shared `environment_isolation`) | The fake's `ENV_PRESENT`/`ENV_ABSENT` keywords replace the Node fixture patch. A harness reply joins its agent messages, so the reply ends with `finished` and carries the redacted shell output (the Node `reply === 'finished'` was never reached against Rust). |
+| claude: project environment encryption, harness shell, routine and direct-chat isolation | `sb_project_integrations::claude_project_environment_encryption_harness_shell_routine_and_direct_chat_isolation` | 24 -> 22 | As above. |
+| project apps and MCP: separate OAuth identities, offered tools, approvals, restart and cleanup | `sb_project_integrations::project_apps_and_mcp_separate_oauth_identities_offered_tools_approvals_restart_and_cleanup` | 39 -> 48 | Composio and the MCP server are `HttpStub`s; the catalog check uses the instance catalog (`/api/models` left with #87). Projects get a folder because harness turns need a workspace. A foreign project's MCP call is refused as an MCP error (Node: failed turn). |
+
+### `app/script-provider.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts | `sb_script_provider::script_provider_settings_keep_identity_and_credentials_isolated_reject_busy_revoked_changes_and_preserve_receipts` | 40 -> 23 | Kept in Node for B2 (the provider GET after the grant) and B3 (the three `script models` steps and the catalog held across a revocation). Rust covers every other step. Dropped (#87): the `providerAccount: 'missing'` refusal and `provider_account` in the result. |
+
+### `app/task-recovery.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| reassign creates one immutable successor, keeps original receipt and fences source controls | `sb_task_recovery::reassign_creates_one_immutable_successor_keeps_original_receipt_and_fences_source_controls` | 18 -> 18 |  |
+| canonical channel context names current visible members and lead across edits | `sb_task_recovery::canonical_channel_context_names_current_visible_members_and_lead_across_edits` | 5 -> 5 |  |
+| canonical routine outcomes validate reasons and atomically retain result receipt and task state | `sb_task_recovery::canonical_routine_outcomes_validate_reasons_and_atomically_retain_result_receipt_and_task_state` | 18 -> 14 | Same checks; some Node checks are combined in one Rust check. |
+| canonical routine outcomes deny forced ordinary chat and descendant calls | `sb_task_recovery::canonical_routine_outcomes_deny_forced_ordinary_chat_and_descendant_calls` | 3 -> 3 |  |
+| canonical routine outcomes reject late results after pause cancel revoke or context change | `sb_task_recovery::canonical_routine_outcomes_reject_late_results_after_pause_cancel_revoke_or_context_change` | 4 -> 4 |  |
+| canonical turn wait reserves one deadline and activates only after matching home secret result | `sb_task_recovery::canonical_turn_wait_reserves_one_deadline_and_activates_only_after_matching_home_secret_result` | 17 -> 17 |  |
+| pending turn wait closes after cancellation, stale target or failed keyring result and rolls back failed activation | `sb_task_recovery::pending_turn_wait_closes_after_cancellation_stale_target_or_failed_keyring_result_and_rolls_back_failed_activation` | 8 -> 8 |  |
+| canonical maintenance expires pending and activated waits once without reviving closed keys | `sb_task_recovery::canonical_maintenance_expires_pending_and_activated_waits_once_without_reviving_closed_keys` | 10 -> 9 | Same checks; some Node checks are combined in one Rust check. |
+| canonical wait maintenance survives SQLite failure and retries after storage recovers | `sb_task_recovery::canonical_wait_maintenance_survives_sqlite_failure_and_retries_after_storage_recovers` | 4 -> 4 |  |
+| disaster restore closes pending provisions and activated wait references while keeping receipts | `sb_task_recovery::disaster_restore_closes_pending_provisions_and_activated_wait_references_while_keeping_receipts` | 6 -> 7 |  |
+| canonical shared data keeps schema ownership, collaborator scope, validation and atomic receipts | `sb_task_recovery::canonical_shared_data_keeps_schema_ownership_collaborator_scope_validation_and_atomic_receipts` | 15 -> 14 | Same checks; some Node checks are combined in one Rust check. |
+| canonical shared data rechecks cancellation and authority across worker I/O and preserves concurrent conflicts | `sb_task_recovery::canonical_shared_data_rechecks_cancellation_and_authority_across_worker_io_and_preserves_concurrent_conflicts` | 9 -> 9 |  |
+| canonical cancellation kills SQL workers and releases query capacity | `sb_task_recovery::canonical_cancellation_kills_sql_workers_and_releases_query_capacity` | 3 -> 3 |  |
+| canonical questions validate limits and atomically pause, answer and retain cancellation | `sb_task_recovery::canonical_questions_validate_limits_and_atomically_pause_answer_and_retain_cancellation` | 20 -> 19 | Same checks; some Node checks are combined in one Rust check. |
+| canonical question answers enforce private human, conversation, project and current collaborator access | `sb_task_recovery::canonical_question_answers_enforce_private_human_conversation_project_and_current_collaborator_access` | 10 -> 10 |  |
+| canonical avatar removal in direct preserves CAS, rollback, scope and exact results | `sb_task_recovery::canonical_avatar_removal_in_direct_preserves_cas_rollback_scope_and_exact_results` | 19 -> 19 |  |
+| canonical avatar removal in side preserves CAS, rollback, scope and exact results | `sb_task_recovery::canonical_avatar_removal_in_side_preserves_cas_rollback_scope_and_exact_results` | 19 -> 19 |  |
+| canonical sites in direct page scoped metadata and retain atomic deletion | `sb_task_recovery::canonical_sites_in_direct_page_scoped_metadata_and_retain_atomic_deletion` | 21 -> 21 |  |
+| canonical sites in side page scoped metadata and retain atomic deletion | `sb_task_recovery::canonical_sites_in_side_page_scoped_metadata_and_retain_atomic_deletion` | 21 -> 21 |  |
+| reassign denies unresolved effects, revoked initiators and invalid successor provenance atomically | `sb_task_recovery::reassign_denies_unresolved_effects_revoked_initiators_and_invalid_successor_provenance_atomically` | 6 -> 6 |  |
+| committed result survives lost ACK, revocation and offline history without granting dispatch | `sb_task_recovery::committed_result_survives_lost_ack_revocation_and_offline_history_without_granting_dispatch` | 7 -> 7 |  |
+| not-sent and uncertain reports require verifiable evidence and cannot resurrect cancelled work | `sb_task_recovery::not_sent_and_uncertain_reports_require_verifiable_evidence_and_cannot_resurrect_cancelled_work` | 5 -> 5 |  |
+| signed no-marker evidence reconciles original owner before acquire and altered proofs fail closed | `sb_task_recovery::signed_no_marker_evidence_reconciles_original_owner_before_acquire_and_altered_proofs_fail_closed` | 8 -> 8 |  |
+| progress reports advance monotonically, immutable result publishes once and prepare sees changed context | `sb_task_recovery::progress_reports_advance_monotonically_immutable_result_publishes_once_and_prepare_sees_changed_context` | 7 -> 7 |  |
+| task controls use current scope and revisions, keep cancellation terminal and resolve no effects implicitly | `sb_task_recovery::task_controls_use_current_scope_and_revisions_keep_cancellation_terminal_and_resolve_no_effects_implicitly` | 6 -> 6 |  |
+| owner risk resolution reserves one replacement and cannot erase unknown original effect | `sb_task_recovery::owner_risk_resolution_reserves_one_replacement_and_cannot_erase_unknown_original_effect` | 6 -> 6 |  |
+| late known result rejects risk retry and historical accepted receipt stays valid after a later ACK | `sb_task_recovery::late_known_result_rejects_risk_retry_and_historical_accepted_receipt_stays_valid_after_a_later_ack` | 3 -> 3 |  |
+| offline task admission is durable, scoped, immutable and exact without provider binding | `sb_task_recovery::offline_task_admission_is_durable_scoped_immutable_and_exact_without_provider_binding` | 15 -> 15 |  |
+| assigned collaborator executes owner home/binding and revoked scope blocks receipt replay | `sb_task_recovery::assigned_collaborator_executes_owner_home_binding_and_revoked_scope_blocks_receipt_replay` | 3 -> 3 |  |
+| task messages require files, preserve line breaks, and closed union rejects mixed routing | `sb_task_recovery::task_messages_require_files_preserve_line_breaks_and_closed_union_rejects_mixed_routing` | 5 -> 5 |  |
+| task admission requires scoped conversation, matching revisions and exact attachment conversation | `sb_task_recovery::task_admission_requires_scoped_conversation_matching_revisions_and_exact_attachment_conversation` | 7 -> 7 |  |
+| provider provenance is captured from owner same-home binding and never caller fields | `sb_task_recovery::provider_provenance_is_captured_from_owner_same_home_binding_and_never_caller_fields` | 5 -> 5 |  |
+| acquire requires stopped/reconciled owner, exact token and fenced generation | `sb_task_recovery::acquire_requires_stopped_reconciled_owner_exact_token_and_fenced_generation` | 7 -> 7 |  |
+| context snapshot is immutable, exact, project scoped and requires current executor token | `sb_task_recovery::context_snapshot_is_immutable_exact_project_scoped_and_requires_current_executor_token` | 6 -> 6 |  |
+| action prepare grants no dispatch; commit has one live grant and stale context blocks new work | `sb_task_recovery::action_prepare_grants_no_dispatch_commit_has_one_live_grant_and_stale_context_blocks_new_work` | 9 -> 9 |  |
+| canonical transfer commits one successor and immutable result, fences old executor and retries without mutation | `sb_task_recovery::canonical_transfer_commits_one_successor_and_immutable_result_fences_old_executor_and_retries_without_mutation` | 15 -> 14 | Same checks; some Node checks are combined in one Rust check. |
+| canonical RPC rejects changed input, stale grants and fabricated results without partial transfer | `sb_task_recovery::canonical_rpc_rejects_changed_input_stale_grants_and_fabricated_results_without_partial_transfer` | 8 -> 8 |  |
+| canonical transfer keeps channel-only tool boundary for private tasks | `sb_task_recovery::canonical_transfer_keeps_channel_only_tool_boundary_for_private_tasks` | 2 -> 2 |  |
+| context projects authorized memory, pinned skills and byte-free asset refs, invalidating changed sources | `sb_task_recovery::context_projects_authorized_memory_pinned_skills_and_byte_free_asset_refs_invalidating_changed_sources` | 11 -> 11 | Memory and skill rows are seeded with SQL equal to `rememberMemory` and `seedSkillVersion`. |
+| context preserves scoped history, questions, compaction and child evidence without foreign records or file bytes | `sb_task_recovery::context_preserves_scoped_history_questions_compaction_and_child_evidence_without_foreign_records_or_file_bytes` | 18 -> 17 | Same checks; some Node checks are combined in one Rust check. |
+| canonical history retains sequence cursors and excludes unmapped, foreign, private and future originals | `sb_task_recovery::canonical_history_retains_sequence_cursors_and_excludes_unmapped_foreign_private_and_future_originals` | 13 -> 13 |  |
+| canonical skills retain installed pins, owner mappings, private boundaries and immutable read results | `sb_task_recovery::canonical_skills_retain_installed_pins_owner_mappings_private_boundaries_and_immutable_read_results` | 25 -> 25 |  |
+| canonical routine tools keep private project mappings, pagination and flow scope | `sb_task_recovery::canonical_routine_tools_keep_private_project_mappings_pagination_and_flow_scope` | 18 -> 18 |  |
+| canonical routine edits require project agents and assignment, preserve CAS and roll back with result failure | `sb_task_recovery::canonical_routine_edits_require_project_agents_and_assignment_preserve_cas_and_roll_back_with_result_failure` | 16 -> 16 |  |
+| canonical provider settings read binding metadata only in direct and stays private | `sb_task_recovery::canonical_provider_settings_read_binding_metadata_only_in_direct_and_stays_private` | 8 -> 5 | Dropped (#87): the provider-binding cases (another home, readiness, foreign owner) and the `providerAccount`/`backupModel` fields. The canonical executor reads the agent's provider instance: `{revision, providerInstance, model, configured}`, checked unbound and bound. |
+| canonical provider settings read binding metadata only in side and stays private | `sb_task_recovery::canonical_provider_settings_read_binding_metadata_only_in_side_and_stays_private` | 8 -> 5 | Dropped (#87): the provider-binding cases (another home, readiness, foreign owner) and the `providerAccount`/`backupModel` fields. The canonical executor reads the agent's provider instance: `{revision, providerInstance, model, configured}`, checked unbound and bound. |
+| canonical setup restricts host actions and forced tools, and requires a complete profile edit | `sb_task_recovery::canonical_setup_restricts_host_actions_and_forced_tools_and_requires_a_complete_profile_edit` | 5 -> 5 |  |
+| canonical profile edit in direct keeps atomic CAS errors and channel privacy | `sb_task_recovery::canonical_profile_edit_in_direct_keeps_atomic_cas_errors_and_channel_privacy` | 12 -> 12 |  |
+| canonical profile edit in side keeps atomic CAS errors and channel privacy | `sb_task_recovery::canonical_profile_edit_in_side_keeps_atomic_cas_errors_and_channel_privacy` | 12 -> 12 |  |
+| canonical agent directory pages authorized teammates and scopes activity to project, human and channel | `sb_task_recovery::canonical_agent_directory_pages_authorized_teammates_and_scopes_activity_to_project_human_and_channel` | 22 -> 22 |  |
+| canonical interruption isolates sender, human and project while preserving terminal outcomes and atomic notice rollback | `sb_task_recovery::canonical_interruption_isolates_sender_human_and_project_while_preserving_terminal_outcomes_and_atomic_notice_rollback` | 27 -> 27 |  |
+| canonical messages retain full assignment, isolated children, group waits and atomic cancellation | `sb_task_recovery::canonical_messages_retain_full_assignment_isolated_children_group_waits_and_atomic_cancellation` | 38 -> 38 | A paused child still gets its context; the refusal comes at prepare (`task_not_runnable`), which is where the Node `stage` call failed. |
+| context counts projected result bytes once, including escaped JSON content | `sb_task_recovery::context_counts_projected_result_bytes_once_including_escaped_json_content` | 2 -> 2 |  |
+| disaster mixed batches reconcile known evidence and privately quarantine only unknown actions atomically | `sb_task_recovery::disaster_mixed_batches_reconcile_known_evidence_and_privately_quarantine_only_unknown_actions_atomically` | 12 -> 12 | The restore session comes from `POST /api/restore/reconcile` with a bootstrap set in the database (the Node `prepareRestoreBootstrap`), not the TS `issueRestoreSession` helper. |
+| owner recovery session is scoped, nonsecret on retry, rotates and requires revoked original source | `sb_task_recovery::owner_recovery_session_is_scoped_nonsecret_on_retry_rotates_and_requires_revoked_original_source` | 9 -> 9 |  |
+| revoked-source recovery retains signed evidence then publishes exact content without granting execution | `sb_task_recovery::revoked_source_recovery_retains_signed_evidence_then_publishes_exact_content_without_granting_execution` | 11 -> 11 |  |
+| recovery rejects replacement keys, expired proof, changed content and non-advancing watermarks atomically | `sb_task_recovery::recovery_rejects_replacement_keys_expired_proof_changed_content_and_non_advancing_watermarks_atomically` | 11 -> 11 |  |
+| recovery stop proof preserves original journal signature and rejects altered runner evidence | `sb_task_recovery::recovery_stop_proof_preserves_original_journal_signature_and_rejects_altered_runner_evidence` | 4 -> 4 |  |
+| late content completes a saved recovery batch without lowering newer evidence watermark | `sb_task_recovery::late_content_completes_a_saved_recovery_batch_without_lowering_newer_evidence_watermark` | 6 -> 6 |  |
+
+59 cases, 59 Rust tests, assertions 648 -> 634. `app/rust-task-test-bridge.ts` is removed with it (the kit's `task_bridge` replaces it).
+
+<!-- stale-b files -->
+
 ## #67 hosted Hub test migration
 
 The app test runner discovers Hub Link once and starts the Rust hosted listener.

@@ -54,6 +54,10 @@ one module per area.
 | `reap` | Dropping the last `TestRoot` kills every process whose executable or working directory is inside it (peers left behind by a killed server). |
 | `gated` | `GatedModel`: an OpenAI-compatible model whose `Answer` can wait for a `Gate`, park the request for the test (`Answer::Park`, `parked`), hang, or stream chunks with gates between them. Extra JSON routes (`route`) serve, for example, image generation. |
 | `stub` | `Stub`: a raw HTTP/1.1 fake for third-party APIs (sync or async handlers, `StubReply::Hang` and `Drop` for lost results, WebSocket upgrades through `with_socket`). |
+| `http_stub` | `HttpStub`: a request-recording HTTP fake with `StubResponse` (JSON, status, text) for third-party APIs in project-integration and MCP-context tests. Overlaps `stub`; to be merged into it. |
+| `control` | `ControlModel`: an OpenAI-compatible model with deferred answers the test releases. Overlaps `gated` and `parked`; to be merged. |
+| `connector_fixture` | A fake Slack for connector output tests. Overlaps `platform`; to be merged. |
+| `task_bridge` | The canonical task protocol for task-recovery tests, with request signing (`ring`). |
 | `platform`, `connector` | `ConnectorFixture` (fake Slack and Telegram with Socket Mode, a fault-injecting script proxy and the connector process); `Connector` runs `--connector-config`, `journal` runs `--connector-journal-config`. |
 | `peer` | `PeerBridge`: a computer bridge with a recording peer token issuer and loopback `peer-http`; pair two servers with `server::start_pair` on a multi-thread test runtime. |
 | `signing`, `noise` | `hmac_sha256_hex` for signed event deliveries; `noise_png` for large generated images. |

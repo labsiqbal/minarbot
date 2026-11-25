@@ -9,11 +9,12 @@ description = "Dev-only integration-test kit: disposable Minarbot servers, fake 
 # Every dependency below is already in the workspace lock file through
 # minarbot-server, so the kit adds no new third-party code.
 [dependencies]
-axum = { version = "0.8", features = ["http1", "json", "tokio"] }
+axum = { version = "0.8", features = ["http1", "json", "tokio", "ws"] }
 base64 = "0.22"
 futures-util = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 jsonwebtoken = "9"
+ring = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { workspace = true, features = ["functions"] }
 rustix = { version = "1", features = ["process"] }

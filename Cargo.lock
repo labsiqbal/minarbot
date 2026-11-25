@@ -2490,6 +2490,7 @@ dependencies = [
  "image",
  "jsonwebtoken",
  "reqwest",
+ "ring",
  "rusqlite",
  "rustix",
  "serde",

@@ -200,6 +200,15 @@ impl Canonical {
         )?)
     }
 
+    /// Clerk session token of `actor` for the running server.
+    pub fn token_for(&self, actor: &Account) -> Result<String> {
+        let server = self
+            .server
+            .as_ref()
+            .ok_or("start the canonical server first")?;
+        self.token(actor, server.origin())
+    }
+
     /// Send an authenticated canonical request as `actor`.
     pub async fn send(
         &self,

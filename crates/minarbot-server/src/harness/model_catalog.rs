@@ -291,6 +291,19 @@ pub(crate) async fn models_for_instance(
         .map_err(|_| launch_error(&runtime))?;
     let catalog = probe_process(process, &runtime, PROBE_TIMEOUT).await?;
     let mut result = response(catalog);
+    // A catalog that echoes an instance secret (for example the provider key
+    // as a model id) is invalid and must not reach the browser.
+    let secrets = crate::data::provider_instances::secret_values(state, instance_id)?;
+    if secrets
+        .iter()
+        .filter(|secret| secret.len() >= 8)
+        .any(|secret| result.to_string().contains(secret.as_str()))
+    {
+        return Err(error(
+            502,
+            "The provider returned an invalid model catalog. Check the /models endpoint response.",
+        ));
+    }
     if let Some(models) = result["catalog"].as_array_mut() {
         for model in models {
             model["options"] = match runtime.as_str() {

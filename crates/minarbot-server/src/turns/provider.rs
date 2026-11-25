@@ -61,9 +61,42 @@ pub async fn call(
     if let Some(base) = state.config.data.base_url.as_deref() {
         return test_fixture_call(state, base, model, messages, _tools).await;
     }
-    crate::harness::run(state, turn, model, messages, phase)
+    let messages = with_awareness(state, turn, messages, phase)?;
+    crate::harness::run(state, turn, model, &messages, phase)
         .await
         .map(Answer::Text)
+}
+
+/// Answer turns that may message teammates get the team roster
+/// (`messaging::awareness`) after their system prompt. Memory, compaction,
+/// goal-judge and routing calls do not, nor do profile setup turns.
+fn with_awareness(
+    state: &AppState,
+    turn: &str,
+    messages: &[Value],
+    phase: &str,
+) -> Result<Vec<Value>> {
+    let mut messages = messages.to_vec();
+    let private = phase.starts_with("memory_") || phase == "compaction" || phase == goals::JUDGE;
+    if private || phase == "routing" {
+        return Ok(messages);
+    }
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    let Some(row) = one(db, "SELECT * FROM turns WHERE id=?", [turn])? else {
+        return Ok(messages);
+    };
+    if super::profile::setup(db, &row)? || !super::messaging::allowed(db, turn)? {
+        return Ok(messages);
+    }
+    if let Some(first) = messages.first_mut().filter(|m| m["role"] == "system") {
+        first["content"] = json!(format!(
+            "{}\n\n{}",
+            string(first, "content"),
+            super::messaging::awareness(db, &row)?
+        ));
+    }
+    Ok(messages)
 }
 
 #[cfg(test)]
