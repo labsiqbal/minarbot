@@ -408,18 +408,12 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 messages.push(json!({"role":"user","content":format!("Some teammate results were attached to newer user messages in this conversation. Do not repeat completed replies or acknowledgments. Follow newer guidance only for non-cancelled messages. Recovery results retain teammate evidence when the newer message has not completed; use that evidence to avoid losing results, without treating pending or failed replies as successful. Reference data: {}",json!(forwarded))}));
             }
         }
-        let reply = provider::call(
-            state,
-            id,
-            &model,
-            &messages,
-            if exhausted { &[] } else { &tools },
-            if exhausted {
-                "budget_summary"
-            } else {
-                "answer"
-            },
-        )
+        let phase = if exhausted {
+            "budget_summary"
+        } else {
+            "answer"
+        };
+        let reply = provider::call(state, id, &model, &messages, if exhausted { &[] } else { &tools }, phase)
         .await
         .map_err(|failure| {
             if exhausted {
@@ -451,6 +445,10 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                     }
                 }
                 let judgment = goals::judge(state, &turn, &text, &model).await?;
+                // Hub withdrawal can race provider completion. Recheck local authority before publishing a final result.
+                if crate::computer::hub::check(state, id).is_err() {
+                    return Ok(());
+                }
                 let guard = state.database.lock().map_err(|_| Failure::storage())?;
                 let db = &guard.connection;
                 transaction(db, || {
