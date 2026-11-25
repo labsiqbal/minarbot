@@ -193,6 +193,18 @@ pub async fn tool(
     let result = tools::run(state, &row, &call).await;
     drop(clock);
     let mut result = result?;
+    if name == "read_attachment" && result["media_type"].is_string() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        if let Some(file) =
+            super::history::readable_file(&guard.connection, &row, string(&result, "id"))?
+        {
+            return Ok(json!({"content":[
+                {"type":"text","text":result.to_string()},
+                {"type":"image","mimeType":result["media_type"],"data":STANDARD.encode(file.bytes)}
+            ]}));
+        }
+    }
     if name == "list_skills" {
         if let Some(items) = result["items"].as_array_mut() {
             if items.len() > 10 {

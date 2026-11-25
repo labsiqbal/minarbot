@@ -1781,8 +1781,12 @@ pub async fn run(
     if mise {
         process::configure_mise(&mut env);
     }
+    let instance_secrets = {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        data::provider_instances::secret_environment_values(&state, &guard.connection, instance_id)?
+    };
     let mut secrets = vec![token.clone()];
-    secrets.extend(instance_environment.values().cloned());
+    secrets.extend(instance_secrets);
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         secrets.extend(crate::mcp::secrets::project(

@@ -140,9 +140,15 @@ const transcript = prompt => {
 async function run(prompt, additionalContext, signal) {
   const context = Object.values(additionalContext ?? {}).map(value => value?.value ?? '').filter(Boolean).join('\n\n');
   const parsed = transcript(prompt);
-  const messages = savedMessages ? [...savedMessages, ...(parsed.length ? parsed : [{ role: 'user', content: prompt }])] : parsed.length
+  const messages = parsed.length
     ? parsed
+    : savedMessages ? [...savedMessages, { role: 'user', content: prompt }]
     : [{ role: 'system', content: [context, prompt].filter(Boolean).join('\n\n') }];
+  const parsedUser = parsed.findLastIndex(message => message.role === 'user');
+  const reminder = prompt.includes('One verification reminder:');
+  const currentUser = parsedUser >= 0
+    ? (reminder ? parsed.findLastIndex((message, index) => index < parsedUser && message.role === 'user') : parsedUser)
+    : messages.findLastIndex(message => message.role === 'user');
   if (!messages.some(message => message.role === 'user')) {
     messages.push({ role: 'user', content: parsed.at(-1)?.content ?? prompt });
   }
@@ -155,14 +161,19 @@ async function run(prompt, additionalContext, signal) {
     if (exhausted && !messages.at(-1)?.content?.includes('Tools are now disabled')) {
       messages.push({ role: 'user', content: `Stopped after ${toolBudget} tool steps. Tools are now disabled. Summarise what you did, what is left, and tell the user they can reply "continue". Do not claim unfinished work is complete.` });
     }
-    const body = { model: model || 'fixture', messages, stream, ...(exhausted ? {} : { tools, parallel_tool_calls: false }) };
+    const bodyMessages = messages.map((message, index) => index > currentUser || message.role !== 'tool' ? message : { ...message, role: 'assistant' });
+    if (reminder) {
+      const prior = bodyMessages.findLastIndex((message, index) => index < currentUser && message.role === 'assistant');
+      if (prior >= 0) bodyMessages[prior] = { ...bodyMessages[prior], role: 'tool' };
+    }
+    const body = { model: model || 'fixture', messages: bodyMessages, stream, ...(exhausted ? {} : { tools, parallel_tool_calls: false }) };
     const value = await providerRequest(body, signal);
     const choice = value.choices?.[0];
     const message = choice?.message;
     if (!choice || !message) throw new Error('Gateway provider returned malformed response');
     const toolCalls = message.tool_calls ?? [];
     if (toolCalls.length && choice.finish_reason === 'tool_calls' && !exhausted) {
-      messages.push(message);
+      messages.push({ role: 'assistant', ...message });
       for (const call of toolCalls) {
         let args;
         try { args = JSON.parse(call.function?.arguments || '{}'); } catch { throw new Error('Gateway provider returned malformed tool arguments'); }
@@ -202,6 +213,13 @@ async function run(prompt, additionalContext, signal) {
         }
         notify('item/completed', { item: { id, type: 'mcpToolCall', tool: call.function?.name ?? '', arguments: args, status: 'completed', result } });
         messages.push({ role: 'tool', tool_call_id: id, content: toolText(result) });
+        const image = result.content?.find(item => item.type === 'image' && item.data && item.mimeType);
+        if (image) {
+          messages.push({ role: 'user', content: [
+            { type: 'text', text: 'Image attachment (reference data).' },
+            { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
+          ] });
+        }
         calls++;
       }
       exhausted = calls >= toolBudget;
