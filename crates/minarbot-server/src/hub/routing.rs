@@ -259,12 +259,6 @@ pub(super) fn lease(db: &Connection, principal: &Value, input: &Value) -> Result
     }
     let row = one(db, "SELECT request_json FROM turns WHERE project_id=? AND id=? AND node_id=? AND state='admitted'", [project.as_str(),turn.as_str(),text(principal,"nodeId")])?.ok_or_else(denied)?;
     let request = stored(&row, "request_json")?;
-    if !db
-        .prepare("SELECT 1 FROM participations WHERE project_id=? AND id=? AND state='active'")?
-        .exists(params![project, text(&request, "participationId")])?
-    {
-        return Err(stale());
-    }
     current(db, &request)?;
     let clock = now();
     let deadline = request["expiresAt"].as_i64().ok_or_else(Failure::storage)?;
@@ -373,6 +367,12 @@ pub(super) fn accept(db: &Connection, principal: &Value, f: &Value) -> Result<Va
         if f[key] != request[key] {
             return Err(denied());
         }
+    }
+    if !db
+        .prepare("SELECT 1 FROM participations WHERE project_id=? AND id=? AND state='active'")?
+        .exists(params![project, text(&request, "participationId")])?
+    {
+        return Err(stale());
     }
     current(db, &request)?;
     let encoded = canonical(f);
