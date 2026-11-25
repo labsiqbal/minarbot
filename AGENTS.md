@@ -11,14 +11,14 @@ npm run build --prefix app
 cargo xtask leptos
 ```
 
-Run Rust integration tests after building the server binary. The e2e crate uses `minarbot-testkit` and `MINARBOT_SERVER_BINARY`.
+Write integration tests with `minarbot-testkit` as described in `docs/testing.md`. Build the server and the kit's fake peers before running them:
 
 ```sh
-cargo build -p minarbot-server
-MINARBOT_SERVER_BINARY=$PWD/target/debug/minarbot-server cargo test -p minarbot-e2e
+cargo build -p minarbot-server -p minarbot-testkit
+cargo test -p minarbot-testkit -p minarbot-e2e
 ```
 
-The remaining Node suite is legacy coverage during #89 migration.
+The remaining Node suite is legacy coverage during the #89 migration. Do not add Node tests.
 
 ## Rust
 
