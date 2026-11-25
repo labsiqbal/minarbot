@@ -132,6 +132,7 @@ each iteration as a case.
 | `app/turn-waits.test.ts` | 5 | 5 | 0 | 2 (B1) |
 | `app/acp-harness.test.ts` | 17 | 17 | 0 | 0 (deleted) |
 | `app/agent-delegation.test.ts` | 19 | 19 | 0 | 1 (B1) |
+| `app/composio.test.ts` | 3 | 3 | 0 | 1 (TS module, split out) |
 
 <!-- fixture-summary -->
 
@@ -271,6 +272,14 @@ each iteration as a case.
 | completion wakes a parent waiting for user input and preserves its pending question | `fx_delegation::completion_wakes_a_parent_waiting_for_user_input_and_preserves_its_pending_question` | 3 -> 3 | Full. |
 | concurrent child limit counts tasks still waiting on their async descendants | `fx_delegation::concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descendants` | 4 -> 4 | Full. |
 | Rust counts active children of an owner completion turn against its inherited budget | `fx_delegation::rust_counts_active_children_of_an_owner_completion_turn_against_its_inherited_budget` | 3 -> 3 | Changed by #87: the limit refusal returns to the model, which ends the continuation `done` with it instead of `failed`. |
+
+### `app/composio.test.ts` (kept: TS module)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| connected apps end to end: catalog, accounts, grants, tools, approvals, receipts and no secrets | `fx_composio::connected_apps_end_to_end_catalog_accounts_grants_tools_approvals_receipts_and_no_secrets` | 70 -> 61 | Changed by #87: the unconfigured and ungranted turns no longer fail; the unoffered call is refused over MCP (403) and the turn ends `done`. The test asserts the refusal and that no Composio tool was offered. The `COMPOSIO_API_KEY` environment variable is the kit's key bridge (`Bridge::composio_key_cell`); server output replaces captured console logs. |
+| installation API key: validation, encrypted persistence, receipts, runtime precedence and restart | `fx_composio::installation_api_key_validation_encrypted_persistence_receipts_runtime_precedence_and_restart` | 39 -> 38 | Full; the environment key changes through the key cell between requests, as `process.env` did. |
+| Rust key replacement and removal reset identity, grants, policies and pending calls atomically | `fx_composio::rust_key_replacement_and_removal_reset_identity_grants_policies_and_pending_calls_atomically` | 21 -> 21 (+6 TS) | Changed by #87: the Node API runtime kept the tool list of the turn's start, so the call held across the reset was refused ("was not offered or access was revoked"). A harness call resolves tools again over MCP, so after the reset and the new grant the write waits for approval; the test denies it and asserts nothing was sent. Every pending-call and reset assertion is full. The 6 `restoreConnectedAppCommand` asserts test `app/src/connected-app-command.ts` and stay in Node as their own TS-module case. |
 
 <!-- fixture-cases -->
 
