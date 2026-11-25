@@ -32,6 +32,7 @@ pub mod model;
 pub mod protocol;
 pub mod providers;
 pub mod proxy;
+pub mod restore;
 pub mod server;
 pub mod wait;
 pub mod workspace;

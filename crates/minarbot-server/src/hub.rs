@@ -6,6 +6,8 @@ mod routing;
 mod session;
 mod storage;
 #[cfg(test)]
+mod schema_tests;
+#[cfg(test)]
 mod tests;
 
 use crate::{

@@ -90,7 +90,8 @@ async fn model_discovery_validates_catalog_and_never_follows_credential_redirect
     let requests = provider.requests();
     ensure!(requests.len() == 6, "provider calls: {requests:?}");
     ensure!(
-        requests.iter().all(|request| request.path == "/v1/models"
+        requests.iter().all(|request| request.method == "GET"
+            && request.path == "/v1/models"
             && request.authorization.as_deref() == Some("Bearer fixture-secret")),
         "provider requests: {requests:?}"
     );

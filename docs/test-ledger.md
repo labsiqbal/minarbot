@@ -140,7 +140,7 @@ Recurring #87 differences, stated once and referenced per row:
 - **W1 (channel workspaces).** 7098b86 (#87) gives a channel without a project
   its lead agent's workspace, so workspace and Git tools are offered there.
 
-Kit additions: `minarbot_testkit::gate::ModelGate` (new file `gate.rs`) holds
+Kit additions: `minarbot_testkit::restore` (new file: runs `minarbot-server restore ...` and checks `exitCode` against the process status, Clerk identity env and stdin token from the test-only key, Ed25519 `FenceKey`; adds the `ring` dependency the server already locks), `minarbot_testkit::hmac` (new file), `fixtures/local-pre-collapse.sql` (copied from `app/test-support/fixtures/`), `minarbot_testkit::gate::ModelGate` (new file `gate.rs`) holds
 one scripted reply so a test can act between "the model chose a tool" and
 "the server ran it", which the Node providers did by awaiting before they
 answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
@@ -164,6 +164,8 @@ Product bugs fixed in this slice:
 | `app/routines.test.ts` | 4 | 4 | 0 | 0 |
 | `app/models.test.ts` | 1 | 1 | 0 | 0 |
 | `app/workflow-http.test.ts` | 12 | 12 (+1 regression) | 0 | 1 (TS module) |
+| `app/schema.test.ts` | 4 | 4 (1 server unit test) | 0 | 0 |
+| `app/restore-fence.test.ts` | 7 | 7 | 0 | 0 |
 
 ### `app/memory.test.ts`
 
@@ -242,6 +244,29 @@ Product bugs fixed in this slice:
 | workflow output inbox survives restart with stable paging and idempotent read | `sa_workflows::workflow_output_inbox_survives_restart_with_stable_paging_and_idempotent_read` | 11 -> 21 | Full. |
 | workflow channel outputs deliver once and recheck channel availability at completion | `sa_workflows::workflow_channel_outputs_deliver_once_and_recheck_channel_availability_at_completion` | 21 -> 47 | Full. |
 | workflow run pages retain older approvals after restart and validate cursors | `sa_workflows::workflow_run_pages_retain_older_approvals_after_restart_and_validate_cursors` | 6 -> 12 | Full. |
+
+### `app/schema.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| fresh canonical startup extends the 85373b3 schema and reopens its data unchanged | `sa_schema::fresh_canonical_startup_extends_the_85373b3_schema_and_reopens_its_data_unchanged` | 11 -> 13 (shared helper) | #87 removed legacy provider storage: a fresh server no longer creates `provider_accounts`, `provider_account_changes`, `model_fallbacks` (and, locally, `engine_logins`); an upgrade drops `provider_accounts`, `engine_logins` and the `agents` columns `runtime`, `provider_account`, `backup_model`, and keeps the other two tables so old turns keep their history. The expected snapshots and the retained agent row leave exactly these out. The optional baseline-binary branch (`MINARBOT_SCHEMA_BASELINE_BINARY`) is not ported; the frozen fixture is seeded as in the default Node path. |
+| fresh local startup extends the 85373b3 schema and reopens its data unchanged | `sa_schema::fresh_local_startup_extends_the_85373b3_schema_and_reopens_its_data_unchanged` | 11 -> 13 (shared helper) | Same as above. |
+| fresh Rust hub startup preserves the 85373b3 schema and applies extensions | `minarbot-server` unit test `hub::schema_tests::fresh_rust_hub_startup_preserves_the_85373b3_schema_and_applies_extensions` | 2 -> 2 | Opens the hub store (`hub::storage::open`) directly; fixture copied to `crates/minarbot-server/src/hub/testdata/`. |
+| local 0.16.4 memory import does not backfill learning jobs | `sa_schema::local_0_16_4_memory_import_does_not_backfill_learning_jobs` | 8 -> 8 | Full (the optional `MINARBOT_V0164_BINARY` branch is not ported). |
+
+### `app/restore-fence.test.ts`
+
+All cases drive `minarbot-server restore ...` through `minarbot_testkit::restore`.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| signed infrastructure fence preflight survives restart and exact retry without activating restore | `sa_restore_fence::signed_infrastructure_fence_preflight_survives_restart_and_exact_retry_without_activating_restore` | 8 -> 8 | Full. |
+| restore fence rejects forged, stale, mismatched, self-supplied and replaced-session proofs | `sa_restore_fence::restore_fence_rejects_forged_stale_mismatched_self_supplied_and_replaced_session_proofs` | 7 -> 7 | Full (each of the 18 evidence variants and 3 pins is checked in a loop). |
+| operator CLI creates and verifies bounded private fence files while keeping recovery read-only | `sa_restore_fence::operator_cli_creates_and_verifies_bounded_private_fence_files_while_keeping_recovery_read_only` | 25 -> 25 | Full. |
+| activation plan commits one fenced recovery receipt and exact retry | `sa_restore_fence::activation_plan_commits_one_fenced_recovery_receipt_and_exact_retry` | 9 -> 9 | The evidence lives 5 s instead of 30 s, because the case waits for it to expire. |
+| activation rolls back on receipt failure and rejects changed plans | `sa_restore_fence::activation_rolls_back_on_receipt_failure_and_rejects_changed_plans` | 9 -> 9 | Full. |
+| activation retains populated revoked grants and held tasks, refusing unsafe recovery state | `sa_restore_fence::activation_retains_populated_revoked_grants_and_held_tasks_refusing_unsafe_recovery_state` | 12 -> 9 | Full; the four revoked-list counts are one loop. |
+| activation requires current schema, owner session and fresh infrastructure proof | `sa_restore_fence::activation_requires_current_schema_owner_session_and_fresh_infrastructure_proof` | 6 -> 7 | Recovery accepts schema v6 (baseline) to v7 (#87 added `v7_provider_instances`); the Node case deleted v6, then the newest, and failed after #87. The test removes v6 and v7. Evidence lives 5 s. |
 <!-- stale-a end -->
 
 ## #67 hosted Hub test migration

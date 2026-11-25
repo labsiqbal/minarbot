@@ -6,3 +6,5 @@
   nothing. Never use it outside tests.
 - `canonical-pre-collapse.sql`: canonical-mode schema fixture, copied from
   `app/test-support/fixtures/canonical-pre-collapse.sql` for #89.
+- `local-pre-collapse.sql`: local-mode schema at 85373b3, copied from
+  `app/test-support/fixtures/local-pre-collapse.sql` for #89.
