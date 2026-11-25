@@ -145,6 +145,12 @@ Recurring #87 differences, stated once and referenced per row:
 - **D1 (harness context).** The harness keeps its own conversation: the
   server cannot prune older screenshots in it, and a resumed run starts a new
   harness session that sees the transcript text, not earlier tool results.
+- **M1 (harness parent waits).** A harness turn's `send_message` with
+  `expects_reply` holds the MCP call, and the parent's run and slot, until
+  the group settles (at most 30 s, `mcp/server.rs`). The API runtime parked
+  the parent as `queued` instead. A later user turn on that thread therefore
+  queues behind the parent, so no reply is `delivered_earlier` to it, and a
+  group request with one slot cannot run its deliveries until the wait ends.
 - **W1 (channel workspaces).** 7098b86 (#87) gives a channel without a project
   its lead agent's workspace, so workspace and Git tools are offered there.
 
@@ -187,6 +193,7 @@ Product bugs fixed in this slice:
 | `app/tool-budget.test.ts` | 13 | 11 | 2 | 1 (TS module part) |
 | `app/fallback.test.ts` | 1 | 1 | 0 | 0 |
 | `app/coordination.test.ts` | 1 | 1 | 0 | 0 |
+| `app/agent-messages.test.ts` | 1 | 1 | 0 | 0 |
 
 ### `app/memory.test.ts`
 
@@ -395,6 +402,12 @@ socket path fits `sun_path`.
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | --- | --- |
 | coordination: durable delegation, transfer, cancellation, rejection and recovery | `sa_coordination::coordination_durable_delegation_transfer_cancellation_rejection_and_recovery` | 55 -> 47 | Full; B1x. Holds use `Reply::hold` and `ModelGate::hold_when`. Children are paused, cancelled or restarted after their first model call (the harness reaches the model shortly after the child starts running). |
+
+### `app/agent-messages.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| teammate messages correlate groups, isolate context, persist receipts and bound delivery | `sa_agent_messages::teammate_messages_correlate_groups_isolate_context_persist_receipts_and_bound_delivery` | 48 -> 55 | Full apart from M1: the bypass turn now stays `queued` while the parent waits, the group result carries both replies with an empty `delivered_earlier`, and the bypass receives no replies (the Node `delivered_earlier[0].consumer`, bypass `receivedAgentReplies` and parent-`queued` checks invert). H1: self and duplicate recipients and the outside-channel recipient are refused to the model (the turn is `done` and its answer carries the error, "Recipient ..." for the channel); reply loops are refused and retried until the tool budget fails the delivery. The suite returns to two slots after the one-slot pause check (M1). Model-side checks run in the scripted model and are asserted at the end. |
 <!-- stale-a end -->
 
 ## #67 hosted Hub test migration

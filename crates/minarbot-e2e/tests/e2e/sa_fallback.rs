@@ -4,7 +4,7 @@
 //! decision), so every scenario must make exactly one attempt with the
 //! agent's model and never switch to the backup.
 
-use crate::sa_support::{lock, turn_tool_results, RawAction, RawProvider, Shared};
+use crate::sa_support::{lock, RawAction, RawProvider, Shared};
 use minarbot_testkit::{prelude::*, server::Gateway, Server};
 use std::sync::Arc;
 use tokio::sync::Notify;
