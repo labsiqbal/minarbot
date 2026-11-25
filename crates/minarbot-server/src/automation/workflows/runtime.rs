@@ -113,7 +113,12 @@ pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
                 if branches.iter().any(|b|b["kind"]=="agent"&&data::agents::hidden(db,string(b,"agent")).unwrap_or(true)){fail(db,id,"Branch agent is hidden.")?;break;}
                 let agents = branches.iter().map(|b| if b["kind"]=="agent"{string(b,"agent")}else{string(&run,"agent")}).collect::<Vec<_>>();
                 if agents.iter().any(|a| db.query_row("SELECT count(*) FROM turns WHERE agent=? AND status IN('queued','running')",[a],|r|r.get::<_,i64>(0)).map(|n| n + agents.iter().filter(|b|*b==a).count() as i64 > 100).unwrap_or(true)) { break; }
-                for (index,b) in branches.iter().enumerate(){let mut b=b.clone();b["id"]=n["id"].clone();b["next"]=n["next"].clone();step(state,db,&run,&b,seq+index as i64,Some(group),Some(index as i64+1))?;}
+                // A branch that cannot start fails this run like a single step
+                // does; it must not abort the whole automation tick.
+                db.execute_batch("SAVEPOINT workflow_branches")?;
+                let started=branches.iter().enumerate().try_for_each(|(index,b)|{let mut b=b.clone();b["id"]=n["id"].clone();b["next"]=n["next"].clone();step(state,db,&run,&b,seq+index as i64,Some(group),Some(index as i64+1))});
+                if let Err(e)=started{db.execute_batch("ROLLBACK TO workflow_branches; RELEASE workflow_branches")?;fail(db,id,&e.message)?;break;}
+                db.execute_batch("RELEASE workflow_branches")?;
                 db.execute("INSERT INTO workflow_steps(run,seq,node,status,settings) VALUES(?,?,?,'waiting',?)",params![id,group,string(&n,"id"),n.to_string()])?;
                 for i in 0..branches.len(){db.execute("INSERT INTO workflow_parallel_members VALUES(?,?,?,?)",params![id,group,i as i64+1,seq+i as i64])?;}
                 db.execute("UPDATE workflow_runs SET steps=?,status='waiting',revision=revision+1 WHERE id=?",params![group,id])?;break;

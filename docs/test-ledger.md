@@ -859,6 +859,327 @@ One parent case with 34 subtests; each subtest is its own Rust test against the 
 
 <!-- stale-b files -->
 
+<!-- stale-a start -->
+## #89 stale-a slice
+
+The Node suites below failed after #87 removed the direct API runtime. Each
+runtime case is now one Rust test in `crates/minarbot-e2e/tests/e2e/sa_*.rs`
+(`sa_` = stale-a), or a server unit test where noted. Agents use
+`runtime: "api"` in test mode, which binds them to the kit's `fake-gateway`
+Codex instance, so every model step is a harness turn against the
+`ScriptedModel`.
+
+Assertion counts are static call sites: Node `assert*(` calls in the case
+body, Rust `ensure!`, `*_expect(` and `wait_status(` calls plus calls of
+module helpers that assert (named per file). A Node assertion inside a loop
+counts once, as does its Rust port.
+
+Recurring #87 differences, stated once and referenced per row:
+
+- **H1 (harness tool errors).** A harness gets an MCP error for a tool it is
+  not offered, a refused call or a storage failure and decides itself how to
+  continue. The API runtime failed the turn instead. Tests assert the exact
+  MCP error the model saw, that the tool was not offered and that the call
+  had no effect, and that the turn finishes.
+- **H2 (done check).** After a turn creates a deliverable, the server sends one
+  "One verification reminder" user message in the same turn. Scripted models
+  answer it with text.
+- **H3 (peer files).** `fake-gateway` keeps `fake-gateway-log.jsonl` and
+  `.fake-gateway-<thread>.json` in its working directory, which is the agent
+  workspace. Workspace listings ignore exactly these names.
+- **L1 (user-selected notes).** 89b7f4e (#87, on the base) makes a note the user
+  selected read-only to agents (409 "Memory note was selected by the user").
+  Agent edits of such notes now assert that 409; revisions that followed
+  them shift down by one.
+- **B1x (null coordination results).** `delegate_task` and `transfer_task`
+  return null like `ask_user` (B1), and the harness takes one more model
+  step before the server parks or stops the turn. Tests answer that step
+  with empty text (delegation) or never (transfer) and leave it out of
+  counts, as stage 1 does for B1.
+- **D1 (harness context).** The harness keeps its own conversation: the
+  server cannot prune older screenshots in it, and a resumed run starts a new
+  harness session that sees the transcript text, not earlier tool results.
+- **M1 (harness parent waits).** A harness turn's `send_message` with
+  `expects_reply` holds the MCP call, and the parent's run and slot, until
+  the group settles (at most 30 s, `mcp/server.rs`). The API runtime parked
+  the parent as `queued` instead. A later user turn on that thread therefore
+  queues behind the parent, so no reply is `delivered_earlier` to it, and a
+  group request with one slot cannot run its deliveries until the wait ends.
+- **W1 (channel workspaces).** 7098b86 (#87) gives a channel without a project
+  its lead agent's workspace, so workspace and Git tools are offered there.
+
+Kit additions: `minarbot_testkit::connector` (new file: port of `rust-connector-fixture.ts`, `rust-connectors-runner.ts` and `connector-journal-command.ts`: fake Telegram/Slack API with a Socket Mode WebSocket and a `Remote` hook, a lossy script-API proxy with `Fault`s, the connector runner and journal command; enables axum's `ws` feature, already in the lock through the server), `minarbot_testkit::restore` (new file: runs `minarbot-server restore ...` and checks `exitCode` against the process status, Clerk identity env and stdin token from the test-only key, Ed25519 `FenceKey`; adds the `ring` dependency the server already locks), `minarbot_testkit::hmac` (new file), `fixtures/local-pre-collapse.sql` (copied from `app/test-support/fixtures/`), `minarbot_testkit::gate::ModelGate` (new file `gate.rs`) holds
+one scripted reply so a test can act between "the model chose a tool" and
+"the server ran it", which the Node providers did by awaiting before they
+answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
+(`not ported: option hubLink.<name>`), as the Node bridge did.
+
+Kit fixes found while porting: `fake-gateway` forwards `turn/start`
+`input_image` items and treats `MINARBOT_TOOL_BUDGET=0` as an exhausted
+budget; a finished `fake-gateway` run no longer removes the run that
+replaced it on the same thread (a later `turn/interrupt` could not abort
+it, and the peer never exited: the flaky `g8_g9_g11...` self-test);
+`ModelGate` holds by predicate (`hold_when`) and releases replies gated
+before a release but answered after it; the scripted model and the gate
+accept bodies up to 64 MiB.
+
+Product bugs fixed in this slice:
+
+| Bug | Found by | Cause and fix |
+| --- | --- | --- |
+| P2 | image-attachment | Codex prompts repeated each attached image as a base64 data URL in the text prompt as well as an `input_image` item, and harness stdin accepted at most 2 MiB per message, so valid images above about 1.5 MiB failed the turn ("Coding harness context exceeds 2 MiB", then "input exceeded its buffer limit"). The prompt now carries a note instead of the data URL, the stdin limit covers the 4 MiB image budget plus the prompt (8 MiB), and `read_attachment` of an image already attached to the turn returns the "already included" note again. |
+| P3 | tool-budget | Harness continuations (question answer, transfer to another owner, restart) started with the full `MINARBOT_TOOL_BUDGET` again; `ask_user` and `transfer_task` were never counted because the run stops before reporting them; a transfer left the old owner's run spending the budget on 401 calls; and a run that failed after the budget ran out lost "Stopped after N tool steps. Resume to continue.". The server now passes the remaining budget, counts both tools, stops the old owner's run on transfer (keeping the turn queued for the new owner) and maps the failure. Resume and reassign keep their fresh budget (they reset `tool_budget_used`). |
+| P4 | agent-messages | MCP `tools/list` for a harness session listed private tools (skills, routines, profile) in channel deliveries and `send_message`/`list_agents`/`interrupt_agent` in no-reply notices, unlike `turns::tools::offered`. The session listing now applies the same filters. |
+| P1 | workflow-http "parallel webhook ..." | A parallel branch that could not start (here an agent without a provider instance) returned its error out of `automation::workflows::runtime::settle`. That rolled back the whole automation tick every second, so the run stayed `ready` and every other routine, flow and workflow stalled. The branches now start inside a savepoint; a failure rolls them back and fails only that run, as a single step does. |
+
+| Node file | Node runtime cases | Rust tests | Dropped | Kept in Node |
+| --- | ---: | ---: | ---: | ---: |
+| `app/memory.test.ts` | 2 | 2 | 0 | 1 (TS module part) |
+| `app/memory-selection.test.ts` | 1 | 1 | 0 | 1 (TS module part) |
+| `app/memory-tools.test.ts` | 2 | 2 | 0 | 0 |
+| `app/shared-data.test.ts` | 1 | 1 | 0 | 0 |
+| `app/rust-file-output-panel.test.ts` | 1 | 1 | 0 | 0 |
+| `app/rust-core.test.ts` | 2 | 2 | 0 | 0 |
+| `app/rust-workspace-git-http.test.ts` | 2 | 2 | 0 | 0 |
+| `app/routines.test.ts` | 4 | 4 | 0 | 0 |
+| `app/models.test.ts` | 1 | 1 | 0 | 0 |
+| `app/workflow-http.test.ts` | 12 | 12 (+1 regression) | 0 | 1 (TS module) |
+| `app/schema.test.ts` | 4 | 4 (1 server unit test) | 0 | 0 |
+| `app/restore-fence.test.ts` | 7 | 7 | 0 | 0 |
+| `app/telegram.test.ts` | 6 | 6 | 0 | 0 |
+| `app/telegram-output.test.ts` | 1 | 1 | 0 | 0 |
+| `app/transcription.test.ts` | 6 | 6 | 0 | 0 |
+| `app/mcp.test.ts` | 1 | 1 | 0 | 0 |
+| `app/slack.test.ts` | 8 | 8 | 0 | 0 |
+| `app/image-attachment.test.ts` | 3 | 1 | 2 | 0 |
+| `app/agent-result-files.test.ts` | 2 | 2 | 0 | 0 |
+| `app/tool-budget.test.ts` | 13 | 11 | 2 | 1 (TS module part) |
+| `app/fallback.test.ts` | 1 | 1 | 0 | 0 |
+| `app/coordination.test.ts` | 1 | 1 | 0 | 0 |
+| `app/agent-messages.test.ts` | 1 | 1 | 0 | 0 |
+| `app/agent-interrupt.test.ts` | 1 | 1 | 0 | 0 |
+
+### `app/memory.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| memory CRUD, exact retry, isolated provider search and bounded context survive restart | `sa_memory::memory_crud_exact_retry_isolated_provider_search_and_bounded_context_survive_restart` | 33 -> 34 | The six `memoryCommand` rejections are also asserted as server 400s. The `memoryDraft`/`memoryCommand` assertions stay in the trimmed Node case (TS module `app/src/memory-command.ts`). |
+| Rust memory permits edits at capacity and rolls back edits over the context budget | `sa_memory::rust_memory_permits_edits_at_capacity_and_rolls_back_edits_over_the_context_budget` | 7 -> 15 | Full. |
+
+### `app/memory-selection.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| automatic memory selection is atomic, user-protected, scoped and durable across resume | `sa_memory_selection::automatic_memory_selection_is_atomic_user_protected_scoped_and_durable_across_resume` | 30 -> 23 (+5 kept) | The provider's "`select_memory` offered" assertion is counted per request. `memoryCommand({automatic: 'yes'})` is also asserted as a server 400; the other `memoryDraft`/`memoryCommand` assertions stay in the trimmed Node case (TS module). |
+
+### `app/memory-tools.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| agent memory writes preserve scope, user selection, atomic errors and resume receipts | `sa_memory_tools::agent_memory_writes_preserve_scope_user_selection_atomic_errors_and_resume_receipts` | 32 -> 32 | L1: "Agent updated" and "Side update" assert 409. The context-budget note is saved with `automatic: true` so the agent edit still reaches the 413 check. `ModelGate` replaces the provider's `beforeWrite` await. H1: the journal fault is a 500 tool error and the write rolls back. |
+| memory and artifact order survives repeated delegation when parent continues | `sa_memory_tools::memory_and_artifact_order_survives_repeated_delegation_when_parent_continues` | 5 -> 3 | Full (the Node count includes the provider's own checks). |
+
+### `app/shared-data.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Rust shared SQL keeps schema ownership, host restrictions and bounded results | `sa_shared_data::rust_shared_sql_keeps_schema_ownership_host_restrictions_and_bounded_results` | 27 -> 38 (counting `Sql::ok`/`ok_with`/`rejects`) | The runaway-query bound (5 s) is measured beyond an ordinary harness turn, measured right before it. |
+
+### `app/rust-file-output-panel.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| conversation output updates, panel requests and owner deletion preserve reference identity | `sa_file_output_panel::conversation_output_updates_panel_requests_and_owner_deletion_preserve_reference_identity` | 35 -> 30 | Full; the provider's two checks are collected and asserted at the end. H2. |
+
+### `app/rust-core.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| core serves exact static bytes, strict asset CSP, HTML 404 and local boundary errors | `sa_core::core_serves_exact_static_bytes_strict_asset_csp_html_404_and_local_boundary_errors` | 12 -> 12 | Serves a minimal packaged build (`sa_support::web_dist`) instead of `app/dist`, so no web build is needed. |
+| Rust test bridge rejects unported options before starting a process | `sa_core::rust_test_bridge_rejects_unported_options_before_starting_a_process` | 4 -> 4 | `NaN` and `Infinity` are sent as `"NaN"` and `1e300`. |
+
+### `app/rust-workspace-git-http.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Git log returns last 50 commits and no more | `sa_workspace_git::git_log_returns_last_50_commits_and_no_more` | 4 -> 5 | Full. |
+| HTTP Git reads/tools/checkpoints use workspace gating and reject foreign requests, restart and restore through API | `sa_workspace_git::http_git_reads_tools_checkpoints_use_workspace_gating_and_reject_foreign_requests_restart_and_restore_through_api` | 22 -> 25 | H1: the read-only `git_commit` call gets MCP 403 and no commit appears. W1: the channel turn now runs `git_status`. H3. |
+
+### `app/routines.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| manual routine runs keep schedule, deduplicate across restart and enforce revision and overlap | `sa_routines::manual_routine_runs_keep_schedule_deduplicate_across_restart_and_enforce_revision_and_overlap` | 36 -> 58 | H1: a direct `report_failure` is refused over MCP and records no outcome (the Node case expected a failed turn). Dropped: the 503 for a new run after restarting without `baseURL`; #87 removed the global provider and the agent's instance persists. |
+| routine occurrences persist once and isolate each run from main history | `sa_routines::routine_occurrences_persist_once_and_isolate_each_run_from_main_history` | 38 -> 49 | Real clock (scheduling). Icon from `sa_support::web_dist`. H1: a direct `no_update` is refused over MCP. |
+| routine hub pages visible local owners, filters safely and never returns secrets | `sa_routines::routine_hub_pages_visible_local_owners_filters_safely_and_never_returns_secrets` | 22 -> 30 | Full. |
+| routine hub delete is revisioned and recoverable, retains runs, revokes webhook and prevents resurrection | `sa_routines::routine_hub_delete_is_revisioned_and_recoverable_retains_runs_revokes_webhook_and_prevents_resurrection` | 15 -> 22 | Full. |
+
+### `app/models.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| model discovery validates catalog and never follows credential redirects | `sa_models::model_discovery_validates_catalog_and_never_follows_credential_redirects` | 13 -> 11 | #87 removed `GET /api/models` (now 404 "Use a provider instance model catalog.") and the server's own provider HTTP client. The test asks the test-gateway instance (`POST /api/provider-instances/codex-test-gateway/models`); `fake-gateway` reads a raw loopback provider (`sa_support::RawProvider`). Kept: bearer key and path on every provider call, deduplicated ids, empty catalog, 502 without the provider detail or key for 401, oversized, malformed, `"\n"` and `" model "` ids. Changed: ids keep the instance's order (`["z","a"]`; the API catalog sorted them) and the default comes from the harness. Dropped (#87 removed the server's provider client and API settings): the redirect mode (the harness fetches models now), `?runtime=api&account=`, startup rejection of an invalid `baseURL`, and 503 without a provider. |
+
+### `app/workflow-http.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| legacy unsupported workflow steps fail once without producing output | `sa_workflows::legacy_unsupported_workflow_steps_fail_once_without_producing_output` | 10 -> 9 | Full. |
+| model conditions choose one branch without tools and reject ambiguous answers | `sa_workflows::model_conditions_choose_one_branch_without_tools_and_reject_ambiguous_answers` | 27 -> 25 | Full; "no tools" is asserted on the tools the harness offered the model. |
+| workflow HTTP versions, model steps, approval receipts and cancellation survive restart | `sa_workflows::workflow_http_versions_model_steps_approval_receipts_and_cancellation_survive_restart` | 53 -> 93 | Full. |
+| provider-free workflows continue beyond one batch and configuration listing is bounded | `sa_workflows::provider_free_workflows_continue_beyond_one_batch_and_configuration_listing_is_bounded` | 20 -> 19 | Full (`nextAt` relative to the fixed clock). |
+| workflow webhooks authenticate, deduplicate, ignore busy runs and recover rotation | `sa_workflows::workflow_webhooks_authenticate_deduplicate_ignore_busy_runs_and_recover_rotation` | 27 -> 51 | Full; real clock for signed timestamps and the 8-day receipt window. HMAC from `minarbot_testkit::hmac`. |
+| parallel webhook waits for provider before creating a receipt | `sa_workflows::parallel_webhook_waits_for_provider_before_creating_a_receipt` | 15 -> 12 | Full. After the restart with a provider the agent is bound to the new instance, because #87 agents bind instances instead of using a global provider. Found bug P1 (below); regression test `sa_workflows::parallel_branch_start_failure_fails_only_its_run`. |
+| workspace workflow directory pages across owners and keeps per-agent lists scoped | `sa_workflows::workspace_workflow_directory_pages_across_owners_and_keeps_per_agent_lists_scoped` | 15 -> 27 | Full. |
+| autosave stops after server canonicalizes condition property order | `sa_workflows::autosave_stops_after_server_canonicalizes_condition_property_order` | 4 -> 3 | Server half: the edit ack returns the draft's graph at revision 2. The case stays in Node for `workflowAutosaveDraft` (TS module `app/src/workflow-editor-state.ts`). |
+| workflow deletion revokes triggers, rejects stale commands and retains terminal results | `sa_workflows::workflow_deletion_revokes_triggers_rejects_stale_commands_and_retains_terminal_results` | 13 -> 32 | Full. |
+| workflow output inbox survives restart with stable paging and idempotent read | `sa_workflows::workflow_output_inbox_survives_restart_with_stable_paging_and_idempotent_read` | 11 -> 21 | Full. |
+| workflow channel outputs deliver once and recheck channel availability at completion | `sa_workflows::workflow_channel_outputs_deliver_once_and_recheck_channel_availability_at_completion` | 21 -> 47 | Full. |
+| workflow run pages retain older approvals after restart and validate cursors | `sa_workflows::workflow_run_pages_retain_older_approvals_after_restart_and_validate_cursors` | 6 -> 12 | Full. |
+
+### `app/schema.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| fresh canonical startup extends the 85373b3 schema and reopens its data unchanged | `sa_schema::fresh_canonical_startup_extends_the_85373b3_schema_and_reopens_its_data_unchanged` | 11 -> 13 (shared helper) | #87 removed legacy provider storage: a fresh server no longer creates `provider_accounts`, `provider_account_changes`, `model_fallbacks` (and, locally, `engine_logins`); an upgrade drops `provider_accounts`, `engine_logins` and the `agents` columns `runtime`, `provider_account`, `backup_model`, and keeps the other two tables so old turns keep their history. The expected snapshots and the retained agent row leave exactly these out. The optional baseline-binary branch (`MINARBOT_SCHEMA_BASELINE_BINARY`) is not ported; the frozen fixture is seeded as in the default Node path. |
+| fresh local startup extends the 85373b3 schema and reopens its data unchanged | `sa_schema::fresh_local_startup_extends_the_85373b3_schema_and_reopens_its_data_unchanged` | 11 -> 13 (shared helper) | Same as above. |
+| fresh Rust hub startup preserves the 85373b3 schema and applies extensions | `minarbot-server` unit test `hub::schema_tests::fresh_rust_hub_startup_preserves_the_85373b3_schema_and_applies_extensions` | 2 -> 2 | Opens the hub store (`hub::storage::open`) directly; fixture copied to `crates/minarbot-server/src/hub/testdata/`. |
+| local 0.16.4 memory import does not backfill learning jobs | `sa_schema::local_0_16_4_memory_import_does_not_backfill_learning_jobs` | 8 -> 8 | Full (the optional `MINARBOT_V0164_BINARY` branch is not ported). |
+
+### `app/restore-fence.test.ts`
+
+All cases drive `minarbot-server restore ...` through `minarbot_testkit::restore`.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| signed infrastructure fence preflight survives restart and exact retry without activating restore | `sa_restore_fence::signed_infrastructure_fence_preflight_survives_restart_and_exact_retry_without_activating_restore` | 8 -> 8 | Full. |
+| restore fence rejects forged, stale, mismatched, self-supplied and replaced-session proofs | `sa_restore_fence::restore_fence_rejects_forged_stale_mismatched_self_supplied_and_replaced_session_proofs` | 7 -> 7 | Full (each of the 18 evidence variants and 3 pins is checked in a loop). |
+| operator CLI creates and verifies bounded private fence files while keeping recovery read-only | `sa_restore_fence::operator_cli_creates_and_verifies_bounded_private_fence_files_while_keeping_recovery_read_only` | 25 -> 25 | Full. |
+| activation plan commits one fenced recovery receipt and exact retry | `sa_restore_fence::activation_plan_commits_one_fenced_recovery_receipt_and_exact_retry` | 9 -> 9 | The evidence lives 5 s instead of 30 s, because the case waits for it to expire. |
+| activation rolls back on receipt failure and rejects changed plans | `sa_restore_fence::activation_rolls_back_on_receipt_failure_and_rejects_changed_plans` | 9 -> 9 | Full. |
+| activation retains populated revoked grants and held tasks, refusing unsafe recovery state | `sa_restore_fence::activation_retains_populated_revoked_grants_and_held_tasks_refusing_unsafe_recovery_state` | 12 -> 9 | Full; the four revoked-list counts are one loop. |
+| activation requires current schema, owner session and fresh infrastructure proof | `sa_restore_fence::activation_requires_current_schema_owner_session_and_fresh_infrastructure_proof` | 6 -> 7 | Recovery accepts schema v6 (baseline) to v7 (#87 added `v7_provider_instances`); the Node case deleted v6, then the newest, and failed after #87. The test removes v6 and v7. Evidence lives 5 s. |
+
+### `app/telegram.test.ts`
+
+The connector cases use `minarbot_testkit::connector`. Model steps after
+`ask_user` follow stage 1's B1 handling (`support::after_question_reply`,
+left out of counts).
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Telegram question buttons answer the owning task once across restart and lost responses | `sa_telegram::telegram_question_buttons_answer_the_owning_task_once_across_restart_and_lost_responses` | 19 -> 18 | Full (the Node case failed on B1's null step). |
+| Telegram offline recovery preserves sent parts and rejects repeated operator decisions | `sa_telegram::telegram_offline_recovery_preserves_sent_parts_and_rejects_repeated_operator_decisions` | 26 -> 26 | Full. |
+| Telegram bridge submits once through granted side-thread API and isolates main history | `sa_telegram::telegram_bridge_submits_once_through_granted_side_thread_api_and_isolates_main_history` | 12 -> 11 | Full. |
+| Rust Telegram runner rejects a mismatched bot identity and releases its journal lock | `sa_telegram::rust_telegram_runner_rejects_a_mismatched_bot_identity_and_releases_its_journal_lock` | 3 -> 2 | Full. |
+| Telegram runner replies directly and releases owned journal on shutdown | `sa_telegram::telegram_runner_replies_directly_and_releases_owned_journal_on_shutdown` | 9 -> 6 (shared helper) | Full; the fake's own checks are collected and asserted. |
+| Telegram runner answers a question and releases owned journal on shutdown | `sa_telegram::telegram_runner_answers_a_question_and_releases_owned_journal_on_shutdown` | 9 -> 6 (shared helper) | Same helper; model calls exclude the B1 step (the Node case saw 4). |
+
+### `app/telegram-output.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Telegram sends exact generated artifacts, retains uncertain delivery and rechecks grant before recovery | `sa_telegram_output::telegram_sends_exact_generated_artifacts_retains_uncertain_delivery_and_rechecks_grant_before_recovery` | 22 -> 20 | Full. The three model steps are the file, the answer and the done-check reminder (H2); the B1 step is left out of the count (the Node case saw 4). |
+
+### `app/transcription.test.ts`
+
+Transcription is a direct HTTP integration (`transcriptionProvider`), not a
+harness, so these cases port one to one; the provider is `sa_support::RawProvider`.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| HTTP transcription requires consent, isolates files and never silently replays uncertain requests | `sa_transcription::http_transcription_requires_consent_isolates_files_and_never_silently_replays_uncertain_requests` | 35 -> 29 | Full; the provider's own checks are collected and asserted once. |
+| in-flight transcription deduplicates and cannot publish after archive or shutdown | `sa_transcription::in_flight_transcription_deduplicates_and_cannot_publish_after_archive_or_shutdown` | 11 -> 8 | Full. |
+| transcription is opt-in and validates request bodies | `sa_transcription::transcription_is_opt_in_and_validates_request_bodies` | 5 -> 5 | Full. |
+| transcription rejects redirects and oversized output, and script grants cannot replace consent | `sa_transcription::transcription_rejects_redirects_and_oversized_output_and_script_grants_cannot_replace_consent` | 18 -> 17 | Full. |
+| Rust upgrades legacy transcription operations and reports unknown and duration usage | `sa_transcription::rust_upgrades_legacy_transcription_operations_and_reports_unknown_and_duration_usage` | 6 -> 6 | Full. |
+| cancelling streamed transcription persists without publication or replay | `sa_transcription::cancelling_streamed_transcription_persists_without_publication_or_replay` | 17 -> 16 | Full. |
+
+### `app/mcp.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| MCP tests before save, protects credentials/grants and journals success or uncertainty without replay | `sa_mcp::mcp_tests_before_save_protects_credentials_grants_and_journals_success_or_uncertainty_without_replay` | 43 -> 47 | H1: the ungranted, other-agent, channel, drifted-schema, revoked and missing-host-key calls reach the model as MCP errors and the turn finishes (the Node case expected failed turns); each still asserts the server was not called. Lost and invalid-output calls still fail the turn as uncertain. The backup is restored with `restore workspace` through `minarbot_testkit::restore`. |
+
+### `app/slack.test.ts`
+
+`minarbot_testkit::connector` gained `SocketScript` (rate-limit-once methods,
+envelopes on connect, disconnect after the first ack, an ack hook), mutable
+channels and a record of `Authorization` headers for these cases.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Slack actual agent API retries one task and isolates requester question answers (buttons=false) | `sa_slack::slack_actual_agent_api_retries_one_task_and_isolates_requester_question_answers_buttons_false` | 20 -> 19 (shared helper) | Full; model calls exclude the B1 step (the Node case failed on it). |
+| Slack actual agent API retries one task and isolates requester question answers (buttons=true) | `sa_slack::slack_actual_agent_api_retries_one_task_and_isolates_requester_question_answers_buttons_true` | 20 -> 19 (shared helper) | Same. |
+| Slack Socket Mode runner acknowledges journaled event and delivers once after reconnect | `sa_slack::slack_socket_mode_runner_acknowledges_journaled_event_and_delivers_once_after_reconnect` | 16 -> 8 | Full; the fake's checks (429 Retry-After, ack only after journaling, delivery fields) are collected and asserted once. The connector reaches the server through the kit proxy instead of the server's own `connection.json`. |
+| Slack status and stop scope to requester root and preserve cancellation identity after lost responses | `sa_slack::slack_status_and_stop_scope_to_requester_root_and_preserve_cancellation_identity_after_lost_responses` | 17 -> 16 | Full; B1 step left out of model counts. |
+| Slack offline recovery pins revisions, retains confirmed chunks and requires explicit CLI confirmation | `sa_slack::slack_offline_recovery_pins_revisions_retains_confirmed_chunks_and_requires_explicit_cli_confirmation` | 27 -> 27 | Full. |
+| Slack startup cancellation releases lock and status retains authentication cooldown | `sa_slack::slack_startup_cancellation_releases_lock_and_status_retains_authentication_cooldown` | 8 -> 7 | Full. |
+| Slack interactive Socket Mode withholds early ACK and commits one decision before redelivery ACK | `sa_slack::slack_interactive_socket_mode_withholds_early_ack_and_commits_one_decision_before_redelivery_ack` | 6 -> 5 | Full. |
+| Slack shared channels require opt-in mention and retain one scoped multi-user thread | `sa_slack::slack_shared_channels_require_opt_in_mention_and_retain_one_scoped_multi_user_thread` | 18 -> 17 | Full. |
+
+### `app/image-attachment.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| openai-compatible image attachments retain scope, bytes, retry identity and bounded rereading | `sa_image_attachment::openai_compatible_image_attachments_retain_scope_bytes_retry_identity_and_bounded_rereading` | 30 -> 32 | Full; found P2. The kit's `fake-gateway` now forwards `input_image` items, and the scripted model and gate accept bodies up to 64 MiB. |
+| anthropic image attachments retain scope, bytes, retry identity and bounded rereading | Dropped | 30 -> 0 | #87 removed the Anthropic wire format (direct provider clients); every family-neutral assertion is in the openai-compatible test. |
+| gemini image attachments retain scope, bytes, retry identity and bounded rereading | Dropped | 30 -> 0 | #87 removed the Gemini API; as above. |
+
+### `app/agent-result-files.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| requester reads returned teammate text artifacts but not private inputs or no-reply outputs | `sa_agent_result_files::requester_reads_returned_teammate_text_artifacts_but_not_private_inputs_or_no_reply_outputs` | 24 -> 20 (shared helper) | Full. `ModelGate::hold_when` replaces the provider's held continuation; H2. |
+| requester reads returned teammate PDF artifacts but not private inputs or no-reply outputs | `sa_agent_result_files::requester_reads_returned_teammate_pdf_artifacts_but_not_private_inputs_or_no_reply_outputs` | 24 -> 20 (shared helper) | Full; the PDF fixture is `sa_support::pdf_fixture` and the extraction hold is the kit PDF bridge (multi-thread runtime, because the bridge blocks). |
+
+### `app/tool-budget.test.ts`
+
+The fake desktop runtime is the kit computer bridge (`desktop-*` operations)
+with `desktop.testRuntime`; its lease directory is kept short so the proxy
+socket path fits `sun_path`.
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| nine distinct tools complete before per-task budget requests a final answer without tools | `sa_tool_budget::nine_distinct_tools_complete_before_per_task_budget_requests_a_final_answer_without_tools` | 12 -> 6 | Full (the Node count includes the provider's per-request checks). |
+| budget setting rejects malformed values, survives restart and template recovery | `sa_tool_budget::budget_setting_rejects_malformed_values_survives_restart_and_template_recovery` | 9 -> 11 | Server half; `templateCommand` is built inline. `parseAgentTemplate` and `restoreAgentCreation` stay in the trimmed Node case (TS modules). |
+| resume gets fresh budget without replay; desktop images retain latest three across restart | `sa_tool_budget::resume_gets_fresh_budget_without_replay_desktop_images_retain_latest_three_across_restart` | 17 -> 11 | Kept: stop message, 10 captures, summary without tools, resume once (replayed command), 10 fresh captures, 11 requests, 20 distinct tool ids and screenshots, budget 10. D1: the "latest three images", "omitted" note, 10 earlier results in the resumed context and the per-attempt `budget_summary` call phase are API-runtime context management. |
+| legacy channel transfers share attempt budget beyond eight coordination steps | `sa_tool_budget::legacy_channel_transfers_share_attempt_budget_beyond_eight_coordination_steps` | 5 -> 5 | Full after P3; B1x. |
+| duplicate provider IDs have distinct protocol message (current attempt) | Dropped | 4 -> 0 | Provider tool-call IDs stay inside the harness protocol since #87 (the server's provider client was removed); the server never sees them. |
+| duplicate provider IDs have distinct protocol message (saved call) | Dropped | 4 -> 0 | Same. |
+| workflow uses shared per-task budget and final summary | `sa_tool_budget::workflow_uses_shared_per_task_budget_and_final_summary` | 6 -> 6 (shared helper) | Full. |
+| routine uses shared per-task budget and final summary | `sa_tool_budget::routine_uses_shared_per_task_budget_and_final_summary` | 6 -> 6 (shared helper) | Full. |
+| routine flow uses shared per-task budget and final summary | `sa_tool_budget::routine_flow_uses_shared_per_task_budget_and_final_summary` | 6 -> 6 (shared helper) | Full. |
+| invalid final summary fails clearly and never executes tools (string) | `sa_tool_budget::invalid_final_summary_fails_clearly_and_never_executes_tools_string` | 5 -> 5 (shared helper) | Full after P3. |
+| invalid final summary fails clearly and never executes tools (object) | `sa_tool_budget::invalid_final_summary_fails_clearly_and_never_executes_tools_object` | 5 -> 5 (shared helper) | Full after P3. |
+| reassign gets fresh budget while retaining recorded computer calls | `sa_tool_budget::reassign_gets_fresh_budget_while_retaining_recorded_computer_calls` | 6 -> 6 | Full. |
+| automatic question continuation retains attempt budget across restart | `sa_tool_budget::automatic_question_continuation_retains_attempt_budget_across_restart` | 5 -> 5 | Full after P3; the B1 step (here the first run's budget summary) is left out of the count. |
+
+### `app/fallback.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| backup model is opt-in, bounded, durable and never replays after activity or uncertainty | `sa_fallback::backup_model_is_opt_in_bounded_durable_and_never_replays_after_activity_or_uncertainty` | 37 -> 25 | **Owner decision needed.** The brief records that #87 accepts and ignores `backupModel` (the upgrade drops `agents.backup_model`), so no turn can fall back. The test asserts that: `backupModel` is accepted and not stored; every failure class (429, 503, 403, malformed, lost reply, after a tool) makes exactly one attempt with the agent's model and is never replayed by the same command; usage rows exist and never contain the upstream detail; scoped and workflow turns make one attempt; cancel, uncertain resume and edits behave as before. Dropped: the backup-success branches (`answer_model == "backup"`, `["primary","backup"]` call lists, the question and restart-during-backup flows that only the backup model reached), the template `backupModel` parse (TS module, needs a stored backup), the client-side `timeout` scenario and `truncated` (finish reasons are read by the harness since #87). |
+
+### `app/coordination.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| coordination: durable delegation, transfer, cancellation, rejection and recovery | `sa_coordination::coordination_durable_delegation_transfer_cancellation_rejection_and_recovery` | 55 -> 47 | Full; B1x. Holds use `Reply::hold` and `ModelGate::hold_when`. Children are paused, cancelled or restarted after their first model call (the harness reaches the model shortly after the child starts running). |
+
+### `app/agent-messages.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| teammate messages correlate groups, isolate context, persist receipts and bound delivery | `sa_agent_messages::teammate_messages_correlate_groups_isolate_context_persist_receipts_and_bound_delivery` | 48 -> 55 | Full apart from M1: the bypass turn now stays `queued` while the parent waits, the group result carries both replies with an empty `delivered_earlier`, and the bypass receives no replies (the Node `delivered_earlier[0].consumer`, bypass `receivedAgentReplies` and parent-`queued` checks invert). H1: self and duplicate recipients and the outside-channel recipient are refused to the model (the turn is `done` and its answer carries the error, "Recipient ..." for the channel); reply loops are refused and retried until the tool budget (10 for the teammates) fails the delivery. The suite returns to two slots after the one-slot pause check (M1). Model-side checks run in the scripted model and are asserted at the end. |
+
+### `app/agent-interrupt.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| caller interruption cancels only owned deliveries, journals notice and preserves other work | `sa_agent_interrupt::caller_interruption_cancels_only_owned_deliveries_journals_notice_and_preserves_other_work` | 30 -> 31 | Full. M1: Alpha's own requests and its `inspect`/`stop` turns run in side threads (a waiting parent, including Alpha's channel turn, holds its conversation), Alpha may run 8 threads and the server 10 turns. H1: "no active work", "You can only stop" (self and ancestor) and the channel call (where `interrupt_agent` is not offered) reach the model as errors and the turns end `done` with the error in the answer; the ancestor delivery is `done` with the refusal instead of `failed`. The notice trigger is seeded with `edit_database`; holds use `ModelGate::hold_when` (the kit gate now releases replies that were gated before a release but answered after it). |
+<!-- stale-a end -->
+
 ## #67 hosted Hub test migration
 
 The app test runner discovers Hub Link once and starts the Rust hosted listener.

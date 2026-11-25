@@ -228,6 +228,19 @@ pub async fn tool(
         // The question is stored. Hold the reply until the worker has stopped its harness.
         while running.changed().await.is_ok() {}
     }
+    if name == "transfer_task" && result.is_null() {
+        // The task now belongs to the recipient; count the call against the
+        // shared attempt budget (the run stops before reporting it) and stop
+        // this agent's harness run so it cannot spend more on failing calls.
+        {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            guard.connection.execute(
+                "UPDATE turns SET tool_budget_used=tool_budget_used+1,tool_budget_stopped=CASE WHEN tool_budget_used+1 >= (SELECT tool_budget FROM agents WHERE agents.id=turns.agent) THEN tool_budget_used+1 ELSE tool_budget_stopped END WHERE id=?",
+                [turn],
+            )?;
+        }
+        state.turns.cancel(turn);
+    }
     if name == "read_attachment" {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         tools::journal(&guard.connection, &row, &call, &result)?;
@@ -235,6 +248,14 @@ pub async fn tool(
     if name == "read_attachment" && result["media_type"].is_string() {
         use base64::{engine::general_purpose::STANDARD, Engine};
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        // The turn's own attachments already reach the harness as images.
+        let attached: Vec<String> =
+            serde_json::from_str(row["attachments"].as_str().unwrap_or("[]")).unwrap_or_default();
+        if attached.iter().any(|id| id == string(&result, "id")) {
+            return Ok(
+                json!({"id":result["id"],"name":result["name"],"note":"Image already included in this execution."}),
+            );
+        }
         if let Some(file) =
             super::history::readable_file(&guard.connection, &row, string(&result, "id"))?
         {

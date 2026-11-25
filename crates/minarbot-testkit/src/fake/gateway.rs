@@ -49,7 +49,9 @@ struct State {
     model: String,
     workspace: PathBuf,
     saved: Option<Vec<Value>>,
-    runs: HashMap<String, AbortHandle>,
+    /// Active run per thread, tagged with its run id so a finished run never
+    /// removes the run that replaced it.
+    runs: HashMap<String, (String, AbortHandle)>,
     next_id: u64,
     request_ids: HashMap<String, String>,
     /// Extra stdio MCP servers from `thread/start` and which serves each tool.
@@ -453,7 +455,7 @@ fn last_index(messages: &[Value], before: usize, role: &str) -> Option<usize> {
         .rposition(|message| message["role"] == role)
 }
 
-async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
+async fn run(peer: Peer, prompt: String, additional: Value, images: Vec<String>) -> Result<()> {
     let context = additional
         .as_object()
         .map(|entries| {
@@ -495,6 +497,24 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
             .map_or_else(|| json!(prompt), |message| message["content"].clone());
         messages.push(json!({"role": "user", "content": content}));
     }
+    if !images.is_empty() {
+        if let Some(index) = last_index(&messages, messages.len(), "user") {
+            let mut parts = match &messages[index]["content"] {
+                Value::Array(parts) => parts.clone(),
+                Value::String(text) => vec![json!({"type": "text", "text": text})],
+                other => vec![json!({"type": "text", "text": other.to_string()})],
+            };
+            for url in &images {
+                if !parts
+                    .iter()
+                    .any(|part| part["image_url"]["url"] == url.as_str())
+                {
+                    parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+                }
+            }
+            messages[index]["content"] = json!(parts);
+        }
+    }
     let has_mcp = peer.with(|state| !state.mcp_url.is_empty());
     super::log(LOG, &json!({"stage": "tools"}));
     let mut tools = peer.tools().await?;
@@ -507,7 +527,7 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
         });
     }
     let mut calls = 0;
-    let mut exhausted = false;
+    let mut exhausted = peer.budget == 0;
     let generation = peer.next_id();
     loop {
         let disabled = messages
@@ -766,11 +786,8 @@ pub async fn main(args: Args) -> Result<ExitCode> {
         println!("fake-gateway-harness 1.0.0");
         return Ok(ExitCode::SUCCESS);
     }
-    let budget = env("MINARBOT_TOOL_BUDGET")
-        .parse::<usize>()
-        .ok()
-        .filter(|budget| *budget > 0)
-        .unwrap_or(200);
+    // Unset means the default; 0 is a continuation with no budget left.
+    let budget = env("MINARBOT_TOOL_BUDGET").parse::<usize>().unwrap_or(200);
     let peer = Peer {
         out: Out::default(),
         client: reqwest::Client::builder()
@@ -860,10 +877,20 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                     .unwrap_or_default()
                     .to_owned();
                 let additional = params["additionalContext"].clone();
+                // Attached images arrive as `input_image` items after the text.
+                let images: Vec<String> = params["input"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|item| item["type"] == "input_image")
+                    .filter_map(|item| item["image_url"].as_str().map(str::to_owned))
+                    .collect();
                 let worker = peer.clone();
                 let finished = key.clone();
+                let run_id = Uuid::new_v4().to_string();
+                let own = run_id.clone();
                 let task = super::spawn(async move {
-                    if let Err(error) = run(worker.clone(), prompt, additional).await {
+                    if let Err(error) = run(worker.clone(), prompt, additional, images).await {
                         super::log(
                             LOG,
                             &json!({"stage": "error", "message": error.to_string()}),
@@ -874,9 +901,13 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                             "error": {"message": error.to_string()}}),
                         );
                     }
-                    worker.with(|state| state.runs.remove(&finished));
+                    worker.with(|state| {
+                        if state.runs.get(&finished).is_some_and(|(id, _)| *id == own) {
+                            state.runs.remove(&finished);
+                        }
+                    });
                 });
-                peer.with(|state| state.runs.insert(key, task));
+                peer.with(|state| state.runs.insert(key, (run_id, task)));
             }
             Some("model/list") => {
                 let peer = peer.clone();
@@ -893,7 +924,7 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                 let key = params["threadId"]
                     .as_str()
                     .map_or_else(|| peer.with(|state| state.session.clone()), str::to_owned);
-                if let Some(run) = peer.with(|state| state.runs.remove(&key)) {
+                if let Some((_, run)) = peer.with(|state| state.runs.remove(&key)) {
                     run.abort();
                 }
                 peer.out.send(&json!({"id": id, "result": {}}));

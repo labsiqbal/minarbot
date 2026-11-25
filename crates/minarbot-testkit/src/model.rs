@@ -363,6 +363,8 @@ impl ScriptedModel {
         let app = Router::new()
             .route("/v1/chat/completions", post(completion))
             .route("/v1/models", get(models))
+            // Image attachments make model requests larger than axum's 2 MB default.
+            .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
             .with_state(shared.clone());
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let origin = format!("http://{}", listener.local_addr()?);

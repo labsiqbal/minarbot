@@ -3,6 +3,8 @@ mod browser;
 mod fixture;
 mod node;
 mod routing;
+#[cfg(test)]
+mod schema_tests;
 mod session;
 mod storage;
 #[cfg(test)]

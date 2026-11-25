@@ -57,6 +57,8 @@ one module per area.
 | `http_stub` | `HttpStub`: a request-recording HTTP fake with `StubResponse` (JSON, status, text) for third-party APIs in project-integration and MCP-context tests. Overlaps `stub`; to be merged into it. |
 | `control` | `ControlModel`: an OpenAI-compatible model with deferred answers the test releases. Overlaps `gated` and `parked`; to be merged. |
 | `connector_fixture` | A fake Slack for connector output tests. Overlaps `platform`; to be merged. |
+| `chat_connector` | Telegram/Slack connector runs for the stale-a ports: fake platform APIs, script proxy with `Fault`s, `run` and `journal`. Overlaps `platform` and `connector`; to be merged. |
+| `gate`, `restore`, `hmac` | `ModelGate` holds a scripted reply between "the model chose a tool" and "the server runs it"; `restore` runs `minarbot-server restore ...` operator commands with a Clerk `Identity` and Ed25519 `FenceKey`; `hmac::sha256_hex`. Overlaps `gated`/`parked`/`control`, `backup`, and `signing`/`webhook`; to be merged. |
 | `task_bridge` | The canonical task protocol for task-recovery tests, with request signing (`ring`). |
 | `platform`, `connector` | `ConnectorFixture` (fake Slack and Telegram with Socket Mode, a fault-injecting script proxy and the connector process); `Connector` runs `--connector-config`, `journal` runs `--connector-journal-config`. |
 | `peer` | `PeerBridge`: a computer bridge with a recording peer token issuer and loopback `peer-http`; pair two servers with `server::start_pair` on a multi-thread test runtime. |

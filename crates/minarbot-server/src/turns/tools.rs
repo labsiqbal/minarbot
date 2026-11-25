@@ -582,7 +582,9 @@ pub(super) fn dispatch(
                 ));
             }
             db.execute("INSERT INTO questions VALUES (?,?,?,?,?,?,NULL,(SELECT count(*) FROM generated_files WHERE turn=?),(SELECT count(*) FROM coordination WHERE turn=?))",params![uuid::Uuid::new_v4().to_string(),turn["id"].as_str(),call["id"].as_str(),call.to_string(),prompt,json!(clean).to_string(),turn["id"].as_str(),turn["id"].as_str()])?;
-            db.execute("UPDATE turns SET status='queued',paused=1,revision=revision+1,error=NULL WHERE id=?",[string(turn,"id")])?;
+            // The question pauses the turn before the harness reports this
+            // call complete, so it is counted against the tool budget here.
+            db.execute("UPDATE turns SET status='queued',paused=1,revision=revision+1,error=NULL,tool_budget_used=tool_budget_used+1,tool_budget_stopped=CASE WHEN tool_budget_used+1 >= (SELECT tool_budget FROM agents WHERE agents.id=turns.agent) THEN tool_budget_used+1 ELSE tool_budget_stopped END WHERE id=?",[string(turn,"id")])?;
             Ok(json!({"paused": true}))
         }
         "transfer_task" => super::coordination::execute(state, db, turn, call, args),
