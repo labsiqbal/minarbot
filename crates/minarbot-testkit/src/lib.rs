@@ -17,6 +17,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod async_model;
 pub mod backup;
 pub mod bridge;
 pub mod canonical;
@@ -27,19 +28,25 @@ pub mod connector_fixture;
 pub mod control;
 pub mod db;
 pub mod desktop;
+pub mod device_host;
 pub mod fake;
 pub mod fakes;
 pub mod gate;
 pub mod gated;
 pub mod hmac;
+pub mod hosted;
+pub mod hosted_hub;
 pub mod http;
 pub mod http_stub;
 pub mod image;
 pub mod images;
 pub mod issuer;
+pub mod launcher_process;
+pub mod machine_bridge;
 pub mod mcp_server;
 pub mod model;
 pub mod noise;
+pub mod noise_image;
 pub mod parked;
 pub mod pdf;
 pub mod peer;
@@ -48,6 +55,8 @@ pub mod protocol;
 pub mod providers;
 pub mod proxy;
 pub mod reap;
+pub mod relay;
+pub mod release_fixture;
 pub mod restore;
 pub mod server;
 pub mod signing;
@@ -64,7 +73,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 /// Result alias for kit helpers and tests.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub use server::{Server, ServerConfig, TestRoot, FIXED_CLOCK, WAIT};
+pub use server::{Server, ServerConfig, Servers, TestRoot, FIXED_CLOCK, WAIT};
 
 /// Re-exported for tests that build fixture payloads.
 pub use base64;

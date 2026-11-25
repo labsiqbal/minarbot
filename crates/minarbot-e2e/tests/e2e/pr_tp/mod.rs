@@ -1,0 +1,24 @@
+//! Hosted server with device homes, ported from `app/two-process.test.ts`
+//! (#89). A canonical-mode server runs with Clerk session tokens; Rust device
+//! hosts enroll, connect through a device fetch proxy (where the Node
+//! suite's `fetch` patches become fault hooks) and run tasks.
+
+mod completion;
+#[allow(dead_code)]
+mod crypto;
+mod devices;
+mod events;
+mod execution;
+#[allow(dead_code)]
+mod fixture;
+mod journal;
+mod routines;
+mod rpc;
+mod schedules;
+mod shared;
+mod sync;
+mod webhooks;
+mod workflow_config;
+mod workflow_runs;
+mod workflow_waits;
+mod workflows;

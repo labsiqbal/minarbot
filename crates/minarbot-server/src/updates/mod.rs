@@ -8,6 +8,7 @@ mod peers;
 mod release;
 pub(crate) use github::remote_error as github_remote_error;
 pub(crate) use peer_error::PeerError;
+pub(crate) use peers::updates_revoked;
 use peers::*;
 
 use crate::{json_response, local_error, web::Failure, AppState};

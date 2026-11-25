@@ -7,6 +7,19 @@ pub fn ensure_managed(state: &AppState, agent: &str) -> Result<PathBuf> {
     if !uuid(agent) {
         return Err(error(400, "Invalid agent ID."));
     }
+    managed(state, "agent-workspaces", agent)
+}
+
+/// Empty managed folder of a project without folders. Every turn is a
+/// harness turn and needs a working directory; this one holds no files.
+pub fn ensure_project(state: &AppState, project: &str) -> Result<PathBuf> {
+    if !uuid(project) {
+        return Err(error(400, "Invalid project ID."));
+    }
+    managed(state, "project-workspaces", project)
+}
+
+fn managed(state: &AppState, group: &str, id: &str) -> Result<PathBuf> {
     let data = state
         .config
         .database
@@ -32,9 +45,9 @@ pub fn ensure_managed(state: &AppState, agent: &str) -> Result<PathBuf> {
             )
         })
     };
-    let workspaces = open(&root, "agent-workspaces")?;
-    open(&workspaces, agent)?;
-    Ok(data.join("agent-workspaces").join(agent))
+    let workspaces = open(&root, group)?;
+    open(&workspaces, id)?;
+    Ok(data.join(group).join(id))
 }
 
 fn environment(state: &AppState, agent: &str) -> Option<WorkspaceConfig> {

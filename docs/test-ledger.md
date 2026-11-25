@@ -1636,3 +1636,374 @@ Paths below are relative to `app/`. Playwright remains in `test-support/ui-smoke
   `transcript.test.ts`, `turn-stream.test.ts`, `turn-waits.test.ts`, `usage.test.ts`,
   `webhooks.test.ts`, `workflow-files.test.ts`, `workflow-http.test.ts`,
   `workflow-parallel.test.ts`, `workflow-waits.test.ts`, `workspace-files.test.ts`.
+
+## #89 peers slice: multi-server Node suites to Rust
+
+Ported to `crates/minarbot-e2e/tests/e2e/pr_*.rs`, one Rust test per Node
+runtime case. Assertion counts are `assert` calls in the Node case body
+against `ensure!` calls in the Rust test; status codes checked inside the
+`call`/`api` helpers are not counted on either side (the Rust helpers check
+them too). Node servers always had a computer bridge; the Rust tests start
+`machine_bridge::MachineBridge` when a case needs `refreshMachines`, a fake
+peer token issuer or the manual machine clock, and otherwise let the
+servers talk to each other directly. Peer suites use the real clock, as the
+Node suites did. Multi-server tests reserve their server slots at once with
+`Servers::reserve`, so two such tests cannot deadlock on the two-slot cap.
+
+### `app/machines.test.ts` (9 cases, 9 Rust tests, file deleted)
+
+| Node case | Rust test (`pr_machines::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| paired machine recovers after restart while roster sync times out on a shared link | `paired_machine_recovers_after_restart_while_roster_sync_times_out_on_a_shared_link` | 12 -> 12 | The throttled link is a `relay::Relay` with origin rewriting and a paced roster body. |
+| peer transport accepts proxy host headers while owner machine routes retain the local host boundary | `peer_transport_accepts_proxy_host_headers_while_owner_machine_routes_retain_the_local_host_boundary` | 8 -> 8 | Raw HTTP/1.1 requests carry the foreign `Host`. |
+| two real instances pair mutually, expose scoped cached agents, survive restarts, recover offline, and revoke on unpair without leaking credentials | `two_real_instances_pair_mutually_expose_scoped_cached_agents_survive_restarts_recover_offline_and_revoke_on_unpair_without_leaking_credentials` | 28 -> 28 | Node captured test-process logs; Rust scans the server logs, which the file scan also covers. |
+| pairing uses uniform invalid-code errors, strict bodies, one-time expiry, persisted rate limits, and browser-only owner writes | `pairing_uses_uniform_invalid_code_errors_strict_bodies_one_time_expiry_persisted_rate_limits_and_browser_only_owner_writes` | 4 -> 4 | Manual machine clock through the bridge. |
+| origins reject unsafe forms; remote pairing rejects redirects, oversized bodies, and credential reflection | `origins_reject_unsafe_forms_remote_pairing_rejects_redirects_oversized_bodies_and_credential_reflection` | 3 -> 3 | No bridge, so the product's own client meets the redirect and size limits. "No issued token" is read from `/api/mcp-server/peer-tokens`. |
+| unpair removes first while remote is offline; missing wrapping key fails closed and cached agents remain readable | `unpair_removes_first_while_remote_is_offline_missing_wrapping_key_fails_closed_and_cached_agents_remain_readable` | 3 -> 3 | |
+| background health records a different peer version as online and never sends bearer to a changed identity or redirected descriptor | `background_health_records_a_different_peer_version_as_online_and_never_sends_bearer_to_a_changed_identity_or_redirected_descriptor` | 14 -> 15 | Adds a check that only one token was issued. |
+| lost reciprocal acknowledgement retries encrypted pending credentials after restart without minting another token | `lost_reciprocal_acknowledgement_retries_encrypted_pending_credentials_after_restart_without_minting_another_token` | 7 -> 7 | The Node in-handler `assert.equal(data.token, saved)` is a recorded mismatch flag. |
+| default wiring issues pairing tokens from the Minarbot MCP token registry and revokes them on unpair | `default_wiring_issues_pairing_tokens_from_the_minarbot_mcp_token_registry_and_revokes_them_on_unpair` | 12 -> 12 | |
+
+### `app/remote-agents.test.ts` (15 cases, 14 Rust tests, 2 Node cases kept)
+
+Both servers ask one `async_model::AsyncModel`, the Rust form of the Node
+fixture's async provider. The cases that patched `globalThis.fetch` hook the
+same peer requests with a `MachineBridge` extra operation.
+
+| Node case | Rust test (`pr_remote_agents::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| remote message recovery keeps exact target, ID and payload and rejects corrupt storage | Kept in Node | 6 -> - | Tests `app/src/remote-message-command.ts`. |
+| paired real MCP remote agents: message | `paired_real_mcp_remote_agents_message` | 12 -> 12 | Shared helper `paired_real_mcp_remote_agents`. |
+| paired real MCP remote agents: wait | `paired_real_mcp_remote_agents_wait` | 12 -> 12 | Failed on product bug P3 (fixed). |
+| paired real MCP remote agents: completion | `paired_real_mcp_remote_agents_completion` | 12 -> 12 | Failed on product bug P1 (fixed). |
+| paired real MCP remote agents: restart-a | `paired_real_mcp_remote_agents_restart_a` | 12 -> 12 | Failed on P1 (fixed). |
+| paired real MCP remote agents: restart-b | `paired_real_mcp_remote_agents_restart_b` | 12 -> 12 | Failed on P1 (fixed). |
+| remote cancel stops peer delivery, is peer-scoped, and unpaired addresses are unreachable | `remote_cancel_stops_peer_delivery_is_peer_scoped_and_unpaired_addresses_are_unreachable` | 1 -> 1 | Failed on P1 (fixed). |
+| kill switch rejects immediately and loop limits count peer and agent across requests | `kill_switch_rejects_immediately_and_loop_limits_count_peer_and_agent_across_requests` | 12 -> 12 | |
+| delegation depth travels across machines and stops ping-pong | `delegation_depth_travels_across_machines_and_stops_ping_pong` | 2 -> 2 | Failed on P1 (fixed). The count leaves out the extra model step after each paused `delegate_task {wait: true}` (B1); the strict `requests === 6` stays in Node. |
+| offline send remains explicitly uncertain across caller restart without replay | `offline_send_remains_explicitly_uncertain_across_caller_restart_without_replay` | 2 -> 2 | |
+| accepted remote send is never replayed: lost-ack | `accepted_remote_send_is_never_replayed_lost_ack` | 3 -> 3 | Shared helper `accepted_remote_send_is_never_replayed`. |
+| accepted remote send is never replayed: restart-sending | `accepted_remote_send_is_never_replayed_restart_sending` | 3 -> 3 | SIGTERM reaches A before the held acknowledgement fails, as in Node. |
+| peer tokens never enter database bytes, logs, or outbound message responses | `peer_tokens_never_enter_database_bytes_logs_or_outbound_message_responses` | 4 -> 4 | Tokens are captured from bridge `peer-http` traffic, as Node captured them from `fetch`. |
+| kill switch cancels an active peer turn before any more remote work is admitted | `kill_switch_cancels_an_active_peer_turn_before_any_more_remote_work_is_admitted` | 1 -> 1 | |
+| remote role reaches local discovery and team prompt through paired peer summaries | `remote_role_reaches_local_discovery_and_team_prompt_through_paired_peer_summaries` | 3 -> 3 | Failed on product bug P2 (fixed). |
+
+### `app/room-chat.test.ts` (25 cases, 25 Rust tests, 1 Node case kept for B1)
+
+| Node case | Rust test (`pr_room_chat::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| Section lane waits for committed speaker reply and admits a labelled shared delta | `section_lane_waits_for_committed_speaker_reply_and_admits_a_labelled_shared_delta` | 6 -> 6 | Waits for the held speaker's provider call before the 100 ms quiet window (a harness turn is running before its call starts). |
+| room serializes broadcast, records quiet agents, emits named agent mention replies and survives exact retry/restart | `room_serializes_broadcast_records_quiet_agents_emits_named_agent_mention_replies_and_survives_exact_retry_restart` | 13 -> 13 |  |
+| @mentions skip provider calls for unmentioned members, including lead | `mentions_skip_provider_calls_for_unmentioned_members_including_lead` | 3 -> 3 |  |
+| optional lead breaks all-silent tie once; mention requests never fall back to unmentioned lead | `optional_lead_breaks_all_silent_tie_once_mention_requests_never_fall_back_to_unmentioned_lead` | 4 -> 4 |  |
+| room send_message creates visible request/reply before parent answer | `room_send_message_creates_visible_request_reply_before_parent_answer` | 4 -> 4 | Shared helper. |
+| room delegate_task creates visible request/reply before parent answer | `room_delegate_task_creates_visible_request_reply_before_parent_answer` | 4 -> 4 | Failed on P1 (fixed). |
+| room rounds stop at 3 and reserve at most 10 visible agent messages | `room_rounds_stop_at_3_and_reserve_at_most_10_visible_agent_messages` | 4 -> 4 |  |
+| per-agent loop guard stops repeated replies without an unbounded conversation | `per_agent_loop_guard_stops_repeated_replies_without_an_unbounded_conversation` | 2 -> 2 |  |
+| room limit preserves the original delegation call and bounded receipt across restart | `room_limit_preserves_the_original_delegation_call_and_bounded_receipt_across_restart` | 5 -> 5 |  |
+| restart resumes queued room members without replaying interrupted provider calls | `restart_resumes_queued_room_members_without_replaying_interrupted_provider_calls` | 3 -> 3 | Waits for the held provider call before restarting, the in-flight state the Node case assumed. |
+| direct delegation exposes inline transcript request, named reply, machine and activity without replacing final answer | `direct_delegation_exposes_inline_transcript_request_named_reply_machine_and_activity_without_replacing_final_answer` | 5 -> 5 |  |
+| new project section serializes with H2 silence and agent mentions, then follows project membership edits | `new_project_section_serializes_with_h2_silence_and_agent_mentions_then_follows_project_membership_edits` | 6 -> 6 | Failed on product bug P5 (fixed). |
+| room Stop fences a completed root with live/queued invited members; exact lost-response retry survives restart and new generation | `room_stop_fences_a_completed_root_with_live_queued_invited_members_exact_lost_response_retry_survives_restart_and_new_generation` | 11 -> 11 |  |
+| room Stop cancels fan-out, delegated descendants and pending addressed guidance; other roots and direct tasks continue | `room_stop_cancels_fan_out_delegated_descendants_and_pending_addressed_guidance_other_roots_and_direct_tasks_continue` | 4 -> 4 |  |
+| addressed API room Steer consumes once at safe point and completion winner queues once; cross-room targets fail | `addressed_api_room_steer_consumes_once_at_safe_point_and_completion_winner_queues_once_cross_room_targets_fail` | 4 -> 4 |  |
+| addressed root restart retains peers; Stop before completion prevents final and queued mentions | `addressed_root_restart_retains_peers_stop_before_completion_prevents_final_and_queued_mentions` | 4 -> 4 |  |
+| room Stop cancels queued mention invitations before provider admission | `room_stop_cancels_queued_mention_invitations_before_provider_admission` | 2 -> 2 | Waits until the running invitation's provider call arrived before Stop. |
+| room Stop rejects foreign origins, bearer callers, payload changes, wrong generation and archived scope | `room_stop_rejects_foreign_origins_bearer_callers_payload_changes_wrong_generation_and_archived_scope` | 2 -> 2 |  |
+| serialized broadcast yields send_message to parallel children and resumes once | `serialized_broadcast_yields_send_message_to_parallel_children_and_resumes_once` | 5 -> 5 | Shared helper. |
+| serialized broadcast yields delegate_task to parallel children and resumes once | `serialized_broadcast_yields_delegate_task_to_parallel_children_and_resumes_once` | 5 -> 5 | The Assistant count leaves out the step after the paused delegation (B1); the strict count stays in Node. The gateway peer waits a `delegate_task {wait: true}` with its own `wait_task` (G13), so the journal holds those two calls once each instead of one row. |
+| separate Sections and direct chats progress while root order holds within one Section | `separate_sections_and_direct_chats_progress_while_root_order_holds_within_one_section` | 2 -> 2 |  |
+| mention storms deduplicate sources, settle pass obligations and never invite self | `mention_storms_deduplicate_sources_settle_pass_obligations_and_never_invite_self` | 5 -> 5 |  |
+| same-name Unicode speakers retain distinct IDs in bounded committed context; user brief survives truncation | `same_name_unicode_speakers_retain_distinct_ids_in_bounded_committed_context_user_brief_survives_truncation` | 7 -> 7 | Both speaker IDs are checked in one loop. |
+| failure releases serialized lane without lead fallback or provider replay | `failure_releases_serialized_lane_without_lead_fallback_or_provider_replay` | 3 -> 3 | Kit fix: `fake-gateway` now fails the turn on a tool call without a function name, as Codex does; it used to send it to MCP and loop to the tool budget (93 calls). |
+| admission cutoff and unpublished watermarks survive restarts | `admission_cutoff_and_unpublished_watermarks_survive_restarts` | 8 -> 8 | Waits for the gated peer's provider call before stopping. |
+
+### `app/hub-link.test.ts` (41 cases, 39 Rust tests, 2 Node cases kept)
+
+A real hosted Hub (`minarbot-server --hub test-fixture`) runs with a manual
+clock. Node servers enroll through browser approval and reach it over real
+WebSockets through `hosted_hub::HubTransport` (one socket set per node, so
+stopping or crashing a node closes its links as the Node bridge did).
+Received frames are rewritten with `receive_frames`, and sent frames are
+held, dropped or followed by a close with `intercept_sends`, replacing the
+Node `receive` hook and `WebSocket.prototype.send` patches. The shared
+`node()` enrollment helper carries the Node fixture's 9 assertions.
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | --- | --- |
+| signed envelopes reject forged payloads, keys and directions | Kept in Node | 3 -> - | Tests the TypeScript helper `app/test-support/hub-node-signature.ts`. Forged hub signatures against the product are covered by `foreign_project_and_forged_signed_hub_frames_never_reach_local_engine`. |
+| browser-approved enrollment, two real local engines, attribution and local key custody | `pr_hub::cases::browser_approved_enrollment_two_real_local_engines_attribution_and_local_key_custody` | 11 -> 11 |  |
+| owner-only default, specific-member and all-member grants; offline refuses without hub execution | `pr_hub::cases::owner_only_default_specific_member_and_all_member_grants_offline_refuses_without_hub_execution` | 4 -> 4 |  |
+| dangerous tool waits for exact local owner approval; hub/browser roles cannot approve it | `pr_hub::cases::dangerous_tool_waits_for_exact_local_owner_approval_hub_browser_roles_cannot_approve_it` | 8 -> 8 |  |
+| duplicate delivery, final ACK loss and restart never execute twice | `pr_hub::cases::duplicate_delivery_final_ack_loss_and_restart_never_execute_twice` | 4 -> 4 |  |
+| revocation mid-stream stops local work before another effect and does not execute offline | `pr_hub::cases::revocation_mid_stream_stops_local_work_before_another_effect_and_does_not_execute_offline` | 3 -> 3 |  |
+| foreign project and forged signed hub frames never reach local engine | `pr_hub::cases::foreign_project_and_forged_signed_hub_frames_never_reach_local_engine` | 1 -> 1 |  |
+| local owner endpoints require exact Origin and refuse bearer callers; unenrolled app stays idle | `pr_hub::cases::local_owner_endpoints_require_exact_origin_and_refuse_bearer_callers_unenrolled_app_stays_idle` | 4 -> 4 |  |
+| node revocation drains its signed frame before closing transport | `pr_hub::cases::node_revocation_drains_its_signed_frame_before_closing_transport` | 3 -> 3 |  |
+| SIGKILL after dispatch and before result ACK keeps durable uncertainty without replay | `pr_hub::cases::sigkill_after_dispatch_and_before_result_ack_keeps_durable_uncertainty_without_replay` | 2 -> 2 |  |
+| provider partial snapshots stream over real WebSockets before final | `pr_hub::cases::provider_partial_snapshots_stream_over_real_websockets_before_final` | 4 -> 4 |  |
+| browser code alone cannot redeem enrollment; node upgrade rejects browser credentials | `pr_hub::cases::browser_code_alone_cannot_redeem_enrollment_node_upgrade_rejects_browser_credentials` | 2 -> 2 |  |
+| reconnect fences old generation; session expiry renews with node key and never replays completed work | `pr_hub::cases::reconnect_fences_old_generation_session_expiry_renews_with_node_key_and_never_replays_completed_work` | 3 -> 3 |  |
+| local provider spend ceiling refuses next request before dispatch | Kept in Node | 1 -> - | Open product gap P6, needs an Owner decision. |
+| lost enrollment redemption response recovers with signed node proof | `pr_hub::cases::lost_enrollment_redemption_response_recovers_with_signed_node_proof` | 2 -> 2 |  |
+| changed local agent policy rejects an existing hub grant before provider dispatch | `pr_hub::cases::changed_local_agent_policy_rejects_an_existing_hub_grant_before_provider_dispatch` | 1 -> 1 |  |
+| revoking alpha preserves simultaneous beta work on the same node | `pr_hub::cases::revoking_alpha_preserves_simultaneous_beta_work_on_the_same_node` | 5 -> 5 |  |
+| offline local withdrawal survives restart and reaches hub before reconnect admits work | `pr_hub::cases::offline_local_withdrawal_survives_restart_and_reaches_hub_before_reconnect_admits_work` | 2 -> 2 |  |
+| hub-side withdrawal waits offline beyond turn deadline and disables local grant before new work | `pr_hub::cases::hub_side_withdrawal_waits_offline_beyond_turn_deadline_and_disables_local_grant_before_new_work` | 2 -> 2 |  |
+| withdrawal ACK loss retries same revision and cannot withdraw another node or newer consent | `pr_hub::cases::withdrawal_ack_loss_retries_same_revision_and_cannot_withdraw_another_node_or_newer_consent` | 5 -> 5 |  |
+| accounts enrollment routes reject project cookies, bad CSRF, fingerprint mismatch and account overrides | `pr_hub::cases::accounts_enrollment_routes_reject_project_cookies_bad_csrf_fingerprint_mismatch_and_account_overrides` | 2 -> 2 |  |
+| computer input requires local approval and action lease; revoke leaves uncertain input without replay | `pr_hub::effects::computer_input_requires_local_approval_and_action_lease_revoke_leaves_uncertain_input_without_replay` | 8 -> 8 | The lease directory sits in a short temporary folder: its proxy socket path must stay under the 108-byte Unix socket limit, as the Node suite's short folder did. |
+| connected app calls require local approval and lease; revocation after dispatch is uncertain and never replayed | `pr_hub::effects::connected_app_calls_require_local_approval_and_lease_revocation_after_dispatch_is_uncertain_and_never_replayed` | 7 -> 6 | The Node fixture's `assert(address ...)` has no Rust counterpart. |
+| MCP async discovery cannot dispatch after revoke; lost result remains uncertain across restart | `pr_hub::effects::mcp_async_discovery_cannot_dispatch_after_revoke_lost_result_remains_uncertain_across_restart` | 6 -> 5 | The Node fixture's `assert(address ...)` has no Rust counterpart. |
+| codex: unsupported effect fencing never executes hub turns | `pr_hub::effects::codex_unsupported_effect_fencing_never_executes_hub_turns` | 6 -> 5 | #87 removed `agents.runtime`, so no agent can run a native runtime per hub turn. The surviving fence is the local engine refusal: the agent is hidden locally after its grant (policy digest unchanged). The advertised runtime fence, the failed turn code and zero provider calls (also after restart) are checked; the session-mint trap cannot fire without a native runtime. |
+| claude: unsupported effect fencing never executes hub turns | `pr_hub::effects::claude_unsupported_effect_fencing_never_executes_hub_turns` | 6 -> 5 | #87 removed `agents.runtime`, so no agent can run a native runtime per hub turn. The surviving fence is the local engine refusal: the agent is hidden locally after its grant (policy digest unchanged). The advertised runtime fence, the failed turn code and zero provider calls (also after restart) are checked; the session-mint trap cannot fire without a native runtime. |
+| hermes: unsupported effect fencing never executes hub turns | `pr_hub::effects::hermes_unsupported_effect_fencing_never_executes_hub_turns` | 6 -> 5 | #87 removed `agents.runtime`, so no agent can run a native runtime per hub turn. The surviving fence is the local engine refusal: the agent is hidden locally after its grant (policy digest unchanged). The advertised runtime fence, the failed turn code and zero provider calls (also after restart) are checked; the session-mint trap cannot fire without a native runtime. |
+| antigravity: unsupported effect fencing never executes hub turns | `pr_hub::effects::antigravity_unsupported_effect_fencing_never_executes_hub_turns` | 6 -> 5 | #87 removed `agents.runtime`, so no agent can run a native runtime per hub turn. The surviving fence is the local engine refusal: the agent is hidden locally after its grant (policy digest unchanged). The advertised runtime fence, the failed turn code and zero provider calls (also after restart) are checked; the session-mint trap cannot fire without a native runtime. |
+| grok: unsupported effect fencing never executes hub turns | `pr_hub::effects::grok_unsupported_effect_fencing_never_executes_hub_turns` | 6 -> 5 | #87 removed `agents.runtime`, so no agent can run a native runtime per hub turn. The surviving fence is the local engine refusal: the agent is hidden locally after its grant (policy digest unchanged). The advertised runtime fence, the failed turn code and zero provider calls (also after restart) are checked; the session-mint trap cannot fire without a native runtime. |
+| pi: unsupported effect fencing never executes hub turns | `pr_hub::effects::pi_unsupported_effect_fencing_never_executes_hub_turns` | 6 -> 5 | #87 removed `agents.runtime`, so no agent can run a native runtime per hub turn. The surviving fence is the local engine refusal: the agent is hidden locally after its grant (policy digest unchanged). The advertised runtime fence, the failed turn code and zero provider calls (also after restart) are checked; the session-mint trap cannot fire without a native runtime. |
+| opencode: unsupported effect fencing never executes hub turns | `pr_hub::effects::opencode_unsupported_effect_fencing_never_executes_hub_turns` | 6 -> 5 | #87 removed `agents.runtime`, so no agent can run a native runtime per hub turn. The surviving fence is the local engine refusal: the agent is hidden locally after its grant (policy digest unchanged). The advertised runtime fence, the failed turn code and zero provider calls (also after restart) are checked; the session-mint trap cannot fire without a native runtime. |
+| gemini: unsupported effect fencing never executes hub turns | `pr_hub::effects::gemini_unsupported_effect_fencing_never_executes_hub_turns` | 6 -> 5 | #87 removed `agents.runtime`, so no agent can run a native runtime per hub turn. The surviving fence is the local engine refusal: the agent is hidden locally after its grant (policy digest unchanged). The advertised runtime fence, the failed turn code and zero provider calls (also after restart) are checked; the session-mint trap cannot fire without a native runtime. |
+| kiro: unsupported effect fencing never executes hub turns | `pr_hub::effects::kiro_unsupported_effect_fencing_never_executes_hub_turns` | 6 -> 5 | #87 removed `agents.runtime`, so no agent can run a native runtime per hub turn. The surviving fence is the local engine refusal: the agent is hidden locally after its grant (policy digest unchanged). The advertised runtime fence, the failed turn code and zero provider calls (also after restart) are checked; the session-mint trap cannot fire without a native runtime. |
+| two session-enrolled nodes answer browser mention; revoking one live stream preserves other node | `pr_hub::cases::two_session_enrolled_nodes_answer_browser_mention_revoking_one_live_stream_preserves_other_node` | 6 -> 5 | The Node `assert(revokedTurn && otherTurn)` is an error return. |
+| offline withdrawal is acknowledged even after owner loses project membership | `pr_hub::cases::offline_withdrawal_is_acknowledged_even_after_owner_loses_project_membership` | 3 -> 3 |  |
+| project queue admission is atomic, idempotent and expires without executing offline work | `pr_hub::cases::project_queue_admission_is_atomic_idempotent_and_expires_without_executing_offline_work` | 5 -> 5 |  |
+| connected app resume requires exactly one ready action before issuing any lease | `pr_hub::cases::connected_app_resume_requires_exactly_one_ready_action_before_issuing_any_lease` | 3 -> 3 |  |
+| human post rate leaves capacity for withdrawal controls | `pr_hub::cases::human_post_rate_leaves_capacity_for_withdrawal_controls` | 2 -> 2 |  |
+| withdrawal drains its control frame before queued section delivery closes transport | `pr_hub::cases::withdrawal_drains_its_control_frame_before_queued_section_delivery_closes_transport` | 3 -> 3 |  |
+| signed pending requests stay node-scoped; approval, stale revision, offline decline and reconnect preserve consent | `pr_hub::cases::signed_pending_requests_stay_node_scoped_approval_stale_revision_offline_decline_and_reconnect_preserve_consent` | 20 -> 20 |  |
+| local owner deletes linked agent, withdraws hub participation and removes local transport journals | `pr_hub::cases::local_owner_deletes_linked_agent_withdraws_hub_participation_and_removes_local_transport_journals` | 4 -> 4 |  |
+
+### `app/two-process.test.ts` (100 tests and 3 loops, 132 runtime cases, 132 Rust tests, file deleted)
+
+`pr_tp::fixture::Tp` is the Node `fixture()`: a canonical-mode server with
+Clerk session tokens (`hosted::HostedApp`) and a device fetch proxy
+(`relay::Relay`) in front of it. The Node suite patched `globalThis.fetch`
+to lose, hold, rewrite or delay device requests; those patches are
+`Fault` hooks on the proxy (`Drop`, `LoseReply`, `Rewrite`, `Hold`,
+`After`). Test-control hosts (`device_host::DeviceHost`), standalone
+connections (`ConnectionProcess`) and `run-task` processes (`RustTask`)
+run the same `minarbot-server --device-host` binary as the Node helpers.
+Lost replies to the test's own requests are sent and their answer
+ignored. Loop iterations and subtests are separate Rust tests; their Node
+count is the shared case body. The Rust count adds the checks of the
+module helpers a test calls, once per call site, and the status checks of
+`Tp::project`, `Tp::agent` and `Tp::task`. Node `assert.fail` guards in
+effects that must not run became effects that fail the call and are not
+counted. `app/test-support/rust-device-host.ts` was used only by this
+suite and is deleted with it.
+
+| Node case | Rust test (`pr_tp::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| protected turn event verifies on home, saves one receipt and resumes with exact raw payload | `events::protected_turn_event_verifies_on_home_saves_one_receipt_and_resumes_with_exact_raw_payload` | 31 -> 41 |  |
+| protected turn event rejects delayed verification after scope or connection changes: pause | `events::protected_turn_event_rejects_delayed_verification_after_scope_or_connection_changes_pause` | 8 -> 13 | Subtest; the Node count is the shared case body. |
+| protected turn event rejects delayed verification after scope or connection changes: rules | `events::protected_turn_event_rejects_delayed_verification_after_scope_or_connection_changes_rules` | 8 -> 13 | Subtest; the Node count is the shared case body. |
+| protected turn event rejects delayed verification after scope or connection changes: cancel | `events::protected_turn_event_rejects_delayed_verification_after_scope_or_connection_changes_cancel` | 8 -> 13 | Subtest; the Node count is the shared case body. |
+| protected turn event rejects delayed verification after scope or connection changes: revoke | `events::protected_turn_event_rejects_delayed_verification_after_scope_or_connection_changes_revoke` | 8 -> 13 | Subtest; the Node count is the shared case body. |
+| protected turn event rejects delayed verification after scope or connection changes: timeout | `events::protected_turn_event_rejects_delayed_verification_after_scope_or_connection_changes_timeout` | 8 -> 13 | Subtest; the Node count is the shared case body. |
+| protected turn wait uses outbound stream and recovers lost host ACK without another key or wait | `events::protected_turn_wait_uses_outbound_stream_and_recovers_lost_host_ack_without_another_key_or_wait` | 42 -> 53 |  |
+| canonical shared data isolates project images and recovers one write after lost reply and restart | `shared::canonical_shared_data_isolates_project_images_and_recovers_one_write_after_lost_reply_and_restart` | 18 -> 30 |  |
+| canonical avatar removal recovers its original result after a lost reply, later image and restart | `shared::canonical_avatar_removal_recovers_its_original_result_after_a_lost_reply_later_image_and_restart` | 13 -> 12 |  |
+| canonical site management keeps project scope and recovers one deletion after a lost reply and restart | `shared::canonical_site_management_keeps_project_scope_and_recovers_one_deletion_after_a_lost_reply_and_restart` | 14 -> 11 |  |
+| canonical questions survive lost RPC and answer replies, restart and home outage without duplicate work | `shared::canonical_questions_survive_lost_rpc_and_answer_replies_restart_and_home_outage_without_duplicate_work` | 28 -> 26 |  |
+| protected workflow connection reveals only ciphertext to its current owner browser | `workflow_waits::protected_workflow_connection_reveals_only_ciphertext_to_its_current_owner_browser` | 17 -> 20 |  |
+| protected workflow event commits one transition and keeps exact retries after advancement restart and restore | `workflow_waits::protected_workflow_event_commits_one_transition_and_keeps_exact_retries_after_advancement_restart_and_restore` | 29 -> 35 |  |
+| protected workflow wait discards delayed reveal and event replies after authority changes: reveal/revision | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_reveal_revision` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: reveal/rules | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_reveal_rules` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: reveal/assignment | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_reveal_assignment` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: reveal/mapping | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_reveal_mapping` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: reveal/cancel | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_reveal_cancel` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: reveal/expiry | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_reveal_expiry` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: reveal/revoke | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_reveal_revoke` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: reveal/disconnect | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_reveal_disconnect` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: event/revision | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_event_revision` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: event/rules | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_event_rules` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: event/assignment | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_event_assignment` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: event/mapping | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_event_mapping` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: event/cancel | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_event_cancel` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: event/expiry | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_event_expiry` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: event/revoke | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_event_revoke` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| protected workflow wait discards delayed reveal and event replies after authority changes: event/disconnect | `workflow_waits::protected_workflow_wait_discards_delayed_reveal_and_event_replies_after_authority_changes_event_disconnect` | 10 -> 15 | Subtest; the Node count is the shared case body. |
+| canonical workflow schedule coalesces offline intervals with one durable identity across restart | `schedules::canonical_workflow_schedule_coalesces_offline_intervals_with_one_durable_identity_across_restart` | 18 -> 20 |  |
+| canonical workflow once uses its home zone and consumes one catch-up after offline restart | `schedules::canonical_workflow_once_uses_its_home_zone_and_consumes_one_catch_up_after_offline_restart` | 16 -> 18 |  |
+| canonical workflow cron validates HTTP input and admits one retained overdue occurrence after reconnect | `schedules::canonical_workflow_cron_validates_http_input_and_admits_one_retained_overdue_occurrence_after_reconnect` | 16 -> 18 |  |
+| canonical workflow occurrence attaches its first recovery task atomically on the original home | `schedules::canonical_workflow_occurrence_attaches_its_first_recovery_task_atomically_on_the_original_home` | 11 -> 12 |  |
+| workflow schedule sync retains scoped metadata and exact deltas across restart without replaying commands | `schedules::workflow_schedule_sync_retains_scoped_metadata_and_exact_deltas_across_restart_without_replaying_commands` | 13 -> 13 |  |
+| workflow schedule sync rechecks current assignment private versions and root visibility for every human | `schedules::workflow_schedule_sync_rechecks_current_assignment_private_versions_and_root_visibility_for_every_human` | 13 -> 13 |  |
+| canonical workflow schedule rejects foreign scope and rechecks current assignment before receipt replay | `schedules::canonical_workflow_schedule_rejects_foreign_scope_and_rechecks_current_assignment_before_receipt_replay` | 10 -> 10 |  |
+| canonical workflow executes conditions and approval once across restart | `workflows::canonical_workflow_executes_conditions_and_approval_once_across_restart` | 10 -> 10 |  |
+| canonical workflow admits isolated home tasks and keeps model nodes tool-free | `workflows::canonical_workflow_admits_isolated_home_tasks_and_keeps_model_nodes_tool_free` | 21 -> 21 |  |
+| canonical workflow retry preserves topology and failed evidence while using current node settings once | `workflows::canonical_workflow_retry_preserves_topology_and_failed_evidence_while_using_current_node_settings_once` | 24 -> 25 |  |
+| canonical workflow retry changes agent per attempt and falls back to the original node after removal | `workflows::canonical_workflow_retry_changes_agent_per_attempt_and_falls_back_to_the_original_node_after_removal` | 18 -> 20 |  |
+| canonical workflow retry checks capacity scopes and original authority with atomic receipts | `workflows::canonical_workflow_retry_checks_capacity_scopes_and_original_authority_with_atomic_receipts` | 18 -> 18 |  |
+| canonical workflow dispatch retains original collaborator and owner cancellation fences revoked work | `workflows::canonical_workflow_dispatch_retains_original_collaborator_and_owner_cancellation_fences_revoked_work` | 11 -> 13 |  |
+| canonical workflow completion recovers a lost ACK after advancing to approval | `workflows::canonical_workflow_completion_recovers_a_lost_ack_after_advancing_to_approval` | 9 -> 12 |  |
+| canonical workflow cancellation fences no-reply descendants of completed steps | `workflows::canonical_workflow_cancellation_fences_no_reply_descendants_of_completed_steps` | 10 -> 12 |  |
+| canonical workflow oversized handoff fails once without starving later runs | `workflows::canonical_workflow_oversized_handoff_fails_once_without_starving_later_runs` | 7 -> 9 |  |
+| canonical workflow capacity retries leave no empty threads before admission | `workflow_runs::canonical_workflow_capacity_retries_leave_no_empty_threads_before_admission` | 9 -> 15 |  |
+| canonical workflow revoked assignment before host ACK closes the original run | `workflow_runs::canonical_workflow_revoked_assignment_before_host_ack_closes_the_original_run` | 7 -> 10 |  |
+| canonical workflow wait reserves once offline and activates only after home keyring acknowledgement | `workflow_runs::canonical_workflow_wait_reserves_once_offline_and_activates_only_after_home_keyring_acknowledgement` | 18 -> 22 |  |
+| canonical workflow timeout fails offline reservation without generating a second wait | `workflow_runs::canonical_workflow_timeout_fails_offline_reservation_without_generating_a_second_wait` | 11 -> 12 |  |
+| canonical workflow channel output is atomic and does not duplicate after restart | `workflow_runs::canonical_workflow_channel_output_is_atomic_and_does_not_duplicate_after_restart` | 9 -> 9 |  |
+| canonical workflow run admission keeps its graph and receipt across restart and revision changes | `workflow_runs::canonical_workflow_run_admission_keeps_its_graph_and_receipt_across_restart_and_revision_changes` | 22 -> 22 | Node failed at base (409 "Run has stopped."): the scheduler settles a run as soon as it is admitted. A `record_scopes` trigger (`HOLD_STEPS`) holds step execution. |
+| canonical workflow runs deny revoked private and unmapped state and roll back controls with receipts | `workflow_runs::canonical_workflow_runs_deny_revoked_private_and_unmapped_state_and_roll_back_controls_with_receipts` | 26 -> 26 | Node failed at base (UNIQUE `workflow_steps`), for the same reason; held with `HOLD_STEPS`, released only around the manual step mapping. |
+| canonical workflow run and step pages preserve old approvals and admission rolls back failed receipts | `workflow_runs::canonical_workflow_run_and_step_pages_preserve_old_approvals_and_admission_rolls_back_failed_receipts` | 19 -> 19 |  |
+| canonical routine manual run waits for its home and recovers lost replies and restart without moving schedule | `routines::canonical_routine_manual_run_waits_for_its_home_and_recovers_lost_replies_and_restart_without_moving_schedule` | 25 -> 25 |  |
+| canonical routine manual admission enforces current authority private scopes closed requests and receipt conflicts | `routines::canonical_routine_manual_admission_enforces_current_authority_private_scopes_closed_requests_and_receipt_conflicts` | 16 -> 16 |  |
+| canonical routine configuration and flow stay scoped across projects restart and lost replies | `routines::canonical_routine_configuration_and_flow_stay_scoped_across_projects_restart_and_lost_replies` | 27 -> 27 |  |
+| canonical routine runtime coalesces offline intervals once and retains task receipts across restart | `routines::canonical_routine_runtime_coalesces_offline_intervals_once_and_retains_task_receipts_across_restart` | 27 -> 28 |  |
+| canonical routine runtime snapshots flows and hands off once using current home authority | `routines::canonical_routine_runtime_snapshots_flows_and_hands_off_once_using_current_home_authority` | 19 -> 21 |  |
+| canonical routine no_update recovers terminal result after home SIGKILL and server restart without fan-out | `routines::canonical_routine_no_update_recovers_terminal_result_after_home_sigkill_and_server_restart_without_fan_out` | 17 -> 16 | Loop iteration; the Node count is the shared case body. |
+| canonical routine report_failure recovers terminal result after home SIGKILL and server restart without fan-out | `routines::canonical_routine_report_failure_recovers_terminal_result_after_home_sigkill_and_server_restart_without_fan_out` | 17 -> 16 | Loop iteration; the Node count is the shared case body. |
+| canonical routine mixed fan-in waits for success and keeps quiet and failed outcomes distinct | `routines::canonical_routine_mixed_fan_in_waits_for_success_and_keeps_quiet_and_failed_outcomes_distinct` | 16 -> 16 |  |
+| canonical routine keeps no-reply descendants executable after completion and fences revoked root authority | `routines::canonical_routine_keeps_no_reply_descendants_executable_after_completion_and_fences_revoked_root_authority` | 5 -> 6 |  |
+| canonical routine runtime rechecks grants and rolls back failed task admissions without consuming occurrence | `routines::canonical_routine_runtime_rechecks_grants_and_rolls_back_failed_task_admissions_without_consuming_occurrence` | 12 -> 14 |  |
+| canonical routine edit cancels unstarted scheduled work and retains accepted evidence | `routines::canonical_routine_edit_cancels_unstarted_scheduled_work_and_retains_accepted_evidence` | 6 -> 7 |  |
+| canonical routine runtime preserves started snapshots through edits and restore holds unfinished occurrences | `routines::canonical_routine_runtime_preserves_started_snapshots_through_edits_and_restore_holds_unfinished_occurrences` | 13 -> 14 |  |
+| canonical routine cancellation settles terminal occurrence after task cancel | `routines::canonical_routine_cancellation_settles_terminal_occurrence_after_task_cancel` | 5 -> 6 |  |
+| canonical routines recheck assignments private mappings flow agents and receipt rollback | `routines::canonical_routines_recheck_assignments_private_mappings_flow_agents_and_receipt_rollback` | 18 -> 18 |  |
+| canonical routine wall-clock HTTP keeps exact retries and pending identities across restart and catch-up admission | `routines::canonical_routine_wall_clock_http_keeps_exact_retries_and_pending_identities_across_restart_and_catch_up_admission` | 33 -> 34 | Node used the ambient `TZ` and the TypeScript `onceCandidate`. The server and home run in `Asia/Jakarta` (fixed +07:00), so the candidate is computed directly. |
+| canonical routine calendar exports only current project and reader schedules without prompts | `routines::canonical_routine_calendar_exports_only_current_project_and_reader_schedules_without_prompts` | 22 -> 22 |  |
+| canonical workflow configuration stays project scoped with immutable versions and retry receipts | `workflow_config::canonical_workflow_configuration_stays_project_scoped_with_immutable_versions_and_retry_receipts` | 24 -> 24 |  |
+| canonical workflows enforce current assignments private mappings selectors and atomic receipt storage | `workflow_config::canonical_workflows_enforce_current_assignments_private_mappings_selectors_and_atomic_receipt_storage` | 33 -> 33 |  |
+| canonical workflow pages bound graph bytes and preserve list and version cursors | `workflow_config::canonical_workflow_pages_bound_graph_bytes_and_preserve_list_and_version_cursors` | 11 -> 11 |  |
+| canonical workflow inbox keeps read state per authorized human across retry restart and deletion | `workflow_config::canonical_workflow_inbox_keeps_read_state_per_authorized_human_across_retry_restart_and_deletion` | 26 -> 26 |  |
+| canonical workflow inbox hides foreign selectors and rechecks current reader scopes before receipt replay | `workflow_config::canonical_workflow_inbox_hides_foreign_selectors_and_rechecks_current_reader_scopes_before_receipt_replay` | 26 -> 26 |  |
+| canonical workflow inbox pages twenty outputs without duplicate completion or recipient backfill | `sync::canonical_workflow_inbox_pages_twenty_outputs_without_duplicate_completion_or_recipient_backfill` | 18 -> 20 |  |
+| workflow sync publishes metadata and revisioned run transitions once across retry and restart | `sync::workflow_sync_publishes_metadata_and_revisioned_run_transitions_once_across_retry_and_restart` | 14 -> 14 |  |
+| workflow sync includes protected wait activation delivery and expiry without secret references | `sync::workflow_sync_includes_protected_wait_activation_delivery_and_expiry_without_secret_references` | 12 -> 15 |  |
+| workflow sync rolls back commands with event failures and retains deletion tombstones | `sync::workflow_sync_rolls_back_commands_with_event_failures_and_retains_deletion_tombstones` | 18 -> 18 |  |
+| workflow sync rechecks assignment project and private root version and run scopes | `sync::workflow_sync_rechecks_assignment_project_and_private_root_version_and_run_scopes` | 14 -> 14 |  |
+| signed human sync preserves delta cursors through canonical restart and rejects foreign or revoked reads | `sync::signed_human_sync_preserves_delta_cursors_through_canonical_restart_and_rejects_foreign_or_revoked_reads` | 14 -> 14 |  |
+| signed task and device mutations publish atomic scoped observations across retry and restart | `sync::signed_task_and_device_mutations_publish_atomic_scoped_observations_across_retry_and_restart` | 21 -> 36 |  |
+| home execution loop publishes one provider answer through signed canonical HTTP | `execution::home_execution_loop_publishes_one_provider_answer_through_signed_canonical_http` | 7 -> 11 |  |
+| home execution loop saves setup tools, pauses for answers and continues without repeating saved provider output | `execution::home_execution_loop_saves_setup_tools_pauses_for_answers_and_continues_without_repeating_saved_provider_output` | 10 -> 13 |  |
+| home execution loop rejects malformed or unadvertised provider outputs and never retries uncertain effects | `execution::home_execution_loop_rejects_malformed_or_unadvertised_provider_outputs_and_never_retries_uncertain_effects` | 5 -> 12 |  |
+| home execution loop resumes saved provider output after completion reply loss without another provider call | `execution::home_execution_loop_resumes_saved_provider_output_after_completion_reply_loss_without_another_provider_call` | 7 -> 13 |  |
+| home execution loop survives SIGKILL across provider and tool results without replaying effects | `execution::home_execution_loop_survives_sigkill_across_provider_and_tool_results_without_replaying_effects` | 7 -> 10 |  |
+| home execution loop uses explicit uncertainty retry reservation and never retries before that decision | `execution::home_execution_loop_uses_explicit_uncertainty_retry_reservation_and_never_retries_before_that_decision` | 11 -> 17 |  |
+| home execution loop consumes resolved late-known output without repeating its provider call | `execution::home_execution_loop_consumes_resolved_late_known_output_without_repeating_its_provider_call` | 13 -> 19 |  |
+| home execution loop persists provider wait across reply loss and preserves concurrent pause | `execution::home_execution_loop_persists_provider_wait_across_reply_loss_and_preserves_concurrent_pause` | 11 -> 20 |  |
+| home execution loop holds missing bindings and enforces provider slots before dispatch | `execution::home_execution_loop_holds_missing_bindings_and_enforces_provider_slots_before_dispatch` | 12 -> 52 |  |
+| canonical completion recovery handles request without another provider call | `completion::canonical_completion_recovery_handles_request_without_another_provider_call` | 19 -> 26 | Loop iteration; the Node count is the shared case body. |
+| canonical completion recovery handles reply without another provider call | `completion::canonical_completion_recovery_handles_reply_without_another_provider_call` | 19 -> 26 | Loop iteration; the Node count is the shared case body. |
+| canonical completion recovery handles receipt without another provider call | `completion::canonical_completion_recovery_handles_receipt_without_another_provider_call` | 19 -> 26 | Loop iteration; the Node count is the shared case body. |
+| canonical completion recovery handles revoked without another provider call | `completion::canonical_completion_recovery_handles_revoked_without_another_provider_call` | 19 -> 26 | Loop iteration; the Node count is the shared case body. |
+| canonical completion recovery handles storage without another provider call | `completion::canonical_completion_recovery_handles_storage_without_another_provider_call` | 19 -> 26 | Loop iteration; the Node count is the shared case body. |
+| canonical completion enforces pause through signed HTTP | `completion::canonical_completion_enforces_pause_through_signed_http` | 20 -> 22 | Loop iteration; the Node count is the shared case body. |
+| canonical completion enforces cancel through signed HTTP | `completion::canonical_completion_enforces_cancel_through_signed_http` | 20 -> 22 | Loop iteration; the Node count is the shared case body. |
+| canonical completion enforces latest through signed HTTP | `completion::canonical_completion_enforces_latest_through_signed_http` | 20 -> 22 | Loop iteration; the Node count is the shared case body. |
+| canonical completion enforces invalid through signed HTTP | `completion::canonical_completion_enforces_invalid_through_signed_http` | 20 -> 22 | Loop iteration; the Node count is the shared case body. |
+| canonical completion enforces setup through signed HTTP | `completion::canonical_completion_enforces_setup_through_signed_http` | 20 -> 22 | Loop iteration; the Node count is the shared case body. |
+| canonical completion enforces revoked through signed HTTP | `completion::canonical_completion_enforces_revoked_through_signed_http` | 20 -> 22 | Loop iteration; the Node count is the shared case body. |
+| canonical listener rejects a second server on the same database and releases lock on close | `devices::canonical_listener_rejects_a_second_server_on_the_same_database_and_releases_lock_on_close` | 5 -> 5 | The Node launcher mapped "Another canonical server is still running." to `canonical_server_busy`; the Rust test reads that startup error. The alias is a symlinked database in a second test root. |
+| cross-device reassign survives lost reply and restart, preserves old results and waits for fixed recipient home | `devices::cross_device_reassign_survives_lost_reply_and_restart_preserves_old_results_and_waits_for_fixed_recipient_home` | 17 -> 25 |  |
+| local possession gate enrolls only configured server and retains identity across reconnect/revoke | `devices::local_possession_gate_enrolls_only_configured_server_and_retains_identity_across_reconnect_revoke` | 25 -> 28 | The large avatar is a 256x256 noise PNG (`noise_image::noise_png`) instead of `sharp` on random bytes. |
+| device key loss fails closed and concurrent stream replacement fences old heartbeat | `devices::device_key_loss_fails_closed_and_concurrent_stream_replacement_fences_old_heartbeat` | 4 -> 8 |  |
+| lost enrollment ACK resumes same request and explicit reenroll/rotation preserve home identity | `devices::lost_enrollment_ack_resumes_same_request_and_explicit_reenroll_rotation_preserve_home_identity` | 12 -> 14 |  |
+| canonical task HTTP survives lost acceptance response/restart without dispatch and hides private task | `devices::canonical_task_http_survives_lost_acceptance_response_restart_without_dispatch_and_hides_private_task` | 9 -> 15 |  |
+| signed host HTTP admission commits once and result ACK survives canonical restart | `devices::signed_host_http_admission_commits_once_and_result_ack_survives_canonical_restart` | 13 -> 22 |  |
+| journal-backed host dispatches once, retries publication only and refuses lost or late commit grants | `journal::journal_backed_host_dispatches_once_retries_publication_only_and_refuses_lost_or_late_commit_grants` | 19 -> 22 |  |
+| SIGKILL recovery proves no send before marker and never repeats marked effects or lost result ACKs | `journal::sigkill_recovery_proves_no_send_before_marker_and_never_repeats_marked_effects_or_lost_result_acks` | 12 -> 20 |  |
+| Rust exports prepared, in-flight and reported device journal evidence offline | `journal::rust_exports_prepared_in_flight_and_reported_device_journal_evidence_offline` | 7 -> 7 | The frozen journal moved to `crates/minarbot-testkit/fixtures/device-journal-v3/`. |
+| stalled normal requests cannot starve control reads and disconnected requests release capacity | `journal::stalled_normal_requests_cannot_starve_control_reads_and_disconnected_requests_release_capacity` | 4 -> 6 | The 64 held requests are raw TCP connections that send headers and one body byte. |
+| canonical transfer survives lost RPC reply and canonical restart without duplicate successor or caller effects | `journal::canonical_transfer_survives_lost_rpc_reply_and_canonical_restart_without_duplicate_successor_or_caller_effects` | 14 -> 16 |  |
+| owner recovers revoked-device journal through HTTP without device session or repeated effect | `journal::owner_recovers_revoked_device_journal_through_http_without_device_session_or_repeated_effect` | 25 -> 29 |  |
+| disaster recovery imports original host result without original server and never enables dispatch | `journal::disaster_recovery_imports_original_host_result_without_original_server_and_never_enables_dispatch` | 20 -> 24 |  |
+| disaster recovery quarantines signed post-backup actions and tasks without publishing or admitting them | `journal::disaster_recovery_quarantines_signed_post_backup_actions_and_tasks_without_publishing_or_admitting_them` | 21 -> 29 |  |
+| canonical memory RPC isolates projects and retains committed memory after a lost reply | `rpc::canonical_memory_rpc_isolates_projects_and_retains_committed_memory_after_a_lost_reply` | 17 -> 25 |  |
+| canonical history RPC pages scoped originals and retains exact reads after a lost reply | `rpc::canonical_history_rpc_pages_scoped_originals_and_retains_exact_reads_after_a_lost_reply` | 23 -> 35 |  |
+| canonical skill reads recover exact pinned text after lost response, disable and server restart | `rpc::canonical_skill_reads_recover_exact_pinned_text_after_lost_response_disable_and_server_restart` | 16 -> 20 |  |
+| canonical agent directory isolates projects and recovers exact roster after lost reply | `rpc::canonical_agent_directory_isolates_projects_and_recovers_exact_roster_after_lost_reply` | 13 -> 11 |  |
+| canonical teammate sends retain one scoped delivery on its fixed home after lost reply and restart | `rpc::canonical_teammate_sends_retain_one_scoped_delivery_on_its_fixed_home_after_lost_reply_and_restart` | 25 -> 26 |  |
+| canonical setup creation retains one restricted task and creation receipt after lost response and restart | `rpc::canonical_setup_creation_retains_one_restricted_task_and_creation_receipt_after_lost_response_and_restart` | 18 -> 17 |  |
+| canonical caller interruption retains one notice and fences remote deliveries after lost result and restart | `rpc::canonical_caller_interruption_retains_one_notice_and_fences_remote_deliveries_after_lost_result_and_restart` | 17 -> 19 |  |
+| canonical profile edits recover exact result without replacing later edits or current task instructions | `rpc::canonical_profile_edits_recover_exact_result_without_replacing_later_edits_or_current_task_instructions` | 13 -> 19 |  |
+| canonical provider settings use home binding metadata and recover saved result after lost reply | `rpc::canonical_provider_settings_use_home_binding_metadata_and_recover_saved_result_after_lost_reply` | 8 -> 7 | Failed on product bug P7 (fixed). #87 dropped `agents.provider_account` and `agents.backup_model`: the test re-adds the legacy column before seeding it (as the routine-reads case adds `secret`), and expects `backupModel: ""` instead of the creation value `"backup"`. |
+| canonical routine reads and edits isolate project configuration and recover original flow after lost reply | `rpc::canonical_routine_reads_and_edits_isolate_project_configuration_and_recover_original_flow_after_lost_reply` | 17 -> 20 |  |
+| canonical routine webhook admits once offline and recovers lost response restart edits and rotation | `webhooks::canonical_routine_webhook_admits_once_offline_and_recovers_lost_response_restart_edits_and_rotation` | 47 -> 49 |  |
+| canonical routine webhook conceals missing and inactive targets until signature verification | `webhooks::canonical_routine_webhook_conceals_missing_and_inactive_targets_until_signature_verification` | 13 -> 39 |  |
+| canonical routine webhook performs one keyring read for configured and missing targets | `webhooks::canonical_routine_webhook_performs_one_keyring_read_for_configured_and_missing_targets` | 8 -> 8 |  |
+| canonical routine webhook rejects invalid deliveries and records ignored receipts across filter changes | `webhooks::canonical_routine_webhook_rejects_invalid_deliveries_and_records_ignored_receipts_across_filter_changes` | 22 -> 22 |  |
+| canonical routine webhook settings require current owner while assigned collaborator can edit | `webhooks::canonical_routine_webhook_settings_require_current_owner_while_assigned_collaborator_can_edit` | 15 -> 15 |  |
+| canonical routine webhook keyring and DB failures leave no active reference or partial admission and exclude secrets | `webhooks::canonical_routine_webhook_keyring_and_db_failures_leave_no_active_reference_or_partial_admission_and_exclude_secrets` | 23 -> 23 |  |
+
+### `app/github-updates.test.ts` (1 test and 2 loops, 14 runtime cases, 14 Rust tests, file deleted)
+
+The machine under test runs the real `minarbot-launcher`
+(`launcher_process::LauncherProcess`, stopped with SIGTERM) on a current
+release whose server is a wrapper around `minarbot-server --test-config`;
+targets are the launcher's native contract fixture. The fake GitHub origin
+and its CDN are `relay::Relay`s serving an ed25519-signed manifest (`ring`).
+Counts include the shared `waitForTrial`/`trial` checks and the CDN path
+check of `github`/`Publisher`; `api` status checks are not counted on either
+side. `rust-test-launcher.ts` and `test-support/native-release-fixture.ts`
+had no other user and are deleted with the suite. The launcher binary must
+be built (`cargo build -p minarbot-launcher`, or `MINARBOT_LAUNCHER_BINARY`).
+
+| Node case | Rust test (`pr_github::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| signed GitHub release resumes through the CDN and completes a real launcher trial | `signed_github_release_resumes_through_the_cdn_and_completes_a_real_launcher_trial` | 12 -> 12 | The CDN declares the full length, sends 64 bytes and cuts on a signal (`relay::cut_on`). |
+| GitHub signature fixture is rejected while current release keeps running | `github_signature_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub missing-signature fixture is rejected while current release keeps running | `github_missing_signature_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub unknown fixture is rejected while current release keeps running | `github_unknown_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub commit fixture is rejected while current release keeps running | `github_commit_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub version fixture is rejected while current release keeps running | `github_version_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at check. |
+| GitHub archive-commit fixture is rejected while current release keeps running | `github_archive_commit_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at apply. |
+| GitHub hash fixture is rejected while current release keeps running | `github_hash_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at apply. |
+| GitHub truncated fixture is rejected while current release keeps running | `github_truncated_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at apply. |
+| GitHub redirect fixture is rejected while current release keeps running | `github_redirect_fixture_is_rejected_while_current_release_keeps_running` | 9 -> 9 | Loop iteration; shared helper `github_fault_rejected`. Rejected at apply. |
+| GitHub peer fan-out uses direct transfer policy | `github_peer_fan_out_uses_direct_transfer_policy` | 19 -> 19 | Loop iteration; shared helper `github_peer_fan_out`. |
+| GitHub peer fan-out uses late-reply transfer policy | `github_peer_fan_out_uses_late_reply_transfer_policy` | 19 -> 19 | Loop iteration; shared helper `github_peer_fan_out`. |
+| GitHub peer fan-out uses fallback transfer policy | `github_peer_fan_out_uses_fallback_transfer_policy` | 19 -> 19 | Loop iteration; shared helper `github_peer_fan_out`. |
+| GitHub peer fan-out uses invalid transfer policy | `github_peer_fan_out_uses_invalid_transfer_policy` | 19 -> 19 | Loop iteration; shared helper `github_peer_fan_out`. |
+
+### Product bugs fixed in the peers slice
+
+| Bug | Symptom | Cause and fix |
+| --- | --- | --- |
+| P1 | Every harness agent's `delegate_task` over MCP answered 400 "Invalid delegation request". | `mcp/server.rs` added `requestId` and `turn` to session `delegate_task` arguments (aa2feb0), and the native handler (`turns/messaging.rs`) rejects unknown fields. Only the feature tool reads `turn`, so it is now added only when the declaration is not native. |
+| P2 | Agents no longer saw their teammates ("Messaging other agents") in the system prompt, so remote roles never reached the team prompt. | `messaging::awareness` lost its only caller when a8cfcac removed the API runtime. `turns/execution.rs` appends it again under the same conditions (not a profile setup turn, messaging allowed). |
+| P3 | A harness agent that called `wait_task` stayed paused forever. | The native `wait_task` path (`turns/harness.rs`, 93410e8) paused the turn without registering a `delegation_waits` row, so `messaging::settle` never stored the result or resumed the turn. It now registers the wait (and returns at once when the task already finished). |
+| P4 | A peer update whose permission the receiver's owner revoked mid-transfer was still installed when the owner allowed updates again before the transfer ended, although the sender had reported it failed. | The receiver checked permission only at the end of the download. `updates/peers.rs` now counts revocations per machine (`computer/machines.rs` records each one); an apply that saw one never publishes or applies its release. |
+| P5 | Every message to a Section of a project without folders failed with 503 "Coding runtime requires a workspace for this conversation." | #87 made every turn a harness turn, and harness turns need a working directory; `turns/tools.rs` returned none for folderless projects. Such projects now get an empty, read-only managed folder (`data/agent_folders.rs` `ensure_project`). |
+| P7 | Every hosted agent's `read_provider_settings` reported `configured: false` and no provider account, although its home provider binding was ready and tasks ran on it. | a8cfcac (#87) switched the canonical tool (`tasks/mutations.rs`) to the local `agents.provider_instance`, which canonical agents never set. It reads the home binding again (`providerAccount`, `configured`, `binding_stale`). `backupModel` stays `""`, because #87 removed fallback models. |
+
+### `app/updates.test.ts` (6 runtime cases, 6 Rust tests, file deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | --- | --- |
+| release builder publishes verified immutable files before feed metadata and refuses dirty trees | `crates/xtask/src/release_port.rs` `release_builder_publishes_verified_immutable_files_before_feed_metadata_and_refuses_dirty_trees` | 12 -> 12 | Calls `release::fixture_build`, which the Node `app_fixture` runner wrapped. |
+| release lint failure stops build, tests and packaging; successful gates run in order | `release_port::release_lint_failure_stops_build_tests_and_packaging_successful_gates_run_in_order` | 6 -> 6 | The gates still run package scripts through `npm`, as the product does; the fixture scripts are shell commands instead of `node -e`. |
+| desktop build follows dirty guard and packages release version without changing tracked desktop version | `release_port::desktop_build_follows_dirty_guard_and_packages_release_version_without_changing_tracked_desktop_version` | 5 -> 5 | Calls `release::command`. The product runs `node desktop/scripts/build.mjs`, so the fixture keeps that script. |
+| peer fan-out needs both owners, grants no default update scope, streams verified release and keeps tokens secret | `pr_updates::peer_fan_out_needs_both_owners_grants_no_default_update_scope_streams_verified_release_and_keeps_tokens_secret` | 20 -> 20 | The release is published with `release_fixture::publish` instead of the xtask runner. Tokens come from bridge traffic and from decrypting both databases, as in Node. |
+| peer SHA-256 mismatch rejects download before publication | `crates/minarbot-server/src/updates/tests/peer_sha_mismatch.rs` `peer_sha256_mismatch_rejects_download_before_publication` | 2 -> 2 | Node exercised a TypeScript stand-in (`app/rust-update-test.ts`); the Rust test drives the server's own `archive::receive`. |
+| Rust trial gates owner work until matching private socket commit | `pr_updates::rust_trial_gates_owner_work_until_matching_private_socket_commit` | 0 -> 5 | Node checked statuses inside `api()`; the Rust test states each one. |
+| real release build, HTTP update, broken trial rollback and intact workspace | Not ported | - | Opt-in (`MINARBOT_UPDATE_IT=1`), not a default runtime case. It patches `app/server.ts`, which the Rust server replaced, so it could no longer run. The native trial and rollback flow is covered by `crates/minarbot-launcher/tests/launcher.rs` (`native_trial_commits_and_restores_feature_data`, `exited_candidate_rolls_back`). |
+
+### `app/fanout-older-peer.test.ts` (1 case, 1 Rust test, file deleted)
+
+| Node case | Rust test (`pr_fanout::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| fan-out serves one verified executable archive to a peer without apply polling and waits beyond its former apply deadline | `fan_out_serves_one_verified_executable_archive_to_a_peer_without_apply_polling_and_waits_beyond_its_former_apply_deadline` | 16 -> 16 | A `relay::Relay` bound to the peer's paired port hides the apply-polling capability, holds the apply reply for 125 s and can replace its body. The slow call uses its own 170 s client budget. |
+
+### `app/peer-release-transfer.test.ts` (5 default cases plus 2 opt-in, 6 Rust tests, file deleted)
+
+As in Node, these servers run without a computer bridge. A `relay::Relay`
+bound to the sender's paired port shapes each release download; another can
+lose the receiver's apply reply.
+
+| Node case | Rust test (`pr_peer_transfer::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| peer fan-out follows receiver progress beyond the apply request deadline | `peer_fan_out_follows_receiver_progress_beyond_the_apply_request_deadline` | 8 -> 8 | Default 1 s deadline and 90 KB payload (the `MINARBOT_PEER_CONTROL` slow values were opt-in). |
+| peer fan-out succeeds while the receiver still lists the restarted sender as offline | `peer_fan_out_succeeds_while_the_receiver_still_lists_the_restarted_sender_as_offline` | 2 -> 2 | |
+| peer fan-out resumes dropped downloads, including after receiver restart | `peer_fan_out_resumes_dropped_downloads_including_after_receiver_restart` | 21 -> 21 | |
+| peer fan-out reports receiver restart and can resume its retained partial | `peer_fan_out_reports_receiver_restart_and_can_resume_its_retained_partial` | 8 -> 8 | |
+| peer fan-out reports timeout, integrity, size, permission, and launcher failures | `peer_fan_out_reports_timeout_integrity_size_permission_and_launcher_failures` | 7 -> 7 | Intermittently failed on product bug P4 (fixed). |
+| 25 KB/s control keeps fan-out open beyond 60 seconds | `kb_per_second_25_control_keeps_fan_out_open_beyond_60_seconds` | 3 -> 3 | Opt-in in Node (`MINARBOT_PEER_CONTROL=1`); runs every time in Rust (about 65 s). |
+| 20.8 MB peer archive reaches launcher at N KB/s | Not ported | 5 -> - | A loop over `MINARBOT_PEER_TEST_RATES`, which is empty by default, so it produced no runtime case. It is a manual throughput benchmark (about 12 minutes at 30 KB/s), not a contract. |
+
+### Open product gaps (Node case kept)
+
+| Gap | Kept Node case | Detail |
+| --- | --- | --- |
+| P6 | `app/hub-link.test.ts` "local provider spend ceiling refuses next request before dispatch" | `harness/store.rs` reserves the hub provider budget (`before_effect(... "provider")`) once per harness pass. A CLI harness makes several model calls inside one pass (here: the call after an approved tool), so a grant with room for one paid request still makes two. The turn then fails on `spend_limit` at the next pass. Enforcing a per-request ceiling under native harnesses needs a design decision (count MCP tool steps, or refuse multi-step passes for capped grants). |

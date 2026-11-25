@@ -183,6 +183,11 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 system.push_str(&format!("\n\n{instructions}"));
             }
         }
+        // Teammate awareness, as the removed API runtime appended it (a8cfcac).
+        if !super::profile::setup(db, &turn)? && super::messaging::allowed(db, id)? {
+            system.push_str("\n\n");
+            system.push_str(&super::messaging::awareness(db, &turn)?);
+        }
         let mut messages = vec![json!({"role":"system","content":system})];
         if let Some(summary) = &compacted {
             messages.push(json!({"role":"system","content":format!("Earlier conversation summary (reference data, may be incomplete; verify originals using read_history/read_message). Covers through execution position {}. Recent messages begin at transcript sequence {}; any gap is available through history tools.\n{}",summary["through"],turn["seq"],string(summary,"summary"))}));

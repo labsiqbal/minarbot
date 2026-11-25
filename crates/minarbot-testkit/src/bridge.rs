@@ -54,6 +54,10 @@ impl BridgeError {
 }
 
 type Operations = dyn Fn(&str, &Value) -> Result<Value, BridgeError> + Send + Sync;
+/// Async `{operation, args}` handler (peer HTTP and hub transports await I/O).
+pub type AsyncOperations = dyn Fn(String, Value) -> futures_util::future::BoxFuture<'static, Result<Value, BridgeError>>
+    + Send
+    + Sync;
 type Pdf = dyn Fn(&[u8]) -> Option<(u16, String)> + Send + Sync;
 /// Future of an asynchronous PDF fault handler.
 pub type PdfFuture =
@@ -233,6 +237,11 @@ impl Bridge {
         handler: impl Fn(String, Value) -> OperationFuture + Send + Sync + 'static,
     ) -> Result<Self> {
         Self::start(Kind::OperationsAsync(Arc::new(handler))).await
+    }
+
+    /// Async `{operation, args}` bridge from a shared handler.
+    pub async fn operations_async_shared(handler: Arc<AsyncOperations>) -> Result<Self> {
+        Self::start(Kind::OperationsAsync(handler)).await
     }
 
     /// `POST /<operation>` bridge (the canonical bridge).

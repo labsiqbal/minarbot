@@ -21,7 +21,7 @@
         "crates/minarbot-launcher/src/lib.rs"
       ],
       "adaptation": "Preserve private config, durable acceptance, immutable snapshots, trial selection, health deadline, rollback, restart recovery and Node IPC activation; add native server selection and Linux parent-death supervision. Share release integrity with Rust server; native trials activate through private launcher socket after durable commit.",
-      "compatibilityCheck": "cargo test -p minarbot-launcher --test launcher && node --experimental-strip-types --test app/updates.test.ts"
+      "compatibilityCheck": "cargo test -p minarbot-launcher --test launcher && cargo test -p minarbot-e2e -- pr_updates::"
     }
   ],
   "minarbotSourceRevision": "9a78457c",

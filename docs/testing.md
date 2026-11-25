@@ -12,17 +12,17 @@ New integration tests use `crates/minarbot-testkit`. Do not add
 
 ## Build and run
 
-The e2e tests start `target/<profile>/minarbot-server` and the kit's fake
-peer binaries, so build both first. On shared hosts, run everything through
-the slot script:
+The e2e tests start `target/<profile>/minarbot-server`, the kit's fake peer
+binaries and, for the GitHub update cases, `minarbot-launcher`, so build them
+first. On shared hosts, run everything through the slot script:
 
 ```sh
-~/.cache/minarbot-cargo-slot.sh cargo build -p minarbot-server -p minarbot-testkit
+~/.cache/minarbot-cargo-slot.sh cargo build -p minarbot-server -p minarbot-testkit -p minarbot-launcher
 ~/.cache/minarbot-cargo-slot.sh cargo test -p minarbot-testkit -p minarbot-e2e
 ```
 
-`MINARBOT_SERVER_BINARY` overrides the server path, and `MINARBOT_FAKE_BIN_DIR`
-the fake peer directory. One test process runs at most two servers at a time
+`MINARBOT_SERVER_BINARY` overrides the server path, `MINARBOT_LAUNCHER_BINARY`
+the launcher path, and `MINARBOT_FAKE_BIN_DIR` the fake peer directory. One test process runs at most two servers at a time
 (`MINARBOT_TEST_SERVERS` overrides this), so waits stay meaningful on a loaded
 host. `crates/minarbot-e2e/tests/e2e/main.rs` is the only test binary, with
 one module per area.

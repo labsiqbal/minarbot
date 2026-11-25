@@ -309,7 +309,11 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
         && args["agent"].is_string()
     {
         args["requestId"] = json!(uuid::Uuid::new_v4().to_string());
-        args["turn"] = caller["turn"].clone();
+        // The native tool takes its turn from the session and rejects unknown
+        // fields; only the feature tool reads `turn` from its arguments.
+        if decl["native"] != true {
+            args["turn"] = caller["turn"].clone();
+        }
     }
     if caller["kind"] == "session" && caller["agent"] == super::guide::ID {
         let turn = {

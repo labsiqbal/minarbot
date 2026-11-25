@@ -15,6 +15,9 @@ mod leptos;
 #[cfg(unix)]
 mod release;
 
+#[cfg(all(unix, test))]
+mod release_port;
+
 #[cfg(unix)]
 mod served;
 
