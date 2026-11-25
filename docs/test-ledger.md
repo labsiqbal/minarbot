@@ -385,6 +385,16 @@ One parent case with 34 subtests; each subtest is its own Rust test against the 
 | default harness setup saves its profile through MCP and cannot use unrelated tools (claude) | `sb_harness_default::default_harness_setup_saves_its_profile_through_mcp_and_cannot_use_unrelated_tools_claude` | 6 -> 6 | Full. |
 | new agents fall back to the API runtime when Codex is not installed | `sb_harness_default::new_agents_fall_back_to_the_api_runtime_when_codex_is_not_installed` | 2 -> 3 | `runtime: api` left with #87: the agent stays unbound and not runnable. |
 
+### `app/project-integrations.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| Rust project environment validates names and UTF-8 byte bounds | `sb_project_integrations::rust_project_environment_validates_names_and_utf_8_byte_bounds` | 3 -> 4 | Full. |
+| project environment settings and removal preserve consent, replay and stale-write fences | `sb_project_integrations::project_environment_settings_and_removal_preserve_consent_replay_and_stale_write_fences` | 11 -> 11 | Full. |
+| codex: project environment encryption, harness shell, routine and direct-chat isolation | `sb_project_integrations::codex_project_environment_encryption_harness_shell_routine_and_direct_chat_isolation` | 24 -> 22 (shared `environment_isolation`) | The fake's `ENV_PRESENT`/`ENV_ABSENT` keywords replace the Node fixture patch. A harness reply joins its agent messages, so the reply ends with `finished` and carries the redacted shell output (the Node `reply === 'finished'` was never reached against Rust). |
+| claude: project environment encryption, harness shell, routine and direct-chat isolation | `sb_project_integrations::claude_project_environment_encryption_harness_shell_routine_and_direct_chat_isolation` | 24 -> 22 | As above. |
+| project apps and MCP: separate OAuth identities, offered tools, approvals, restart and cleanup | `sb_project_integrations::project_apps_and_mcp_separate_oauth_identities_offered_tools_approvals_restart_and_cleanup` | 39 -> 48 | Composio and the MCP server are `HttpStub`s; the catalog check uses the instance catalog (`/api/models` left with #87). Projects get a folder because harness turns need a workspace. A foreign project's MCP call is refused as an MCP error (Node: failed turn). |
+
 <!-- stale-b files -->
 
 ## #67 hosted Hub test migration

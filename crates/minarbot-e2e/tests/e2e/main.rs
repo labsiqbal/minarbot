@@ -19,6 +19,7 @@ mod sb_http;
 mod sb_mcp_context;
 mod sb_memory;
 mod sb_profile;
+mod sb_project_integrations;
 mod sb_provider;
 mod sb_provider_accounts;
 mod sb_provider_matrix;
