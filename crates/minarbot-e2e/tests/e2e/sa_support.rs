@@ -1,0 +1,230 @@
+//! Helpers shared by the `sa_*` modules (ports of the stale-a Node suites).
+
+use minarbot_testkit::{model::ModelRequest, prelude::*, Server};
+
+/// String field `name` of `value`, or an error naming the field.
+pub fn text(value: &Value, name: &str) -> Result<String> {
+    value[name]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| format!("missing string {name} in {value}").into())
+}
+
+/// `id` of a created row.
+pub fn id(value: &Value) -> Result<String> {
+    text(value, "id")
+}
+
+/// Number of entries in `value[name]` (0 when it is not an array).
+pub fn count(value: &Value, name: &str) -> usize {
+    value[name].as_array().map_or(0, Vec::len)
+}
+
+/// Create an agent bound to the gateway peer (`runtime: "api"`, test mode).
+pub async fn api_agent(app: &Server, name: &str) -> Result<Value> {
+    app.post_expect(
+        "/api/agents",
+        json!({"runtime": "api", "id": new_id(), "name": name, "model": "fixture",
+            "instructions": "Help"}),
+        201,
+    )
+    .await
+}
+
+/// Channel `name` led by `lead` with `members`.
+pub async fn channel(app: &Server, name: &str, lead: &str, members: &[&str]) -> Result<Value> {
+    app.post_expect(
+        "/api/channels",
+        json!({"id": new_id(), "name": name, "instructions": "Help", "lead": lead,
+            "members": members}),
+        201,
+    )
+    .await
+}
+
+/// Side thread of `agent`.
+pub async fn side_thread(app: &Server, agent: &str, name: &str) -> Result<Value> {
+    app.post(
+        &format!("/api/agents/{agent}/threads"),
+        json!({"id": new_id(), "name": name}),
+    )
+    .await
+}
+
+/// Wait until turn `turn` in `path` is `done`/`failed`/`cancelled` and no room
+/// turn rooted at it is still queued or running; returns the turn row.
+pub async fn settle(app: &Server, path: &str, turn: &str) -> Result<Value> {
+    let rows = app
+        .wait_get(path, |rows| {
+            let Some(rows) = rows.as_array() else {
+                return false;
+            };
+            let finished = rows.iter().any(|row| {
+                row["id"] == turn
+                    && ["done", "failed", "cancelled"]
+                        .contains(&row["status"].as_str().unwrap_or(""))
+            });
+            finished
+                && !rows.iter().any(|row| {
+                    row["room"]["root"] == turn
+                        && ["queued", "running"].contains(&row["status"].as_str().unwrap_or(""))
+                })
+        })
+        .await?;
+    rows.as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == turn))
+        .cloned()
+        .ok_or_else(|| format!("turn {turn} missing from {path}").into())
+}
+
+/// JSON content of the last `tool` message of a model request.
+pub fn last_tool_result(request: &ModelRequest) -> Option<Value> {
+    request
+        .tool_results()
+        .last()
+        .and_then(|message| message["content"].as_str())
+        .and_then(|content| serde_json::from_str(content).ok())
+}
+
+/// Whether `request` offers a tool called `name`.
+pub fn offers(request: &ModelRequest, name: &str) -> bool {
+    request.tool_names().iter().any(|tool| tool == name)
+}
+
+/// State of a [`tool_loop`] model: the first step of every turn calls `tool`
+/// with `args`; the step after the tool result records it and answers `done`
+/// (or holds when `hold` is set).
+#[derive(Debug, Default)]
+pub struct ToolLoop {
+    pub call_id: String,
+    pub tool: String,
+    pub args: Value,
+    pub done: String,
+    pub hold: bool,
+    pub held: bool,
+    /// Last tool result the model saw.
+    pub result: Value,
+    /// System context of the last first step.
+    pub initial: String,
+    /// Requests that did not offer `tool` (the Node provider asserted it).
+    pub missing: usize,
+}
+
+pub type Shared<T> = std::sync::Arc<std::sync::Mutex<T>>;
+
+/// Lock `shared`, mapping poisoning to an error.
+pub fn lock<T>(shared: &Shared<T>) -> Result<std::sync::MutexGuard<'_, T>> {
+    shared.lock().map_err(|_| "test state poisoned".into())
+}
+
+/// Script `model` as a [`ToolLoop`].
+pub fn tool_loop(
+    model: &minarbot_testkit::model::ScriptedModel,
+    call_id: &str,
+    tool: &str,
+    args: Value,
+    done: &str,
+) -> Shared<ToolLoop> {
+    use minarbot_testkit::model::Reply;
+    let state = std::sync::Arc::new(std::sync::Mutex::new(ToolLoop {
+        call_id: call_id.into(),
+        tool: tool.into(),
+        args,
+        done: done.into(),
+        ..ToolLoop::default()
+    }));
+    let shared = state.clone();
+    model.respond(move |request| {
+        let Ok(mut state) = shared.lock() else {
+            return Reply::status(500, json!({"error": "poisoned"}));
+        };
+        if !offers(request, &state.tool) {
+            state.missing += 1;
+        }
+        if after_tool(request) {
+            state.result = last_tool_result(request).unwrap_or(Value::Null);
+            if state.hold {
+                state.held = true;
+                return Reply::hold();
+            }
+            return Reply::text(state.done.clone());
+        }
+        state.initial = request.system();
+        Reply::tool_call(&state.call_id, &state.tool, state.args.clone())
+    });
+    state
+}
+
+/// Whether the last message of `request` is a tool result (the step after a
+/// tool call), as opposed to the first step of a turn.
+pub fn after_tool(request: &ModelRequest) -> bool {
+    request
+        .messages()
+        .last()
+        .is_some_and(|message| message["role"] == "tool")
+}
+
+/// Tool messages of the current turn: those after the last user message.
+pub fn turn_tool_results(request: &ModelRequest) -> Vec<Value> {
+    let messages = request.messages();
+    let start = messages
+        .iter()
+        .rposition(|message| message["role"] == "user")
+        .map_or(0, |index| index + 1);
+    messages[start..]
+        .iter()
+        .filter(|message| message["role"] == "tool")
+        .cloned()
+        .collect()
+}
+
+/// JSON content of a tool message.
+pub fn tool_json(message: &Value) -> Value {
+    message["content"]
+        .as_str()
+        .and_then(|content| serde_json::from_str(content).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// Raw request with exactly `headers` (no implicit Origin).
+pub async fn raw(
+    app: &Server,
+    method: minarbot_testkit::http::Method,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> Result<u16> {
+    let mut request = app.client()?.request(method, app.url(path));
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    Ok(request.send().await?.status().as_u16())
+}
+
+/// Hashed Leptos startup asset of [`web_dist`].
+pub const DIST_SCRIPT: &str = "/_leptos/assets/app.0123456789abcdef.js";
+/// Hashed icon of [`web_dist`].
+pub const DIST_ICON: &str = "/_leptos/assets/icon.fedcba9876543210.svg";
+/// Bytes of [`DIST_SCRIPT`]; not valid UTF-8, so a re-encoding server fails.
+pub const DIST_SCRIPT_BYTES: &[u8] = b"export const fixture = 1;\n\xff\x00";
+
+/// Minimal packaged web build (`dist` option): the documents the server
+/// requires plus one hashed script and icon, so static serving is tested
+/// without building the Leptos client.
+pub fn web_dist(root: &minarbot_testkit::TestRoot) -> Result<std::path::PathBuf> {
+    let dist = root.dir("dist")?;
+    let assets = root.dir("dist/_leptos/assets")?;
+    let page = format!(
+        "<!doctype html><html><head><title>__SETTINGS_TITLE__</title>\
+         <link rel=\"icon\" href=\"{DIST_ICON}\"><script type=\"module\" src=\"{DIST_SCRIPT}\"></script>\
+         </head><body></body></html>"
+    );
+    for document in ["appearance.html", "workflows.html", "conversation.html"] {
+        std::fs::write(dist.join("_leptos").join(document), &page)?;
+    }
+    std::fs::write(assets.join("app.0123456789abcdef.js"), DIST_SCRIPT_BYTES)?;
+    std::fs::write(
+        assets.join("icon.fedcba9876543210.svg"),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+    )?;
+    Ok(dist)
+}

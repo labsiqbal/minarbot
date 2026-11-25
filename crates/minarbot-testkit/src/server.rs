@@ -89,6 +89,19 @@ pub const SUPPORTED_OPTIONS: &[&str] = &[
     "maxTokens",
 ];
 
+/// `hubLink` fields `app/rust-test-server.ts` accepted.
+pub const HUB_LINK_OPTIONS: &[&str] = &[
+    "origin",
+    "hubSigningPublicKey",
+    "development",
+    "entry",
+    "fetch",
+    "webSocket",
+    "receive",
+    "reconnectMs",
+    "now",
+];
+
 /// OpenAI-compatible endpoint that the Codex gateway peer (`fake-gateway`)
 /// calls for every model step. `ServerConfig::gateway` mirrors the Node
 /// bridge: it sets the top-level `baseURL` family of options, seeds
@@ -335,6 +348,13 @@ impl ServerConfig {
         for name in self.options.keys() {
             if !SUPPORTED_OPTIONS.contains(&name.as_str()) {
                 return Err(format!("not ported: option {name}").into());
+            }
+        }
+        if let Some(Value::Object(hub)) = self.options.get("hubLink") {
+            for name in hub.keys() {
+                if !HUB_LINK_OPTIONS.contains(&name.as_str()) {
+                    return Err(format!("not ported: option hubLink.{name}").into());
+                }
             }
         }
         let mut options = self.options.clone();

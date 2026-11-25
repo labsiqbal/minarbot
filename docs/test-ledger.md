@@ -105,6 +105,114 @@ the bug is fixed.
 
 No product hook was added; `crates/minarbot-server/src` is unchanged.
 
+<!-- stale-a start -->
+## #89 stale-a slice
+
+The Node suites below failed after #87 removed the direct API runtime. Each
+runtime case is now one Rust test in `crates/minarbot-e2e/tests/e2e/sa_*.rs`
+(`sa_` = stale-a), or a server unit test where noted. Agents use
+`runtime: "api"` in test mode, which binds them to the kit's `fake-gateway`
+Codex instance, so every model step is a harness turn against the
+`ScriptedModel`.
+
+Assertion counts are static call sites: Node `assert*(` calls in the case
+body, Rust `ensure!`, `*_expect(` and `wait_status(` calls plus calls of
+module helpers that assert (named per file). A Node assertion inside a loop
+counts once, as does its Rust port.
+
+Recurring #87 differences, stated once and referenced per row:
+
+- **H1 (harness tool errors).** A harness gets an MCP error for a tool it is
+  not offered, a refused call or a storage failure and decides itself how to
+  continue. The API runtime failed the turn instead. Tests assert the exact
+  MCP error the model saw, that the tool was not offered and that the call
+  had no effect, and that the turn finishes.
+- **H2 (done check).** After a turn creates a deliverable, the server sends one
+  "One verification reminder" user message in the same turn. Scripted models
+  answer it with text.
+- **H3 (peer files).** `fake-gateway` keeps `fake-gateway-log.jsonl` and
+  `.fake-gateway-<thread>.json` in its working directory, which is the agent
+  workspace. Workspace listings ignore exactly these names.
+- **L1 (user-selected notes).** 89b7f4e (#87, on the base) makes a note the user
+  selected read-only to agents (409 "Memory note was selected by the user").
+  Agent edits of such notes now assert that 409; revisions that followed
+  them shift down by one.
+- **W1 (channel workspaces).** 7098b86 (#87) gives a channel without a project
+  its lead agent's workspace, so workspace and Git tools are offered there.
+
+Kit additions: `minarbot_testkit::gate::ModelGate` (new file `gate.rs`) holds
+one scripted reply so a test can act between "the model chose a tool" and
+"the server ran it", which the Node providers did by awaiting before they
+answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
+(`not ported: option hubLink.<name>`), as the Node bridge did.
+
+| Node file | Node runtime cases | Rust tests | Dropped | Kept in Node |
+| --- | ---: | ---: | ---: | ---: |
+| `app/memory.test.ts` | 2 | 2 | 0 | 1 (TS module part) |
+| `app/memory-selection.test.ts` | 1 | 1 | 0 | 1 (TS module part) |
+| `app/memory-tools.test.ts` | 2 | 2 | 0 | 0 |
+| `app/shared-data.test.ts` | 1 | 1 | 0 | 0 |
+| `app/rust-file-output-panel.test.ts` | 1 | 1 | 0 | 0 |
+| `app/rust-core.test.ts` | 2 | 2 | 0 | 0 |
+| `app/rust-workspace-git-http.test.ts` | 2 | 2 | 0 | 0 |
+| `app/routines.test.ts` | 4 | 4 | 0 | 0 |
+
+### `app/memory.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| memory CRUD, exact retry, isolated provider search and bounded context survive restart | `sa_memory::memory_crud_exact_retry_isolated_provider_search_and_bounded_context_survive_restart` | 33 -> 34 | The six `memoryCommand` rejections are also asserted as server 400s. The `memoryDraft`/`memoryCommand` assertions stay in the trimmed Node case (TS module `app/src/memory-command.ts`). |
+| Rust memory permits edits at capacity and rolls back edits over the context budget | `sa_memory::rust_memory_permits_edits_at_capacity_and_rolls_back_edits_over_the_context_budget` | 7 -> 15 | Full. |
+
+### `app/memory-selection.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| automatic memory selection is atomic, user-protected, scoped and durable across resume | `sa_memory_selection::automatic_memory_selection_is_atomic_user_protected_scoped_and_durable_across_resume` | 30 -> 23 (+5 kept) | The provider's "`select_memory` offered" assertion is counted per request. `memoryCommand({automatic: 'yes'})` is also asserted as a server 400; the other `memoryDraft`/`memoryCommand` assertions stay in the trimmed Node case (TS module). |
+
+### `app/memory-tools.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| agent memory writes preserve scope, user selection, atomic errors and resume receipts | `sa_memory_tools::agent_memory_writes_preserve_scope_user_selection_atomic_errors_and_resume_receipts` | 32 -> 32 | L1: "Agent updated" and "Side update" assert 409. The context-budget note is saved with `automatic: true` so the agent edit still reaches the 413 check. `ModelGate` replaces the provider's `beforeWrite` await. H1: the journal fault is a 500 tool error and the write rolls back. |
+| memory and artifact order survives repeated delegation when parent continues | `sa_memory_tools::memory_and_artifact_order_survives_repeated_delegation_when_parent_continues` | 5 -> 3 | Full (the Node count includes the provider's own checks). |
+
+### `app/shared-data.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Rust shared SQL keeps schema ownership, host restrictions and bounded results | `sa_shared_data::rust_shared_sql_keeps_schema_ownership_host_restrictions_and_bounded_results` | 27 -> 38 (counting `Sql::ok`/`ok_with`/`rejects`) | The runaway-query bound (5 s) is measured beyond an ordinary harness turn, measured right before it. |
+
+### `app/rust-file-output-panel.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| conversation output updates, panel requests and owner deletion preserve reference identity | `sa_file_output_panel::conversation_output_updates_panel_requests_and_owner_deletion_preserve_reference_identity` | 35 -> 30 | Full; the provider's two checks are collected and asserted at the end. H2. |
+
+### `app/rust-core.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| core serves exact static bytes, strict asset CSP, HTML 404 and local boundary errors | `sa_core::core_serves_exact_static_bytes_strict_asset_csp_html_404_and_local_boundary_errors` | 12 -> 12 | Serves a minimal packaged build (`sa_support::web_dist`) instead of `app/dist`, so no web build is needed. |
+| Rust test bridge rejects unported options before starting a process | `sa_core::rust_test_bridge_rejects_unported_options_before_starting_a_process` | 4 -> 4 | `NaN` and `Infinity` are sent as `"NaN"` and `1e300`. |
+
+### `app/rust-workspace-git-http.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Git log returns last 50 commits and no more | `sa_workspace_git::git_log_returns_last_50_commits_and_no_more` | 4 -> 5 | Full. |
+| HTTP Git reads/tools/checkpoints use workspace gating and reject foreign requests, restart and restore through API | `sa_workspace_git::http_git_reads_tools_checkpoints_use_workspace_gating_and_reject_foreign_requests_restart_and_restore_through_api` | 22 -> 25 | H1: the read-only `git_commit` call gets MCP 403 and no commit appears. W1: the channel turn now runs `git_status`. H3. |
+
+### `app/routines.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| manual routine runs keep schedule, deduplicate across restart and enforce revision and overlap | `sa_routines::manual_routine_runs_keep_schedule_deduplicate_across_restart_and_enforce_revision_and_overlap` | 36 -> 58 | H1: a direct `report_failure` is refused over MCP and records no outcome (the Node case expected a failed turn). Dropped: the 503 for a new run after restarting without `baseURL`; #87 removed the global provider and the agent's instance persists. |
+| routine occurrences persist once and isolate each run from main history | `sa_routines::routine_occurrences_persist_once_and_isolate_each_run_from_main_history` | 38 -> 49 | Real clock (scheduling). Icon from `sa_support::web_dist`. H1: a direct `no_update` is refused over MCP. |
+| routine hub pages visible local owners, filters safely and never returns secrets | `sa_routines::routine_hub_pages_visible_local_owners_filters_safely_and_never_returns_secrets` | 22 -> 30 | Full. |
+| routine hub delete is revisioned and recoverable, retains runs, revokes webhook and prevents resurrection | `sa_routines::routine_hub_delete_is_revisioned_and_recoverable_retains_runs_revokes_webhook_and_prevents_resurrection` | 15 -> 22 | Full. |
+<!-- stale-a end -->
+
 ## #67 hosted Hub test migration
 
 The app test runner discovers Hub Link once and starts the Rust hosted listener.

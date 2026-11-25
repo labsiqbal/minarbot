@@ -23,6 +23,7 @@ pub mod cli;
 pub mod db;
 pub mod fake;
 pub mod fakes;
+pub mod gate;
 pub mod http;
 pub mod image;
 pub mod issuer;
