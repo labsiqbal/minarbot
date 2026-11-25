@@ -262,6 +262,25 @@ impl MachineBridge {
     }
 }
 
+/// Perform one `peer-http` operation like the bridge does, for an
+/// [`Extra`] hook that observes or fails a peer request after sending it.
+pub async fn peer_http_request(args: &Value) -> Result<Value> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    peer_http(&client, args).await
+}
+
+/// Body of a `peer-http` reply (base64 decoded) as JSON, `Null` otherwise.
+pub fn peer_http_json(reply: &Value) -> Value {
+    base64::engine::general_purpose::STANDARD
+        .decode(reply["body"].as_str().unwrap_or_default())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or(Value::Null)
+}
+
 async fn peer_http(client: &reqwest::Client, args: &Value) -> Result<Value> {
     let url = reqwest::Url::parse(args["url"].as_str().unwrap_or_default())?;
     if !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")) {

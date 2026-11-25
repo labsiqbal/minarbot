@@ -521,3 +521,35 @@ Node suites did. Multi-server tests reserve their server slots at once with
 | background health records a different peer version as online and never sends bearer to a changed identity or redirected descriptor | `background_health_records_a_different_peer_version_as_online_and_never_sends_bearer_to_a_changed_identity_or_redirected_descriptor` | 14 -> 15 | Adds a check that only one token was issued. |
 | lost reciprocal acknowledgement retries encrypted pending credentials after restart without minting another token | `lost_reciprocal_acknowledgement_retries_encrypted_pending_credentials_after_restart_without_minting_another_token` | 7 -> 7 | The Node in-handler `assert.equal(data.token, saved)` is a recorded mismatch flag. |
 | default wiring issues pairing tokens from the Minarbot MCP token registry and revokes them on unpair | `default_wiring_issues_pairing_tokens_from_the_minarbot_mcp_token_registry_and_revokes_them_on_unpair` | 12 -> 12 | |
+
+### `app/remote-agents.test.ts` (15 cases, 14 Rust tests, 2 Node cases kept)
+
+Both servers ask one `async_model::AsyncModel`, the Rust form of the Node
+fixture's async provider. The cases that patched `globalThis.fetch` hook the
+same peer requests with a `MachineBridge` extra operation.
+
+| Node case | Rust test (`pr_remote_agents::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| remote message recovery keeps exact target, ID and payload and rejects corrupt storage | Kept in Node | 6 -> - | Tests `app/src/remote-message-command.ts`. |
+| paired real MCP remote agents: message | `paired_real_mcp_remote_agents_message` | 12 -> 12 | Shared helper `paired_real_mcp_remote_agents`. |
+| paired real MCP remote agents: wait | `paired_real_mcp_remote_agents_wait` | 12 -> 12 | Failed on product bug P3 (fixed). |
+| paired real MCP remote agents: completion | `paired_real_mcp_remote_agents_completion` | 12 -> 12 | Failed on product bug P1 (fixed). |
+| paired real MCP remote agents: restart-a | `paired_real_mcp_remote_agents_restart_a` | 12 -> 12 | Failed on P1 (fixed). |
+| paired real MCP remote agents: restart-b | `paired_real_mcp_remote_agents_restart_b` | 12 -> 12 | Failed on P1 (fixed). |
+| remote cancel stops peer delivery, is peer-scoped, and unpaired addresses are unreachable | `remote_cancel_stops_peer_delivery_is_peer_scoped_and_unpaired_addresses_are_unreachable` | 1 -> 1 | Failed on P1 (fixed). |
+| kill switch rejects immediately and loop limits count peer and agent across requests | `kill_switch_rejects_immediately_and_loop_limits_count_peer_and_agent_across_requests` | 12 -> 12 | |
+| delegation depth travels across machines and stops ping-pong | `delegation_depth_travels_across_machines_and_stops_ping_pong` | 2 -> 2 | Failed on P1 (fixed). The count leaves out the extra model step after each paused `delegate_task {wait: true}` (B1); the strict `requests === 6` stays in Node. |
+| offline send remains explicitly uncertain across caller restart without replay | `offline_send_remains_explicitly_uncertain_across_caller_restart_without_replay` | 2 -> 2 | |
+| accepted remote send is never replayed: lost-ack | `accepted_remote_send_is_never_replayed_lost_ack` | 3 -> 3 | Shared helper `accepted_remote_send_is_never_replayed`. |
+| accepted remote send is never replayed: restart-sending | `accepted_remote_send_is_never_replayed_restart_sending` | 3 -> 3 | SIGTERM reaches A before the held acknowledgement fails, as in Node. |
+| peer tokens never enter database bytes, logs, or outbound message responses | `peer_tokens_never_enter_database_bytes_logs_or_outbound_message_responses` | 4 -> 4 | Tokens are captured from bridge `peer-http` traffic, as Node captured them from `fetch`. |
+| kill switch cancels an active peer turn before any more remote work is admitted | `kill_switch_cancels_an_active_peer_turn_before_any_more_remote_work_is_admitted` | 1 -> 1 | |
+| remote role reaches local discovery and team prompt through paired peer summaries | `remote_role_reaches_local_discovery_and_team_prompt_through_paired_peer_summaries` | 3 -> 3 | Failed on product bug P2 (fixed). |
+
+### Product bugs fixed in the peers slice
+
+| Bug | Symptom | Cause and fix |
+| --- | --- | --- |
+| P1 | Every harness agent's `delegate_task` over MCP answered 400 "Invalid delegation request". | `mcp/server.rs` added `requestId` and `turn` to session `delegate_task` arguments (aa2feb0), and the native handler (`turns/messaging.rs`) rejects unknown fields. Only the feature tool reads `turn`, so it is now added only when the declaration is not native. |
+| P2 | Agents no longer saw their teammates ("Messaging other agents") in the system prompt, so remote roles never reached the team prompt. | `messaging::awareness` lost its only caller when a8cfcac removed the API runtime. `turns/execution.rs` appends it again under the same conditions (not a profile setup turn, messaging allowed). |
+| P3 | A harness agent that called `wait_task` stayed paused forever. | The native `wait_task` path (`turns/harness.rs`, 93410e8) paused the turn without registering a `delegation_waits` row, so `messaging::settle` never stored the result or resumed the turn. It now registers the wait (and returns at once when the task already finished). |

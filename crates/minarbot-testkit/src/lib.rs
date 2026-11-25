@@ -17,6 +17,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod async_model;
 pub mod bridge;
 pub mod canonical;
 pub mod cli;
