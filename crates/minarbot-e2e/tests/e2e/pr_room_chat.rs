@@ -65,18 +65,6 @@ fn has_tool(body: &Value) -> bool {
         .is_some_and(|messages| messages.iter().any(|message| message["role"] == "tool"))
 }
 
-/// Product bug B1 (`docs/test-ledger.md`): a paused blocking tool returns
-/// `{"status": "waiting"}` at once and the harness takes one more step.
-fn after_pause(body: &Value) -> bool {
-    body["messages"]
-        .as_array()
-        .and_then(|messages| messages.last())
-        .filter(|message| message["role"] == "tool")
-        .and_then(|message| message["content"].as_str())
-        .and_then(|content| serde_json::from_str::<Value>(content).ok())
-        .is_some_and(|result| result["status"] == "waiting")
-}
-
 fn model(body: &Value) -> &str {
     body["model"].as_str().unwrap_or_default()
 }
@@ -1106,6 +1094,11 @@ async fn room_stop_cancels_fan_out_delegated_descendants_and_pending_addressed_g
                 gate.wait().await;
                 return text("Late child result");
             }
+            // B7: the steer restarts the child; hold that run until Stop.
+            if latest(&body) == "Pending guidance" {
+                gate.wait().await;
+                return text("Late guidance result");
+            }
             text("Other work finished")
         }
     });
@@ -1129,13 +1122,40 @@ async fn room_stop_cancels_fan_out_delegated_descendants_and_pending_addressed_g
             .find(|row| row["text"] == "Held child")
             .cloned()
             .ok_or("child missing")?;
-        f.post(
-            &path,
-            json!({"id": new_id(), "text": "Pending guidance", "recipient": child["agent"],
-                "targetTurn": child["id"], "dispatchMode": "steer"}),
-            202,
-        )
-        .await?;
+        // B7: a harness child cannot steer, so the guidance is a linked
+        // restart that cancels the child at once and runs in its place.
+        let guidance = new_id();
+        let steer = f
+            .post(
+                &path,
+                json!({"id": guidance, "text": "Pending guidance", "recipient": child["agent"],
+                    "targetTurn": child["id"], "dispatchMode": "steer"}),
+                202,
+            )
+            .await?;
+        ensure!(
+            steer["dispatch_mode"] == "restart" && steer["dispatch_target"] == child["id"],
+            "steer receipt: {steer}"
+        );
+        let running = guidance.clone();
+        let rows = f
+            .wait_for(&path, &root, move |rows| {
+                rows.iter()
+                    .any(|row| row["id"] == running.as_str() && row["status"] == "running")
+            })
+            .await?;
+        let restarted = rows
+            .iter()
+            .find(|row| row["id"] == child["id"])
+            .cloned()
+            .ok_or("child row missing")?;
+        ensure!(
+            restarted["status"] == "cancelled"
+                && restarted["error"]
+                    .as_str()
+                    .is_some_and(|error| error.starts_with("Stopped for restart.")),
+            "child not restarted: {restarted}"
+        );
         let stopped = f
             .post(
                 &stop_path(&path, &root),
@@ -1149,10 +1169,10 @@ async fn room_stop_cancels_fan_out_delegated_descendants_and_pending_addressed_g
             "root not cancelled: {stopped}"
         );
         ensure!(
-            cancelled.contains(&child["id"]),
-            "child not cancelled: {stopped}"
+            cancelled.contains(&json!(guidance)),
+            "pending guidance not cancelled: {stopped}"
         );
-        ensure!(cancelled.len() == 3, "cancelled: {stopped}");
+        ensure!(cancelled.len() == 2, "cancelled: {stopped}");
         held.open();
         let direct = format!("/api/agents/{}/turns", f.member(2));
         let id = new_id();
@@ -1168,7 +1188,7 @@ async fn room_stop_cancels_fan_out_delegated_descendants_and_pending_addressed_g
             f.rows(&path)
                 .await?
                 .iter()
-                .filter(|row| cancelled.contains(&row["id"]))
+                .filter(|row| cancelled.contains(&row["id"]) || row["id"] == child["id"])
                 .all(|row| row["status"] == "cancelled" && row["reply"].is_null()),
             "cancelled rows ran"
         );
@@ -1545,11 +1565,10 @@ async fn serialized_broadcast_yields_to_parallel_children_and_resumes_once(
     let rows = f.wait(&path, &root).await?;
     let parent = find(&rows, &root)?;
     ensure!(parent["reply"] == "Parent final once.", "parent: {parent}");
-    // B1: the step after a paused `delegate_task {wait: true}` is not counted.
     ensure!(
         f.calls()
             .iter()
-            .filter(|call| model(call) == "Assistant" && !after_pause(call))
+            .filter(|call| model(call) == "Assistant")
             .count()
             == 2,
         "Assistant calls: {:?}",
@@ -1567,8 +1586,9 @@ async fn serialized_broadcast_yields_to_parallel_children_and_resumes_once(
         "parent final published twice"
     );
     f.stop().await?;
-    // The gateway peer waits a `delegate_task {wait: true}` with its own
-    // `wait_task` call (kit G13), so that variant journals both, once each.
+    // A paused `delegate_task {wait: true}` parks the parent before the
+    // gateway's own `wait_task` (kit G13) could run, so each variant journals
+    // its one call.
     let journal: Vec<String> = f
         .db()?
         .rows(
@@ -1578,14 +1598,7 @@ async fn serialized_broadcast_yields_to_parallel_children_and_resumes_once(
         .iter()
         .map(|row| row["name"].as_str().unwrap_or_default().to_owned())
         .collect();
-    let expected: &[&str] = if name == "send_message" {
-        &["send_message"]
-    } else {
-        &["delegate_task", "wait_task"]
-    };
-    let mut sorted = journal.clone();
-    sorted.sort();
-    ensure!(sorted == expected, "tool journal: {journal:?}");
+    ensure!(journal == [name], "tool journal: {journal:?}");
     let calls = f.calls().len();
     f.start_again().await?;
     ensure!(f.calls().len() == calls, "restart replayed");

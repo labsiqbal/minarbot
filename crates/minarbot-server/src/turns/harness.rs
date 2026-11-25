@@ -196,31 +196,33 @@ pub async fn tool(
         .ok_or_else(|| error(403, "MCP authorization failed."))?
     };
     if name == "wait_task" {
-        let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        let db = &guard.connection;
-        let delivery = db
-            .query_row(
-                "SELECT delivery FROM delegation_tasks WHERE id=?",
-                [string(args, "taskId")],
-                |r| r.get::<_, String>(0),
-            )
-            .map_err(|_| error(404, "Task was not found."))?;
-        let status = super::messaging::status(db, &row, string(args, "taskId"))?;
-        if !["queued", "running", "waiting"].contains(&string(&status, "status")) {
-            db.execute(
-                "UPDATE delegation_tasks SET wake_delivered=1 WHERE id=?",
-                [string(args, "taskId")],
-            )?;
-            return Ok(status);
-        }
-        // Register the wait so `messaging::settle` stores its result and
-        // resumes this turn; a bare pause is never woken.
-        let timeout = args["timeoutSeconds"]
-            .as_i64()
-            .filter(|seconds| (1..=600).contains(seconds))
-            .unwrap_or(30);
-        let call = json!({"id":call_id,"type":"function","function":{"name":name,"arguments":args.to_string()}});
-        db.execute(
+        let running = state.turns.running(turn)?;
+        let (result, parked) = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            let db = &guard.connection;
+            let delivery = db
+                .query_row(
+                    "SELECT delivery FROM delegation_tasks WHERE id=?",
+                    [string(args, "taskId")],
+                    |r| r.get::<_, String>(0),
+                )
+                .map_err(|_| error(404, "Task was not found."))?;
+            let status = super::messaging::status(db, &row, string(args, "taskId"))?;
+            if !["queued", "running", "waiting"].contains(&string(&status, "status")) {
+                db.execute(
+                    "UPDATE delegation_tasks SET wake_delivered=1 WHERE id=?",
+                    [string(args, "taskId")],
+                )?;
+                (status, false)
+            } else {
+                // Register the wait so `messaging::settle` stores its result and
+                // resumes this turn; a bare pause is never woken.
+                let timeout = args["timeoutSeconds"]
+                    .as_i64()
+                    .filter(|seconds| (1..=600).contains(seconds))
+                    .unwrap_or(30);
+                let call = json!({"id":call_id,"type":"function","function":{"name":name,"arguments":args.to_string()}});
+                db.execute(
             "INSERT INTO delegation_waits(id,turn,call_id,call,task,deadline,status,after_output,after_action) VALUES(?,?,?,?,?,?,'waiting',(SELECT count(*) FROM generated_files WHERE turn=?),(SELECT count(*) FROM coordination WHERE turn=?))",
             rusqlite::params![
                 uuid::Uuid::new_v4().to_string(),
@@ -233,11 +235,21 @@ pub async fn tool(
                 turn
             ],
         )?;
-        db.execute(
+                let parked = db.execute(
             "UPDATE turns SET status='queued',paused=1,waiting_for=?,revision=revision+1 WHERE id=? AND status='running'",
             rusqlite::params![delivery, turn],
-        )?;
-        return Ok(json!({"taskId":args["taskId"],"status":"waiting"}));
+        )? > 0;
+                (json!({"taskId":args["taskId"],"status":"waiting"}), parked)
+            }
+        };
+        if parked {
+            // Like the parking tools below: stop the run before replying.
+            state.turns.cancel(turn);
+            if let Some(mut running) = running {
+                while running.changed().await.is_ok() {}
+            }
+        }
+        return Ok(result);
     }
     let call = json!({"id":call_id,"type":"function","function":{"name":name,"arguments":args.to_string()}});
     // A tool that parks its turn (question, event wait, coordination,
@@ -262,9 +274,21 @@ pub async fn tool(
     let mut result = result?;
     let parked = match name {
         "ask_user" => true,
-        "wait_for_event" | "transfer_task" | "delegate_task" => result.is_null(),
+        "wait_for_event" | "transfer_task" => result.is_null(),
+        // A channel delegation returns null; `wait: true` returns a waiting
+        // receipt. Both queue the turn until the child finishes.
+        "delegate_task" => result.is_null() || result["status"] == "waiting",
         "send_message" => result["status"] == "waiting",
         _ => parking && result["status"] == "waiting_for_user",
+    } && {
+        // Only a turn the tool actually queued is parked; a running turn
+        // keeps its run.
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        exists(
+            &guard.connection,
+            "SELECT 1 FROM turns WHERE id=? AND status='queued'",
+            [turn],
+        )?
     };
     if parked && crate::computer::actions::is_computer_tool(name) {
         // The user takes over; the run after hand-back starts a new session.

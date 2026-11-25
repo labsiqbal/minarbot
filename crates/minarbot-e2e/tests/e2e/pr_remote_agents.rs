@@ -56,23 +56,6 @@ fn tools(body: &Value) -> Result<Vec<Value>> {
         .collect()
 }
 
-/// Product bug B1 (`docs/test-ledger.md`): a blocking native tool
-/// (`ask_user`, and here `delegate_task` with `wait: true`) pauses the turn
-/// and returns `{"status": "waiting"}` at once, so the harness takes one
-/// more model step before the turn resumes with the real result. The
-/// scripts answer that step like any other (the Node script would have);
-/// counts leave it out and the strict count stays in the retained Node
-/// case.
-fn after_pause(body: &Value) -> bool {
-    body["messages"]
-        .as_array()
-        .and_then(|messages| messages.last())
-        .filter(|message| message["role"] == "tool")
-        .and_then(|message| message["content"].as_str())
-        .and_then(|content| serde_json::from_str::<Value>(content).ok())
-        .is_some_and(|result| result["status"] == "waiting")
-}
-
 fn last_json(results: &[Value]) -> Step {
     Step::text(results.last().cloned().unwrap_or(Value::Null).to_string())
 }
@@ -634,12 +617,7 @@ async fn delegation_depth_travels_across_machines_and_stops_ping_pong() -> Resul
         .await?;
     let reply = row["reply"].as_str().unwrap_or_default();
     ensure!(reply.contains("depth"), "depth reply: {reply}");
-    let work = f
-        ._model
-        .requests()
-        .iter()
-        .filter(|body| !after_pause(body))
-        .count();
+    let work = f._model.requests().len();
     ensure!(work == 6, "model requests: {work}");
     Ok(())
 }
