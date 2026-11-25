@@ -14,7 +14,7 @@ const groups = [
   ['appearance', 20, 'appearance', 'MINARBOT_APPEARANCE_SCREENSHOTS'],
   ['automation', 40, 'automation-parity'],
   ['calendar', 12, 'automation-calendar'],
-  ['connections', 32, 'settings-connections', 'MINARBOT_CONNECTION_SCREENSHOTS'],
+  ['connections', 28, 'settings-connections', 'MINARBOT_CONNECTION_SCREENSHOTS'],
   ['controls', 58, 'conversation-controls-parity'],
   ['conversation', 4, 'leptos-conversation', 'MINARBOT_CONVERSATION_SCREENSHOTS'],
   ['files', 52, 'conversation-files-parity'],

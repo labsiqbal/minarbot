@@ -35,7 +35,8 @@ const provider = createServer(async (req, res) => {
   toolIsolation ||= offered.includes('create_agent') && !offered.includes('run_shell') && !offered.includes('edit_profile');
   const last = request.messages.at(-1);
   const user = request.messages.findLast(item => item.role === 'user');
-  const [, reply, tool] = turns.find(([prompt]) => prompt === user?.content) ?? [];
+  const transcript = request.messages.map(item => typeof item.content === 'string' ? item.content : '').join('\n');
+  const [, reply, tool] = [...turns].reverse().find(([prompt]) => transcript.includes(prompt)) ?? [];
   const args = {
     create_agent: { requestId: randomUUID(), name: 'Researcher', model, instructions: 'Cite primary sources and flag gaps.' },
     create_routine: { requestId: randomUUID(), agent: agentId, name: 'Source review', prompt: 'Check the sources in the latest brief.', trigger: 'manual', enabled: true },
@@ -84,6 +85,22 @@ try {
   const page = await browser.newPage({ viewport, reducedMotion: 'reduce' });
   await fixDate(page);
   await page.addInitScript(() => localStorage.setItem('minarbot:details-open', '0'));
+  await page.route('**/api/provider-instances', async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const provider of body.providers ?? []) {
+      if (provider.id === 'codex-test-gateway') {
+        provider.auth = { status: 'authenticated', method: 'ChatGPT' };
+        provider.models = [{ id: model, label: model, options: [] }];
+      }
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.route('**/api/provider-instances/*/models', async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    await route.fulfill({ json: { models: [model], catalog: [{ id: model, label: model, options: [] }] } });
+  });
   const failures = [];
   page.on('pageerror', error => failures.push(error.message));
   page.on('console', event => { if (event.type() === 'error') failures.push(event.text()); });
@@ -139,7 +156,7 @@ try {
   assert.equal(agents.length, 1);
   assert.equal(agents[0].instructions, 'Cite primary sources and flag gaps.');
   await api(confirm, { action: 'apply', change: proposal.change }, 409);
-  await api('/api/agents', { id: agentId, name: 'Routine owner fixture', runtime: 'api', model, instructions: 'Check sources.' }, 201);
+  await api('/api/agents', { id: agentId, name: 'Routine owner fixture', providerInstance: 'codex-test-gateway', model, instructions: 'Check sources.' }, 201);
 
   await send(2);
   const routineChange = page.getByRole('article', { name: 'Create routine' });

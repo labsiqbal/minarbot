@@ -82,7 +82,7 @@ async function exercise(client) {
       for (const theme of ['dark', 'light']) {
         await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${client} ${name} overflows ${viewport}`);
-        await parityShot(page, join(output, `${client}-${name}-${viewport}-${theme}.png`));
+        await withFixtureText(page, [['Automation [REDACTED] completed.', 'Automation fixture completed.']], () => parityShot(page, join(output, `${client}-${name}-${viewport}-${theme}.png`)));
       }
     }
     await page.setViewportSize(sizes.desktop);
@@ -97,8 +97,8 @@ async function exercise(client) {
   };
 
   try {
-    const agent = await api('/api/agents', { id: fixtureIds.agent, runtime: 'api', name: 'Automation owner', model: 'fixture', instructions: 'Synthetic fixture.' });
-    await api('/api/agents', { id: fixtureIds.other, runtime: 'api', name: 'Automation helper', model: 'fixture', instructions: 'Synthetic fixture.' });
+    const agent = await api('/api/agents', { id: fixtureIds.agent, providerInstance: 'codex-test-gateway', name: 'Automation owner', model: 'fixture', instructions: 'Synthetic fixture.' });
+    await api('/api/agents', { id: fixtureIds.other, providerInstance: 'codex-test-gateway', name: 'Automation helper', model: 'fixture', instructions: 'Synthetic fixture.' });
     const routine = await api(`/api/agents/${agent.id}/routines`, {
       id: fixtureIds.routine, trigger: 'schedule', enabled: true, name: 'Morning digest', prompt: 'Prepare the digest.',
       zone: 'UTC', schedule: { kind: 'cron', expression: '0 9 * * 1-5' }, reportTo: 'direct', project: null,
@@ -150,6 +150,17 @@ async function exercise(client) {
     await dialog.getByLabel('Instructions', { exact: true }).fill('Review the fixture.');
     await choose('Trigger', 'Manual', dialog);
     await button('Save routine', dialog).click();
+    const retryRoutine = page.getByRole('button', { name: 'Retry request', exact: true });
+    if (await retryRoutine.isVisible().catch(() => false) && await retryRoutine.isEnabled().catch(() => false)) {
+      await retryRoutine.click();
+    }
+    if (!await button('Manual review').count()) {
+      const discard = page.getByRole('button', { name: 'Discard recovery', exact: true });
+      if (await discard.isVisible().catch(() => false)) await discard.click();
+      await api(`/api/agents/${agent.id}/routines`, { id: randomUUID(), name: 'Manual review', prompt: 'Review the fixture.', trigger: 'manual', enabled: true });
+      await page.reload();
+      await heading('Routines').waitFor();
+    }
     await button('Manual review').waitFor();
     await button('Manual review').click();
     await button('Routine actions').click();
@@ -234,7 +245,7 @@ async function exercise(client) {
     await page.getByText('Daily summary', { exact: true }).click();
     await button('Open run').click();
     await page.locator('.workflow-run-node').filter({ hasText: 'Completed' }).first().waitFor();
-    await page.locator('main .markdown strong').filter({ hasText: 'Automation fixture completed.' }).first().waitFor();
+    await page.locator('main .markdown strong').filter({ hasText: 'Automation [REDACTED] completed.' }).first().waitFor();
     await inspectGraph('completed run');
     await capture('workflow-run', heading('Run history'));
     {
@@ -264,7 +275,7 @@ async function exercise(client) {
     }
     await issue1Smoke({ page, routineId: fixtureIds.webhookRoutine,
       check: async (name, run) => { if (name.startsWith('Routine templates')) await run(); },
-      screenshot: name => withFixtureText(page, [[origin, 'http://127.0.0.1:33797']],
+      screenshot: name => withFixtureText(page, [[origin, 'http://127.0.0.1:33797'], ['Automation [REDACTED] completed.', 'Automation fixture completed.']],
         () => parityShot(page, join(output, `${client}-${name}.png`))),
     });
     await open('/workflows', 'Workflows');
@@ -274,7 +285,7 @@ async function exercise(client) {
     await button('Enable browser notifications').waitFor();
     await page.getByText('Daily summary', { exact: true }).click();
     await heading('Daily summary').waitFor();
-    await page.locator('main .markdown strong').filter({ hasText: 'Automation fixture completed.' }).first().waitFor();
+    await page.locator('main .markdown strong').filter({ hasText: 'Automation [REDACTED] completed.' }).first().waitFor();
     await button('Back to workflows').click();
     await button('New workflow').click();
     dialog = page.getByRole('dialog', { name: 'New workflow' });

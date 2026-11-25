@@ -14,6 +14,7 @@ import { desktopImage, installVncFixture } from './computer-smoke.mjs';
 const out = resolve(process.argv[2] ?? '/tmp/minarbot-conversation-parity');
 const work = await mkdtemp(join(tmpdir(), 'minarbot-conversation-parity-'));
 const dist = fileURLToPath(new URL('../../dist', import.meta.url));
+const gatewayBinary = fileURLToPath(new URL('../../fixtures/fake-gateway-harness.mjs', import.meta.url));
 const model = 'parity-fixture';
 const ids = { agent: '40000000-0000-4000-8000-000000000010', completed: '40000000-0000-4000-8000-000000000011', failed: '40000000-0000-4000-8000-000000000012', rich: '40000000-0000-4000-8000-000000000013' };
 const chart = {
@@ -33,7 +34,7 @@ const provider = createServer(async (request, response) => {
   for await (const chunk of request) raw += chunk;
   const { messages } = JSON.parse(raw);
   const prompt = messages.findLast(message => message.role === 'user')?.content;
-  if (prompt === 'Inspect failed run') {
+  if (typeof prompt === 'string' && prompt.includes('Inspect failed run')) {
     response.statusCode = 400;
     return response.end(JSON.stringify({ error: { message: 'Fixture provider rejected the request.' } }));
   }
@@ -54,7 +55,14 @@ try {
     assert(res.ok, `${path} ${res.status} ${await res.clone().text()}`);
     return res.json();
   }
-  const agent = await api('/api/agents', { id: ids.agent, name: 'Conversation fixture', instructions: 'Reply to fixture prompts.', model, runtime: 'api' });
+  await api('/api/provider-instances/codex-test-gateway/update', { id: randomUUID(), instanceId: 'codex-test-gateway', revision: 1, kind: 'codex', displayName: 'Test gateway', enabled: true, binaryPath: gatewayBinary,
+    environment: [
+      { name: 'MINARBOT_GATEWAY_BASE_URL', value: `http://127.0.0.1:${provider.address().port}/v1` },
+      { name: 'MINARBOT_PROVIDER_KEY', value: 'synthetic', secret: true },
+      { name: 'MINARBOT_GATEWAY_MODEL', value: model },
+      { name: 'MINARBOT_GATEWAY_STREAM', value: 'false' },
+    ] });
+  const agent = await api('/api/agents', { id: ids.agent, name: 'Conversation fixture', instructions: 'Reply to fixture prompts.', model, providerInstance: 'codex-test-gateway' });
   const main = `/agents/${agent.id}`;
   async function seed(scope, text, ready) {
     const id = text === 'Replay fixture' ? ids.completed : text === 'Inspect failed run' ? ids.failed : ids.rich;
@@ -65,7 +73,7 @@ try {
       if (turn?.status === 'failed' || turn?.status === 'interrupted') assert.fail(`${text}: ${turn.error}`);
       await wait(100);
     }
-    assert.fail(`${text} did not reach requested state`);
+    assert.fail(`${text} did not reach requested state: ${JSON.stringify((await api(`${scope}/turns`)).find(row => row.id === id))}`);
   }
   async function thread(name) {
     const data = await api(`/api${main}/threads`, { id: randomUUID(), name });

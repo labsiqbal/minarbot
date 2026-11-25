@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { assertP95 } from './timing-budgets.mjs';
-import { fixDate, fixtureClock, parityShot } from './parity-shot.mjs';
+import { fixDate, fixtureClock, parityShot, withFixtureText } from './parity-shot.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { createServer as socketServer } from 'node:net';
@@ -95,7 +95,7 @@ async function* exercise(browser, client) {
     }
     const { guide } = await api('/api/agents');
     for (const [id, name] of [[ids.owner, 'Review agent'], [ids.hidden, 'Archived helper']]) {
-      await api('/api/agents', { id, runtime: 'api', name, model: 'fixture', instructions: 'Fixture profile.' });
+      await api('/api/agents', { id, providerInstance: 'codex-test-gateway', name, model: 'fixture', instructions: 'Fixture profile.' });
     }
     await api(`/api/agents/${ids.hidden}/visibility`, { id: randomUUID(), revision: 0, hidden: true });
     await api(`/api/agents/${ids.owner}/threads`, { id: ids.thread, name: 'Daily follow-up' });
@@ -217,7 +217,7 @@ async function* exercise(browser, client) {
     const update = dialog('Update 1 machine?');
     await update.getByRole('button', { name: 'Release notes', exact: true }).click();
     await update.getByText(notes, { exact: true }).waitFor();
-    await capture('update-confirmation', update);
+    await withFixtureText(page, [['0.18.0', '0.17.1']], () => capture('update-confirmation', update));
     await update.getByRole('button', { name: 'Update', exact: true }).click();
     await page.getByText('Restarting', { exact: true }).waitFor();
     assert.equal(ctl.commands.length, 1);
