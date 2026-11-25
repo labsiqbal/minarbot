@@ -142,6 +142,32 @@ async fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
                 }));
             }
         }
+        // Match `turns::tools::offered`: deliveries from a channel get no
+        // private tools, and no-reply notices cannot message or stop others.
+        let id = string(&turn, "id");
+        let private = crate::turns::messaging::channel(&guard.connection, id)?.is_none();
+        let messaging = crate::turns::messaging::allowed(&guard.connection, id)?;
+        specs.retain(|spec| {
+            let name = string(spec, "name");
+            (private
+                || !matches!(
+                    name,
+                    "list_skills"
+                        | "read_skill"
+                        | "read_skill_file"
+                        | "list_routines"
+                        | "read_routine"
+                        | "set_routine_flow"
+                        | "read_provider_settings"
+                        | "edit_profile"
+                        | "list_sites"
+                        | "publish_site"
+                        | "delete_site"
+                        | "set_avatar"
+                        | "interrupt_agent"
+                ))
+                && (messaging || !matches!(name, "list_agents" | "send_message" | "interrupt_agent"))
+        });
     }
     specs.retain(|t| {
         allowed(caller, string(t, "scope"))
