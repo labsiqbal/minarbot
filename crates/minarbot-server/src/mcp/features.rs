@@ -920,6 +920,11 @@ fn conversations(state: &AppState, c: &Value, name: &str, a: &Value) -> Result<V
         {
             rows.push(json!({"id":a["agent"],"agent":a["agent"],"name":"Direct conversation","kind":"direct","archived":false,"delivery":false}));
         }
+        if c["kind"] == "session" && a["limit"].is_null() {
+            let mut args = a.clone();
+            args["limit"] = json!(10);
+            return Ok(page(rows, &args, "id"));
+        }
         return Ok(page(rows, a, "id"));
     }
     let cutoff = if c["kind"] == "session" {

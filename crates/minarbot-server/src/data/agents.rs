@@ -307,15 +307,31 @@ fn test_runtime_instance(state: &AppState, db: &Connection, v: &Value) -> Result
     if !state.config.harness.test_mode {
         return Ok(None);
     }
-    let runtime = v.get("runtime").and_then(Value::as_str);
+    let runtime = v.get("runtime").and_then(Value::as_str).map(|runtime| {
+        if runtime == "api" {
+            "codex"
+        } else {
+            runtime
+        }
+    });
     let Some(runtime) = runtime.filter(|runtime| crate::harness::RUNTIMES.contains(runtime)) else {
         return Ok(None);
     };
+    let id = if runtime == "codex"
+        && exists(
+            db,
+            "SELECT 1 FROM provider_instances WHERE id='codex-test-gateway'",
+            [],
+        )? {
+        "codex-test-gateway"
+    } else {
+        runtime
+    };
     db.execute(
         "INSERT INTO provider_instances(id,kind,display_name) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING",
-        params![runtime, runtime, crate::harness::label(runtime)],
+        params![id, runtime, crate::harness::label(runtime)],
     )?;
-    Ok(Some(runtime.to_owned()))
+    Ok(Some(id.to_owned()))
 }
 fn default_provider_instance(state: &AppState, db: &Connection) -> Result<Option<String>> {
     let rows = all(
@@ -465,6 +481,9 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
                 "providerInstance",
                 "modelOptions",
                 "confirmRuntime",
+                "runtime",
+                "providerAccount",
+                "backupModel",
             ],
         ) {
             return Err(error(

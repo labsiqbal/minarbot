@@ -303,6 +303,26 @@ pub(crate) fn launch_config_from_db(
     Ok(Some((kind, binary, args, environment)))
 }
 
+pub(crate) fn secret_environment_values(
+    state: &AppState,
+    db: &Connection,
+    id: &str,
+) -> Result<Vec<String>> {
+    let Some(row) = row(db, id)? else {
+        return Ok(Vec::new());
+    };
+    let values: Vec<Value> =
+        serde_json::from_str(string(&row, "environment")).map_err(|_| Failure::storage())?;
+    values
+        .into_iter()
+        .filter(|value| value["secret"] == true)
+        .map(|value| {
+            provider_store::decrypt_secret(state, id, string(&value, "value"))
+                .ok_or_else(Failure::storage)
+        })
+        .collect()
+}
+
 /// Seed one provider instance for legacy Node fixtures. Production config never
 /// reaches this path. The API key still uses the provider-instance encryption
 /// path so the gateway process receives only the decrypted launch environment.

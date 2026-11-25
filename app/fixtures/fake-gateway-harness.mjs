@@ -24,8 +24,8 @@ let stream = env('MINARBOT_GATEWAY_STREAM') === 'true';
 let toolBudget = Number(env('MINARBOT_TOOL_BUDGET')) || 200;
 let workspace = process.cwd();
 let savedMessages;
-const persistSession = Boolean(process.env.MINARBOT_TEST_PARENT);
-const saveSession = messages => { if (persistSession) writeFileSync(`${workspace}/.fake-gateway-${session}.json`, JSON.stringify(messages)); };
+const persistSession = true;
+const saveSession = messages => { if (persistSession) { savedMessages = messages; writeFileSync(`${workspace}/.fake-gateway-${session}.json`, JSON.stringify(messages)); } };
 const activeRuns = new Map();
 let nextId = 1;
 
@@ -41,7 +41,16 @@ const rpc = async (method, params = {}, signal) => {
     body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method, params }),
   });
   const body = await response.json();
-  if (!response.ok || body.error) throw new Error(`MCP request failed (${response.status}): ${JSON.stringify(body)}`);
+  if (!response.ok) {
+    if (response.status >= 500) throw new Error(`MCP request failed (${response.status}): ${JSON.stringify(body)}`);
+    const message = typeof body.error === 'string' ? body.error : body.error?.message ?? 'MCP request failed.';
+    return { isError: true, content: [{ type: 'text', text: message }], structuredContent: { error: message, status: response.status } };
+  }
+  if (body.error) {
+    const message = body.error.message ?? 'MCP request failed.';
+    if (/uncertain/i.test(message)) throw new Error(message);
+    return { isError: true, content: [{ type: 'text', text: message }], structuredContent: { error: message, status: body.error.code } };
+  }
   return body.result ?? {};
 };
 
@@ -118,12 +127,31 @@ const emitText = (id, text) => {
 
 const emitError = error => notify('error', { willRetry: false, error: { message: error instanceof Error ? error.message : 'Gateway request failed.' } });
 
+const transcript = prompt => {
+  const tagged = [...prompt.matchAll(/<minarbot-message>(.*?)<\/minarbot-message>/gs)];
+  if (tagged.length) return tagged.map(match => JSON.parse(match[1]));
+  const markers = [...prompt.matchAll(/(?:^|\n\n)(system|user|assistant|tool): /g)];
+  return markers.map((marker, index) => ({
+    role: marker[1],
+    content: prompt.slice(marker.index + marker[0].length, markers[index + 1]?.index ?? prompt.length),
+  }));
+};
+
 async function run(prompt, additionalContext, signal) {
   const context = Object.values(additionalContext ?? {}).map(value => value?.value ?? '').filter(Boolean).join('\n\n');
-  const messages = savedMessages ? [...savedMessages, { role: 'user', content: prompt }] : [
-    { role: 'system', content: [context, prompt].filter(Boolean).join('\n\n') },
-    { role: 'user', content: prompt },
-  ];
+  const parsed = transcript(prompt);
+  const messages = parsed.length
+    ? parsed
+    : savedMessages ? [...savedMessages, { role: 'user', content: prompt }]
+    : [{ role: 'system', content: [context, prompt].filter(Boolean).join('\n\n') }];
+  const parsedUser = parsed.findLastIndex(message => message.role === 'user');
+  const reminder = prompt.includes('One verification reminder:');
+  const currentUser = parsedUser >= 0
+    ? (reminder ? parsed.findLastIndex((message, index) => index < parsedUser && message.role === 'user') : parsedUser)
+    : messages.findLastIndex(message => message.role === 'user');
+  if (!messages.some(message => message.role === 'user')) {
+    messages.push({ role: 'user', content: parsed.at(-1)?.content ?? prompt });
+  }
   const tools = (await openAITools()).filter(tool => prompt.includes('Initial name:') ? ['ask_user', 'edit_profile'].includes(tool.function.name) : true);
   let calls = 0;
   let exhausted = false;
@@ -133,14 +161,19 @@ async function run(prompt, additionalContext, signal) {
     if (exhausted && !messages.at(-1)?.content?.includes('Tools are now disabled')) {
       messages.push({ role: 'user', content: `Stopped after ${toolBudget} tool steps. Tools are now disabled. Summarise what you did, what is left, and tell the user they can reply "continue". Do not claim unfinished work is complete.` });
     }
-    const body = { model: model || 'fixture', messages, stream, ...(exhausted ? {} : { tools, parallel_tool_calls: false }) };
+    const bodyMessages = messages.map((message, index) => index > currentUser || message.role !== 'tool' ? message : { ...message, role: 'assistant' });
+    if (reminder) {
+      const prior = bodyMessages.findLastIndex((message, index) => index < currentUser && message.role === 'assistant');
+      if (prior >= 0) bodyMessages[prior] = { ...bodyMessages[prior], role: 'tool' };
+    }
+    const body = { model: model || 'fixture', messages: bodyMessages, stream, ...(exhausted ? {} : { tools, parallel_tool_calls: false }) };
     const value = await providerRequest(body, signal);
     const choice = value.choices?.[0];
     const message = choice?.message;
     if (!choice || !message) throw new Error('Gateway provider returned malformed response');
     const toolCalls = message.tool_calls ?? [];
     if (toolCalls.length && choice.finish_reason === 'tool_calls' && !exhausted) {
-      messages.push(message);
+      messages.push({ role: 'assistant', ...message });
       for (const call of toolCalls) {
         let args;
         try { args = JSON.parse(call.function?.arguments || '{}'); } catch { throw new Error('Gateway provider returned malformed tool arguments'); }
@@ -156,22 +189,14 @@ async function run(prompt, additionalContext, signal) {
           const normalized = { ...input };
           if (schema.required?.includes('requestId') && !normalized.requestId) normalized.requestId = requestId(generation, id, suffix);
           if (name === 'wait_task' && normalized.timeoutSeconds !== undefined) normalized.timeoutSeconds = Math.min(30, Math.max(1, Number(normalized.timeoutSeconds) || 30));
-          if (schema.properties && normalized) {
-            for (const key of Object.keys(normalized)) if (!(key in schema.properties)) delete normalized[key];
-          }
           return rpc('tools/call', { name, arguments: normalized }, signal);
         };
         let result;
         if (recipients) {
-          const results = [];
-          for (const [index, recipient] of recipients.entries()) {
-            results.push(await callOne({ requestId: requestId(generation, id, `recipient-${index}`), recipient, text: args.text, ...(args.metadata ? { metadata: args.metadata } : {}) }, `recipient-${index}`));
-          }
-          result = results.length === 1
-            ? results[0]
-            : { structuredContent: { status: 'queued', requests: results.map(value => value.structuredContent ?? value) } };
+          result = await callOne({ requestId: requestId(generation, id, 'recipients'), recipients, text: args.text, expects_reply: args.expects_reply, ...(args.metadata ? { metadata: args.metadata } : {}) }, 'recipients');
         } else {
           result = await callOne(args);
+          if (result.isError && /uncertain/i.test(toolText(result))) throw new Error(toolText(result));
           if (legacyWait && result.structuredContent?.taskId) {
             result = await rpc('tools/call', { name: 'wait_task', arguments: {
               requestId: requestId(generation, id, 'wait'),
@@ -182,6 +207,13 @@ async function run(prompt, additionalContext, signal) {
         }
         notify('item/completed', { item: { id, type: 'mcpToolCall', tool: call.function?.name ?? '', arguments: args, status: 'completed', result } });
         messages.push({ role: 'tool', tool_call_id: id, content: toolText(result) });
+        const image = result.content?.find(item => item.type === 'image' && item.data && item.mimeType);
+        if (image) {
+          messages.push({ role: 'user', content: [
+            { type: 'text', text: 'Image attachment (reference data).' },
+            { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
+          ] });
+        }
         calls++;
       }
       exhausted = calls >= toolBudget;

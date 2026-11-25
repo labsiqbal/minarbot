@@ -107,6 +107,13 @@ pub fn summary(
         .into_iter()
         .filter_map(|a| a.key)
         .collect::<Vec<_>>();
+    for row in all(db, "SELECT id FROM provider_instances WHERE enabled=1", [])? {
+        if let Some((_, _, _, environment)) =
+            crate::data::provider_instances::launch_config_from_db(state, db, string(&row, "id"))?
+        {
+            secrets.extend(environment.into_values());
+        }
+    }
     if let Some(token) = &state.config.remaining_data.script_token {
         secrets.push(token.clone());
     }
