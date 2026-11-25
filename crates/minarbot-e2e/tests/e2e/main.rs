@@ -8,6 +8,7 @@ mod cli;
 mod goals;
 mod harness;
 mod kit;
+mod pd_channel_context;
 mod pd_files;
 mod pd_flows_http;
 mod pd_history_tools;
