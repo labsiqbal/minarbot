@@ -335,7 +335,6 @@ async fn seeded_sse_frames_wake_after_visibility_and_file_lane_commits() -> Resu
     }
     assert_eq!(frame, expected.as_bytes());
     let mut isolated = TurnStream::connect(&app, &format!("/api/agents/{other}/turns")).await?;
-    let quiet = Duration::from_millis(80);
     assert!(timeout(quiet, isolated.next()).await.is_err());
     let update = |text: &str, revision| -> Result<()> {
         db.execute(
