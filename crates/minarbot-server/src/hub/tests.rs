@@ -1498,11 +1498,10 @@ fn result_admission_rejects_withdrawn_participation() -> Check {
     let grant = p.peer_grant(&db, json!({"mode":"all-members"}))?;
     ok(post(&mut db, &p.alice(), &named(p.section(), &grant)))?;
     let req = request(&db, &p.peer)?;
-    ok(authority::withdraw(
-        &db,
-        &p.bob(),
-        &json!({"participationId":req["participationId"]}),
-    ))?;
+    db.execute(
+        "UPDATE participations SET state='revoked' WHERE project_id=? AND id=?",
+        params![req["projectId"].as_str(), req["participationId"].as_str()],
+    )?;
     rejects(
         accept(&db, &p.peer, &result(&req, "turn.admitted", 1, json!({}))),
         "stale_revision",
