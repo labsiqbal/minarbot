@@ -197,6 +197,7 @@ pub async fn signed_event(
         .server
         .client()?
         .post(format!("{}{path}", tp.origin()))
+        .header("Connection", "close")
         .header("Content-Type", "application/json")
         .header("X-Minarbot-Time", time)
         .header("X-Minarbot-Id", event_id);

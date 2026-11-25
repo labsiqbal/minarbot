@@ -1696,7 +1696,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
             new_id().to_uppercase(),
             "--wait",
             "--timeout",
-            "5"
+            WAIT_SECONDS
         ])
         .await?;
     code(&next, 3, "second question")?;
@@ -1716,7 +1716,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
                 new_id(),
                 "--wait",
                 "--timeout",
-                "5"
+                WAIT_SECONDS
             ],
             b"No",
         )
@@ -1799,7 +1799,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
             lower_id,
             "--wait",
             "--timeout",
-            "5"
+            WAIT_SECONDS
         ])
         .await?,
         3,
@@ -1814,7 +1814,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
             upper_id,
             "--wait",
             "--timeout",
-            "5"
+            WAIT_SECONDS
         ])
         .await?,
         3,
@@ -1890,7 +1890,7 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
         new_id().to_uppercase(),
         "--wait",
         "--timeout",
-        "5"
+        WAIT_SECONDS
     ];
     let before_side = work_calls(&model);
     let thread_turns = format!("/threads/{side_id}/turns");

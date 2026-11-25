@@ -1151,7 +1151,11 @@ async fn two_session_enrolled_nodes_answer_browser_mention_revoking_one_live_str
         last(&results)["payload"]["text"] == "Partial from OtherStream",
         "other reply"
     );
-    ensure!(f.turn_state(&revoked)? == "unknown", "revoked turn state: {}", f.turn(&revoked)?);
+    ensure!(
+        f.turn_state(&revoked)? == "unknown",
+        "revoked turn state: {}",
+        f.turn(&revoked)?
+    );
     ensure!(
         !f.results()?
             .iter()
