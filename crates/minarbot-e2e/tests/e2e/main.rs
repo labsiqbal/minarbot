@@ -16,6 +16,7 @@ mod pd_mcp_isolation;
 mod pd_pdf_text;
 mod pd_rust_desktop_http;
 mod pd_shared_data_http;
+mod pd_sidebar;
 mod pd_skill_tools;
 mod pd_webhooks;
 mod pd_workflow_parallel;
