@@ -90,27 +90,26 @@ async fn raw(
     headers: &[(&str, &str)],
     body: Option<String>,
 ) -> Result<(u16, String)> {
-    let (status, _, text) = raw_as(w, "user_owner", method, path, headers, body).await?;
+    let (status, _, text) = raw_as(&w.tp, "user_owner", method, path, headers, body).await?;
     Ok((status, text))
 }
 
 /// `raw` as `subject`, with the response headers.
 pub async fn raw_as(
-    w: &WorkflowHome,
+    tp: &super::fixture::Tp,
     subject: &str,
     method: Method,
     path: &str,
     headers: &[(&str, &str)],
     body: Option<String>,
 ) -> Result<(u16, std::collections::HashMap<String, String>, String)> {
-    let mut request = w
-        .tp
+    let mut request = tp
         .app
         .server
         .client()?
-        .request(method, format!("{}{path}", w.tp.origin()))
-        .header("Authorization", format!("Bearer {}", w.tp.jwt(subject)?))
-        .header("Origin", w.tp.origin())
+        .request(method, format!("{}{path}", tp.origin()))
+        .header("Authorization", format!("Bearer {}", tp.jwt(subject)?))
+        .header("Origin", tp.origin())
         .header("Content-Type", "application/json")
         .header("X-Minarbot-Protocol", "1");
     for (name, value) in headers {
@@ -1393,7 +1392,7 @@ async fn calendar(
     let request = new_id();
     let mut headers: Vec<(&str, &str)> = vec![("Connection", "close"), ("X-Minarbot-Request-Id", &request)];
     headers.extend(extra.iter().map(|(name, value)| (*name, value.as_str())));
-    raw_as(w, subject, Method::GET, &format!("{path}{suffix}"), &headers, None).await
+    raw_as(&w.tp, subject, Method::GET, &format!("{path}{suffix}"), &headers, None).await
 }
 
 /// The wall-clock case runs its server and home in a fixed zone without

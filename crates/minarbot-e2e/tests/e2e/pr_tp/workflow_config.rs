@@ -224,7 +224,7 @@ async fn canonical_workflows_enforce_current_assignments_private_mappings_select
             ensure!(status == 404, "{query}: {status} {denied}");
         }
         let (status, _, _) = raw_as(
-            &w,
+            &w.tp,
             "user_owner",
             Method::GET,
             &w.detail,
@@ -579,7 +579,7 @@ async fn canonical_workflow_inbox_hides_foreign_selectors_and_rechecks_current_r
         ensure!(w.tp.send(&read_path, Some(with(&command, json!({"id": new_id()})))).await?.0 == 400, "mismatched id");
         for header in ["X-Minarbot-Project", "X-Minarbot-Project-Id"] {
             let (status, _, _) = raw_as(
-                &w,
+                &w.tp,
                 "user_owner",
                 Method::GET,
                 &inbox,

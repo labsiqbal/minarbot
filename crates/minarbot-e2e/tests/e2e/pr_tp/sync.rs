@@ -561,7 +561,7 @@ async fn signed_task_and_device_mutations_publish_atomic_scoped_observations_acr
         );
         ensure!(!task_delta.to_string().contains("canary"), "canary synced");
         ensure!(!task_delta.to_string().contains(&payload_digest), "digest synced");
-        let completed = loop_task(&tp, &runtime, false, Binding::New).await?;
+        let completed = loop_task(&tp, &runtime.device_id()?, false, Binding::New).await?;
         let completed_path = sync(&completed.project);
         let queued = tp.data(&completed_path).await?;
         runtime
