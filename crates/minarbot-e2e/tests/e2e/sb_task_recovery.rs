@@ -4238,3 +4238,326 @@ async fn canonical_history_retains_sequence_cursors_and_excludes_unmapped_foreig
     ensure!(canonical_json(&replay.body) == canonical_json(&read_result.body), "read receipt changed");
     Ok(())
 }
+
+async fn run_tool(f: &TaskFixture, task: &mut Task, name: &str, args: Value) -> Result<Value> {
+    Ok(result_content(&stage(f, task, &args, name).await?.run(f).await?.expect_ok()?))
+}
+
+/// A context mutation for a tool call that was never prepared (a forced call).
+async fn forced(f: &TaskFixture, task: &Task, name: &str, arguments: &str) -> Result<Envelope> {
+    let expected = task_revision(f, task).await?;
+    let call = json!({"id": new_id(), "function": {"name": name, "arguments": arguments}});
+    let digest = minarbot_testkit::task_bridge::tool_digest(&call, &expected, None);
+    f.task_op(
+        "context-mutations",
+        &task.id,
+        json!({"requestId": new_id(), "actionId": new_id(), "ownership": task.ownership, "toolCall": call,
+            "expectedRevision": expected, "payloadDigest": digest}),
+        &task.token,
+    )
+    .await
+}
+
+async fn offered_tools(f: &TaskFixture, task: &Task) -> Result<Value> {
+    let revision = task_revision(f, task).await?;
+    let context = f
+        .task_op("context", &task.id, json!({"requestId": new_id(), "ownership": task.ownership, "expectedTaskRevision": revision}), &task.token)
+        .await?
+        .expect_ok()?;
+    Ok(context.data()["snapshot"]["tools"].clone())
+}
+
+fn not_found(result: &Value) -> bool {
+    result["error"].as_str().is_some_and(|error| error.contains("not found"))
+}
+
+async fn new_project(f: &TaskFixture, name: &str) -> Result<String> {
+    let project = new_id();
+    f.human(minarbot_testkit::http::Method::POST, "/api/projects", Some(json!({"requestId": new_id(), "id": project, "name": name})), &f.owner)
+        .await?
+        .expect_ok()?;
+    Ok(project)
+}
+
+#[tokio::test]
+async fn canonical_skills_retain_installed_pins_owner_mappings_private_boundaries_and_immutable_read_results(
+) -> Result<()> {
+    let f = TaskFixture::new(&["list_skills", "read_skill", "read_skill_file"], None).await?;
+    let config = new_project(&f, "Configuration").await?;
+    let map = |table: &str, key: Value, account: &str| scope_row(&f, table, key, account, &config, "owner", &f.agent);
+    let owner = f.owner.account_id.clone();
+    let seed = |mapped: bool, account: &str| -> Result<String> {
+        let skill = new_id();
+        save_skill(&f, &skill, 0, "Pinned", "Global configuration", "PINNED_INSTRUCTIONS")?;
+        f.db().execute("INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,1,0)", [&f.agent, &skill])?;
+        if mapped {
+            map("skills", json!([skill]), account)?;
+            map("skill_versions", json!([skill, 1]), account)?;
+            map("agent_skills", json!([f.agent, skill]), account)?;
+        }
+        Ok(skill)
+    };
+    let mut installed = Vec::new();
+    for _ in 0..11 {
+        installed.push(seed(true, &owner)?);
+    }
+    installed.sort();
+    let skill = installed[0].clone();
+    let unmapped = seed(false, &owner)?;
+    let foreign = seed(true, &f.foreign.account_id)?;
+    let disabled = seed(true, &owner)?;
+    let removed = seed(true, &owner)?;
+    let uninstalled = seed(true, &owner)?;
+    f.db().execute("UPDATE agent_skills SET enabled=0 WHERE skill=?", [&disabled])?;
+    f.db().execute("UPDATE agent_skills SET removed=1 WHERE skill=?", [&removed])?;
+    f.db().execute("DELETE FROM agent_skills WHERE skill=?", [&uninstalled])?;
+    let other_agent = new_id();
+    f.db().execute("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Other','fixture','Private')", [&other_agent])?;
+    f.db().execute("INSERT INTO agent_skills(agent,skill,version,enabled,revision,removed) VALUES (?,?,1,1,1,0)", [&other_agent, &uninstalled])?;
+    map("agent_skills", json!([other_agent, uninstalled]), &owner)?;
+    save_skill(&f, &skill, 1, "Latest", "Uninstalled version", "LATEST_MUST_NOT_LEAK")?;
+    let binary = minarbot_testkit::base64::Engine::encode(&minarbot_testkit::base64::engine::general_purpose::STANDARD, b"BINARY_MUST_NOT_LEAK");
+    let text = format!("{}TEXT_TAIL", "x".repeat(8000));
+    f.db().execute(
+        "INSERT INTO skill_files VALUES (?,1,?)",
+        [skill.clone(), json!([{"path": "notes.txt", "content": text}, {"path": "asset.bin", "content": binary, "encoding": "base64"}]).to_string()],
+    )?;
+    map("skill_files", json!([skill, 1]), &owner)?;
+    let mut main = start(&f, &f.owner, Some(json!({"v": 1, "kind": "direct", "message": {"text": "Read installed configuration", "files": []}}))).await?;
+    let ids = |rows: &Value| -> Vec<Value> { rows.as_array().map(|rows| rows.iter().map(|row| row["id"].clone()).collect()).unwrap_or_default() };
+    let page = run_tool(&f, &mut main, "list_skills", json!({})).await?;
+    let first_page: Vec<Value> = installed[..10].iter().map(|id| json!(id)).collect();
+    ensure!(ids(&page["items"]) == first_page, "first page: {page}");
+    ensure!(page["next_after"] == installed[9].as_str(), "cursor: {page}");
+    let next = run_tool(&f, &mut main, "list_skills", json!({"after": page["next_after"]})).await?;
+    ensure!(ids(&next["items"]) == [json!(installed[10])], "second page: {next}");
+    let read = run_tool(&f, &mut main, "read_skill", json!({"id": skill})).await?;
+    ensure!(read["version"] == 1, "pinned version: {read}");
+    ensure!(read["content"] == "PINNED_INSTRUCTIONS", "content: {read}");
+    ensure!(read["files"] == json!([{"path": "notes.txt", "characters": 8009}, {"path": "asset.bin", "binary": true}]), "files: {read}");
+    ensure!(!read.to_string().contains(&binary), "binary leaked");
+    let first = run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "notes.txt"})).await?;
+    ensure!(first["content"] == "x".repeat(8000), "first chunk");
+    ensure!(first["next_offset"] == 8000, "next offset: {}", first["next_offset"]);
+    ensure!(run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "notes.txt", "offset": 8000})).await?["content"] == "TEXT_TAIL", "tail");
+    ensure!(run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "asset.bin"})).await?["binary"] == true, "binary file");
+    for id in [&unmapped, &foreign, &disabled, &removed, &uninstalled] {
+        ensure!(not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": id})).await?), "{id} readable");
+    }
+    for (table, key) in [("skills", json!([installed[3]])), ("skill_versions", json!([installed[3], 1])), ("agent_skills", json!([f.agent, installed[3]]))] {
+        f.db().execute("UPDATE record_scopes SET account=? WHERE table_name=? AND key_json=?", [&f.foreign.account_id, table, &key.to_string()])?;
+        ensure!(not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": installed[3]})).await?), "{table} foreign mapping");
+        f.db().execute("DELETE FROM record_scopes WHERE table_name=? AND key_json=?", [table, &key.to_string()])?;
+        ensure!(not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": installed[3]})).await?), "{table} missing mapping");
+        map(table, key, &owner)?;
+    }
+    for (name, args) in [("list_skills", json!({"after": "invalid"})), ("read_skill", json!({"id": "invalid"})), ("read_skill_file", json!({"id": skill, "path": "notes.txt", "offset": -1}))] {
+        ensure!(status_of(&f, &mut main, args, name).await? == 400, "{name} accepted invalid arguments");
+    }
+    ensure!(not_found(&run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "../notes.txt"})).await?), "path traversal");
+    f.db().execute("DELETE FROM record_scopes WHERE table_name='skill_files' AND key_json=?", [json!([skill, 1]).to_string()])?;
+    ensure!(run_tool(&f, &mut main, "read_skill", json!({"id": skill})).await?["files"] == json!([]), "unmapped files listed");
+    ensure!(not_found(&run_tool(&f, &mut main, "read_skill_file", json!({"id": skill, "path": "notes.txt"})).await?), "unmapped file readable");
+    map("skill_files", json!([skill, 1]), &owner)?;
+    let saved = stage(&f, &mut main, &json!({"id": skill}), "read_skill").await?;
+    let result = saved.run(&f).await?.expect_ok()?;
+    f.db().execute("UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE skill=?", [&skill])?;
+    ensure!(canonical_json(&saved.run(&f).await?.expect_ok()?.body) == canonical_json(&result.body), "read receipt changed");
+    ensure!(not_found(&run_tool(&f, &mut main, "read_skill", json!({"id": skill})).await?), "disabled skill readable");
+    let stale = stage(&f, &mut main, &json!({"id": installed[1]}), "read_skill").await?;
+    f.db().execute("UPDATE agent_skills SET enabled=0,revision=revision+1 WHERE skill=?", [&installed[1]])?;
+    stale.run(&f).await?.expect_code("context_stale")?;
+    let thread = insert_thread(&f, &owner)?;
+    let mut side = start(&f, &f.owner, Some(side_payload(&thread, "Read installed configuration"))).await?;
+    ensure!(run_tool(&f, &mut side, "read_skill", json!({"id": installed[2]})).await?["content"] == "PINNED_INSTRUCTIONS", "side read");
+    f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, &f.agent])?;
+    f.db().execute("INSERT INTO response_policies VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, &f.agent])?;
+    let mut member = start(&f, &f.member, None).await?;
+    ensure!(run_tool(&f, &mut member, "read_skill", json!({"id": installed[2]})).await?["content"] == "PINNED_INSTRUCTIONS", "member read");
+    let channel = insert_channel(&f)?;
+    let mut room = start(&f, &f.owner, Some(channel_payload(&channel, "Read installed configuration"))).await?;
+    ensure!(offered_tools(&f, &room).await? == json!([]), "channel tools offered");
+    stage(&f, &mut room, &json!({}), "list_skills").await?.run(&f).await?.expect_code("execution_denied")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn canonical_routine_tools_keep_private_project_mappings_pagination_and_flow_scope() -> Result<()> {
+    let f = TaskFixture::new(&["list_routines", "read_routine", "set_routine_flow"], None).await?;
+    let mut task = start(&f, &f.owner, None).await?;
+    ensure!(run_tool(&f, &mut task, "list_routines", json!({})).await? == json!({"routines": [], "next_after": null}), "empty list");
+    f.db().execute_batch(
+        "CREATE TABLE IF NOT EXISTS routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT,secret TEXT);
+         CREATE TABLE IF NOT EXISTS routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER);
+         ALTER TABLE routines ADD COLUMN secret TEXT;",
+    )?;
+    let other = new_project(&f, "Other").await?;
+    let owner = f.owner.account_id.clone();
+    let seed = |project: &str, account: &str, mapped: bool, agent: &str| -> Result<String> {
+        let id = new_id();
+        f.db().execute(
+            "INSERT INTO routines(id,agent,name,prompt,next_at,interval_ms,enabled,revision,trigger,secret) VALUES (?,?,'Routine','Routine prompt',123456,NULL,1,1,'schedule','SECRET_MUST_NOT_LEAK')",
+            [&id, agent],
+        )?;
+        if mapped {
+            f.db().execute(
+                "INSERT INTO record_scopes VALUES ('routines',?,?,?,'owner','agent',?)",
+                [json!([id]).to_string(), account.to_owned(), project.to_owned(), agent.to_owned()],
+            )?;
+        }
+        Ok(id)
+    };
+    let mut visible = Vec::new();
+    for _ in 0..11 {
+        visible.push(seed(&f.project, &owner, true, &f.agent)?);
+    }
+    visible.sort();
+    let foreign = seed(&other, &owner, true, &f.agent)?;
+    let private_routine = seed(&f.project, &f.member.account_id, true, &f.agent)?;
+    let unmapped = seed(&f.project, &owner, false, &f.agent)?;
+    let unassigned = new_id();
+    f.db().execute("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Unassigned','fixture','Help')", [&unassigned])?;
+    let foreign_agent = seed(&f.project, &owner, true, &unassigned)?;
+    let ids = |rows: &Value| -> Vec<Value> { rows.as_array().map(|rows| rows.iter().map(|row| row["id"].clone()).collect()).unwrap_or_default() };
+    let page = run_tool(&f, &mut task, "list_routines", json!({})).await?;
+    let first_page: Vec<Value> = visible[..10].iter().map(|id| json!(id)).collect();
+    ensure!(ids(&page["routines"]) == first_page, "first page: {page}");
+    ensure!(page["next_after"] == visible[9].as_str(), "cursor: {page}");
+    ensure!(!page.to_string().contains("Routine prompt"), "list carries prompts");
+    ensure!(!page.to_string().contains("SECRET_MUST_NOT_LEAK"), "list carries secrets");
+    let next = run_tool(&f, &mut task, "list_routines", json!({"after": page["next_after"]})).await?;
+    ensure!(ids(&next["routines"]) == [json!(visible[10])], "second page: {next}");
+    ensure!(next["next_after"].is_null(), "last cursor: {next}");
+    let plain = run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?;
+    ensure!(plain["prompt"] == "Routine prompt", "prompt: {plain}");
+    ensure!(plain["flow"] == json!({"graph": {"root": f.agent, "nodes": [f.agent], "links": []}, "revision": 0}), "default flow: {plain}");
+    ensure!(!plain.to_string().contains("SECRET_MUST_NOT_LEAK"), "read carries secrets");
+    let graph = json!({"root": f.agent, "nodes": [f.agent], "links": []});
+    f.db().execute("INSERT INTO routine_flows VALUES (?,?,2)", [visible[0].clone(), graph.to_string()])?;
+    ensure!(not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?), "unmapped flow readable");
+    f.db().execute(
+        "INSERT INTO record_scopes VALUES ('routine_flows',?,?,?,'owner','agent',?)",
+        [json!([visible[0]]).to_string(), owner.clone(), other.clone(), f.agent.clone()],
+    )?;
+    ensure!(not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?), "foreign-project flow readable");
+    f.db().execute("UPDATE record_scopes SET project=? WHERE table_name='routine_flows'", [&f.project])?;
+    ensure!(run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?["flow"] == json!({"graph": graph, "revision": 2}), "mapped flow");
+    f.db().execute("UPDATE record_scopes SET account=? WHERE table_name='routine_flows'", [&f.member.account_id])?;
+    ensure!(not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": visible[0]})).await?), "private flow readable");
+    for id in [&foreign, &private_routine, &unmapped, &foreign_agent] {
+        ensure!(not_found(&run_tool(&f, &mut task, "read_routine", json!({"id": id})).await?), "{id} readable");
+    }
+    for (name, args) in [("list_routines", json!({"after": "bad"})), ("read_routine", json!({"id": "bad"}))] {
+        ensure!(status_of(&f, &mut task, args, name).await? == 400, "{name} accepted a bad id");
+    }
+    let channel = insert_channel(&f)?;
+    let room = start(&f, &f.owner, Some(channel_payload(&channel, "Forced read"))).await?;
+    ensure!(offered_tools(&f, &room).await? == json!([]), "channel tools offered");
+    for name in ["list_routines", "set_routine_flow"] {
+        forced(&f, &room, name, "{}").await?.expect_code("execution_denied")?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn canonical_routine_edits_require_project_agents_and_assignment_preserve_cas_and_roll_back_with_result_failure(
+) -> Result<()> {
+    let f = TaskFixture::new(&["set_routine_flow"], None).await?;
+    let (recipient, outsider, routine, private_routine, foreign_routine) = (new_id(), new_id(), new_id(), new_id(), new_id());
+    let other = new_project(&f, "Other").await?;
+    for (id, project) in [(&recipient, &f.project), (&outsider, &other)] {
+        f.human(minarbot_testkit::http::Method::POST, "/api/agents", Some(with(agent_body(id, "Recipient", &f), json!({"projectId": project}))), &f.owner)
+            .await?
+            .expect_ok()?;
+    }
+    f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, &f.agent])?;
+    f.db().execute_batch(
+        "CREATE TABLE IF NOT EXISTS routines(id TEXT PRIMARY KEY,agent TEXT,name TEXT,prompt TEXT,next_at INTEGER,interval_ms INTEGER,enabled INTEGER,revision INTEGER,trigger TEXT);
+         CREATE TABLE IF NOT EXISTS routine_flows(routine TEXT PRIMARY KEY,graph TEXT,revision INTEGER);
+         CREATE TABLE IF NOT EXISTS flow_runs(root_turn TEXT PRIMARY KEY,graph TEXT);",
+    )?;
+    for (id, project, visibility) in [(&routine, &f.project, "project"), (&private_routine, &f.project, "owner"), (&foreign_routine, &other, "project")] {
+        f.db().execute("INSERT INTO routines(id,agent,name,prompt,next_at,interval_ms,enabled,revision,trigger) VALUES (?,?,'Routine','Prompt',123456,NULL,1,1,'schedule')", [id, &f.agent])?;
+        f.db().execute(
+            "INSERT INTO record_scopes VALUES ('routines',?,?,?,?,'agent',?)",
+            [json!([id]).to_string(), f.owner.account_id.clone(), project.clone(), visibility.to_owned(), f.agent.clone()],
+        )?;
+    }
+    let mut task = start(&f, &f.member, None).await?;
+    for id in [private_routine.clone(), foreign_routine.clone(), new_id()] {
+        ensure!(not_found(&run_tool(&f, &mut task, "set_routine_flow", json!({"id": id, "revision": 0, "links": []})).await?), "{id} editable");
+    }
+    for revision in [json!(-1), json!(1.5), json!(9_007_199_254_740_991_i64), json!(9_007_199_254_740_992_i64), Value::Null] {
+        ensure!(status_of(&f, &mut task, json!({"id": routine, "revision": revision, "links": []}), "set_routine_flow").await? == 400, "revision {revision} accepted");
+    }
+    let agent = f.agent.clone();
+    for links in [
+        json!([{"from": agent, "to": agent}]),
+        json!([{"from": agent, "to": recipient}, {"from": recipient, "to": agent}]),
+        json!([{"from": agent, "to": recipient}, {"from": agent, "to": recipient}]),
+        Value::Null,
+    ] {
+        ensure!(status_of(&f, &mut task, json!({"id": routine, "revision": 0, "links": links}), "set_routine_flow").await? == 400, "links {links} accepted");
+    }
+    for to in [outsider.clone(), recipient.clone(), new_id()] {
+        ensure!(status_of(&f, &mut task, json!({"id": routine, "revision": 0, "links": [{"from": agent, "to": to}]}), "set_routine_flow").await? == 404, "recipient {to} accepted");
+    }
+    ensure!(field(&f, "SELECT count(*) n FROM routine_flows", [], "n")? == 0, "flows saved");
+    f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, &recipient])?;
+    f.db().execute_batch("CREATE TRIGGER fail_flow_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;")?;
+    let pending = stage(&f, &mut task, &json!({"id": routine, "revision": 0, "links": [{"from": agent, "to": recipient}]}), "set_routine_flow").await?;
+    pending.run(&f).await?.expect_code("storage_failed")?;
+    ensure!(field(&f, "SELECT count(*) n FROM routine_flows", [], "n")? == 0, "flow kept after a failed result");
+    ensure!(field(&f, "SELECT count(*) n FROM record_scopes WHERE table_name='routine_flows'", [], "n")? == 0, "flow scope kept");
+    f.db().execute_batch("DROP TRIGGER fail_flow_result")?;
+    let saved = result_content(&pending.run(&f).await?.expect_ok()?);
+    let graph = saved["graph"].clone();
+    ensure!(saved == json!({"graph": {"root": agent, "nodes": [agent, recipient], "links": [{"from": agent, "to": recipient}]}, "revision": 1}), "saved: {saved}");
+    let mapping = one(&f, "SELECT account,project,visibility FROM record_scopes WHERE table_name='routine_flows'", [])?;
+    ensure!(mapping == json!({"account": f.owner.account_id, "project": f.project, "visibility": "project"}), "mapping: {mapping}");
+    f.db().execute("INSERT INTO flow_runs(root_turn,graph) VALUES (?,?)", [task.id.clone(), graph.to_string()])?;
+    ensure!(status_of(&f, &mut task, json!({"id": routine, "revision": 0, "links": []}), "set_routine_flow").await? == 409, "stale revision accepted");
+    let pending = stage(&f, &mut task, &json!({"id": routine, "revision": 1, "links": []}), "set_routine_flow").await?;
+    let cleared = json!({"graph": {"root": agent, "nodes": [agent], "links": []}, "revision": 2});
+    ensure!(result_content(&pending.run(&f).await?.expect_ok()?) == cleared, "cleared flow");
+    let run_graph: Value = serde_json::from_str(field(&f, "SELECT graph FROM flow_runs", [], "graph")?.as_str().ok_or("graph")?)?;
+    ensure!(run_graph == graph, "running flow changed: {run_graph}");
+    ensure!(result_content(&pending.run(&f).await?.expect_ok()?) == cleared, "replay");
+    f.db().execute("UPDATE tasks SET state='cancelled',revision=revision+1 WHERE id=?", [&task.id])?;
+    ensure!(result_content(&pending.run(&f).await?.expect_ok()?) == cleared, "replay after cancellation");
+    ensure!(field(&f, "SELECT revision FROM routine_flows WHERE routine=?", [&routine], "revision")? == 2, "flow revision");
+    Ok(())
+}
+
+async fn provider_settings(side: bool) -> Result<()> {
+    let f = TaskFixture::new(&["read_provider_settings"], None).await?;
+    let actor = if side { f.member.clone() } else { f.owner.clone() };
+    let payload = if side {
+        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &actor.account_id, &f.agent])?;
+        side_payload(&insert_thread(&f, &actor.account_id)?, "Read settings")
+    } else {
+        json!({"v": 1, "kind": "direct", "message": {"text": "Read settings", "files": []}})
+    };
+    let mut task = start(&f, &actor, Some(payload)).await?;
+    let read = run_tool(&f, &mut task, "read_provider_settings", json!({})).await?;
+    ensure!(read == json!({"revision": 1, "providerInstance": "", "model": "fixture", "configured": false}), "unbound: {read}");
+    f.db().execute("UPDATE agents SET provider_instance='codex-owner' WHERE id=?", [&f.agent])?;
+    let read = run_tool(&f, &mut task, "read_provider_settings", json!({})).await?;
+    ensure!(read == json!({"revision": 1, "providerInstance": "codex-owner", "model": "fixture", "configured": true}), "bound: {read}");
+    forced(&f, &task, "read_provider_settings", &json!({"agentId": new_id()}).to_string()).await?.expect_code("unknown_field")?;
+    let channel = insert_channel(&f)?;
+    let room = start(&f, &f.owner, Some(channel_payload(&channel, "Forced read"))).await?;
+    ensure!(offered_tools(&f, &room).await? == json!([]), "channel tools offered");
+    forced(&f, &room, "read_provider_settings", "{}").await?.expect_code("execution_denied")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn canonical_provider_settings_read_binding_metadata_only_in_direct_and_stays_private() -> Result<()> {
+    provider_settings(false).await
+}
+
+#[tokio::test]
+async fn canonical_provider_settings_read_binding_metadata_only_in_side_and_stays_private() -> Result<()> {
+    provider_settings(true).await
+}
