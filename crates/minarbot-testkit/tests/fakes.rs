@@ -25,6 +25,24 @@ use tokio::{
 
 const LIMIT: Duration = Duration::from_secs(10);
 
+/// Kills a peer-spawned child with SIGKILL when dropped, so a failing
+/// self-test never leaves descendants behind.
+struct Reap(i32);
+
+impl Reap {
+    fn signal(&self, signal: rustix::process::Signal) {
+        if let Some(pid) = rustix::process::Pid::from_raw(self.0) {
+            let _ = rustix::process::kill_process(pid, signal);
+        }
+    }
+}
+
+impl Drop for Reap {
+    fn drop(&mut self) {
+        self.signal(rustix::process::Signal::KILL);
+    }
+}
+
 /// A fake peer process with line-based JSON I/O.
 struct Peer {
     child: Child,
@@ -536,15 +554,15 @@ async fn n12_n13_n14_n15_n16_gates_crashes_oversize_and_descendants() -> Result<
         Ok(fakes::native_log(workspace.path())?
             .iter()
             .find(|row| row["type"] == "descendant")
-            .and_then(|row| row["pid"].as_u64()))
+            .and_then(|row| row["pid"].as_i64()))
     })
     .await?;
+    let _reap = Reap(i32::try_from(pid)?);
     ensure!(
         std::path::Path::new(&format!("/proc/{pid}")).exists(),
         "N16 descendant not running"
     );
     peer.exit().await?;
-    let _ = Command::new("kill").arg(pid.to_string()).status().await;
     Ok(())
 }
 
@@ -1005,15 +1023,15 @@ async fn a1_to_a12_acp_session_permission_files_cancel_and_errors() -> Result<()
                 })
                 .await?;
                 let pid = workspace.read("child-pid")?;
+                let child = Reap(pid.trim().parse()?);
                 let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
                 ensure!(!stat.contains(") Z "), "A9 detached child not running");
-                let _ = Command::new("kill").args(["-TERM", &pid]).status().await;
+                child.signal(rustix::process::Signal::TERM);
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 ensure!(
                     std::path::Path::new(&format!("/proc/{pid}")).exists(),
                     "A9 child must survive TERM"
                 );
-                let _ = Command::new("kill").args(["-KILL", &pid]).status().await;
             }
         }
     }
