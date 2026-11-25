@@ -140,16 +140,19 @@ fn write_refused(turn: &Value) -> bool {
     turn["status"] == "done" && reply(turn).contains("Workspace does not have write permission.")
 }
 
-/// Folderless conversations are refused at admission: every agent runs a
-/// harness since #87, and a harness turn needs a workspace. (The removed
-/// API runtime accepted the turn and failed its workspace tool.)
-async fn refused_without_folder(f: &Projects, path: &str) -> Result<()> {
-    let error = f
-        .request(path, Some(json!({"id": new_id(), "text": "READ"})), 503)
-        .await?;
+/// Folderless conversations run in an empty, read-only managed folder (P5),
+/// so the read finds no file and never reaches the host workspace. The
+/// harness returns the tool error to the model and the turn ends; the
+/// removed API runtime failed the turn.
+async fn no_host_folder(f: &Projects, path: &str) -> Result<()> {
+    let turn = f.send(path, "READ").await?;
+    ensure!(turn["status"] == "done", "{path}: {turn}");
+    let content: String = serde_json::from_str(reply(&turn))
+        .map_err(|error| format!("{path}: reply {}: {error}", reply(&turn)))?;
+    let result: Value = serde_json::from_str(&content).unwrap_or(Value::Null);
     ensure!(
-        error["error"] == "Coding runtime requires a workspace for this conversation.",
-        "{path}: {error}"
+        result["error"].is_string() && !content.contains("project bytes"),
+        "{path}: read {content}"
     );
     Ok(())
 }
@@ -1412,7 +1415,7 @@ async fn folderless_project_and_side_threads_isolate_host_grants_accept_folders_
         "direct read with host grant"
     );
     // No implicit host binding inside folderless sections.
-    refused_without_folder(&f, &path).await?;
+    no_host_folder(&f, &path).await?;
     let project = f
         .request(
             &format!("/api/projects/{id}/thread"),
@@ -1426,7 +1429,7 @@ async fn folderless_project_and_side_threads_isolate_host_grants_accept_folders_
         "/api/threads/{}/turns",
         thread["id"].as_str().ok_or("thread")?
     );
-    refused_without_folder(&f, &thread_turns).await?;
+    no_host_folder(&f, &thread_turns).await?;
     f.request(
         &format!("/api/projects/{id}/edit"),
         Some(json!({"id": new_id(), "revision": 2, "folders": [f.workspace]})),
@@ -1450,7 +1453,7 @@ async fn folderless_project_and_side_threads_isolate_host_grants_accept_folders_
         )
         .await?;
     // Another folderless project does not borrow this project's folder.
-    refused_without_folder(
+    no_host_folder(
         &f,
         &format!(
             "/api/channels/{}/turns",
@@ -1525,7 +1528,13 @@ async fn rust_project_migration_rolls_back_ownership_and_retries_without_touchin
             "CREATE TRIGGER fail_migration BEFORE INSERT ON local_project_sections BEGIN SELECT RAISE(ABORT,'interrupted migration'); END",
         )?;
     }
-    let failure = f.app.root().start_error(f.config.clone()).await?;
+    // The failing start reuses the stopped server's slot: a second slot
+    // could deadlock behind another test's two-slot reservation.
+    let failure = f
+        .app
+        .root()
+        .start_error_beside(&f.app, f.config.clone())
+        .await?;
     ensure!(
         failure.contains("Project migration failed"),
         "startup error: {failure}"

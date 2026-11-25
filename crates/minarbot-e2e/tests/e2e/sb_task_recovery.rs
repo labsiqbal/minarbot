@@ -5463,18 +5463,58 @@ async fn provider_settings(side: bool) -> Result<()> {
     let mut task = start(&f, &actor, Some(payload)).await?;
     let read = run_tool(&f, &mut task, "read_provider_settings", json!({})).await?;
     ensure!(
-        read == json!({"revision": 1, "providerInstance": "", "model": "fixture", "configured": false}),
+        read == json!({"revision": 1, "providerAccount": "", "model": "fixture", "backupModel": "", "configured": false}),
         "unbound: {read}"
     );
+    let binding = new_id();
     f.db().execute(
-        "UPDATE agents SET provider_instance='codex-owner' WHERE id=?",
-        [&f.agent],
+        "INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','Owner account','PRIVATE_LABEL','ready',1)",
+        [&binding, &f.home, &f.owner.account_id],
+    )?;
+    f.db().execute(
+        "UPDATE agent_authority SET provider_binding=? WHERE agent=?",
+        [&binding, &f.agent],
+    )?;
+    let other_home = new_id();
+    f.db().execute(
+        "INSERT INTO devices SELECT ?,installation,account,signing_public_key,encryption_public_key,signing_thumbprint,encryption_thumbprint,descriptor_json,generation,connection_generation,status,zone,zone_revision,last_seen,capabilities_json,revision FROM devices WHERE id=?",
+        [&other_home, &f.home],
+    )?;
+    let unavailable = json!({"error": "Provider binding is unavailable.", "status": 409});
+    f.db().execute(
+        "UPDATE provider_bindings SET device=? WHERE id=?",
+        [&other_home, &binding],
     )?;
     let read = run_tool(&f, &mut task, "read_provider_settings", json!({})).await?;
-    ensure!(
-        read == json!({"revision": 1, "providerInstance": "codex-owner", "model": "fixture", "configured": true}),
-        "bound: {read}"
-    );
+    ensure!(read == unavailable, "binding on another home: {read}");
+    f.db().execute(
+        "UPDATE provider_bindings SET device=? WHERE id=?",
+        [&f.home, &binding],
+    )?;
+    // #87 removed fallback models, so `backupModel` stays empty.
+    let expected = json!({"revision": 1, "providerAccount": "Owner account", "model": "fixture", "backupModel": "", "configured": true});
+    let read = run_tool(&f, &mut task, "read_provider_settings", json!({})).await?;
+    ensure!(read == expected, "bound: {read}");
+    for readiness in ["missing", "unreadable", "unavailable", "revoked"] {
+        f.db().execute(
+            "UPDATE provider_bindings SET readiness=?,revision=revision+1 WHERE id=?",
+            [readiness, binding.as_str()],
+        )?;
+        let mut unready = expected.clone();
+        unready["configured"] = json!(false);
+        let read = run_tool(&f, &mut task, "read_provider_settings", json!({})).await?;
+        ensure!(read == unready, "{readiness}: {read}");
+    }
+    f.db().execute(
+        "UPDATE provider_bindings SET owner_account=? WHERE id=?",
+        [&f.foreign.account_id, &binding],
+    )?;
+    let read = run_tool(&f, &mut task, "read_provider_settings", json!({})).await?;
+    ensure!(read == unavailable, "foreign owner binding: {read}");
+    f.db().execute(
+        "UPDATE provider_bindings SET owner_account=? WHERE id=?",
+        [&f.owner.account_id, &binding],
+    )?;
     forced(
         &f,
         &task,
