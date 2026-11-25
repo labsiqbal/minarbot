@@ -3,6 +3,7 @@
 //! hosts enroll, connect through a device fetch proxy (where the Node
 //! suite's `fetch` patches become fault hooks) and run tasks.
 
+mod completion;
 #[allow(dead_code)]
 mod crypto;
 mod events;

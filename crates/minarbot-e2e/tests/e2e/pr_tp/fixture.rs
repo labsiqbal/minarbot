@@ -54,6 +54,10 @@ pub enum Fault {
     Hold(BoxFuture),
     /// Forward, read the reply, then lose it when `lose(status, body)` holds.
     LoseReply(Box<dyn Fn(u16, &[u8]) -> bool + Send>),
+    /// Lose the request before it reaches the server.
+    Drop,
+    /// Forward, then reply with `rewrite(status, body)` instead.
+    Rewrite(Box<dyn Fn(u16, Vec<u8>) -> Vec<u8> + Send>),
 }
 
 pub type FaultHook = Arc<dyn Fn(&Exchange) -> Fault + Send + Sync>;
@@ -100,10 +104,19 @@ impl Tp {
                     wait.await;
                     return forward(&exchange, &origin).await;
                 }
+                if let Fault::Drop = fault {
+                    return Ok(Answer::Drop);
+                }
                 let upstream = match exchange.forward(&origin).await {
                     Ok(upstream) => upstream,
                     Err(_) => return Ok(Answer::Drop),
                 };
+                if let Fault::Rewrite(rewrite) = fault {
+                    let status = upstream.status;
+                    let headers = relay::without_length(upstream.headers.clone());
+                    let body = upstream.bytes().await.unwrap_or_default();
+                    return Ok(Answer::bytes(status, headers, rewrite(status, body)));
+                }
                 if let Fault::LoseReply(lose) = fault {
                     let status = upstream.status;
                     let headers = relay::without_length(upstream.headers.clone());
