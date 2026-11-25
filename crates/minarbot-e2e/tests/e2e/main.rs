@@ -16,6 +16,7 @@ mod pd_guide_infra;
 mod pd_history_tools;
 mod pd_image_generation;
 mod pd_local_projects;
+mod pd_local_routines;
 mod pd_mcp_isolation;
 mod pd_pdf_text;
 mod pd_rust_desktop_http;
