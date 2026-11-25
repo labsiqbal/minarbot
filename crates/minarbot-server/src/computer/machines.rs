@@ -1111,6 +1111,9 @@ pub fn set_updates(s: &AppState, v: &Value) -> Result<Value> {
         db.execute("INSERT INTO machine_update_policy VALUES(?,?) ON CONFLICT(environment_id) DO UPDATE SET allowed=excluded.allowed",params![machine,allowed as i64])?;
         Ok(())
     })?;
+    if !allowed {
+        crate::updates::updates_revoked(&machine);
+    }
     let value = visible(s, &r)?;
     receipt(s, &id, &fingerprint, Some(&machine), &value)?;
     Ok(value)

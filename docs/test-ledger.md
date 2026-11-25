@@ -552,6 +552,7 @@ same peer requests with a `MachineBridge` extra operation.
 | --- | --- | --- |
 | P1 | Every harness agent's `delegate_task` over MCP answered 400 "Invalid delegation request". | `mcp/server.rs` added `requestId` and `turn` to session `delegate_task` arguments (aa2feb0), and the native handler (`turns/messaging.rs`) rejects unknown fields. Only the feature tool reads `turn`, so it is now added only when the declaration is not native. |
 | P2 | Agents no longer saw their teammates ("Messaging other agents") in the system prompt, so remote roles never reached the team prompt. | `messaging::awareness` lost its only caller when a8cfcac removed the API runtime. `turns/execution.rs` appends it again under the same conditions (not a profile setup turn, messaging allowed). |
+| P4 | A peer update whose permission the receiver's owner revoked mid-transfer was still installed when the owner allowed updates again before the transfer ended, although the sender had reported it failed. | The receiver checked permission only at the end of the download. `updates/peers.rs` now counts revocations per machine (`computer/machines.rs` records each one); an apply that saw one never publishes or applies its release. |
 | P3 | A harness agent that called `wait_task` stayed paused forever. | The native `wait_task` path (`turns/harness.rs`, 93410e8) paused the turn without registering a `delegation_waits` row, so `messaging::settle` never stored the result or resumed the turn. It now registers the wait (and returns at once when the task already finished). |
 
 ### `app/updates.test.ts` (6 runtime cases, 6 Rust tests, file deleted)
@@ -571,3 +572,19 @@ same peer requests with a `MachineBridge` extra operation.
 | Node case | Rust test (`pr_fanout::`) | Asserts | Notes |
 | --- | --- | --- | --- |
 | fan-out serves one verified executable archive to a peer without apply polling and waits beyond its former apply deadline | `fan_out_serves_one_verified_executable_archive_to_a_peer_without_apply_polling_and_waits_beyond_its_former_apply_deadline` | 16 -> 16 | A `relay::Relay` bound to the peer's paired port hides the apply-polling capability, holds the apply reply for 125 s and can replace its body. The slow call uses its own 170 s client budget. |
+
+### `app/peer-release-transfer.test.ts` (5 default cases plus 2 opt-in, 6 Rust tests, file deleted)
+
+As in Node, these servers run without a computer bridge. A `relay::Relay`
+bound to the sender's paired port shapes each release download; another can
+lose the receiver's apply reply.
+
+| Node case | Rust test (`pr_peer_transfer::`) | Asserts | Notes |
+| --- | --- | --- | --- |
+| peer fan-out follows receiver progress beyond the apply request deadline | `peer_fan_out_follows_receiver_progress_beyond_the_apply_request_deadline` | 8 -> 8 | Default 1 s deadline and 90 KB payload (the `MINARBOT_PEER_CONTROL` slow values were opt-in). |
+| peer fan-out succeeds while the receiver still lists the restarted sender as offline | `peer_fan_out_succeeds_while_the_receiver_still_lists_the_restarted_sender_as_offline` | 2 -> 2 | |
+| peer fan-out resumes dropped downloads, including after receiver restart | `peer_fan_out_resumes_dropped_downloads_including_after_receiver_restart` | 21 -> 21 | |
+| peer fan-out reports receiver restart and can resume its retained partial | `peer_fan_out_reports_receiver_restart_and_can_resume_its_retained_partial` | 8 -> 8 | |
+| peer fan-out reports timeout, integrity, size, permission, and launcher failures | `peer_fan_out_reports_timeout_integrity_size_permission_and_launcher_failures` | 7 -> 7 | Intermittently failed on product bug P4 (fixed). |
+| 25 KB/s control keeps fan-out open beyond 60 seconds | `kb_per_second_25_control_keeps_fan_out_open_beyond_60_seconds` | 3 -> 3 | Opt-in in Node (`MINARBOT_PEER_CONTROL=1`); runs every time in Rust (about 65 s). |
+| 20.8 MB peer archive reaches launcher at N KB/s | Not ported | 5 -> - | A loop over `MINARBOT_PEER_TEST_RATES`, which is empty by default, so it produced no runtime case. It is a manual throughput benchmark (about 12 minutes at 30 KB/s), not a contract. |

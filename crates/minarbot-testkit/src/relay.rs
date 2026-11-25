@@ -230,6 +230,92 @@ pub fn paced(chunks: Vec<Bytes>, gap: Duration) -> BoxStream<'static, Result<Byt
         .boxed()
 }
 
+/// Next chunk of a body stream.
+pub async fn next(stream: &mut BoxStream<'static, Result<Bytes>>) -> Option<Result<Bytes>> {
+    stream.next().await
+}
+
+/// Pass `stream` through at `rate` bytes per second, in 8 KiB parts,
+/// measured from `started` (the Node `throttle` transfer).
+pub fn rate_limited(
+    stream: BoxStream<'static, Result<Bytes>>,
+    rate: u64,
+    started: std::time::Instant,
+) -> BoxStream<'static, Result<Bytes>> {
+    let rate = rate.max(1);
+    let mut emitted = 0_u64;
+    stream
+        .flat_map(|chunk| {
+            let parts: Vec<Result<Bytes>> = match chunk {
+                Ok(bytes) => (0..bytes.len())
+                    .step_by(8192)
+                    .map(|offset| Ok(bytes.slice(offset..(offset + 8192).min(bytes.len()))))
+                    .collect(),
+                Err(error) => vec![Err(error)],
+            };
+            futures_util::stream::iter(parts)
+        })
+        .then(move |part| {
+            if let Ok(bytes) = &part {
+                emitted += bytes.len() as u64;
+            }
+            let due = Duration::from_millis(emitted * 1000 / rate);
+            async move {
+                let elapsed = started.elapsed();
+                if due > elapsed {
+                    tokio::time::sleep(due - elapsed).await;
+                }
+                part
+            }
+        })
+        .boxed()
+}
+
+/// Yield `part` (if any), wait `pause`, then cut the connection.
+pub fn then_cut(part: Option<Bytes>, pause: Duration) -> BoxStream<'static, Result<Bytes>> {
+    futures_util::stream::iter(part.map(Ok))
+        .chain(futures_util::stream::once(async move {
+            tokio::time::sleep(pause).await;
+            Err::<Bytes, crate::Error>("cut by relay".into())
+        }))
+        .boxed()
+}
+
+/// Yield `part` (if any) and then hang until the client goes away.
+pub fn then_hang(part: Option<Bytes>) -> BoxStream<'static, Result<Bytes>> {
+    futures_util::stream::iter(part.map(Ok))
+        .chain(futures_util::stream::pending())
+        .boxed()
+}
+
+/// Pass `stream` through with the first byte of the first chunk flipped.
+pub fn flip_first_byte(
+    stream: BoxStream<'static, Result<Bytes>>,
+) -> BoxStream<'static, Result<Bytes>> {
+    let mut first = true;
+    stream
+        .map(move |chunk| {
+            let chunk = chunk?;
+            if !std::mem::take(&mut first) || chunk.is_empty() {
+                return Ok(chunk);
+            }
+            let mut bytes = chunk.to_vec();
+            bytes[0] ^= 1;
+            Ok(Bytes::from(bytes))
+        })
+        .boxed()
+}
+
+/// `first` (if any) followed by the rest of `stream`.
+pub fn prepend(
+    first: Option<Bytes>,
+    stream: BoxStream<'static, Result<Bytes>>,
+) -> BoxStream<'static, Result<Bytes>> {
+    futures_util::stream::iter(first.map(Ok))
+        .chain(stream)
+        .boxed()
+}
+
 /// A body that never yields: the reply hangs until the client gives up.
 pub fn hang() -> BoxStream<'static, Result<Bytes>> {
     futures_util::stream::pending().boxed()

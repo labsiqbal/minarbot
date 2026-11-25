@@ -2396,6 +2396,7 @@ name = "minarbot-e2e"
 version = "0.1.0"
 dependencies = [
  "minarbot-testkit",
+ "ring",
  "serde_json",
  "tokio",
 ]
@@ -2499,6 +2500,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tokio",
+ "tokio-tungstenite",
  "uuid",
 ]
 

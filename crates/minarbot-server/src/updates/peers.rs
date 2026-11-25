@@ -178,6 +178,38 @@ async fn update_peer_release(
     machines::update_remote(state, machine, Some(&body), archive.size, progress).await
 }
 
+/// Update-permission revocations per machine since this server started. A
+/// peer apply that saw one while it transferred never publishes or applies
+/// its release, even when the owner allows updates again before it ends.
+static REVOCATIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn revocations(machine: &str) -> u64 {
+    REVOCATIONS
+        .lock()
+        .map_or(u64::MAX, |map| map.get(machine).copied().unwrap_or(0))
+}
+
+/// Record that the owner turned off updates from `machine`.
+pub(crate) fn updates_revoked(machine: &str) {
+    if let Ok(mut map) = REVOCATIONS.lock() {
+        *map.entry(machine.to_owned()).or_default() += 1;
+    }
+}
+
+async fn check_unrevoked(
+    state: &AppState,
+    machine: &str,
+    bearer: Option<&str>,
+    epoch: u64,
+) -> Result<()> {
+    check_permission(state, machine, bearer).await?;
+    if revocations(machine) != epoch {
+        return Err(PeerError::PermissionRevoked.failure());
+    }
+    Ok(())
+}
+
 async fn check_permission(state: &AppState, machine: &str, bearer: Option<&str>) -> Result<()> {
     if authorize(state, bearer).await? != machine {
         return Err(PeerError::PermissionRevoked.failure());
@@ -231,6 +263,7 @@ async fn apply_release(
     bearer: Option<&str>,
     id: &str,
 ) -> Result<Value> {
+    let epoch = revocations(machine);
     let target = string(value, "target");
     let expected = string(value, "sha256");
     let options = state.config.update.options();
@@ -262,7 +295,7 @@ async fn apply_release(
             ));
         }
         feed.stage(releases, &manifest, || {
-            check_permission(state, machine, bearer)
+            check_unrevoked(state, machine, bearer, epoch)
         })
         .await?
     } else if releases.join(target).exists() {
@@ -275,7 +308,7 @@ async fn apply_release(
                 sha256: expected,
             },
             |offset| machines::download_release(state, machine, target, offset, polling),
-            || check_permission(state, machine, bearer),
+            || check_unrevoked(state, machine, bearer, epoch),
         )
         .await?
     };
@@ -284,7 +317,7 @@ async fn apply_release(
     if release["version"] != value["version"] {
         return Err(PeerError::IntegrityMismatch.detail("Peer release version mismatch."));
     }
-    check_permission(state, machine, bearer).await?;
+    check_unrevoked(state, machine, bearer, epoch).await?;
     let mut result = launcher(
         options,
         json!({"type":"apply","id":id,"target":release["id"],"version":release["version"]}),

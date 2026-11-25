@@ -24,6 +24,7 @@ pub mod cli;
 pub mod db;
 pub mod fake;
 pub mod fakes;
+pub mod hosted_hub;
 pub mod http;
 pub mod image;
 pub mod issuer;

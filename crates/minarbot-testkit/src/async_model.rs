@@ -16,7 +16,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures_util::future::BoxFuture;
+use futures_util::{future::BoxFuture, StreamExt};
 use serde_json::{json, Value};
 use std::{
     future::Future,
@@ -33,6 +33,11 @@ pub enum Step {
     Tool(String, Value),
     /// HTTP error status.
     Status(u16),
+    /// One `tool_calls` entry sent verbatim (may be malformed on purpose).
+    RawTool(Value),
+    /// Server-sent events: one content delta, then the final frame after
+    /// `delay`, whatever the request asked for (the Node `streamText`).
+    Stream(String, std::time::Duration),
 }
 
 impl Step {
@@ -125,7 +130,26 @@ async fn completion(State(shared): State<Arc<Shared>>, body: Bytes) -> Response 
         Ok(step) => step,
         Err(_) => Step::Status(500),
     };
+    if let Step::Stream(text, delay) = &step {
+        let first =
+            json!({"choices": [{"index": 0, "delta": {"content": text}, "finish_reason": null}]});
+        let last = json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]});
+        let delay = *delay;
+        let frames = futures_util::stream::iter([Ok::<_, std::convert::Infallible>(format!(
+            "data: {first}\n\n"
+        ))])
+        .chain(futures_util::stream::once(async move {
+            tokio::time::sleep(delay).await;
+            Ok(format!("data: {last}\n\ndata: [DONE]\n\n"))
+        }));
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from_stream(frames))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    }
     let (message, finish, delta) = match &step {
+        Step::Stream(..) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         Step::Status(status) => {
             return (
                 StatusCode::from_u16(*status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -138,11 +162,17 @@ async fn completion(State(shared): State<Arc<Shared>>, body: Bytes) -> Response 
             "stop",
             json!({"role": "assistant", "content": text}),
         ),
-        Step::Tool(name, arguments) => {
-            let call = json!({"id": crate::new_id(), "type": "function",
-                "function": {"name": name, "arguments": arguments.to_string()}});
+        Step::Tool(..) | Step::RawTool(..) => {
+            let call = match &step {
+                Step::Tool(name, arguments) => json!({"id": crate::new_id(), "type": "function",
+                    "function": {"name": name, "arguments": arguments.to_string()}}),
+                Step::RawTool(call) => call.clone(),
+                _ => Value::Null,
+            };
             let mut indexed = call.clone();
-            indexed["index"] = json!(0);
+            if indexed.is_object() {
+                indexed["index"] = json!(0);
+            }
             (
                 json!({"role": "assistant", "content": null, "tool_calls": [call]}),
                 "tool_calls",
