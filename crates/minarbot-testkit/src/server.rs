@@ -182,6 +182,7 @@ impl TestRoot {
         let executable = binary
             .clone()
             .or_else(|| std::env::var_os("MINARBOT_SERVER_BINARY").map(PathBuf::from))
+            .or_else(default_binary)
             .unwrap_or_else(|| PathBuf::from("target/debug/minarbot-server"));
         let child = Command::new(executable)
             .arg("--test-config")
@@ -243,6 +244,13 @@ impl TestRoot {
             binary,
         })
     }
+}
+
+fn default_binary() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let target = executable.parent()?.parent()?;
+    let binary = target.join("minarbot-server");
+    binary.is_file().then_some(binary)
 }
 
 fn read_output(path: &Path) -> std::io::Result<String> {
