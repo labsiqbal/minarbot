@@ -690,7 +690,8 @@ async fn rust_telegram_runner_rejects_a_mismatched_bot_identity_and_releases_its
     let options = json!({"platform": "telegram", "directory": directory,
         "scriptDirectory": root.path().join("absent"), "agent": new_id(),
         "token": chat_connector::TELEGRAM_TOKEN, "users": [4], "origin": server.origin()});
-    let result = chat_connector::run(&options, &root.path().join("logs"), std::future::pending()).await;
+    let result =
+        chat_connector::run(&options, &root.path().join("logs"), std::future::pending()).await;
     let error = result
         .err()
         .map(|error| error.to_string())

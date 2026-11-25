@@ -9,8 +9,8 @@
 use crate::sb_support::{after_tool, id, last_result, reminder, settle};
 use minarbot_testkit::{
     control::{Answer, ControlModel},
-    prelude::*,
     http_stub::{HttpStub, StubRequest, StubResponse},
+    prelude::*,
     Server,
 };
 use std::sync::{Arc, Mutex};

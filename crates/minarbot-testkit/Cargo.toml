@@ -14,7 +14,6 @@ base64 = "0.22"
 futures-util = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 jsonwebtoken = "9"
-ring = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 ring = "0.17"
 rusqlite = { workspace = true, features = ["functions"] }

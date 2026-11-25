@@ -7,9 +7,9 @@ use minarbot_testkit::{
     db::Inspector,
     fakes::{self, Fake},
     http::Method,
+    http_stub::{HttpStub, StubRequest, StubResponse},
     prelude::*,
     protocol::sha256_hex,
-    http_stub::{HttpStub, StubRequest, StubResponse},
     Server,
 };
 use std::{
