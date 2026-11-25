@@ -51,6 +51,7 @@ one module per area.
 | `images`, `mcp_server`, `pdf` | Fake image provider (raw TCP, can lose replies); external streamable-HTTP MCP server with held calls; PDF fixtures and `PdfGate` (fail once, hold a parse, see it abandoned). |
 | `desktop`, `vnc` | `DesktopFixture` for `desktop.testRuntime` (launches, commands, failures, held commands); `VncClient`, a WebSocket + RFB 3.8 client. |
 | `fake::stdio_mcp` | `StdioServer`: one stdio MCP request per process, for `minarbot-server --mcp-stdio` or extra harness servers. |
+| `reap` | Dropping the last `TestRoot` kills every process whose executable or working directory is inside it (peers left behind by a killed server). |
 
 Configuring a model (`ServerConfig::model` or `gateway`) makes `fake-gateway`
 the Codex executable, as the Node bridge did, so native Codex tests configure

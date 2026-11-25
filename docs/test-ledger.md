@@ -209,9 +209,11 @@ New files: `parked` (requests held per key and answered later), `webhook`
 (download, `restore workspace`, `workspace_snapshot`), `images` (image
 provider on raw TCP), `mcp_server` (external MCP server with held calls),
 `pdf` (PDF fixtures, async PDF gate), `desktop` (desktop fixture runtime),
-`vnc` (WebSocket/RFB client) and `fake/stdio_mcp` (stdio MCP client). Edits:
+`vnc` (WebSocket/RFB client), `fake/stdio_mcp` (stdio MCP client) and
+`reap` (dropping a root kills the processes left in it). Edits:
 `bridge` gained `pdf_async` and `operations_async`; the gateway peer mounts
-extra stdio MCP servers from `thread/start` (G19).
+extra stdio MCP servers from `thread/start` (G19); `Server` stops its
+process before releasing its root.
 
 ### Notes
 
