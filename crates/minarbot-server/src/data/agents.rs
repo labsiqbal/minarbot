@@ -317,11 +317,21 @@ fn test_runtime_instance(state: &AppState, db: &Connection, v: &Value) -> Result
     let Some(runtime) = runtime.filter(|runtime| crate::harness::RUNTIMES.contains(runtime)) else {
         return Ok(None);
     };
+    let id = if runtime == "codex"
+        && exists(
+            db,
+            "SELECT 1 FROM provider_instances WHERE id='codex-test-gateway'",
+            [],
+        )? {
+        "codex-test-gateway"
+    } else {
+        runtime
+    };
     db.execute(
         "INSERT INTO provider_instances(id,kind,display_name) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING",
-        params![runtime, runtime, crate::harness::label(runtime)],
+        params![id, runtime, crate::harness::label(runtime)],
     )?;
-    Ok(Some(runtime.to_owned()))
+    Ok(Some(id.to_owned()))
 }
 fn default_provider_instance(state: &AppState, db: &Connection) -> Result<Option<String>> {
     let rows = all(
