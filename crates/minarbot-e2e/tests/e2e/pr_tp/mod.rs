@@ -6,6 +6,7 @@
 mod completion;
 #[allow(dead_code)]
 mod crypto;
+mod devices;
 mod events;
 mod execution;
 #[allow(dead_code)]

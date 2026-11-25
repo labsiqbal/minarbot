@@ -215,6 +215,12 @@ impl HostedApp {
         format!("http://127.0.0.1:{}", self.port)
     }
 
+    /// This server's configuration on another `port` (for a second server
+    /// on the same or another database).
+    pub fn config_on(&self, port: u16) -> ServerConfig {
+        self.config.clone().option("port", port)
+    }
+
     pub fn database(&self) -> PathBuf {
         self.server.database()
     }

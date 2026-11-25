@@ -32,6 +32,7 @@ pub mod image;
 pub mod issuer;
 pub mod machine_bridge;
 pub mod model;
+pub mod noise_image;
 pub mod protocol;
 pub mod providers;
 pub mod proxy;

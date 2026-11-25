@@ -591,6 +591,13 @@ impl ConnectionProcess {
         locked(&self.stderr).clone()
     }
 
+    /// Wait (up to 30 s) for the process to exit on its own.
+    pub async fn wait(&mut self) -> Result<std::process::ExitStatus> {
+        Ok(tokio::time::timeout(Duration::from_secs(30), self.child.wait())
+            .await
+            .map_err(|_| "device connection did not exit")??)
+    }
+
     /// SIGTERM, then SIGKILL after 5 s.
     pub async fn stop(&mut self) -> Result<()> {
         if let Some(pid) = self.child.id() {

@@ -58,6 +58,8 @@ pub enum Fault {
     Drop,
     /// Forward, then reply with `rewrite(status, body)` instead.
     Rewrite(Box<dyn Fn(u16, Vec<u8>) -> Vec<u8> + Send>),
+    /// Forward and read the reply, then deliver it after this future.
+    After(BoxFuture),
 }
 
 pub type FaultHook = Arc<dyn Fn(&Exchange) -> Fault + Send + Sync>;
@@ -111,6 +113,13 @@ impl Tp {
                     Ok(upstream) => upstream,
                     Err(_) => return Ok(Answer::Drop),
                 };
+                if let Fault::After(wait) = fault {
+                    let status = upstream.status;
+                    let headers = relay::without_length(upstream.headers.clone());
+                    let body = upstream.bytes().await.unwrap_or_default();
+                    wait.await;
+                    return Ok(Answer::bytes(status, headers, body));
+                }
                 if let Fault::Rewrite(rewrite) = fault {
                     let status = upstream.status;
                     let headers = relay::without_length(upstream.headers.clone());
