@@ -25,7 +25,9 @@ pub(crate) struct Profile {
     pub instructions: String,
     pub runtime: Option<String>,
     pub provider_account: String,
+    #[serde(alias = "providerInstance")]
     pub provider_instance: String,
+    #[serde(alias = "modelOptions")]
     pub model_options: Value,
     pub backup_model: String,
     pub goal_judge_model: Option<String>,
