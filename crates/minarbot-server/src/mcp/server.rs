@@ -118,6 +118,12 @@ async fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
             [string(caller, "turn")],
         )?
         .ok_or_else(|| error(403, "MCP authorization failed."))?;
+        if crate::turns::messaging::channel(&guard.connection, string(&turn, "id"))?.is_some() {
+            specs.retain(|t| {
+                t["native"] == true
+                    || !crate::turns::tools::PRIVATE_TOOLS.contains(&string(t, "name"))
+            });
+        }
         for spec in crate::turns::tools::offered(state, &guard.connection, &turn)? {
             let name = string(&spec["function"], "name");
             if [

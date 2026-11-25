@@ -126,9 +126,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         "interrupt_agent" => {
             private && super::messaging::allowed(db, string(turn, "id")).unwrap_or(false)
         }
-        "edit_profile" | "list_skills" | "read_skill" | "read_skill_file" | "list_sites"
-        | "publish_site" | "delete_site" | "set_avatar" | "list_routines" | "read_routine"
-        | "set_routine_flow" => private,
+        name if PRIVATE_TOOLS.contains(&name) => private,
         "run_shell" => bound && crate::platform::LINUX_SANDBOX,
         "git_status"
         | "git_diff"
@@ -187,6 +185,21 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
     }
     Ok(specs)
 }
+/// Native tools offered only in private conversations. Their MCP feature
+/// twins are withheld from shared-room turns too (`mcp::server`).
+pub const PRIVATE_TOOLS: &[&str] = &[
+    "edit_profile",
+    "list_skills",
+    "read_skill",
+    "read_skill_file",
+    "list_sites",
+    "publish_site",
+    "delete_site",
+    "set_avatar",
+    "list_routines",
+    "read_routine",
+    "set_routine_flow",
+];
 pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> {
     if pending(state) {
         return Err(error(503, "Update trial is pending."));
