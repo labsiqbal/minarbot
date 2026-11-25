@@ -680,3 +680,687 @@ async fn canonical_routine_runtime_snapshots_flows_and_hands_off_once_using_curr
     w.tp.close().await?;
     result
 }
+
+fn step<'a>(run: &'a Value, agent: &str) -> Option<&'a Value> {
+    run["steps"]
+        .as_array()
+        .and_then(|steps| steps.iter().find(|step| step["agentId"] == agent))
+}
+
+fn step_task(run: &Value, agent: &str) -> Option<String> {
+    step(run, agent).and_then(|step| step["taskId"].as_str().map(str::to_owned))
+}
+
+/// Agent body bound to an existing provider binding.
+fn bound_agent(agent: &str, name: &str, project: &str, home: &Value, binding: &str) -> Value {
+    let mut body = agent_body(agent, name, "Help", project, home);
+    body["providerBinding"] = json!({"bindingId": binding, "expectedRevision": 1});
+    body
+}
+
+/// The workflow home's current `/api/devices` row.
+async fn current_home(w: &WorkflowHome) -> Result<Value> {
+    w.tp.data("/api/devices")
+        .await?
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == w.home["id"]).cloned())
+        .ok_or_else(|| "home missing".into())
+}
+
+fn binding_of(w: &WorkflowHome, agent: &str) -> Result<String> {
+    w.tp.inspect()?
+        .scalar("SELECT provider_binding FROM agent_authority WHERE agent=?", [agent])
+}
+
+/// Make the routine's schedule due now (an edit to revision 1).
+async fn due_now(w: &WorkflowHome, detail: &str, create: &Value) -> Result<()> {
+    let edit = new_id();
+    let mut edited = create.clone();
+    edited["requestId"] = json!(edit);
+    edited["id"] = json!(edit);
+    edited["revision"] = json!(1);
+    edited["nextAt"] = json!(wall_ms() - 1000);
+    ensure!(w.tp.send(&format!("{detail}/edit"), Some(edited)).await?.0 == 200, "due edit");
+    Ok(())
+}
+
+async fn outcome_recovers_terminal_result_after_home_sigkill(name: &'static str) -> Result<()> {
+    let mut w = WorkflowHome::start().await?;
+    let result = async {
+        let routine = new_id();
+        let detail = routine_path(&w, &routine);
+        let reason = if name == "no_update" {
+            "Checked all sources; nothing changed."
+        } else {
+            "Required service access is missing."
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let checks = Checks::new();
+        let (counter, failures) = (calls.clone(), checks.handle());
+        let provider = minarbot_testkit::device_host::provider(move |context| {
+            check(
+                &failures,
+                context["snapshot"]["tools"].as_array().is_some_and(|tools| {
+                    tools.iter().any(|tool| tool["function"]["name"] == name)
+                }),
+                "Actual routine step offers outcome tools",
+            );
+            counter.fetch_add(1, Ordering::SeqCst);
+            let arguments = json!({"reason": format!("  {reason}  ")}).to_string();
+            async move {
+                Ok(json!({"toolCall": {"id": "outcome", "function": {"name": name,
+                    "arguments": arguments}}}))
+            }
+        })
+        .await?;
+        let mut connection = w.connect()?;
+        connected(&connection).await?;
+        let home = current_home(&w).await?;
+        let (peer, owner) = (new_id(), account(&w.tp, "user_owner").await?);
+        bind(&w, &text(&home["id"]), &w.agent, &owner, "routine-outcome")?;
+        let binding = binding_of(&w, &w.agent)?;
+        let (status, body) = w
+            .tp
+            .send("/api/agents", Some(bound_agent(&peer, "Downstream", &w.project, &home, &binding)))
+            .await?;
+        ensure!(status == 201, "peer: {status} {body}");
+        let create = routine_command(&routine, "Outcome flow", "Check for changes", wall_ms() + 600_000, None, true);
+        ensure!(w.tp.send(&routines_of(&w), Some(create.clone())).await?.0 == 201, "routine");
+        let flow = new_id();
+        ensure!(
+            w.tp.send(
+                &format!("{detail}/flow"),
+                Some(json!({"requestId": flow, "id": flow, "revision": 0,
+                    "links": [{"from": w.agent, "to": peer}]}))
+            )
+            .await?
+            .0 == 200,
+            "flow"
+        );
+        due_now(&w, &detail, &create).await?;
+        let run = wait_first_run(&w, &detail, |run| run["state"] == "admitted").await?;
+        let task = text(&run["taskId"]);
+        connection.stop().await?;
+        minarbot_testkit::device_host::crash_task(&w.options, &task, &provider.origin(), "tool-reply").await?;
+        ensure!(calls.load(Ordering::SeqCst) == 1, "provider calls before crash recovery");
+        let terminal = if name == "no_update" { "done" } else { "failed" };
+        let run = wait_first_run(&w, &detail, |run| run["state"] == terminal).await?;
+        let mut steps: Vec<(Value, Value, Value)> = run["steps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|step| (step["agentId"].clone(), step["state"].clone(), step["taskId"].clone()))
+            .collect();
+        let mut expected = vec![
+            (json!(w.agent), json!(if name == "no_update" { "skipped" } else { "failed" }), json!(task)),
+            (json!(peer), json!("skipped"), Value::Null),
+        ];
+        let key = |row: &(Value, Value, Value)| row.0.to_string();
+        steps.sort_by_key(key);
+        expected.sort_by_key(key);
+        ensure!(steps == expected, "steps: {steps:?}");
+        ensure!(step(&run, &w.agent).is_some_and(|step| step["preview"] == reason), "preview");
+        let db = w.tp.inspect()?;
+        let turn = db.row("SELECT status,no_update,reply,error FROM turns WHERE id=?", [&task])?;
+        let expected_turn = if name == "no_update" {
+            json!({"status": "done", "no_update": 1, "reply": reason, "error": null})
+        } else {
+            json!({"status": "failed", "no_update": 0, "reply": null, "error": reason})
+        };
+        ensure!(turn == expected_turn, "turn: {turn}");
+        ensure!(db.scalar::<i64>("SELECT stopped FROM execution_owners WHERE task=?", [&task])? == 1, "owner stopped");
+        let saved = db.row(
+            "SELECT r.action,r.content_json FROM task_results r JOIN task_actions a ON a.id=r.action WHERE r.task=? AND a.action_kind='canonical'",
+            [&task],
+        )?;
+        drop(db);
+        w.tp.restart().await?;
+        for _ in 0..2 {
+            let resumed = minarbot_testkit::device_host::run_task_process(&w.options, &task, &provider.origin()).await?;
+            ensure!(
+                resumed["state"] == if name == "no_update" { "completed" } else { "failed" },
+                "resumed: {resumed}"
+            );
+            ensure!(calls.load(Ordering::SeqCst) == 1, "provider calls after resume");
+        }
+        let db = w.tp.inspect()?;
+        ensure!(
+            db.scalar::<String>("SELECT content_json FROM task_results WHERE action=?", [&text(&saved["action"])])?
+                == text(&saved["content_json"]),
+            "saved result changed"
+        );
+        ensure!(db.scalar::<i64>("SELECT count(*) FROM task_actions WHERE task=?", [&task])? == 2, "actions");
+        ensure!(db.scalar::<i64>("SELECT count(*) FROM task_results WHERE task=?", [&task])? == 2, "results");
+        ensure!(db.scalar::<i64>("SELECT count(*) FROM tasks WHERE project=?", [&w.project])? == 1, "no fan-out");
+        ensure!(first_run(&w, &detail).await? == run, "run changed");
+        checks.result()?;
+        drop(provider);
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+#[tokio::test]
+async fn canonical_routine_no_update_recovers_terminal_result_after_home_sigkill_and_server_restart_without_fan_out(
+) -> Result<()> {
+    outcome_recovers_terminal_result_after_home_sigkill("no_update").await
+}
+
+#[tokio::test]
+async fn canonical_routine_report_failure_recovers_terminal_result_after_home_sigkill_and_server_restart_without_fan_out(
+) -> Result<()> {
+    outcome_recovers_terminal_result_after_home_sigkill("report_failure").await
+}
+
+#[tokio::test]
+async fn canonical_routine_mixed_fan_in_waits_for_success_and_keeps_quiet_and_failed_outcomes_distinct(
+) -> Result<()> {
+    let w = WorkflowHome::start().await?;
+    let result = async {
+        let routine = new_id();
+        let detail = routine_path(&w, &routine);
+        let connection = w.host.connect().await?;
+        until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+        let owner = account(&w.tp, "user_owner").await?;
+        bind(&w, &text(&w.home["id"]), &w.agent, &owner, "routine-fan-in")?;
+        let binding = binding_of(&w, &w.agent)?;
+        let (quiet, failed, good, joined) = (new_id(), new_id(), new_id(), new_id());
+        let home = current_home(&w).await?;
+        for agent in [&quiet, &failed, &good, &joined] {
+            let (status, _) = w
+                .tp
+                .send("/api/agents", Some(bound_agent(agent, "Flow member", &w.project, &home, &binding)))
+                .await?;
+            ensure!(status == 201, "flow member: {status}");
+        }
+        let create = routine_command(&routine, "Mixed flow", "Root work", wall_ms() + 600_000, None, true);
+        ensure!(w.tp.send(&routines_of(&w), Some(create.clone())).await?.0 == 201, "routine");
+        let links: Vec<Value> = [&quiet, &failed, &good]
+            .iter()
+            .flat_map(|agent| [json!({"from": w.agent, "to": agent}), json!({"from": agent, "to": joined})])
+            .collect();
+        let flow = new_id();
+        ensure!(
+            w.tp.send(&format!("{detail}/flow"), Some(json!({"requestId": flow, "id": flow, "revision": 0, "links": links})))
+                .await?
+                .0
+                == 200,
+            "flow"
+        );
+        due_now(&w, &detail, &create).await?;
+        let run = wait_first_run(&w, &detail, |run| run["state"] == "admitted").await?;
+        let ran = w.host.run_task(&text(&run["taskId"]), |_| async { Ok(json!({"text": "Root evidence"})) }).await?;
+        ensure!(ran["state"] == "completed", "root: {ran}");
+        let run = wait_first_run(&w, &detail, |run| {
+            [&quiet, &failed, &good].iter().all(|agent| step_task(run, agent).is_some())
+        })
+        .await?;
+        let checks = Checks::new();
+        for (agent, name, reason) in [
+            (&quiet, "no_update", "Quiet check found no change"),
+            (&failed, "report_failure", "One source is unavailable"),
+        ] {
+            let task = step_task(&run, agent).ok_or("step task")?;
+            let failures = checks.handle();
+            let ran = w
+                .host
+                .run_task(&task, move |context| {
+                    check(
+                        &failures,
+                        context["snapshot"]["tools"].as_array().is_some_and(|tools| {
+                            tools.iter().any(|tool| tool["function"]["name"] == name)
+                        }),
+                        "Downstream step offers outcome tools",
+                    );
+                    let arguments = json!({"reason": reason}).to_string();
+                    async move {
+                        Ok(json!({"toolCall": {"id": name, "function": {"name": name, "arguments": arguments}}}))
+                    }
+                })
+                .await?;
+            ensure!(
+                ran["state"] == if name == "no_update" { "completed" } else { "failed" },
+                "{name}: {ran}"
+            );
+        }
+        let run = wait_first_run(&w, &detail, |run| {
+            step(run, &failed).is_some_and(|step| step["state"] == "failed")
+        })
+        .await?;
+        ensure!(step(&run, &quiet).is_some_and(|step| step["state"] == "skipped"), "quiet skipped");
+        ensure!(
+            step(&run, &joined).is_some_and(|step| step["taskId"].is_null()),
+            "Fan-in waits for every upstream result"
+        );
+        let good_task = step_task(&run, &good).ok_or("good task")?;
+        let ran = w.host.run_task(&good_task, |_| async { Ok(json!({"text": "Actionable result"})) }).await?;
+        ensure!(ran["state"] == "completed", "good: {ran}");
+        let run = wait_first_run(&w, &detail, |run| step_task(run, &joined).is_some()).await?;
+        let joined_task = step_task(&run, &joined).ok_or("joined task")?;
+        let failures = checks.handle();
+        let ran = w
+            .host
+            .run_task(&joined_task, move |context| {
+                let prompt = context["snapshot"]["conversation"]["message"]["text"].as_str().unwrap_or_default().to_owned();
+                check(&failures, prompt.contains("Actionable result"), "good result in prompt");
+                check(&failures, prompt.contains("\"status\":\"skipped\""), "skipped status in prompt");
+                check(&failures, prompt.contains("One source is unavailable"), "failure in prompt");
+                async { Ok(json!({"text": "Merged actionable result"})) }
+            })
+            .await?;
+        ensure!(ran["state"] == "completed", "joined: {ran}");
+        checks.result()?;
+        let run = wait_first_run(&w, &detail, |run| run["state"] == "failed").await?;
+        ensure!(step(&run, &joined).is_some_and(|step| step["state"] == "done"), "joined done");
+        ensure!(
+            w.tp.inspect()?.scalar::<i64>("SELECT count(*) FROM tasks WHERE project=? AND agent=?", [&w.project, &joined])? == 1,
+            "joined tasks"
+        );
+        connection.stop().await?;
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+#[tokio::test]
+async fn canonical_routine_keeps_no_reply_descendants_executable_after_completion_and_fences_revoked_root_authority(
+) -> Result<()> {
+    let w = WorkflowHome::start().await?;
+    let result = async {
+        let routine = new_id();
+        let detail = routine_path(&w, &routine);
+        let connection = w.host.connect().await?;
+        until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+        let (peer, owner) = (new_id(), account(&w.tp, "user_owner").await?);
+        bind(&w, &text(&w.home["id"]), &w.agent, &owner, "routine-fixture")?;
+        let home = w.tp.data("/api/devices").await?[0].clone();
+        ensure!(
+            w.tp.send("/api/agents", Some(agent_body(&peer, "Teammate", "Help", &w.project, &home))).await?.0 == 201,
+            "teammate"
+        );
+        let create = routine_command(&routine, "Background work", "Delegate without waiting", wall_ms() - 1000, None, true);
+        ensure!(w.tp.send(&routines_of(&w), Some(create)).await?.0 == 201, "routine");
+        let run = wait_first_run(&w, &detail, |run| run["state"] == "admitted").await?;
+        let task = text(&run["taskId"]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (counter, recipient) = (calls.clone(), peer.clone());
+        let ran = w
+            .host
+            .run_task(&task, move |_| {
+                let first = counter.fetch_add(1, Ordering::SeqCst) == 0;
+                let recipient = recipient.clone();
+                async move {
+                    Ok(if first {
+                        json!({"toolCall": {"id": "delegate", "function": {"name": "send_message",
+                            "arguments": json!({"recipients": [recipient], "text": "Background work",
+                                "expects_reply": false}).to_string()}}})
+                    } else {
+                        json!({"text": "Parent done"})
+                    })
+                }
+            })
+            .await?;
+        ensure!(ran["state"] == "completed", "parent: {ran}");
+        wait_first_run(&w, &detail, |run| run["state"] == "done").await?;
+        let child: String = w.tp.inspect()?.scalar("SELECT id FROM turns WHERE parent=?", [&task])?;
+        let owned = w.host.start_task(&child).await?;
+        w.host.context(&child, &owned["ownership"], &owned["revision"]).await?;
+        w.tp.write()?.execute(
+            "UPDATE agent_projects SET deleted=1 WHERE project=? AND agent=?",
+            [&w.project, &w.agent],
+        )?;
+        let denied = w.host.context(&child, &owned["ownership"], &owned["revision"]).await;
+        ensure!(
+            denied.as_ref().is_err_and(|error| minarbot_testkit::device_host::is_code(error, "execution_denied")),
+            "revoked root context: {denied:?}"
+        );
+        ensure!(
+            w.tp.inspect()?.scalar::<String>("SELECT reply FROM turns WHERE id=?", [&task])? == "Parent done",
+            "parent reply"
+        );
+        connection.stop().await?;
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+#[tokio::test]
+async fn canonical_routine_runtime_rechecks_grants_and_rolls_back_failed_task_admissions_without_consuming_occurrence(
+) -> Result<()> {
+    let w = WorkflowHome::start().await?;
+    let result = async {
+        let routine = new_id();
+        let detail = routine_path(&w, &routine);
+        let collaborator = account(&w.tp, "user_collaborator").await?;
+        let db = w.tp.write()?;
+        db.execute("INSERT INTO project_members VALUES (?,?,'member',1,0)", [&w.project, &collaborator])?;
+        db.execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&w.project, &collaborator, &w.agent])?;
+        let command = routine_command(&routine, "Revocable", "Check", wall_ms() - 1000, None, true);
+        let as_member = |path: String, body: Option<Value>| {
+            let tp = &w.tp;
+            async move { tp.send_as(&path, body, "user_collaborator", None).await }
+        };
+        ensure!(as_member(routines_of(&w), Some(command.clone())).await?.0 == 201, "routine");
+        let runs = format!("{detail}/runs");
+        let run = minarbot_testkit::wait::until_within("pending", SETTLE, || async {
+            let run = as_member(runs.clone(), None).await?.1["data"]["items"][0].clone();
+            Ok((run["state"] == "pending").then_some(run))
+        })
+        .await?;
+        let occurrence = text(&run["id"]);
+        db.execute(
+            "UPDATE collaborator_agents SET enabled=0,revision=2 WHERE project=? AND account=?",
+            [&w.project, &collaborator],
+        )?;
+        let connection = w.host.connect().await?;
+        until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+        let occurrence_task = || -> Result<Value> {
+            Ok(minarbot_testkit::db::Inspector::open(w.tp.database())?
+                .row("SELECT task FROM routine_occurrences WHERE id=?", [&occurrence])?["task"]
+                .clone())
+        };
+        ensure!(occurrence_task()?.is_null(), "revoked occurrence admitted");
+        ensure!(as_member(runs.clone(), None).await?.0 == 404, "revoked runs");
+        db.execute(
+            "UPDATE collaborator_agents SET enabled=1,revision=3 WHERE project=? AND account=?",
+            [&w.project, &collaborator],
+        )?;
+        db.execute_batch("CREATE TRIGGER fail_routine_admission BEFORE INSERT ON receipts WHEN NEW.scope LIKE 'tasks:routine-step:%' BEGIN SELECT RAISE(ABORT,'synthetic routine receipt failure'); END")?;
+        let rebind = new_id();
+        let mut edit = command.clone();
+        edit["requestId"] = json!(rebind);
+        edit["id"] = json!(rebind);
+        edit["revision"] = json!(1);
+        ensure!(as_member(format!("{detail}/edit"), Some(edit)).await?.0 == 200, "rebind edit");
+        until("automation failure", SETTLE, || async {
+            Ok(w.tp.app.output()?.1.contains("Project automation failed:"))
+        })
+        .await?;
+        ensure!(occurrence_task()?.is_null(), "Regrant never revives old schedule authority");
+        ensure!(db.scalar::<i64>("SELECT count(*) FROM routine_steps", [])? == 0, "routine steps");
+        ensure!(db.scalar::<i64>("SELECT count(*) FROM tasks", [])? == 0, "tasks");
+        ensure!(w.tp.data(&detail).await?["enabled"] == 1, "enabled");
+        db.execute_batch("DROP TRIGGER fail_routine_admission")?;
+        let accepted = minarbot_testkit::wait::until_within("admitted", SETTLE, || async {
+            let items = as_member(runs.clone(), None).await?.1["data"]["items"].clone();
+            Ok(items.as_array().and_then(|rows| rows.iter().find(|row| row["state"] == "admitted").cloned()))
+        })
+        .await?;
+        let task = text(&accepted["taskId"]);
+        ensure!(
+            as_member(format!("/api/tasks/{task}"), None).await?.1["receipt"]["actorId"] == collaborator.as_str(),
+            "task actor"
+        );
+        db.execute(
+            "UPDATE collaborator_agents SET enabled=0,revision=4 WHERE project=? AND account=?",
+            [&w.project, &collaborator],
+        )?;
+        let denied = w.host.start_task(&task).await;
+        ensure!(
+            denied.as_ref().is_err_and(|error| minarbot_testkit::device_host::is_code(error, "execution_denied")),
+            "revoked start: {denied:?}"
+        );
+        ensure!(db.scalar::<i64>("SELECT count(*) FROM task_actions", [])? == 0, "task actions");
+        ensure!(db.rows("PRAGMA foreign_key_check", [])?.is_empty(), "foreign keys");
+        connection.stop().await?;
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+async fn admitted_routine(w: &WorkflowHome, name: &str, prompt: &str) -> Result<(String, String, Value, Value)> {
+    let routine = new_id();
+    let detail = routine_path(w, &routine);
+    let command = routine_command(&routine, name, prompt, wall_ms() - 1000, Some(300), true);
+    ensure!(w.tp.send(&routines_of(w), Some(command.clone())).await?.0 == 201, "routine");
+    let run = wait_first_run(w, &detail, |run| run["state"] == "admitted").await?;
+    Ok((routine, detail, command, run))
+}
+
+/// Disable the routine at its current revision and schedule.
+async fn disable(w: &WorkflowHome, detail: &str, command: &Value) -> Result<(u16, Value)> {
+    let current = w.tp.data(detail).await?;
+    let edit = new_id();
+    let mut body = command.clone();
+    body["requestId"] = json!(edit);
+    body["id"] = json!(edit);
+    body["revision"] = current["revision"].clone();
+    body["nextAt"] = current["next_at"].clone();
+    body["enabled"] = json!(false);
+    w.tp.send(&format!("{detail}/edit"), Some(body)).await
+}
+
+#[tokio::test]
+async fn canonical_routine_edit_cancels_unstarted_scheduled_work_and_retains_accepted_evidence(
+) -> Result<()> {
+    let mut w = WorkflowHome::start().await?;
+    let result = async {
+        let connection = w.connect()?;
+        connected(&connection).await?;
+        let (_, detail, command, run) = admitted_routine(&w, "Disable queued", "Never start after disable").await?;
+        let task_path = format!("/api/tasks/{}", text(&run["taskId"]));
+        let (_, task) = w.tp.send(&task_path, None).await?;
+        ensure!(task["data"]["state"] == "queued", "queued: {task}");
+        let (status, saved) = disable(&w, &detail, &command).await?;
+        ensure!(status == 200, "disable: {status} {saved}");
+        let (_, after) = w.tp.send(&task_path, None).await?;
+        ensure!(after["data"]["state"] == "cancelled", "cancelled");
+        ensure!(after["receipt"] == task["receipt"], "receipt kept");
+        w.tp.restart().await?;
+        ensure!(w.tp.data(&task_path).await?["state"] == "cancelled", "cancelled after restart");
+        drop(connection);
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+#[tokio::test]
+async fn canonical_routine_runtime_preserves_started_snapshots_through_edits_and_restore_holds_unfinished_occurrences(
+) -> Result<()> {
+    let mut w = WorkflowHome::start().await?;
+    let result = async {
+        let connection = w.host.connect().await?;
+        until("home", SETTLE, || async { Ok(connection.phase() == "connected") }).await?;
+        let (routine, detail, command, run) = admitted_routine(&w, "Started", "Retain started work").await?;
+        let task = text(&run["taskId"]);
+        let owned = w.host.start_task(&task).await?;
+        ensure!(disable(&w, &detail, &command).await?.0 == 200, "disable");
+        ensure!(
+            w.tp.task_detail(&task).await?["state"] == "running",
+            "Configuration edits keep started snapshot under task controls"
+        );
+        let backup = super::fixture::workspace_snapshot(&w.tp, None)?;
+        connection.stop().await?;
+        w.tp.restore_from(&backup).await?;
+        let check_restored = || -> Result<()> {
+            let db = minarbot_testkit::db::Inspector::open(w.tp.database())?;
+            let row = db.row("SELECT * FROM routine_occurrences WHERE id=?", [&text(&run["id"])])?;
+            ensure!(row["state"] == "blocked", "occurrence state: {row}");
+            ensure!(row["task"] == task.as_str(), "occurrence task");
+            ensure!(row["due_at"] == run["dueAt"], "due");
+            ensure!(row["schedule_revision"] == run["scheduleRevision"], "schedule revision");
+            ensure!(db.scalar::<i64>("SELECT enabled FROM routines WHERE id=?", [&routine])? == 0, "routine enabled");
+            ensure!(db.scalar::<String>("SELECT state FROM tasks WHERE id=?", [&task])? == "uncertain", "task state");
+            Ok(())
+        };
+        check_restored()?;
+        w.tp.restart().await?;
+        let db = w.tp.inspect()?;
+        ensure!(db.count("routine_occurrences")? == 1, "occurrences");
+        ensure!(
+            db.scalar::<String>("SELECT state FROM routine_occurrences WHERE id=?", [&text(&run["id"])])? == "blocked",
+            "blocked after restart"
+        );
+        ensure!(db.rows("PRAGMA foreign_key_check", [])?.is_empty(), "foreign keys");
+        ensure!(
+            w.host.context(&task, &owned["ownership"], &owned["revision"]).await.is_err(),
+            "restored task context"
+        );
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+#[tokio::test]
+async fn canonical_routine_cancellation_settles_terminal_occurrence_after_task_cancel() -> Result<()> {
+    let mut w = WorkflowHome::start().await?;
+    let result = async {
+        let connection = w.connect()?;
+        connected(&connection).await?;
+        let (_, detail, _, run) = admitted_routine(&w, "Cancel", "Cancel me").await?;
+        let task = text(&run["taskId"]);
+        let current = w.tp.task_detail(&task).await?;
+        let (status, _) = w
+            .tp
+            .send(
+                &format!("/api/tasks/{task}/control"),
+                Some(json!({"requestId": new_id(), "expectedRevision": current["revision"],
+                    "operation": "cancel"})),
+            )
+            .await?;
+        ensure!(status == 200, "cancel: {status}");
+        let run = wait_first_run(&w, &detail, |run| run["state"] == "failed").await?;
+        ensure!(w.tp.task_detail(&task).await?["state"] == "cancelled", "task cancelled");
+        ensure!(
+            w.tp.inspect()?.scalar::<String>("SELECT state FROM routine_steps WHERE occurrence=?", [&text(&run["id"])])?
+                == "failed",
+            "step failed"
+        );
+        w.tp.restart().await?;
+        ensure!(first_run(&w, &detail).await?["state"] == "failed", "failed after restart");
+        drop(connection);
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
+
+#[tokio::test]
+async fn canonical_routines_recheck_assignments_private_mappings_flow_agents_and_receipt_rollback(
+) -> Result<()> {
+    let w = WorkflowHome::start().await?;
+    let result = async {
+        let list = routines_of(&w);
+        let routine = new_id();
+        let detail = routine_path(&w, &routine);
+        let command = routine_command(&routine, "Routine", "Check", wall_ms() + 600_000, None, false);
+        for fields in [
+            json!({"trigger": ["webhook"]}),
+            json!({"trigger": {}}),
+            json!({"nextAt": -1}),
+            json!({"intervalSeconds": 1.5}),
+            json!({"prompt": ""}),
+        ] {
+            let invalid = new_id();
+            let mut body = command.clone();
+            for (key, value) in fields.as_object().into_iter().flatten() {
+                body[key] = value.clone();
+            }
+            body["requestId"] = json!(invalid);
+            body["id"] = json!(invalid);
+            ensure!(w.tp.send(&list, Some(body)).await?.0 == 400, "invalid {fields}");
+        }
+        ensure!(w.tp.data(&list).await?["items"] == json!([]), "Invalid bodies write no configuration");
+        ensure!(w.tp.send(&list, Some(command.clone())).await?.0 == 201, "routine");
+        let collaborator = account(&w.tp, "user_collaborator").await?;
+        let db = w.tp.write()?;
+        let as_member = |path: String, body: Option<Value>| {
+            let tp = &w.tp;
+            async move { tp.send_as(&path, body, "user_collaborator", None).await }
+        };
+        db.execute("INSERT INTO project_members VALUES (?,?,'member',1,0)", [&w.project, &collaborator])?;
+        ensure!(as_member(detail.clone(), None).await?.0 == 404, "unassigned read");
+        db.execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&w.project, &collaborator, &w.agent])?;
+        db.execute("INSERT INTO response_policies VALUES (?,?,?,0,1)", [&w.project, &collaborator, &w.agent])?;
+        ensure!(as_member(detail.clone(), None).await?.0 == 200, "Response OFF retains assignment");
+        let edit_id = new_id();
+        let mut edit = command.clone();
+        edit["requestId"] = json!(edit_id);
+        edit["id"] = json!(edit_id);
+        edit["revision"] = json!(1);
+        edit["name"] = json!("Collaborator");
+        ensure!(as_member(format!("{detail}/edit"), Some(edit.clone())).await?.0 == 200, "member edit");
+        db.execute(
+            "UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=?",
+            [&w.project, &collaborator],
+        )?;
+        ensure!(
+            as_member(format!("{detail}/edit"), Some(edit.clone())).await?.0 == 404,
+            "Revoked grants cannot read old receipts"
+        );
+        db.execute(
+            "UPDATE collaborator_agents SET enabled=1,revision=revision+1 WHERE project=? AND account=?",
+            [&w.project, &collaborator],
+        )?;
+        let owner = account(&w.tp, "user_owner").await?;
+        let key = json!([routine]).to_string();
+        db.execute(
+            "UPDATE record_scopes SET account=?,visibility='owner' WHERE table_name='routines' AND key_json=?",
+            [&collaborator, &key],
+        )?;
+        ensure!(w.tp.send(&detail, None).await?.0 == 404, "Owner cannot read another human private root");
+        ensure!(as_member(detail.clone(), None).await?.0 == 200, "private owner read");
+        db.execute(
+            "UPDATE record_scopes SET account=?,visibility='project' WHERE table_name='routines' AND key_json=?",
+            [&owner, &key],
+        )?;
+        let teammate = new_id();
+        ensure!(
+            w.tp.send("/api/agents", Some(agent_body(&teammate, "Teammate", "Help", &w.project, &w.home))).await?.0 == 201,
+            "teammate"
+        );
+        let flow_id = new_id();
+        let flow = json!({"requestId": flow_id, "id": flow_id, "revision": 0,
+            "links": [{"from": w.agent, "to": teammate}]});
+        let flow_path = format!("{detail}/flow");
+        ensure!(as_member(flow_path.clone(), Some(flow.clone())).await?.0 == 404, "Every flow agent needs assignment");
+        let mut bad = flow.clone();
+        bad["links"] = json!([{"from": w.agent, "to": new_id()}]);
+        ensure!(w.tp.send(&flow_path, Some(bad)).await?.0 == 400, "unknown flow agent");
+        ensure!(w.tp.send(&flow_path, Some(flow.clone())).await?.0 == 200, "flow");
+        db.execute(
+            "UPDATE record_scopes SET project=? WHERE table_name='routine_flows' AND key_json=?",
+            [&w.other, &key],
+        )?;
+        ensure!(w.tp.send(&flow_path, Some(flow.clone())).await?.0 == 404, "Receipt cannot expose a foreign flow");
+        db.execute(
+            "UPDATE record_scopes SET project=? WHERE table_name='routine_flows' AND key_json=?",
+            [&w.project, &key],
+        )?;
+        db.execute_batch("CREATE TRIGGER fail_routine_receipt BEFORE INSERT ON receipts WHEN NEW.scope LIKE '%/edit' BEGIN SELECT RAISE(ABORT,'synthetic routine receipt failure'); END")?;
+        let change = new_id();
+        let mut atomic = edit.clone();
+        atomic["requestId"] = json!(change);
+        atomic["id"] = json!(change);
+        atomic["revision"] = json!(2);
+        atomic["name"] = json!("Atomic");
+        ensure!(w.tp.send(&format!("{detail}/edit"), Some(atomic.clone())).await?.0 == 500, "receipt failure");
+        ensure!(w.tp.data(&detail).await?["name"] == "Collaborator", "edit rolled back");
+        db.execute_batch("DROP TRIGGER fail_routine_receipt")?;
+        ensure!(w.tp.send(&format!("{detail}/edit"), Some(atomic.clone())).await?.0 == 200, "edit");
+        let short = new_id();
+        let mut short_edit = atomic.clone();
+        short_edit["requestId"] = json!(short);
+        short_edit["id"] = json!(short);
+        short_edit["revision"] = json!(3);
+        short_edit["intervalSeconds"] = json!(60);
+        ensure!(w.tp.send(&format!("{detail}/edit"), Some(short_edit)).await?.0 == 400, "short interval");
+        Ok(())
+    }
+    .await;
+    w.tp.close().await?;
+    result
+}
