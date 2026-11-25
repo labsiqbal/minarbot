@@ -23,7 +23,7 @@ fn allowed(row: &Value, scope: &str) -> bool {
         .and_then(|v| v.as_array().cloned())
         .is_some_and(|a| a.iter().any(|v| v == scope))
 }
-fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
+async fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
     let mut setup = false;
     let mut automation_model = false;
     let mut web_access = crate::turns::web::Access::default();
@@ -36,14 +36,15 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
         });
     }
     if caller["kind"] == "session" && caller["turn"].is_string() {
-        let guard = state.database.lock().map_err(|_| Failure::storage())?;
-        let db = &guard.connection;
-        let turn = one(
-            db,
-            "SELECT * FROM turns WHERE id=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))))",
-            [caller["turn"].as_str()],
-        )?
-        .ok_or_else(|| error(403, "MCP authorization failed."))?;
+        let turn = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            one(
+                &guard.connection,
+                "SELECT * FROM turns WHERE id=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))))",
+                [caller["turn"].as_str()],
+            )?
+            .ok_or_else(|| error(403, "MCP authorization failed."))?
+        };
         if turn["agent"] == super::guide::ID {
             return if super::guide::eligible(&turn) {
                 super::guide::declarations()
@@ -51,17 +52,22 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
                 Ok(Vec::new())
             };
         }
-        setup = harness::setup(db, &turn)?;
-        automation_model = crate::automation::model(db, string(&turn, "id"))?.is_some()
-            || (turn["workflow_run"].is_string()
-                && one(
-                    db,
-                    "SELECT 1 FROM workflow_steps WHERE turn=? AND model IS NOT NULL",
-                    [string(&turn, "id")],
-                )?
-                .is_some());
-        web_access = crate::turns::web::access(state, db, string(caller, "agent"))?;
-        for spec in harness::specs(state, db, &turn)? {
+        let native_specs = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            let db = &guard.connection;
+            setup = harness::setup(db, &turn)?;
+            automation_model = crate::automation::model(db, string(&turn, "id"))?.is_some()
+                || (turn["workflow_run"].is_string()
+                    && one(
+                        db,
+                        "SELECT 1 FROM workflow_steps WHERE turn=? AND model IS NOT NULL",
+                        [string(&turn, "id")],
+                    )?
+                    .is_some());
+            web_access = crate::turns::web::access(state, db, string(caller, "agent"))?;
+            harness::specs(state, db, &turn)?
+        };
+        for spec in native_specs {
             let f = &spec["function"];
             let name = string(f, "name");
             if ["list_agents", "send_message", "read_history"].contains(&name) {
@@ -77,6 +83,11 @@ fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
                 "orchestration"
             };
             specs.push(json!({"name":name,"description":f["description"],"inputSchema":f["parameters"],"scope":scope,"native":true}));
+        }
+        let composio_tools = crate::connectors::composio::tools(state, &turn).await?;
+        for spec in crate::connectors::composio::specs(&composio_tools) {
+            let function = &spec["function"];
+            specs.push(json!({"name":function["name"],"description":function["description"],"inputSchema":function["parameters"],"scope":"orchestration","native":true}));
         }
     }
     let feature_names: Vec<String> =
@@ -224,7 +235,7 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
     if method == "tools/list" {
         return Ok(crate::json_response(
             200,
-            json!({"jsonrpc":"2.0","id":body["id"],"result":{"tools":public_tools(&declarations(state,&caller)?)}}),
+            json!({"jsonrpc":"2.0","id":body["id"],"result":{"tools":public_tools(&declarations(state,&caller).await?)}}),
         ));
     }
     if method != "tools/call" {
@@ -243,7 +254,8 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let decl = declarations(state, &caller)?
+    let decl = declarations(state, &caller)
+        .await?
         .into_iter()
         .find(|t| t["name"] == name)
         .ok_or_else(|| error(403, "MCP authorization failed."))?;
@@ -292,21 +304,76 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
     {
         return Err(error(400, "Invalid MCP tool call."));
     }
+    if caller["kind"] == "session" && args["recipients"].is_array() {
+        let mut native = args.clone();
+        if let Some(map) = native.as_object_mut() {
+            map.remove("requestId");
+            map.remove("metadata");
+            map.entry("expects_reply").or_insert(json!(false));
+        }
+        let call_id = uuid::Uuid::new_v4().to_string();
+        let mut result = harness::tool(
+            state,
+            string(&caller, "turn"),
+            name,
+            &native,
+            &call_id,
+        )
+        .await?;
+        if native["expects_reply"] == true && result["status"] == "waiting" {
+            for _ in 0..1500 {
+                let completed = {
+                    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+                    one(
+                        &guard.connection,
+                        "SELECT result FROM flow_tool_calls WHERE turn=? AND call_id=?",
+                        params![string(&caller, "turn"), call_id],
+                    )?
+                    .and_then(|row| serde_json::from_str::<Value>(string(&row, "result")).ok())
+                    .filter(|value| value["status"] == "completed")
+                };
+                if let Some(value) = completed {
+                    result = value;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        }
+        return Ok(reply(&body["id"], Ok(result)));
+    }
     if name == "render_component" && super::secrets::reflected(args.to_string().as_bytes(), &bearer)
     {
         return Err(error(400, "Component replies cannot include credentials."));
     }
     if decl["native"] == true {
-        let result = harness::tool(
-            state,
-            string(&caller, "turn"),
-            name,
-            &args,
-            &uuid::Uuid::new_v4().to_string(),
+        let turn = string(&caller, "turn");
+        let call = json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "type": "function",
+            "function": {"name": name, "arguments": args.to_string()},
+        });
+        let effect = crate::computer::hub::before_effect(state, turn, "tool", call).await?;
+        let result = crate::computer::hub::run_effect(
+            &effect,
+            harness::tool(
+                state,
+                turn,
+                name,
+                &args,
+                &uuid::Uuid::new_v4().to_string(),
+            ),
         )
         .await;
+        crate::computer::hub::finish_effect(
+            state,
+            effect,
+            if result.is_ok() { "succeeded" } else { "unknown" },
+        )
+        .await?;
         let result = result.and_then(|v| {
-            if v["error"].is_string() {
+            if name == "read_skill_file" {
+                Ok(v)
+            } else if v["error"].is_string() {
                 Err(error(400, string(&v, "error")))
             } else {
                 Ok(v)
@@ -379,6 +446,26 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
                 harness::history(db, &row, &args)?
             }
             "get_message_status" => {
+                if caller["kind"] == "session" {
+                    let request_id = string(&args, "requestId");
+                    let deliveries = all(
+                        db,
+                        "SELECT t.status,t.paused,t.reply,t.error FROM agent_deliveries d JOIN turns t ON t.id=d.turn JOIN agent_requests r ON r.id=d.request WHERE r.id=? AND r.turn=?",
+                        params![request_id, string(&caller, "turn")],
+                    )?;
+                    if deliveries.is_empty() {
+                        return Err(error(404, "Message not found."));
+                    }
+                    let active = deliveries.iter().any(|row| {
+                        row["paused"] == 1 || ["queued", "running"].contains(&string(row, "status"))
+                    });
+                    let reply = deliveries
+                        .iter()
+                        .find(|row| row["status"] == "done")
+                        .map(|row| row["reply"].clone())
+                        .unwrap_or(Value::Null);
+                    return Ok(json!({"requestId":request_id,"status":if active {"waiting"} else {"done"},"reply":reply,"error":Value::Null}));
+                }
                 let row=one(db,"SELECT t.* FROM mcp_server_messages m JOIN turns t ON t.id=m.turn WHERE m.caller=? AND m.request_id=?",[caller["id"].as_str().unwrap_or(""),string(&args,"requestId")])?.ok_or_else(||error(404,"Message not found."))?;
                 json!({"requestId":args["requestId"],"status":row["status"],"reply":row["reply"],"error":row["error"]})
             }
