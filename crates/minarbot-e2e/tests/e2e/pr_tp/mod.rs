@@ -6,11 +6,13 @@
 #[allow(dead_code)]
 mod crypto;
 mod events;
+mod execution;
 #[allow(dead_code)]
 mod fixture;
 mod routines;
 mod schedules;
 mod shared;
+mod sync;
 mod workflow_config;
 mod workflow_runs;
 mod workflow_waits;
