@@ -20,6 +20,7 @@
 pub mod bridge;
 pub mod canonical;
 pub mod cli;
+pub mod connector;
 pub mod db;
 pub mod fake;
 pub mod fakes;

@@ -11,7 +11,7 @@ description = "End-to-end tests that drive the real minarbot-server binary throu
 [dev-dependencies]
 minarbot-testkit = { path = "../minarbot-testkit" }
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio = { version = "1", features = ["macros", "net", "io-util", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["macros", "net", "io-util", "rt-multi-thread", "sync", "time"] }
 
 [[test]]
 name = "e2e"

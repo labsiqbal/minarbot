@@ -140,7 +140,7 @@ Recurring #87 differences, stated once and referenced per row:
 - **W1 (channel workspaces).** 7098b86 (#87) gives a channel without a project
   its lead agent's workspace, so workspace and Git tools are offered there.
 
-Kit additions: `minarbot_testkit::restore` (new file: runs `minarbot-server restore ...` and checks `exitCode` against the process status, Clerk identity env and stdin token from the test-only key, Ed25519 `FenceKey`; adds the `ring` dependency the server already locks), `minarbot_testkit::hmac` (new file), `fixtures/local-pre-collapse.sql` (copied from `app/test-support/fixtures/`), `minarbot_testkit::gate::ModelGate` (new file `gate.rs`) holds
+Kit additions: `minarbot_testkit::connector` (new file: port of `rust-connector-fixture.ts`, `rust-connectors-runner.ts` and `connector-journal-command.ts`: fake Telegram/Slack API with a Socket Mode WebSocket and a `Remote` hook, a lossy script-API proxy with `Fault`s, the connector runner and journal command; enables axum's `ws` feature, already in the lock through the server), `minarbot_testkit::restore` (new file: runs `minarbot-server restore ...` and checks `exitCode` against the process status, Clerk identity env and stdin token from the test-only key, Ed25519 `FenceKey`; adds the `ring` dependency the server already locks), `minarbot_testkit::hmac` (new file), `fixtures/local-pre-collapse.sql` (copied from `app/test-support/fixtures/`), `minarbot_testkit::gate::ModelGate` (new file `gate.rs`) holds
 one scripted reply so a test can act between "the model chose a tool" and
 "the server ran it", which the Node providers did by awaiting before they
 answered. `ServerConfig::to_json` now also rejects unknown `hubLink` fields
@@ -166,6 +166,7 @@ Product bugs fixed in this slice:
 | `app/workflow-http.test.ts` | 12 | 12 (+1 regression) | 0 | 1 (TS module) |
 | `app/schema.test.ts` | 4 | 4 (1 server unit test) | 0 | 0 |
 | `app/restore-fence.test.ts` | 7 | 7 | 0 | 0 |
+| `app/telegram.test.ts` | 6 | 6 | 0 | 0 |
 
 ### `app/memory.test.ts`
 
@@ -267,6 +268,21 @@ All cases drive `minarbot-server restore ...` through `minarbot_testkit::restore
 | activation rolls back on receipt failure and rejects changed plans | `sa_restore_fence::activation_rolls_back_on_receipt_failure_and_rejects_changed_plans` | 9 -> 9 | Full. |
 | activation retains populated revoked grants and held tasks, refusing unsafe recovery state | `sa_restore_fence::activation_retains_populated_revoked_grants_and_held_tasks_refusing_unsafe_recovery_state` | 12 -> 9 | Full; the four revoked-list counts are one loop. |
 | activation requires current schema, owner session and fresh infrastructure proof | `sa_restore_fence::activation_requires_current_schema_owner_session_and_fresh_infrastructure_proof` | 6 -> 7 | Recovery accepts schema v6 (baseline) to v7 (#87 added `v7_provider_instances`); the Node case deleted v6, then the newest, and failed after #87. The test removes v6 and v7. Evidence lives 5 s. |
+
+### `app/telegram.test.ts`
+
+The connector cases use `minarbot_testkit::connector`. Model steps after
+`ask_user` follow stage 1's B1 handling (`support::after_question_reply`,
+left out of counts).
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | --- | --- |
+| Telegram question buttons answer the owning task once across restart and lost responses | `sa_telegram::telegram_question_buttons_answer_the_owning_task_once_across_restart_and_lost_responses` | 19 -> 18 | Full (the Node case failed on B1's null step). |
+| Telegram offline recovery preserves sent parts and rejects repeated operator decisions | `sa_telegram::telegram_offline_recovery_preserves_sent_parts_and_rejects_repeated_operator_decisions` | 26 -> 26 | Full. |
+| Telegram bridge submits once through granted side-thread API and isolates main history | `sa_telegram::telegram_bridge_submits_once_through_granted_side_thread_api_and_isolates_main_history` | 12 -> 11 | Full. |
+| Rust Telegram runner rejects a mismatched bot identity and releases its journal lock | `sa_telegram::rust_telegram_runner_rejects_a_mismatched_bot_identity_and_releases_its_journal_lock` | 3 -> 2 | Full. |
+| Telegram runner replies directly and releases owned journal on shutdown | `sa_telegram::telegram_runner_replies_directly_and_releases_owned_journal_on_shutdown` | 9 -> 6 (shared helper) | Full; the fake's own checks are collected and asserted. |
+| Telegram runner answers a question and releases owned journal on shutdown | `sa_telegram::telegram_runner_answers_a_question_and_releases_owned_journal_on_shutdown` | 9 -> 6 (shared helper) | Same helper; model calls exclude the B1 step (the Node case saw 4). |
 <!-- stale-a end -->
 
 ## #67 hosted Hub test migration

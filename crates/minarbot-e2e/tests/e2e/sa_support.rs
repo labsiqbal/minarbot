@@ -235,6 +235,14 @@ pub struct RawRequest {
     pub method: String,
     pub path: String,
     pub authorization: Option<String>,
+    pub body: Vec<u8>,
+}
+
+impl RawRequest {
+    /// The body as JSON (`Null` when it is not JSON).
+    pub fn json(&self) -> Value {
+        serde_json::from_slice(&self.body).unwrap_or(Value::Null)
+    }
 }
 
 /// Reply of a [`RawProvider`]: status, extra headers and body bytes.
@@ -249,55 +257,146 @@ pub struct RawProvider {
     task: tokio::task::JoinHandle<()>,
 }
 
+/// What a [`RawProvider`] does with one request.
+pub enum RawAction {
+    /// Answer with this reply.
+    Reply(RawReply),
+    /// Send the head and these first body bytes of a larger body, then keep
+    /// the connection open until the client closes it; `closed` is notified
+    /// then.
+    Partial(RawReply, std::sync::Arc<tokio::sync::Notify>),
+    /// Close the connection without a reply (a lost response).
+    Lose,
+}
+
+/// Asynchronous responder of a [`RawProvider`].
+pub type RawResponder = std::sync::Arc<
+    dyn Fn(RawRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = RawAction> + Send>>
+        + Send
+        + Sync,
+>;
+
 impl RawProvider {
     pub async fn start(
         reply: impl Fn(&RawRequest) -> RawReply + Send + Sync + 'static,
     ) -> Result<Self> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let reply = std::sync::Arc::new(reply);
+        Self::start_async(std::sync::Arc::new(move |request: RawRequest| {
+            let action = RawAction::Reply(reply(&request));
+            Box::pin(async move { action })
+        }))
+        .await
+    }
+
+    /// Provider whose replies may wait (hold) or stream partially.
+    pub async fn start_async(respond: RawResponder) -> Result<Self> {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let origin = format!("http://{}", listener.local_addr()?);
         let requests: Shared<Vec<RawRequest>> = Shared::default();
         let log = requests.clone();
-        let reply = std::sync::Arc::new(reply);
         let task = tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let (log, reply) = (log.clone(), reply.clone());
+            while let Ok((stream, _)) = listener.accept().await {
+                let (log, respond) = (log.clone(), respond.clone());
                 tokio::spawn(async move {
+                    let mut stream = tokio::io::BufReader::new(stream);
                     let mut head = Vec::new();
-                    let mut byte = [0_u8; 1];
                     while !head.ends_with(b"\r\n\r\n") && head.len() < 65_536 {
+                        let mut byte = [0_u8; 1];
                         if stream.read(&mut byte).await.unwrap_or(0) == 0 {
                             return;
                         }
                         head.push(byte[0]);
                     }
                     let text = String::from_utf8_lossy(&head).into_owned();
-                    let mut lines = text.split("\r\n");
-                    let mut first = lines.next().unwrap_or_default().split(' ');
-                    let request = RawRequest {
-                        method: first.next().unwrap_or_default().to_owned(),
-                        path: first.next().unwrap_or_default().to_owned(),
-                        authorization: lines.find_map(|line| {
+                    let mut first = text.split("\r\n").next().unwrap_or_default().split(' ');
+                    let (method, path) = (
+                        first.next().unwrap_or_default().to_owned(),
+                        first.next().unwrap_or_default().to_owned(),
+                    );
+                    let header = |wanted: &str| {
+                        text.split("\r\n").skip(1).find_map(|line| {
                             line.split_once(':')
-                                .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                                .filter(|(name, _)| name.trim().eq_ignore_ascii_case(wanted))
                                 .map(|(_, value)| value.trim().to_owned())
-                        }),
+                        })
+                    };
+                    let mut body = Vec::new();
+                    if header("transfer-encoding")
+                        .is_some_and(|value| value.eq_ignore_ascii_case("chunked"))
+                    {
+                        loop {
+                            let mut size = String::new();
+                            if stream.read_line(&mut size).await.unwrap_or(0) == 0 {
+                                return;
+                            }
+                            let Ok(size) = usize::from_str_radix(
+                                size.trim().split(';').next().unwrap_or("0"),
+                                16,
+                            ) else {
+                                return;
+                            };
+                            let mut chunk = vec![0_u8; size + 2];
+                            if stream.read_exact(&mut chunk).await.is_err() {
+                                return;
+                            }
+                            if size == 0 {
+                                break;
+                            }
+                            body.extend_from_slice(&chunk[..size]);
+                        }
+                    } else {
+                        let length: usize = header("content-length")
+                            .and_then(|value| value.parse().ok())
+                            .unwrap_or(0);
+                        body = vec![0_u8; length];
+                        if stream.read_exact(&mut body).await.is_err() {
+                            return;
+                        }
+                    }
+                    let request = RawRequest {
+                        method,
+                        path,
+                        authorization: header("authorization"),
+                        body,
                     };
                     if let Ok(mut log) = log.lock() {
                         log.push(request.clone());
                     }
-                    let (status, headers, body) = reply(&request);
-                    let mut out = format!(
-                        "HTTP/1.1 {status} X\r\ncontent-length: {}\r\nconnection: close\r\n",
+                    let (reply, closed) = match respond(request).await {
+                        RawAction::Reply(reply) => (reply, None),
+                        RawAction::Partial(reply, closed) => (reply, Some(closed)),
+                        RawAction::Lose => {
+                            let _ = stream.get_mut().shutdown().await;
+                            return;
+                        }
+                    };
+                    let (status, headers, body) = reply;
+                    let length = if closed.is_some() {
+                        body.len() + 1_000_000
+                    } else {
                         body.len()
+                    };
+                    let mut out = format!(
+                        "HTTP/1.1 {status} X\r\ncontent-length: {length}\r\nconnection: close\r\n"
                     );
                     for (name, value) in headers {
                         out.push_str(&format!("{name}: {value}\r\n"));
                     }
                     out.push_str("\r\n");
+                    let stream = stream.get_mut();
                     let _ = stream.write_all(out.as_bytes()).await;
                     let _ = stream.write_all(&body).await;
-                    let _ = stream.shutdown().await;
+                    match closed {
+                        Some(closed) => {
+                            let mut rest = [0_u8; 1024];
+                            while stream.read(&mut rest).await.unwrap_or(0) > 0 {}
+                            closed.notify_one();
+                        }
+                        None => {
+                            let _ = stream.shutdown().await;
+                        }
+                    }
                 });
             }
         });
@@ -313,6 +412,11 @@ impl RawProvider {
         format!("{}/v1", self.origin)
     }
 
+    /// `http://127.0.0.1:<port>`.
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
     pub fn requests(&self) -> Vec<RawRequest> {
         self.requests
             .lock()
@@ -325,4 +429,19 @@ impl Drop for RawProvider {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+/// Names of the tool calls made since the last user message (this turn).
+pub fn turn_tool_calls(request: &ModelRequest) -> Vec<String> {
+    let messages = request.messages();
+    let start = messages
+        .iter()
+        .rposition(|message| message["role"] == "user")
+        .map_or(0, |index| index + 1);
+    messages[start..]
+        .iter()
+        .filter_map(|message| message["tool_calls"].as_array())
+        .flatten()
+        .filter_map(|call| call["function"]["name"].as_str().map(str::to_owned))
+        .collect()
 }
