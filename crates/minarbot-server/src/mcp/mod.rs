@@ -39,6 +39,15 @@ pub fn url(state: &AppState) -> String {
 pub fn mint_session(state: &AppState, agent: &str, turn: &str) -> Result<(String, String)> {
     registry::mint(state, agent, turn)
 }
+pub fn register_external_session(
+    state: &AppState,
+    id: &str,
+    token: &str,
+    agent: &str,
+    turn: &str,
+) -> Result<()> {
+    registry::register_external(state, id, token, agent, turn)
+}
 pub fn revoke_session(state: &AppState, id: &str) {
     if let Ok(db) = state.database.lock() {
         let _=db.connection.execute("UPDATE mcp_server_tokens SET revoked=coalesce(revoked,?) WHERE id=? AND kind='session'",params![state.config.now(),id]);

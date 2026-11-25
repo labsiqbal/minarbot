@@ -139,8 +139,23 @@ pub fn mint(state: &AppState, agent: &str, turn: &str) -> Result<(String, String
     db.connection.execute("INSERT INTO mcp_server_tokens(id,token_hash,kind,name,agent,turn,scopes,created,request_digest) VALUES(?,?,'session','',?,?,?,?,'')",params![id,hash(&token),agent,turn,json!(["agents:read","agents:profile","agents:message","history:read","conversations:read","conversations:write","projects:read","projects:write","routines:read","routines:write","workflows:read","workflows:run","machines:read","settings:read","usage:read","skills:read","computer:read","computer:run","orchestration"]).to_string(),state.config.now()])?;
     Ok((id, token))
 }
+pub fn register_external(
+    state: &AppState,
+    id: &str,
+    token: &str,
+    agent: &str,
+    turn: &str,
+) -> Result<()> {
+    let db = state.database.lock().map_err(|_| Failure::storage())?;
+    db.connection.execute(
+        "INSERT INTO mcp_server_tokens(id,token_hash,kind,name,agent,turn,scopes,created,request_digest) VALUES(?,?,'session','',?,?,?,?,'') ON CONFLICT(token_hash) DO UPDATE SET id=excluded.id,agent=excluded.agent,turn=excluded.turn,revoked=NULL,created=excluded.created",
+        params![id, hash(token), agent, turn, json!(["agents:read","agents:profile","agents:message","history:read","conversations:read","conversations:write","projects:read","projects:write","routines:read","routines:write","workflows:read","workflows:run","machines:read","settings:read","usage:read","skills:read","computer:read","computer:run","orchestration"]).to_string(), state.config.now()],
+    )?;
+    Ok(())
+}
 pub fn verify(state: &AppState, token: &str) -> Result<Value> {
-    if token.len() != 43
+    if token.is_empty()
+        || token.len() > 4096
         || !token
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
@@ -154,7 +169,10 @@ pub fn verify(state: &AppState, token: &str) -> Result<Value> {
         && row["turn"].is_string()
         && !data::exists(
             db,
-            "SELECT 1 FROM turns WHERE id=? AND agent=? AND status='running'",
+            // Native harnesses pause their turn while a blocking MCP call is
+            // outstanding. Keep its session lease valid until that call has
+            // produced a durable result, then revoke it when the turn settles.
+            "SELECT 1 FROM turns WHERE id=? AND agent=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))))",
             params![row["turn"].as_str(), row["agent"].as_str()],
         )?
     {
