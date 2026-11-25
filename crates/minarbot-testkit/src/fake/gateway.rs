@@ -584,7 +584,13 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
                     {
                         return Err(tool_text(&result).into());
                     }
-                    let legacy_wait = name == "delegate_task" && args["wait"] == true;
+                    // When Minarbot already parked the turn for the result
+                    // (`status: waiting`), it resumes the turn itself, like a
+                    // real harness that moves on; only a queued task is
+                    // waited for here.
+                    let legacy_wait = name == "delegate_task"
+                        && args["wait"] == true
+                        && result["structuredContent"]["status"] != "waiting";
                     if legacy_wait {
                         if let Some(task) = result["structuredContent"]["taskId"].as_str() {
                             let task = task.to_owned();

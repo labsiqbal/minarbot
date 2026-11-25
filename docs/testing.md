@@ -176,7 +176,7 @@ name) and, where listed, end to end by an e2e module.
 | G10 | Provider HTTP errors -> `error` notification. | - |
 | G11 | `turn/interrupt` aborts the turn with no further output. | threads |
 | G12 | `Initial name:` turns offer only `ask_user` and `edit_profile`. | agent_create |
-| G13 | `wait_task` timeouts are clamped to 1-30 s; `delegate_task {wait: true}` waits with `wait_task`; `send_message` fans out to recipients. | - |
+| G13 | `wait_task` timeouts are clamped to 1-30 s; `delegate_task {wait: true}` waits with `wait_task` unless Minarbot answered `status: waiting` (it then resumes the turn itself); `send_message` fans out to recipients. | - |
 | G14 | Image tool results are forwarded as an `image_url` user message. | - |
 | G15 | Without an MCP session (goal judges), no tools are offered. The Node fixture crashed here. | goals |
 | G16 | `model/list` returns the provider's `GET /models` as one page. The Node fixture had none. | cli |
