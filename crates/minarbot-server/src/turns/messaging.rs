@@ -484,8 +484,14 @@ pub fn run(
                         })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            if !closed(args, &["recipients", "text", "expects_reply"])
-                || !args["expects_reply"].is_boolean()
+            if !closed(
+                args,
+                if args.get("requestId").is_some() {
+                    &["requestId", "recipients", "text", "expects_reply"][..]
+                } else {
+                    &["recipients", "text", "expects_reply"][..]
+                },
+            ) || !args["expects_reply"].is_boolean()
             {
                 return Err(error(409, "Invalid recipient, text, or reply request."));
             }
@@ -545,8 +551,14 @@ pub fn run(
             Ok(result)
         }
         "delegate_task" => {
-            if !closed(args, &["agent", "task", "wait"])
-                || args.get("wait").is_some_and(|v| !v.is_boolean())
+            if !closed(
+                args,
+                if args.get("requestId").is_some() {
+                    &["requestId", "agent", "task", "wait"][..]
+                } else {
+                    &["agent", "task", "wait"][..]
+                },
+            ) || args.get("wait").is_some_and(|v| !v.is_boolean())
             {
                 return Err(error(400,"Invalid delegation request. Agent and task are required; task is limited to 16,000 characters."));
             }
@@ -629,10 +641,18 @@ pub fn run(
             let waiting = call["function"]["name"] == "wait_task";
             if !closed(
                 args,
-                if waiting {
-                    &["taskId", "timeoutSeconds"]
+                if args.get("requestId").is_some() {
+                    if waiting {
+                        &["requestId", "taskId", "timeoutSeconds"][..]
+                    } else {
+                        &["requestId", "taskId"][..]
+                    }
                 } else {
-                    &["taskId"]
+                    if waiting {
+                        &["taskId", "timeoutSeconds"][..]
+                    } else {
+                        &["taskId"][..]
+                    }
                 },
             ) || !uuid(string(args, "taskId"))
                 || waiting && !integer(&args["timeoutSeconds"], 1, 600)
@@ -644,6 +664,13 @@ pub fn run(
             }
             let id = string(args, "taskId");
             let row = task(db, turn, id)?;
+            if waiting {
+                db.execute(
+                    "UPDATE turns SET status='queued',waiting_for=?,revision=revision+1 WHERE id=? AND status='running'",
+                    [string(&row, "delivery"), string(turn, "id")],
+                )?;
+                return Ok(json!({"taskId":id,"status":"waiting"}));
+            }
             if call["function"]["name"] == "cancel_task" {
                 let mut cancelled = cancel(
                     db,
@@ -819,7 +846,7 @@ pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
         }
         db.execute("INSERT OR IGNORE INTO flow_tool_calls(turn,call_id,call,result,after_output,after_action) VALUES(?,?,?,?,?,?)",params![wait["turn"].as_str(),wait["call_id"].as_str(),wait["call"].as_str(),result.to_string(),wait["after_output"].as_i64(),wait["after_action"].as_i64()])?;
         db.execute(
-            "UPDATE turns SET waiting_for=NULL,revision=revision+1 WHERE id=? AND status='queued'",
+            "UPDATE turns SET paused=0,waiting_for=NULL,revision=revision+1 WHERE id=? AND status='queued'",
             [string(&wait, "turn")],
         )?;
     }

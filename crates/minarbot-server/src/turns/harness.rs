@@ -180,11 +180,30 @@ pub async fn tool(
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         one(
             &guard.connection,
-            "SELECT * FROM turns WHERE id=? AND status='running'",
+            // A blocking native tool pauses its turn while the MCP request is
+            // outstanding. Keep that same session authorized until the tool
+            // returns, while cancelled or ordinary queued turns stay fenced.
+            "SELECT * FROM turns WHERE id=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL)))",
             [turn],
         )?
         .ok_or_else(|| error(403, "MCP authorization failed."))?
     };
+    if name == "wait_task" {
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        let delivery = guard
+            .connection
+            .query_row(
+                "SELECT delivery FROM delegation_tasks WHERE id=?",
+                [string(&args, "taskId")],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(|_| error(404, "Task was not found."))?;
+        guard.connection.execute(
+            "UPDATE turns SET status='queued',paused=1,waiting_for=?,revision=revision+1 WHERE id=? AND status='running'",
+            rusqlite::params![delivery, turn],
+        )?;
+        return Ok(json!({"taskId":args["taskId"],"status":"waiting"}));
+    }
     let call = json!({"id":call_id,"type":"function","function":{"name":name,"arguments":args.to_string()}});
     let clock = super::diagnostics::Clock::start(state, turn, call_id);
     let result = tools::run(state, &row, &call).await;

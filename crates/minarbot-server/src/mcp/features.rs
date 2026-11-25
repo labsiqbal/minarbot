@@ -39,7 +39,7 @@ fn owner(c: &Value) -> Result<()> {
 fn current(db: &Connection, c: &Value) -> Result<Value> {
     one(
         db,
-        "SELECT * FROM turns WHERE id=? AND agent=? AND status='running'",
+        "SELECT * FROM turns WHERE id=? AND agent=? AND (status='running' OR (status='queued' AND (paused=1 OR waiting_for IS NOT NULL OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))))",
         [string(c, "turn"), string(c, "agent")],
     )?
     .ok_or_else(deny)
@@ -1044,6 +1044,26 @@ async fn delegation(state: &AppState, c: &Value, name: &str, a: &Value) -> Resul
         }
     };
     if name == "wait_task" {
+        let (delivery, wait_id) = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            let db = &guard.connection;
+            let delivery = one(
+                db,
+                "SELECT delivery FROM delegation_tasks WHERE id=?",
+                [string(a, "taskId")],
+            )?
+            .ok_or_else(|| error(404, "Task not found."))?;
+            db.execute(
+                "UPDATE turns SET status='queued',paused=1,waiting_for=?,revision=revision+1 WHERE id=? AND status='running'",
+                params![string(&delivery, "delivery"), string(&turn, "id")],
+            )?;
+            let wait_id = uuid::Uuid::new_v4().to_string();
+            db.execute(
+                "INSERT INTO delegation_waits(id,turn,call_id,call,task,deadline,status,after_output,after_action) VALUES(?,?,?,?,?,?,'waiting',0,0)",
+                params![wait_id, string(&turn, "id"), string(a, "requestId"), json!({"function":{"name":"wait_task"}}).to_string(), string(a, "taskId"), state.config.now() + a["timeoutSeconds"].as_i64().unwrap_or(30) * 1000],
+            )?;
+            (string(&delivery, "delivery").to_owned(), wait_id)
+        };
         let deadline = tokio::time::Instant::now()
             + std::time::Duration::from_secs(a["timeoutSeconds"].as_u64().unwrap_or(1));
         loop {
@@ -1052,9 +1072,29 @@ async fn delegation(state: &AppState, c: &Value, name: &str, a: &Value) -> Resul
                 authorize(state, &guard.connection, c, name, a)?;
                 messaging::status(&guard.connection, &turn, string(a, "taskId"))?
             };
+            let timed_out = tokio::time::Instant::now() >= deadline;
             if ["done", "failed", "cancelled", "uncertain"].contains(&string(&status, "status"))
-                || tokio::time::Instant::now() >= deadline
+                || timed_out
             {
+                let guard = state.database.lock().map_err(|_| Failure::storage())?;
+                guard
+                    .connection
+                    .execute("DELETE FROM delegation_waits WHERE id=?", [&wait_id])?;
+                if !timed_out {
+                    guard.connection.execute(
+                        "UPDATE delegation_tasks SET wake_delivered=1 WHERE id=?",
+                        [string(a, "taskId")],
+                    )?;
+                }
+                guard.connection.execute(
+                    "UPDATE turns SET status='running',paused=0,waiting_for=NULL,revision=revision+1 WHERE id=? AND status='queued' AND paused=1 AND (waiting_for=? OR waiting_for IS NULL)",
+                    params![string(&turn, "id"), delivery],
+                )?;
+                if timed_out {
+                    let mut status = status;
+                    status["timedOut"] = json!(true);
+                    return Ok(status);
+                }
                 return Ok(status);
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;

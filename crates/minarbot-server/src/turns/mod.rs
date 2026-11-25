@@ -252,7 +252,7 @@ fn schedule(state: &AppState, reader: &Connection) -> Result<()> {
         for (id, cancel) in active.iter() {
             if !exists(
                 db,
-                "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND (paused=0 OR EXISTS(SELECT 1 FROM composio_calls WHERE turn=turns.id AND state='approval'))",
+                "SELECT 1 FROM turns WHERE id=? AND status IN('queued','running') AND (paused=0 OR EXISTS(SELECT 1 FROM composio_calls WHERE turn=turns.id AND state='approval') OR EXISTS(SELECT 1 FROM provider_calls WHERE turn=turns.id AND status='pending'))",
                 [id],
             )? {
                 cancel.cancel.send_replace(true);
