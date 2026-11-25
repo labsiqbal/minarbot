@@ -14,6 +14,7 @@ mod sb_crash;
 mod sb_flows;
 mod sb_gemini;
 mod sb_handoff;
+mod sb_harness_default;
 mod sb_http;
 mod sb_mcp_context;
 mod sb_memory;

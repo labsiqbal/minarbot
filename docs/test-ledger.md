@@ -373,6 +373,18 @@ One parent case with 34 subtests; each subtest is its own Rust test against the 
 | Rust ACP and Pi execute fake protocols with model selection and approvals | `sb_rust_harness::rust_acp_and_pi_execute_fake_protocols_with_model_selection_and_approvals` | 6 -> 6 | Full. |
 | Rust MCP feature receipts, scopes, cursors and stdio forwarding | `sb_rust_harness::rust_mcp_feature_receipts_scopes_cursors_and_stdio_forwarding` | 17 -> 15 | Full; peer tokens come from `/api/mcp-server/peer-tokens`. |
 
+### `app/harness-default.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| new agents default to Codex with a managed workspace; API agents keep runtime and switch in one saved command | `sb_harness_default::new_agents_default_to_codex_with_a_managed_workspace_api_agents_keep_runtime_and_switch_in_one_saved_command` | 11 -> 9 | Dropped (#87): `runtime` on create and the implicit default binding; a new agent is unbound until an instance is chosen. Ported: runtime choices, the confirmed one-command switch with its receipt, the managed workspace, restart, `defaultRuntime`. |
+| agents on this machine's Codex sign-in use the CLI folder without writing to it | `sb_harness_default::agents_on_this_machines_codex_sign_in_use_the_cli_folder_without_writing_to_it` | 11 -> 6 | The `device` account became an instance with `homePath` (sets `CODEX_HOME`). Dropped (#87, a8cfcac): the isolated `HOME` for device turns and the API-runtime 400. |
+| agents on this machine's Claude Code sign-in run with the real HOME and add nothing to ~/.claude | `sb_harness_default::agents_on_this_machines_claude_code_sign_in_run_with_the_real_home_and_add_nothing_to_claude` | 6 -> 4 | Full; the agent is bound through the runtime edit. |
+| provider isolation, account home rotation and MCP shell approval boundaries | `sb_harness_default::provider_isolation_account_home_rotation_and_mcp_shell_approval_boundaries` | 24 -> 11 | Kept in Node for B8 (`harnessApprovals.length === 0` for workspace checks); Rust allows the B8 card and checks the rest. Accounts became instances with secret keys. Dropped (#87): per-binding home rotation and `config.toml` (a8cfcac), the "not offered" tool list (5528da5 offers the full set). |
+| default harness setup saves its profile through MCP and cannot use unrelated tools (codex) | `sb_harness_default::default_harness_setup_saves_its_profile_through_mcp_and_cannot_use_unrelated_tools_codex` | 6 -> 6 | Full; bound to an explicit instance. |
+| default harness setup saves its profile through MCP and cannot use unrelated tools (claude) | `sb_harness_default::default_harness_setup_saves_its_profile_through_mcp_and_cannot_use_unrelated_tools_claude` | 6 -> 6 | Full. |
+| new agents fall back to the API runtime when Codex is not installed | `sb_harness_default::new_agents_fall_back_to_the_api_runtime_when_codex_is_not_installed` | 2 -> 3 | `runtime: api` left with #87: the agent stays unbound and not runnable. |
+
 <!-- stale-b files -->
 
 ## #67 hosted Hub test migration
