@@ -129,7 +129,7 @@ each iteration as a case.
 | `app/avatar-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/site-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/base-instructions-scenario.test.ts` | 1 | 1 | 0 | 0 (deleted) |
-| `app/turn-waits.test.ts` | 5 | 5 | 0 | 1 (B1) |
+| `app/turn-waits.test.ts` | 5 | 5 | 0 | 2 (B1) |
 | `app/acp-harness.test.ts` | 17 | 17 | 0 | 0 (deleted) |
 
 <!-- fixture-summary -->
@@ -219,7 +219,7 @@ each iteration as a case.
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
-| agent event waits release workers, survive restart, honor pause and accept once | `fx_waits::agent_event_waits_release_workers_survive_restart_honor_pause_and_accept_once` | 37 -> 25 | B1 (`wait_for_event`): the harness takes one model step after the tool returns `null`; the test ends that step with text (a failed step would fail the waiting turn) and keeps it out of counts. While that step finishes, an immediate resume answers "Previous request has not stopped yet"; the test retries only on that message. Changed by #87: `timeoutSeconds: 0` returns the 400 to the model instead of failing the turn. The backup restore runs `minarbot-server restore workspace` into a second root. Signatures use `signing::hmac_sha256_hex` and the fixed clock. |
+| agent event waits release workers, survive restart, honor pause and accept once | `fx_waits::agent_event_waits_release_workers_survive_restart_honor_pause_and_accept_once` | 37 -> 25 | Kept in Node for B1 (`wait_for_event`): the harness takes one model step after the tool returns `null`; the test ends that step with text (a failed step would fail the waiting turn) and keeps it out of counts. While that step finishes, an immediate resume answers "Previous request has not stopped yet"; the test retries only on that message. Changed by #87: `timeoutSeconds: 0` returns the 400 to the model instead of failing the turn. The backup restore runs `minarbot-server restore workspace` into a second root. Signatures use `signing::hmac_sha256_hex` and the fixed clock. |
 | routine waits preserve artifacts and reject events cancelled before upload completes | `fx_waits::routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upload_completes` | 26 -> 19 | Kept in Node for B1: Node counts two continuations (the event and the one-time verification reminder); the B1 step uses the reminder up, so the Rust test asserts one. Everything else is full, including the half-sent event cancelled mid-upload (`SplitRequest`). |
 | workflow cancellation closes waiting descendants of completed steps | `fx_waits::workflow_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full (shared helper `cancellation_closes_waiting_descendants`). |
 | channel cancellation closes waiting descendants of completed steps | `fx_waits::channel_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full. |
