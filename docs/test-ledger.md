@@ -395,6 +395,12 @@ One parent case with 34 subtests; each subtest is its own Rust test against the 
 | claude: project environment encryption, harness shell, routine and direct-chat isolation | `sb_project_integrations::claude_project_environment_encryption_harness_shell_routine_and_direct_chat_isolation` | 24 -> 22 | As above. |
 | project apps and MCP: separate OAuth identities, offered tools, approvals, restart and cleanup | `sb_project_integrations::project_apps_and_mcp_separate_oauth_identities_offered_tools_approvals_restart_and_cleanup` | 39 -> 48 | Composio and the MCP server are `HttpStub`s; the catalog check uses the instance catalog (`/api/models` left with #87). Projects get a folder because harness turns need a workspace. A foreign project's MCP call is refused as an MCP error (Node: failed turn). |
 
+### `app/script-provider.test.ts`
+
+| Node case | Rust test | Assertions Node -> Rust | Notes |
+| --- | --- | ---: | --- |
+| script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts | `sb_script_provider::script_provider_settings_keep_identity_and_credentials_isolated_reject_busy_revoked_changes_and_preserve_receipts` | 30 -> 24 | Kept in Node for B2 (the provider GET after the grant) and B3 (the three `script models` steps and the catalog held across a revocation). Rust covers every other step. Dropped (#87): the `providerAccount: 'missing'` refusal and `provider_account` in the result. |
+
 <!-- stale-b files -->
 
 ## #67 hosted Hub test migration

@@ -25,6 +25,7 @@ mod sb_provider_accounts;
 mod sb_provider_matrix;
 mod sb_provider_settings;
 mod sb_rust_harness;
+mod sb_script_provider;
 mod sb_scripts;
 mod sb_skills;
 mod sb_slack_output;
