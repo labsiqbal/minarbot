@@ -1,11 +1,10 @@
 //! Script provider settings keep identity and credentials isolated (port of
 //! `app/script-provider.test.ts`).
 //!
-//! The Node case stays in place for B2 (`GET /api/scripts/agents/{id}/provider`
-//! deadlocks) and B3 (`script models` cannot reach the instance catalog);
-//! this test covers every other step. `providerAccount` and `backupModel`
-//! are accepted and ignored since #87, so the "missing account" refusal is
-//! dropped.
+//! Provider accounts became provider instances (#87): the read lists
+//! instances instead of accounts, `script models` reads the bound instance's
+//! catalog, and `providerAccount` and `backupModel` are accepted and ignored,
+//! so the "missing account" refusal is dropped.
 
 use crate::sb_support::id;
 use minarbot_testkit::{
@@ -55,6 +54,7 @@ async fn script_provider_settings_keep_identity_and_credentials_isolated_reject_
     let script_token = token();
     let secret = token();
     let model = ControlModel::start().await?;
+    model.catalog(["new", "old"]);
     model.respond(|request| {
         if request.last_user_text() == "HOLD" {
             Answer::Defer
@@ -86,6 +86,24 @@ async fn script_provider_settings_keep_identity_and_credentials_isolated_reject_
         json!({"id": new_id(), "revision": 0, "enabled": true}),
     )
     .await?;
+    let current = script(&app, Method::GET, &path, None, auth, 200, &secret).await?;
+    ensure!(current["model"] == "old", "provider read: {current}");
+    let instance = current["providerInstance"]
+        .as_str()
+        .ok_or_else(|| format!("no bound instance: {current}"))?
+        .to_owned();
+    ensure!(
+        current["providers"].as_array().is_some_and(|rows| rows
+            .iter()
+            .any(|row| row["id"] == instance.as_str() && row["enabled"] == true)),
+        "bound instance not listed as enabled: {current}"
+    );
+    ensure!(
+        ["baseURL", "baseUrl", "binaryPath", "environment"]
+            .iter()
+            .all(|field| !current.to_string().contains(field)),
+        "provider read shows connection details: {current}"
+    );
     let command = json!({"id": new_id(), "revision": a["revision"], "model": "new", "providerAccount": "chosen", "backupModel": ""});
     let mut extra = command.clone();
     extra["enabled"] = json!(true);
@@ -136,11 +154,56 @@ async fn script_provider_settings_keep_identity_and_credentials_isolated_reject_
     let mut stale = command.clone();
     stale["id"] = json!(new_id());
     script(&app, Method::POST, &path, Some(&stale), auth, 409, &secret).await?;
-    app.post(
-        &permission,
-        json!({"id": new_id(), "revision": 1, "enabled": false}),
+    let models_path = format!("/api/scripts/agents/{agent}/models");
+    let listed = script(&app, Method::GET, &models_path, None, auth, 200, &secret).await?;
+    ensure!(
+        listed["instance"] == instance.as_str() && listed["models"] == json!(["new", "old"]),
+        "script models: {listed}"
+    );
+    script(
+        &app,
+        Method::GET,
+        &format!("{models_path}?instance=missing"),
+        None,
+        auth,
+        404,
+        &secret,
     )
     .await?;
+    script(
+        &app,
+        Method::GET,
+        &format!("{models_path}?url=http://foreign.test"),
+        None,
+        auth,
+        400,
+        &secret,
+    )
+    .await?;
+    // A catalog read that outlives the revocation is refused.
+    model.respond_catalog(|| Answer::Defer);
+    let (revoked, held) = tokio::join!(
+        script(&app, Method::GET, &models_path, None, auth, 403, &secret),
+        async {
+            let held = model.deferred().await?;
+            let authorization = held.request.authorization.clone();
+            app.post(
+                &permission,
+                json!({"id": new_id(), "revision": 1, "enabled": false}),
+            )
+            .await?;
+            held.answer(Answer::Raw(
+                json!({"object": "list", "data": [{"id": "new"}, {"id": "old"}]}).to_string(),
+            ));
+            Result::<Option<String>>::Ok(authorization)
+        }
+    );
+    revoked?;
+    ensure!(
+        held? == Some(format!("Bearer {secret}")),
+        "catalog request without the instance key"
+    );
+    model.respond_catalog(|| Answer::text("catalog"));
     app.post(
         &permission,
         json!({"id": new_id(), "revision": 2, "enabled": true}),

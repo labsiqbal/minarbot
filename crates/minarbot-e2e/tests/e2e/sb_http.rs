@@ -1034,10 +1034,11 @@ async fn http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupte
         status(&app, &profile_edit, edit.clone()).await?.1 == changed,
         "edit replay"
     );
-    // B6 (docs/test-ledger.md): replaying the stored creation while its
-    // instance is unavailable returns 400 instead of the receipt; that
-    // assertion stays in the Node case. The replay is checked below once the
-    // instance is back.
+    let (code, retry) = status(&app, "/api/agents", profile.clone()).await?;
+    ensure!(
+        code == 200 && retry == changed,
+        "create replay without a provider: {code} {retry}"
+    );
     let mut new_command = edit.clone();
     new_command["id"] = json!(new_id());
     ensure!(
@@ -1067,6 +1068,10 @@ async fn http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupte
     );
     app.restart_with(config.clone().without("baseURL").without("harness"))
         .await?;
+    ensure!(
+        status(&app, "/api/agents", profile.clone()).await?.1 == changed,
+        "create receipt after restart without a provider"
+    );
     ensure!(
         status(&app, &profile_edit, edit.clone()).await?.1 == changed,
         "edit receipt after restart"

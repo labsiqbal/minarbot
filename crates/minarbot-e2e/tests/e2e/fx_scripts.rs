@@ -135,12 +135,10 @@ async fn private_script_discovery_follows_live_grants_rotates_on_restart_and_pre
         "token format {token}"
     );
     ensure!(mode(&file)? == 0o600, "file mode {:o}", mode(&file)?);
-    // B2 (`docs/test-ledger.md`): `/api/scripts/agents/{id}/provider`
-    // deadlocks the server, so the token is proven on the turns route.
     let (status, body) = bearer(
         &app,
         Method::GET,
-        &format!("/api/scripts/agents/{a}/turns"),
+        &format!("/api/scripts/agents/{a}/provider"),
         &token,
         None,
     )
@@ -696,10 +694,7 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         200,
     )
     .await?;
-    ensure!(
-        work_count(&model) == side_calls,
-        "side replay ran the model"
-    );
+    ensure!(model.calls() == side_calls, "side replay ran the model");
     let stop_turn = json!({"id": new_id(), "text": "ASK"});
     let stop_id = id(&stop_turn)?;
     expect(&app, Method::POST, &side_path, &token, Some(stop_turn), 202).await?;
