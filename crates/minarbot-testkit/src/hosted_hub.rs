@@ -259,6 +259,22 @@ impl HubTransport {
         }
     }
 
+    /// Same hub, clock, keys and hooks with a separate socket set, so each
+    /// node server's transport closes with it (one Node bridge per node).
+    pub fn for_node(&self) -> Self {
+        Self {
+            sockets: Arc::default(),
+            ..self.clone()
+        }
+    }
+
+    /// Close every socket of this transport (the node's bridge closing).
+    pub fn close_all(&self) {
+        for (_, socket) in locked(&self.sockets).drain() {
+            let _ = socket.sender.send(Control::Close(1001, String::new()));
+        }
+    }
+
     /// Every key entry value stored by nodes.
     pub fn key_values(&self) -> Vec<String> {
         locked(&self.keys).values().cloned().collect()

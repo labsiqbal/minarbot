@@ -16,6 +16,15 @@ use std::sync::{
     Arc, Mutex,
 };
 
+/// Removes a scratch directory on drop.
+struct DirGuard(std::path::PathBuf);
+
+impl Drop for DirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Desktop runtime fixture answered through the computer bridge (the
 /// Node `desktop.runtime`): launches succeed, input counts as an effect
 /// and can be held, capture returns an empty frame.
@@ -84,7 +93,12 @@ async fn computer_input_requires_local_approval_and_action_lease_revoke_leaves_u
         false,
     )
     .await?;
-    let (computer, leases) = (f.root.dir("computer")?, f.root.dir("leases")?);
+    // The lease directory holds a Unix socket; keep its path under the
+    // 108-byte socket limit, as the Node suite's short temporary folder did.
+    let short = std::env::temp_dir().join(format!("mb-hub-{}", &new_id()[..8]));
+    std::fs::create_dir_all(&short)?;
+    let _lease_guard = DirGuard(short.clone());
+    let (computer, leases) = (f.root.dir("computer")?, short.join("leases"));
     let mut node = f
         .node_with_ops(
             "ComputerBoundary",
@@ -123,8 +137,15 @@ async fn computer_input_requires_local_approval_and_action_lease_revoke_leaves_u
         let results = f.done(&first[0], None).await?;
         ensure!(
             effects.load(Ordering::SeqCst) == 1,
-            "effects: {}",
-            effects.load(Ordering::SeqCst)
+            "effects: {} model {:?} tools {:?} stderr {}",
+            effects.load(Ordering::SeqCst),
+            f.model
+                .requests()
+                .last()
+                .map(|r| r["messages"].as_array().and_then(|m| m.last()).cloned()),
+            Inspector::open(node.app.database())?
+                .rows("SELECT call,result FROM flow_tool_calls", [])?,
+            node.app.output()?.1
         );
         ensure!(
             results
@@ -163,7 +184,7 @@ async fn computer_input_requires_local_approval_and_action_lease_revoke_leaves_u
         node.restart().await?;
         pause(200).await;
         ensure!(effects.load(Ordering::SeqCst) == 2, "input replayed");
-        node.app.shutdown().await?;
+        node.stop().await?;
         let state = Inspector::open(node.app.database())?.row(
             "SELECT state FROM hub_link_actions WHERE action_id=?",
             [pending["actionId"].as_str().unwrap_or_default()],
@@ -547,16 +568,20 @@ async fn mcp_async_discovery_cannot_dispatch_after_revoke_lost_result_remains_un
     result
 }
 
-/// #87 removed `agents.runtime`; a hub turn is fenced when the agent has no
-/// usable provider instance. The case still checks the advertised runtime
-/// fence and that no session is minted or provider called.
+/// #87 removed `agents.runtime`, so no agent can be switched to a native
+/// runtime any more. The surviving fence is the local engine refusal
+/// (`local_engine_unsupported_or_unavailable`): the case hides the agent
+/// locally after its grant (which leaves the policy digest unchanged) and
+/// still checks the advertised runtime fence, that the hub turn fails and
+/// that no provider call happens, also after restart.
 async fn unsupported_effect_fencing_never_executes_hub_turns(runtime: &'static str) -> Result<()> {
     let f = Hub::start(1, None, false).await?;
     let mut node = f.node("NativeBoundary", &f.alice).await?;
+    let p = f.owner(&node).await?;
     let agent = node.local_agent();
-    node.app.shutdown().await?;
+    node.stop().await?;
     Writable::open(node.app.database())?.execute(
-        "UPDATE agents SET provider_instance='' WHERE id=?",
+        "INSERT INTO agent_visibility(agent,hidden) VALUES(?,1) ON CONFLICT(agent) DO UPDATE SET hidden=1",
         [agent.as_str()],
     )?;
     node.restart().await?;
@@ -569,7 +594,6 @@ async fn unsupported_effect_fencing_never_executes_hub_turns(runtime: &'static s
         status["unsupportedRuntimes"][runtime] == "native_effect_fencing_unavailable",
         "status: {status}"
     );
-    let p = f.owner(&node).await?;
     let post = f.post(&f.alice, &[&p.participation_id]).await?;
     until("turn failed", || async {
         Ok(f.turn_state(&post[0])? == "failed")

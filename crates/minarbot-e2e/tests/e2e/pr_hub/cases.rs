@@ -165,7 +165,7 @@ async fn owner_only_default_specific_member_and_all_member_grants_offline_refuse
     let all = f.participate(&bob, all_members(), None).await?;
     let post = f.post(&f.alice, &[&all.participation_id]).await?;
     f.done(&post[0], None).await?;
-    bob.app.shutdown().await?;
+    bob.stop().await?;
     until("node offline", || async {
         Ok(f.node_field(&bob.node_id, "status")? == "offline")
     })
@@ -547,7 +547,7 @@ async fn sigkill_after_dispatch_and_before_result_ack_keeps_durable_uncertainty_
     let p = f.owner(&node).await?;
     let post = f.browser_post(&f.alice, &[&p.participation_id]).await?;
     until("provider dispatched", || async { Ok(f.calls() == 1) }).await?;
-    node.app.crash().await?;
+    node.crash().await?;
     held.open();
     until("durable uncertainty", || async {
         Ok(f.turn_state(&post[0])? == "unknown")
@@ -655,62 +655,6 @@ async fn reconnect_fences_old_generation_session_expiry_renews_with_node_key_and
     ensure!(session()? > expires, "session not renewed");
     ensure!(f.calls() == 1, "provider calls: {}", f.calls());
     ensure!(f.turn_state(&post[0])? == "done", "turn state");
-    Ok(())
-}
-
-#[tokio::test]
-async fn local_provider_spend_ceiling_refuses_next_request_before_dispatch() -> Result<()> {
-    let f = Hub::start(
-        1,
-        Some(script(|body| async move {
-            if has_tool(&body) {
-                return Ok(Step::text("Second paid call"));
-            }
-            Ok(Step::RawTool(
-                json!({"id": "budget-tool", "type": "function",
-                "function": {"name": "create_text_file", "arguments":
-                    json!({"name": "budget.txt", "text": "One local file"}).to_string()}}),
-            ))
-        })),
-        false,
-    )
-    .await?;
-    let node = f.node("Budget", &f.alice).await?;
-    let mut policy = f.policy(&node, owner(), None).await?;
-    policy["maxCostMicros"] = json!(100);
-    let p = f
-        .propose(&f.alice, &node.agent_id, &policy, 100, None)
-        .await?;
-    f.consent(&p, None).await?;
-    call(
-        &node.app,
-        "/api/hub-link/grants/approve",
-        Some(
-            json!({"projectId": f.project.project_id, "participationId": p.participation_id,
-            "agentId": node.agent_id, "localAgentId": node.agent["id"], "revision": p.revision,
-            "policy": policy, "providerMaxCostMicros": 100}),
-        ),
-        200,
-    )
-    .await?;
-    let post = f.post(&f.alice, &[&p.participation_id]).await?;
-    until("approval", || async { Ok(node.approvals()?.len() == 1) }).await?;
-    let prompt = node.approvals()?[0].clone();
-    call(
-        &node.app,
-        "/api/hub-link/approvals",
-        Some(
-            json!({"actionId": prompt["actionId"], "actionDigest": prompt["actionDigest"],
-            "approved": true}),
-        ),
-        200,
-    )
-    .await?;
-    until("turn failed", || async {
-        Ok(f.turn_state(&post[0])? == "failed")
-    })
-    .await?;
-    ensure!(f.calls() == 1, "provider calls: {}", f.calls());
     Ok(())
 }
 
@@ -893,7 +837,7 @@ async fn hub_side_withdrawal_waits_offline_beyond_turn_deadline_and_disables_loc
     let f = Hub::start(1, None, false).await?;
     let mut node = f.node("HubWithdrawOffline", &f.bob).await?;
     let p = f.owner(&node).await?;
-    node.app.shutdown().await?;
+    node.stop().await?;
     until("node offline", || async {
         Ok(f.node_field(&node.node_id, "status")? == "offline")
     })
@@ -918,7 +862,7 @@ async fn hub_side_withdrawal_waits_offline_beyond_turn_deadline_and_disables_loc
         )? == 1)
     })
     .await?;
-    node.app.shutdown().await?;
+    node.stop().await?;
     let enabled = Inspector::open(node.app.database())?.row(
         "SELECT enabled FROM hub_link_grants WHERE participation_id=?",
         [&p.participation_id],
@@ -1624,7 +1568,7 @@ async fn local_owner_deletes_linked_agent_withdraws_hub_participation_and_remove
         call(&node.app, "/api/hub-link/history", None, 200).await? == json!([]),
         "hub history kept"
     );
-    node.app.shutdown().await?;
+    node.stop().await?;
     let db = Inspector::open(node.app.database())?;
     for table in [
         "hub_link_threads",

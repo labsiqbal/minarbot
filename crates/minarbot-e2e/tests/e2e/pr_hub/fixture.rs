@@ -141,6 +141,7 @@ pub struct Node {
     pub account: String,
     pub config: ServerConfig,
     pub token: String,
+    transport: HubTransport,
 }
 
 pub fn who(subject: &str) -> Value {
@@ -761,7 +762,8 @@ impl Hub {
         extra: impl FnOnce(ServerConfig) -> ServerConfig,
     ) -> Result<Node> {
         let root = TestRoot::new()?;
-        let hub_ops = self.transport.extra();
+        let transport = self.transport.for_node();
+        let hub_ops = transport.extra();
         let combined: minarbot_testkit::machine_bridge::Extra = Arc::new(move |operation, args| {
             ops.as_ref()
                 .and_then(|ops| ops(operation, args))
@@ -860,6 +862,7 @@ impl Hub {
             account: account.to_owned(),
             config,
             token,
+            transport,
         };
         until("node online", || async {
             Ok(node.status()?["connected"] == true)
@@ -1028,8 +1031,23 @@ impl Node {
         .await
     }
 
+    /// Stop the server and close its hub transport (the Node `app.close()`).
+    pub async fn stop(&mut self) -> Result<()> {
+        self.app.shutdown().await?;
+        self.transport.close_all();
+        Ok(())
+    }
+
+    /// SIGKILL the server and close its transport (the Node `app.crash()`).
+    pub async fn crash(&mut self) -> Result<()> {
+        self.app.crash().await?;
+        self.transport.close_all();
+        Ok(())
+    }
+
     pub async fn restart(&mut self) -> Result<()> {
         let _ = self.app.shutdown().await;
+        self.transport.close_all();
         let config = self.config.clone();
         self.app.start_stopped(config).await?;
         until("reconnected", || async {
