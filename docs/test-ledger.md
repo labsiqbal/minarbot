@@ -124,6 +124,7 @@ each iteration as a case.
 | `app/script-discovery.test.ts` | 3 | 3 | 0 | 1 (B2) |
 | `app/script-messages.test.ts` | 1 | 1 | 0 | 1 (B1) |
 | `app/flow-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/routine-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 
 <!-- fixture-summary -->
 
@@ -177,6 +178,12 @@ each iteration as a case.
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
 | agent flow edits preserve ownership, revisions and ordered receipts across restart | `fx_tools::agent_flow_edits_preserve_ownership_revisions_and_ordered_receipts_across_restart` | 16 -> 13 | Full. The server's done check asks once more ("One verification reminder"); the Node API runtime kept the tool results in that request, so the model answers it with the final text. The Node count includes two helper asserts. |
+
+### `app/routine-tools.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| routine tools recover from invalid arguments, preserve owner scope and keep runtime faults fatal | `fx_tools::routine_tools_recover_from_invalid_arguments_preserve_owner_scope_and_keep_runtime_faults_fatal` | 28 -> 22 | Found F1 (fixed): channel turns were offered `list_routines` and `read_routine` again through MCP feature tools. Changed by #87: the malformed-JSON iteration `{` is dropped, because the harness rejects arguments that are not JSON before Minarbot sees the call (the API runtime parsed them itself); `null`, `[]` and `"cursor"` still reach Minarbot and get the 400. An unoffered `set_routine_flow` in a channel is refused over MCP (403) instead of failing the turn, and the model stops after the refusal. MCP refusals carry `status`, so the foreign-routine result is `{error, status: 400}`. |
 
 <!-- fixture-cases -->
 
