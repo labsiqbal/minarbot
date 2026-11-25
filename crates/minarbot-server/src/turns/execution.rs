@@ -432,6 +432,27 @@ pub async fn run(state: &AppState, id: &str) -> Result<()> {
                 failure
             }
         });
+        // A harness runs the whole tool loop in one call, so the budget can
+        // run out inside it; its failure then reports the stop like above.
+        let reply = match reply {
+            Err(failure) if !exhausted => {
+                let spent = {
+                    let db = state.database.lock().map_err(|_| Failure::storage())?;
+                    one(&db.connection, "SELECT tool_budget_used FROM turns WHERE id=?", [id])?
+                        .and_then(|row| row["tool_budget_used"].as_i64())
+                        .unwrap_or(0)
+                };
+                Err(if spent >= budget {
+                    error(
+                        502,
+                        format!("Stopped after {spent} tool steps. Resume to continue."),
+                    )
+                } else {
+                    failure
+                })
+            }
+            other => other,
+        };
         let reply = reply?;
         match reply {
             provider::Answer::Text(text) => {

@@ -216,7 +216,8 @@ impl Process {
 
     pub async fn send(&mut self, value: Value) -> Result<()> {
         let mut bytes = value.to_string().into_bytes();
-        if bytes.len() > 2 * 1024 * 1024 {
+        // Room for the 4 MiB image budget as base64 plus the 2 MiB prompt.
+        if bytes.len() > 8 * 1024 * 1024 {
             return Err(error(
                 502,
                 "Coding harness input exceeded its buffer limit.",

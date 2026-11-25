@@ -510,6 +510,19 @@ fn launch_turn(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// `message` with each `image_url` content part replaced by a short note.
+fn without_image_data(message: &Value) -> Value {
+    let mut message = message.clone();
+    if let Some(parts) = message["content"].as_array_mut() {
+        for part in parts.iter_mut() {
+            if part["image_url"]["url"].is_string() {
+                *part = json!({"type":"text","text":"[Image attached separately]"});
+            }
+        }
+    }
+    message
+}
+
 async fn execute(
     state: &AppState,
     turn: &Value,
@@ -585,14 +598,22 @@ async fn execute(
             None => None,
         }
     };
+    // Codex receives attached images as `input_image` items (below); keeping
+    // their data URLs in the text prompt as well sent each image twice and
+    // pushed turns with valid images over the 2 MiB context limit.
+    let prompt_messages: Vec<Value> = if runtime == "codex" {
+        messages.iter().map(without_image_data).collect()
+    } else {
+        messages.to_vec()
+    };
     let mut prompt = if state.config.harness.test_mode {
-        messages
+        prompt_messages
             .iter()
             .map(|v| format!("<minarbot-message>{}</minarbot-message>", v))
             .collect::<Vec<_>>()
             .join("\n\n")
     } else {
-        messages
+        prompt_messages
             .iter()
             .map(|v| {
                 format!(
@@ -1702,7 +1723,22 @@ pub async fn run(
     }
     env.extend(instance_environment.clone());
     if let Some(tool_budget) = profile["tool_budget"].as_i64() {
-        env.insert("MINARBOT_TOOL_BUDGET".into(), tool_budget.to_string());
+        // A continuation (question answer, restart) keeps the attempt's
+        // budget; resume and reassign reset `tool_budget_used` first.
+        let used = {
+            let guard = state.database.lock().map_err(|_| Failure::storage())?;
+            one(
+                &guard.connection,
+                "SELECT tool_budget_used FROM turns WHERE id=?",
+                [turn_id],
+            )?
+            .and_then(|row| row["tool_budget_used"].as_i64())
+            .unwrap_or(0)
+        };
+        env.insert(
+            "MINARBOT_TOOL_BUDGET".into(),
+            (tool_budget - used).max(0).to_string(),
+        );
     }
     let same_home;
     {
