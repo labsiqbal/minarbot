@@ -214,6 +214,7 @@ impl TurnStream {
     }
 
     async fn drain_ready(&mut self) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
         for _ in 0..8 {
             if tokio::time::timeout(Duration::from_millis(10), self.next())
                 .await
