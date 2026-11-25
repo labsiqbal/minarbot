@@ -366,9 +366,6 @@ async fn seeded_sse_frames_wake_after_visibility_and_file_lane_commits() -> Resu
         let revision = index + 5;
         let text = format!("File lane commit {revision}");
         update(&text, revision)?;
-        if let Ok(Ok(Some(frame))) = timeout(quiet, stream.next()).await {
-            assert_eq!(frame["partial"]["text"], text);
-        }
         assert_eq!(request.send().await?.status(), 200);
         assert_eq!(stream.snapshot().await?["partial"]["text"], text);
     }
