@@ -286,10 +286,16 @@ pub fn usage(db: &Connection, q: &[(String, String)]) -> Result<Value> {
         [],
     )?
     .ok_or_else(Failure::storage)?;
+    let transcription = if table(db, "transcriptions")? {
+        one(db,"SELECT count(*) AS calls,count(*) FILTER(WHERE status='pending') AS pending,count(*) FILTER(WHERE status='uncertain') AS uncertain,count(*) FILTER(WHERE status='cancelled') AS cancelled,count(*) FILTER(WHERE usage IS NULL OR usage='null') AS unknown,CAST(sum(json_extract(usage,'$.input_tokens')) AS TEXT) AS input_tokens,CAST(sum(json_extract(usage,'$.output_tokens')) AS TEXT) AS output_tokens,CAST(sum(json_extract(usage,'$.total_tokens')) AS TEXT) AS total_tokens,sum(json_extract(usage,'$.seconds')) AS seconds FROM transcriptions",[])? .unwrap_or(json!({"calls":0,"pending":0,"uncertain":0,"cancelled":0,"unknown":0,"input_tokens":null,"output_tokens":null,"total_tokens":null,"seconds":null}))
+    } else {
+        json!({"calls":0,"pending":0,"uncertain":0,"cancelled":0,"unknown":0,"input_tokens":null,"output_tokens":null,"total_tokens":null,"seconds":null})
+    };
     Ok(json!({
         "summary": summary,
         "next_before": if calls.len() > 50 { calls[49]["seq"].clone() } else { Value::Null },
-        "calls": calls.into_iter().take(50).collect::<Vec<_>>()
+        "calls": calls.into_iter().take(50).collect::<Vec<_>>(),
+        "transcription": transcription
     }))
 }
 
