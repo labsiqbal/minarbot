@@ -312,27 +312,11 @@ pub async fn rpc(state: &AppState, request: Request) -> Result<Response> {
             map.entry("expects_reply").or_insert(json!(false));
         }
         let call_id = uuid::Uuid::new_v4().to_string();
-        let mut result =
-            harness::tool(state, string(&caller, "turn"), name, &native, &call_id).await?;
-        if native["expects_reply"] == true && result["status"] == "waiting" {
-            for _ in 0..1500 {
-                let completed = {
-                    let guard = state.database.lock().map_err(|_| Failure::storage())?;
-                    one(
-                        &guard.connection,
-                        "SELECT result FROM flow_tool_calls WHERE turn=? AND call_id=?",
-                        params![string(&caller, "turn"), call_id],
-                    )?
-                    .and_then(|row| serde_json::from_str::<Value>(string(&row, "result")).ok())
-                    .filter(|value| value["status"] == "completed")
-                };
-                if let Some(value) = completed {
-                    result = value;
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-        }
+        // A reply-expecting message queues its turn (`messaging::run`), like
+        // `wait_task`: return the waiting receipt so the harness can end its
+        // turn, free the conversation, and the scheduler resumes the turn
+        // once every reply settles.
+        let result = harness::tool(state, string(&caller, "turn"), name, &native, &call_id).await?;
         return Ok(reply(&body["id"], Ok(result)));
     }
     if name == "render_component" && super::secrets::reflected(args.to_string().as_bytes(), &bearer)

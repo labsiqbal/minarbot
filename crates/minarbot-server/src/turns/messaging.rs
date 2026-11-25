@@ -366,7 +366,7 @@ fn send(
     }
     let result = json!({"request":request,"status":if bounded{"bounded"}else if reply{"waiting"}else{"sent"},"expects_reply":reply});
     tools::journal(db, turn, call, &result)?;
-    if reply && !bounded && !state.config.harness.test_mode {
+    if reply && !bounded {
         db.execute(
             "UPDATE turns SET status='queued' WHERE id=?",
             [string(turn, "id")],
