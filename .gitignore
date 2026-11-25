@@ -28,6 +28,9 @@
 !.env.*.example
 *.key
 *.pem
+# Test-only key pair for fake Clerk tokens (crates/minarbot-testkit/fixtures/README.md).
+!crates/minarbot-testkit/fixtures/clerk-test-key.pem
+!crates/minarbot-testkit/fixtures/clerk-test-key.pub.pem
 *.p12
 *.pfx
 *.sqlite*
