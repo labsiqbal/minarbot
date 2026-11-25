@@ -138,8 +138,13 @@ each iteration as a case.
 | `app/connector-task-files.test.ts` | 6 | 6 | 0 | 0 (deleted) |
 | `app/workflow-files.test.ts` | 8 | 8 | 0 | 0 (deleted) |
 | `app/rust-connectors.test.ts` | 13 | 13 | 0 | 2 (B1) |
+| Total | 105 | 103 | 0 | 13 (B1 x7, B2, B7 x2; 3 TS-module cases) |
 
-<!-- fixture-summary -->
+"Dropped" counts whole cases; assertions dropped for removed behaviour are
+named per case below. Partly dropped behaviour: the malformed-JSON tool
+arguments iteration (routine-tools), the per-request system prompt roster
+refresh and capability epoch (team awareness), and turn failure on refused or
+failed MCP tool calls (several cases), all removed with the #87 API runtime.
 
 ### `app/queue-edits.test.ts` (deleted)
 
@@ -351,7 +356,19 @@ each iteration as a case.
 | Rust slack runner workflow through native turns | `fx_connectors::rust_slack_runner_workflow_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
 | Rust slack runner media through native turns | `fx_connectors::rust_slack_runner_media_through_native_turns` | 20 -> 22 | Full (shared helper `runner`): fake platform with Socket Mode reconnect, script proxy that maps script routes to UI routes and answers workflow calls itself. |
 
-<!-- fixture-cases -->
+
+### Product bugs found and fixed in the fixture slice
+
+| Bug | Fix | Found by |
+| --- | --- | --- |
+| F1 | MCP feature tools re-offered private-only tools (`list_routines`, `read_routine`, `list_skills`) to shared-room turns after the native filter withheld them. `turns::tools::PRIVATE_TOOLS` now drives both filters. | `fx_tools::routine_tools...` |
+| F2 | Refused (4xx) native tool calls over MCP were not journaled, unlike the agent loop in `turns/execution.rs`; `harness::journal_refusal` records them. | `fx_tools::avatar_tool...` |
+| F3 | MCP added `requestId` and `turn` to every session `delegate_task`; the native handler rejects unknown fields, so every harness delegation failed with 400. Only the feature tool gets them now. | `fx_delegation::*` |
+| F4 | Harness sessions got the native `wait_task`, which marks the turn paused and waiting but is never resumed. Sessions now use the blocking feature tool, which records a durable delegation wait. | `fx_delegation::durable_task_wait_*` |
+
+B1 also covers `wait_for_event`: it returns `null` at once and the harness takes one more model step. Rust tests end that step with text (a failed step would fail the waiting turn) and leave it out of counts; `fx_support::after_pause` and `pause_reply_for` implement this.
+
+Open finding (not fixed, #87 behaviour change): a Composio call held across a key reset is offered again for the new installation over MCP, because harness calls resolve tools per request; the Node API runtime refused it with its turn-start tool list. The Rust test asserts that the call waits for approval and is never dispatched.
 
 ## #67 hosted Hub test migration
 

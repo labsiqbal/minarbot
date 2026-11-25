@@ -31,7 +31,7 @@ one module per area.
 
 | Module | Use it for |
 | --- | --- |
-| `server` | `TestRoot` (one temp dir and database). `ServerConfig` takes every option `app/rust-test-server.ts` accepted (unknown names fail with `not ported: option X`). Builders: `fixed_clock` (on by default), `real_clock`, `model`, `gateway`, `executable`, `issuer`, `workspace`, `script_directory`, `concurrency`, `path_prefix`, `sync_key`, `computer_bridge`, `canonical_bridge`, `pdf_bridge` and `composio`. `Server` has `get`, `post`, `post_expect`, `get_expect`, `call`, `wait_get`, `wait_row`, `wait_status`, `restart`, `restart_with`, `shutdown`, `crash`, `start_stopped`, `edit_database`, `refresh_machines` and `output`. |
+| `server` | `TestRoot` (one temp dir and database). `ServerConfig` takes every option `app/rust-test-server.ts` accepted (unknown names fail with `not ported: option X`). Builders: `fixed_clock` (on by default), `real_clock`, `model`, `gateway`, `executable`, `issuer`, `workspace`, `script_directory`, `concurrency`, `path_prefix`, `sync_key`, `computer_bridge`, `canonical_bridge`, `pdf_bridge` and `composio`. `Server` has `get`, `post`, `post_expect`, `get_expect`, `call`, `wait_get`, `wait_row`, `wait_status`, `restart`, `restart_with`, `shutdown`, `crash`, `start_stopped`, `edit_database`, `refresh_machines` and `output`. `TestRoot::start_error_beside` runs a failing start on the caller's slot; `server::start_pair` starts two servers on both slots at once. |
 | `http` | `Reply` (status and JSON), `SseReader`, and `SplitRequest` for a request whose last body bytes are held back. |
 | `wait` | `until`, `until_within`, `until_value` (the timeout shows the last value) and `never`. |
 | `db` | `Inspector` (read-only, works while the server runs) and `Fixture` (writable, only for seeding the API cannot do and for fault triggers). |
@@ -45,6 +45,11 @@ one module per area.
 | `canonical` | `Canonical` sets up the canonical schema, accounts and Clerk RS256 tokens (test-only key) for hosted-mode requests. |
 | `bridge` | Closure-backed bridges for computer, canonical, PDF and Composio test options. |
 | `protocol`, `image` | `digest_command`, `canonical_json` and `sha256_hex`; PNG builder and dimensions. |
+| `gated` | `GatedModel`: an OpenAI-compatible model whose `Answer` can wait for a `Gate`, park the request for the test (`Answer::Park`, `parked`), hang, or stream chunks with gates between them. Extra JSON routes (`route`) serve, for example, image generation. |
+| `stub` | `Stub`: a raw HTTP/1.1 fake for third-party APIs (sync or async handlers, `StubReply::Hang` and `Drop` for lost results, WebSocket upgrades through `with_socket`). |
+| `platform`, `connector` | `ConnectorFixture` (fake Slack and Telegram with Socket Mode, a fault-injecting script proxy and the connector process); `Connector` runs `--connector-config`, `journal` runs `--connector-journal-config`. |
+| `peer` | `PeerBridge`: a computer bridge with a recording peer token issuer and loopback `peer-http`; pair two servers with `server::start_pair` on a multi-thread test runtime. |
+| `signing`, `noise` | `hmac_sha256_hex` for signed event deliveries; `noise_png` for large generated images. |
 
 Configuring a model (`ServerConfig::model` or `gateway`) makes `fake-gateway`
 the Codex executable, as the Node bridge did, so native Codex tests configure
