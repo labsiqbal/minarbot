@@ -43,6 +43,12 @@ pub(crate) fn scoped(db: &Connection, scope: &str, name: &str, args: &Value) -> 
         if editing && old.is_none() {
             return Err(error(404, "Memory note not found in this conversation."));
         }
+        if editing && old.as_ref().is_some_and(|row| row["selection_locked"] == 1) {
+            return Err(error(
+                409,
+                "Memory note was selected by the user. Reload before saving.",
+            ));
+        }
         return data::memory::scoped(
             db,
             scope,
