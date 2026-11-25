@@ -133,6 +133,8 @@ each iteration as a case.
 | `app/acp-harness.test.ts` | 17 | 17 | 0 | 0 (deleted) |
 | `app/agent-delegation.test.ts` | 19 | 19 | 0 | 1 (B1) |
 | `app/composio.test.ts` | 3 | 3 | 0 | 1 (TS module, split out) |
+| `app/dispatch.test.ts` | 11 | 10 | 0 | 3 (B7 x2, TS module) |
+| `app/turn-stream.test.ts` | 2 | 1 | 0 | 1 (TS module) |
 
 <!-- fixture-summary -->
 
@@ -280,6 +282,29 @@ each iteration as a case.
 | connected apps end to end: catalog, accounts, grants, tools, approvals, receipts and no secrets | `fx_composio::connected_apps_end_to_end_catalog_accounts_grants_tools_approvals_receipts_and_no_secrets` | 70 -> 61 | Changed by #87: the unconfigured and ungranted turns no longer fail; the unoffered call is refused over MCP (403) and the turn ends `done`. The test asserts the refusal and that no Composio tool was offered. The `COMPOSIO_API_KEY` environment variable is the kit's key bridge (`Bridge::composio_key_cell`); server output replaces captured console logs. |
 | installation API key: validation, encrypted persistence, receipts, runtime precedence and restart | `fx_composio::installation_api_key_validation_encrypted_persistence_receipts_runtime_precedence_and_restart` | 39 -> 38 | Full; the environment key changes through the key cell between requests, as `process.env` did. |
 | Rust key replacement and removal reset identity, grants, policies and pending calls atomically | `fx_composio::rust_key_replacement_and_removal_reset_identity_grants_policies_and_pending_calls_atomically` | 21 -> 21 (+6 TS) | Changed by #87: the Node API runtime kept the tool list of the turn's start, so the call held across the reset was refused ("was not offered or access was revoked"). A harness call resolves tools again over MCP, so after the reset and the new grant the write waits for approval; the test denies it and asserts nothing was sent. Every pending-call and reset assertion is full. The 6 `restoreConnectedAppCommand` asserts test `app/src/connected-app-command.ts` and stay in Node as their own TS-module case. |
+
+### `app/dispatch.test.ts` (kept: B7, TS module)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| startup failure reports child output and releases the provider and directory | `fx_dispatch::startup_failure_reports_child_output_and_releases_the_provider_and_directory` | 3 -> 4 | Ported to the kit's startup error: exit status, stdout and stderr tails, no provider call, and the test root is removed when it drops. |
+| steer is injected once at next tool-loop safe point, durable and idempotent | `fx_dispatch::steer_is_injected_once_at_next_tool_loop_safe_point_durable_and_idempotent` | 15 -> 8 | Kept in Node for B7: the steer is stored but never delivered to a harness turn, so the "Delivered" label, one copy per later request, history and fork assertions stay in Node. Receipt, replay, conflicting mode, held editor, call count before release, final reply, saved file and receipt replay without a model call are ported. |
+| steer before final answer and steer after completion each become one queued turn | `fx_dispatch::steer_before_final_answer_and_steer_after_completion_each_become_one_queued_turn` | 5 -> 5 | Full. |
+| restart cancels and links a new turn, carries partial text and saved results, no effect replay | `fx_dispatch::restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_results_no_effect_replay` | 12 -> 11 | Kept in Node for B7: the undelivered steer cannot reach the restart context (`Keep the delivered constraint`). Partial text, saved result, replay warning, no tool replay, ordering and receipt are ported; the partial arrives through the gateway's live stream forwarding. |
+| server restart mid-steer releases guidance once and never replays uncertain source | `fx_dispatch::server_restart_mid_steer_releases_guidance_once_and_never_replays_uncertain_source` | 2 -> 2 | Full. |
+| fork stores bounded immutable cutoff, same agent, idempotency and channel lineage | `fx_dispatch::fork_stores_bounded_immutable_cutoff_same_agent_idempotency_and_channel_lineage` | 25 -> 25 | Full. |
+| composer recovery validates dispatch mode and target | Kept in Node | 3 -> 0 | Tests `app/src/conversation-command.ts`. |
+| restart during uncertain MCP effect keeps its receipt and never replays external call | `fx_dispatch::restart_during_uncertain_mcp_effect_keeps_its_receipt_and_never_replays_external_call` | 6 -> 4 | Full; the external MCP server is `fx_mcp::LosingMcp`. The provider-side check counts as the last assert. |
+| queued dispatch rejects stale revision, held editor, cross-conversation target and started message | `fx_dispatch::queued_dispatch_rejects_stale_revision_held_editor_cross_conversation_target_and_started_message` | 5 -> 5 | Full. |
+| queued restart cancels captured generation; late steering stays queued without duplicate turn | `fx_dispatch::queued_restart_cancels_captured_generation_late_steering_stays_queued_without_duplicate_turn` | 4 -> 4 | Full. |
+| terminal forks preserve partial answers; untitled chats name from first text and keep manual names | `fx_dispatch::terminal_forks_preserve_partial_answers_untitled_chats_name_from_first_text_and_keep_manual_names` | 3 -> 3 | Full. |
+
+### `app/turn-stream.test.ts` (kept: TS module)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| snapshot merge rejects stale calls, duplicate reconnects and late polling regressions | Kept in Node | 14 -> 0 | Tests `app/shared/turn-stream.ts`. |
+| room polling retains active members beyond full history and orders prose/tool/final by attempt | `fx_stream::room_polling_retains_active_members_beyond_full_history_and_orders_prose_tool_final_by_attempt` | 31 -> 29 | Changed by #87: a harness turn is one provider call record, so the second model step is a new stream segment of the same `seq` (ordinals 0-3) instead of a new attempt with its own `seq`, and its revision grows instead of restarting at 0. `streamWork` is reimplemented in the test. Needs the gateway's live stream forwarding (G4). |
 
 <!-- fixture-cases -->
 

@@ -184,8 +184,10 @@ impl Peer {
     }
 
     /// One provider request; streamed responses are folded into a
-    /// non-streamed completion plus the original content deltas.
-    async fn provider(&self, body: &Value) -> Result<(Value, Vec<String>)> {
+    /// non-streamed completion plus the original content deltas. Each content
+    /// delta is also forwarded as `item/agentMessage/delta` for `item` the
+    /// moment it arrives, like Codex streams a reply.
+    async fn provider(&self, body: &Value, item: &str) -> Result<(Value, Vec<String>)> {
         let mut request = self
             .client
             .post(format!(
@@ -209,13 +211,28 @@ impl Peer {
         if body["stream"] != true {
             return Ok((response.json().await?, Vec::new()));
         }
-        let text = response.text().await?;
+        let mut response = response;
+        let mut pending: Vec<u8> = Vec::new();
+        let mut lines: Vec<String> = Vec::new();
         let mut content = String::new();
         let mut deltas = Vec::new();
         let mut calls: Vec<Value> = Vec::new();
         let mut finish = Value::Null;
         let mut usage = Value::Null;
-        for line in text.lines() {
+        let mut ended = false;
+        while !ended {
+            match response.chunk().await? {
+                Some(chunk) => pending.extend_from_slice(&chunk),
+                None => {
+                    pending.push(b'\n');
+                    ended = true;
+                }
+            }
+            while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = pending.drain(..=end).collect();
+                lines.push(String::from_utf8_lossy(&line).trim_end().to_owned());
+            }
+            for line in lines.drain(..) {
             let Some(data) = line.strip_prefix("data:") else {
                 continue;
             };
@@ -227,6 +244,12 @@ impl Peer {
             let choice = &chunk["choices"][0];
             let delta = &choice["delta"];
             if let Some(text) = delta["content"].as_str() {
+                if !text.is_empty() {
+                    self.notify(
+                        "item/agentMessage/delta",
+                        json!({"itemId": item, "delta": text}),
+                    );
+                }
                 deltas.push(text.to_owned());
                 content.push_str(text);
             }
@@ -259,6 +282,7 @@ impl Peer {
             }
             if usage.is_null() {
                 usage = chunk["usage"].clone();
+            }
             }
         }
         if finish.is_null() {
@@ -475,7 +499,8 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
             LOG,
             &json!({"stage": "provider", "pid": std::process::id(), "messages": body["messages"].as_array().map_or(0, Vec::len)}),
         );
-        let (value, deltas) = peer.provider(&body).await?;
+        let item = Uuid::new_v4().to_string();
+        let (value, deltas) = peer.provider(&body, &item).await?;
         let choice = &value["choices"][0];
         let message = &choice["message"];
         if !choice.is_object() || !message.is_object() {
@@ -486,6 +511,13 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
             .cloned()
             .unwrap_or_default();
         if !tool_calls.is_empty() && choice["finish_reason"] == "tool_calls" && !exhausted {
+            let streamed: String = deltas.concat();
+            if !streamed.is_empty() {
+                peer.notify(
+                    "item/completed",
+                    json!({"item": {"id": item, "type": "agentMessage", "text": streamed}}),
+                );
+            }
             let mut assistant = Map::new();
             assistant.insert("role".into(), json!("assistant"));
             if let Some(fields) = message.as_object() {
@@ -607,20 +639,14 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
         if !tool_calls.is_empty() {
             return Err("Gateway provider returned tools after budget exhaustion".into());
         }
-        let id = Uuid::new_v4().to_string();
+        let id = item;
         let content = message["content"].as_str().unwrap_or_default().to_owned();
-        let emit = |text: &str| {
-            if !text.is_empty() {
-                peer.notify(
-                    "item/agentMessage/delta",
-                    json!({"itemId": id, "delta": text}),
-                );
-            }
-        };
-        if deltas.is_empty() {
-            emit(&content);
-        } else {
-            deltas.iter().for_each(|delta| emit(delta));
+        // Streamed deltas were forwarded as they arrived.
+        if deltas.is_empty() && !content.is_empty() {
+            peer.notify(
+                "item/agentMessage/delta",
+                json!({"itemId": id, "delta": content}),
+            );
         }
         peer.notify(
             "item/completed",

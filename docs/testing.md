@@ -162,7 +162,7 @@ name) and, where listed, end to end by an e2e module.
 | G1 | `--version`. | - |
 | G2 | `thread/start` and `thread/resume` take the MCP URL, token variable, cwd, thread ID and model. | threads, cli |
 | G3 | `tools/list` becomes OpenAI tools; text answers -> deltas, `item/completed`, usage and `turn/completed`. | threads |
-| G4 | With `MINARBOT_GATEWAY_STREAM=true`, SSE content and tool-call deltas are folded and the content deltas forwarded. | - |
+| G4 | With `MINARBOT_GATEWAY_STREAM=true`, SSE content and tool-call deltas are folded; each content delta is forwarded as it arrives, and streamed text before tool calls becomes its own `agentMessage` item. | `fx_stream`, `fx_dispatch::restart_cancels...` |
 | G5 | Tool calls -> `mcpToolCall` items and MCP `tools/call`, with a stable `requestId` filled in when the schema requires one. | questions, agent_create |
 | G6 | MCP HTTP 4xx -> tool error to the model; 5xx -> turn error. | agent_create (`escape`) |
 | G7 | An "uncertain" MCP error fails the turn. | - |
