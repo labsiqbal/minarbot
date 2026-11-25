@@ -187,7 +187,7 @@ for B1 until the #89 integration below fixed it.
 | local-projects: Rust managed folder retry recovers durable intent after transaction failure without deleting files | `pd_local_projects::rust_managed_folder_retry_recovers_durable_intent_after_transaction_failure_without_deleting_files` | 4 -> 4 | Full. |
 | local-projects: standalone and P2 migration preserves channel IDs, history, read state, memory, files and legacy sidebar through restart and backup restore | `pd_local_projects::standalone_and_p2_migration_preserves_channel_ids_history_read_state_memory_files_and_legacy_sidebar_through_restart_and_backup_restore` | 28 -> 25 | Full; snapshots via `backup::workspace_snapshot`. |
 | local-projects: section commands require revisions and request IDs, inherit members, reorder, archive and replay across restart | `pd_local_projects::section_commands_require_revisions_and_request_ids_inherit_members_reorder_archive_and_replay_across_restart` | 18 -> 19 | Full. |
-| local-projects: folderless project and side threads isolate host grants, accept folders later, and archive retains configuration | `pd_local_projects::folderless_project_and_side_threads_isolate_host_grants_accept_folders_later_and_archive_retains_configuration` | 17 -> 14 | Folderless sends are refused with 503 "Coding runtime requires a workspace for this conversation." (before #87 only harness runtimes got this; now every agent is one). |
+| local-projects: folderless project and side threads isolate host grants, accept folders later, and archive retains configuration | `pd_local_projects::folderless_project_and_side_threads_isolate_host_grants_accept_folders_later_and_archive_retains_configuration` | 17 -> 14 | Since P5 (peers slice) a folderless Section or thread runs in an empty read-only managed folder: the read finds no file, never sees the host workspace's `read.txt`, and the turn ends `done` with the tool error (H1); the removed API runtime failed the turn. The rollback case's failing start reuses its stopped server's slot (`start_error_beside`), which a second slot could deadlock behind a two-slot reservation (#89 integration). |
 | local-projects: Rust project migration rolls back ownership and retries without touching standalone data | `pd_local_projects::rust_project_migration_rolls_back_ownership_and_retries_without_touching_standalone_data` | 7 -> 8 | Full. |
 | local-projects: Rust migrates a standalone channel with a colliding ID into its own project | `pd_local_projects::rust_migrates_a_standalone_channel_with_a_colliding_id_into_its_own_project` | 6 -> 4 | Full. |
 | local-projects: Rust project members retain added order through reload and edit | `pd_local_projects::rust_project_members_retain_added_order_through_reload_and_edit` | 2 -> 2 | Full. |
@@ -839,8 +839,8 @@ One parent case with 34 subtests; each subtest is its own Rust test against the 
 | canonical skills retain installed pins, owner mappings, private boundaries and immutable read results | `sb_task_recovery::canonical_skills_retain_installed_pins_owner_mappings_private_boundaries_and_immutable_read_results` | 25 -> 25 |  |
 | canonical routine tools keep private project mappings, pagination and flow scope | `sb_task_recovery::canonical_routine_tools_keep_private_project_mappings_pagination_and_flow_scope` | 18 -> 18 |  |
 | canonical routine edits require project agents and assignment, preserve CAS and roll back with result failure | `sb_task_recovery::canonical_routine_edits_require_project_agents_and_assignment_preserve_cas_and_roll_back_with_result_failure` | 16 -> 16 |  |
-| canonical provider settings read binding metadata only in direct and stays private | `sb_task_recovery::canonical_provider_settings_read_binding_metadata_only_in_direct_and_stays_private` | 8 -> 5 | Dropped (#87): the provider-binding cases (another home, readiness, foreign owner) and the `providerAccount`/`backupModel` fields. The canonical executor reads the agent's provider instance: `{revision, providerInstance, model, configured}`, checked unbound and bound. |
-| canonical provider settings read binding metadata only in side and stays private | `sb_task_recovery::canonical_provider_settings_read_binding_metadata_only_in_side_and_stays_private` | 8 -> 5 | Dropped (#87): the provider-binding cases (another home, readiness, foreign owner) and the `providerAccount`/`backupModel` fields. The canonical executor reads the agent's provider instance: `{revision, providerInstance, model, configured}`, checked unbound and bound. |
+| canonical provider settings read binding metadata only in direct and stays private | `sb_task_recovery::canonical_provider_settings_read_binding_metadata_only_in_direct_and_stays_private` | 8 -> 8 | Full since the #89 integration: P7 (peers slice) reads the home binding again, so the port asserts `{revision, providerAccount, model, backupModel, configured}` unbound, bound and per readiness, and the 409 for a binding on another home or of another owner. Dropped (#87): `backupModel: "backup"` (it stays `""`) and the legacy `agents.provider_account` column. |
+| canonical provider settings read binding metadata only in side and stays private | `sb_task_recovery::canonical_provider_settings_read_binding_metadata_only_in_side_and_stays_private` | 8 -> 8 | Same as direct. |
 | canonical setup restricts host actions and forced tools, and requires a complete profile edit | `sb_task_recovery::canonical_setup_restricts_host_actions_and_forced_tools_and_requires_a_complete_profile_edit` | 5 -> 5 |  |
 | canonical profile edit in direct keeps atomic CAS errors and channel privacy | `sb_task_recovery::canonical_profile_edit_in_direct_keeps_atomic_cas_errors_and_channel_privacy` | 12 -> 12 |  |
 | canonical profile edit in side keeps atomic CAS errors and channel privacy | `sb_task_recovery::canonical_profile_edit_in_side_keeps_atomic_cas_errors_and_channel_privacy` | 12 -> 12 |  |
@@ -1239,13 +1239,41 @@ Rust sites; their counts became strict. The Node files above are deleted,
 except `app/agent-visibility.test.ts` and `app/dispatch.test.ts`, which keep
 only their TypeScript-module cases.
 
+### Peers merge (c7b12d6)
+
+After `t3/89-opus-peers` merged into `t3/87-89-base`, six tests failed in
+two full runs, and a run of the affected modules hung.
+
+| Test | Cause | Fix |
+| --- | --- | --- |
+| `sb_task_recovery::canonical_provider_settings_read_binding_metadata_only_in_{direct,side}_and_stays_private` | Test: stale-b ported a8cfcac's read of the local provider instance, which hosted agents never set; peers' P7 reads the home binding again. | The port asserts the Node binding cases (unbound, bound, readiness, other home, foreign owner). |
+| `pd_local_projects::folderless_project_and_side_threads_isolate_host_grants_accept_folders_later_and_archive_retains_configuration` | Test: asserted the 503 admission refusal that P5 replaced with an empty read-only folder. | The folderless reads finish with a tool error and never reach the host file. |
+| `pr_room_chat::failure_releases_serialized_lane_without_lead_fallback_or_provider_replay` | Kit: the merge dropped peers' `fake-gateway` check for tool calls without a function name (93 calls). | Check restored. |
+| `pr_room_chat::serialized_broadcast_yields_delegate_task_to_parallel_children_and_resumes_once` | Product: `delegate_task {wait: true}` with an explicit agent returns a waiting receipt (not null) and queues the parent, so I1 missed it and the gateway's `wait_task` ran. | I1 now covers it (below); the test asserts Node's strict counts. |
+| `pr_room_chat::room_stop_cancels_fan_out_delegated_descendants_and_pending_addressed_guidance_other_roots_and_direct_tasks_continue` | Test: written before B7; the steer to the child is a linked restart. | Asserts the restart and the two cancelled entries (see its row). |
+| Hang in `pd_local_projects`, `pr_remote_agents`, `pr_room_chat` | Test: `rust_project_migration_rolls_back...` held a stopped server and asked for a second slot with `start_error`; the slot semaphore is FIFO, so behind a two-slot `Servers::reserve` every test waited. | `start_error_beside`. |
+
+I1 also now covers `delegate_task {wait: true}` and the native `wait_task`,
+which both return a waiting receipt, and it parks only a turn the tool
+actually left `queued`, so a running turn keeps its run.
+
+Ported after the peers merge: `app/remote-agents.test.ts` "delegation depth
+travels across machines and stops ping-pong" (`pr_remote_agents::delegation_depth_travels_across_machines_and_stops_ping_pong`,
+2 -> 2, strict `requests === 6`) and `app/room-chat.test.ts` "serialized
+broadcast yields delegate_task to parallel children and resumes once"
+(`pr_room_chat::serialized_broadcast_yields_delegate_task_to_parallel_children_and_resumes_once`,
+5 -> 5). `app/room-chat.test.ts` is deleted; `app/remote-agents.test.ts`
+keeps its TypeScript-module case. P6 stays in `app/hub-link.test.ts`.
+
 ### Node cases left from #89
 
 Every remaining case tests a TypeScript module and stays until #89 S3:
 `threads` (1), `questions` (1), `agent-create` (2), `agent-visibility` (1),
 `composio` (1), `dispatch` (1), `turn-stream` (1), `memory` (1),
-`memory-selection` (1), `workflow-http` (1) and `tool-budget` (1), all
-`app/<name>.test.ts`.
+`memory-selection` (1), `workflow-http` (1), `tool-budget` (1) and
+`remote-agents` (1), all `app/<name>.test.ts`, plus the peers slice's
+TS-module cases in `app/hub-link.test.ts` and its P6 case, which needs an
+Owner decision.
 
 ## #67 hosted Hub test migration
 
@@ -1664,7 +1692,7 @@ Node suites did. Multi-server tests reserve their server slots at once with
 | lost reciprocal acknowledgement retries encrypted pending credentials after restart without minting another token | `lost_reciprocal_acknowledgement_retries_encrypted_pending_credentials_after_restart_without_minting_another_token` | 7 -> 7 | The Node in-handler `assert.equal(data.token, saved)` is a recorded mismatch flag. |
 | default wiring issues pairing tokens from the Minarbot MCP token registry and revokes them on unpair | `default_wiring_issues_pairing_tokens_from_the_minarbot_mcp_token_registry_and_revokes_them_on_unpair` | 12 -> 12 | |
 
-### `app/remote-agents.test.ts` (15 cases, 14 Rust tests, 2 Node cases kept)
+### `app/remote-agents.test.ts` (15 cases, 14 Rust tests, 1 Node case kept: TS module)
 
 Both servers ask one `async_model::AsyncModel`, the Rust form of the Node
 fixture's async provider. The cases that patched `globalThis.fetch` hook the
@@ -1680,7 +1708,7 @@ same peer requests with a `MachineBridge` extra operation.
 | paired real MCP remote agents: restart-b | `paired_real_mcp_remote_agents_restart_b` | 12 -> 12 | Failed on P1 (fixed). |
 | remote cancel stops peer delivery, is peer-scoped, and unpaired addresses are unreachable | `remote_cancel_stops_peer_delivery_is_peer_scoped_and_unpaired_addresses_are_unreachable` | 1 -> 1 | Failed on P1 (fixed). |
 | kill switch rejects immediately and loop limits count peer and agent across requests | `kill_switch_rejects_immediately_and_loop_limits_count_peer_and_agent_across_requests` | 12 -> 12 | |
-| delegation depth travels across machines and stops ping-pong | `delegation_depth_travels_across_machines_and_stops_ping_pong` | 2 -> 2 | Failed on P1 (fixed). The count leaves out the extra model step after each paused `delegate_task {wait: true}` (B1); the strict `requests === 6` stays in Node. |
+| delegation depth travels across machines and stops ping-pong | `delegation_depth_travels_across_machines_and_stops_ping_pong` | 2 -> 2 | Failed on P1 (fixed). Strict `requests === 6` since the #89 integration fixed B1 for `delegate_task {wait: true}`; the Node case is deleted. |
 | offline send remains explicitly uncertain across caller restart without replay | `offline_send_remains_explicitly_uncertain_across_caller_restart_without_replay` | 2 -> 2 | |
 | accepted remote send is never replayed: lost-ack | `accepted_remote_send_is_never_replayed_lost_ack` | 3 -> 3 | Shared helper `accepted_remote_send_is_never_replayed`. |
 | accepted remote send is never replayed: restart-sending | `accepted_remote_send_is_never_replayed_restart_sending` | 3 -> 3 | SIGTERM reaches A before the held acknowledgement fails, as in Node. |
@@ -1688,7 +1716,7 @@ same peer requests with a `MachineBridge` extra operation.
 | kill switch cancels an active peer turn before any more remote work is admitted | `kill_switch_cancels_an_active_peer_turn_before_any_more_remote_work_is_admitted` | 1 -> 1 | |
 | remote role reaches local discovery and team prompt through paired peer summaries | `remote_role_reaches_local_discovery_and_team_prompt_through_paired_peer_summaries` | 3 -> 3 | Failed on product bug P2 (fixed). |
 
-### `app/room-chat.test.ts` (25 cases, 25 Rust tests, 1 Node case kept for B1)
+### `app/room-chat.test.ts` (25 cases, 25 Rust tests, file deleted)
 
 | Node case | Rust test (`pr_room_chat::`) | Asserts | Notes |
 | --- | --- | --- | --- |
@@ -1705,17 +1733,17 @@ same peer requests with a `MachineBridge` extra operation.
 | direct delegation exposes inline transcript request, named reply, machine and activity without replacing final answer | `direct_delegation_exposes_inline_transcript_request_named_reply_machine_and_activity_without_replacing_final_answer` | 5 -> 5 |  |
 | new project section serializes with H2 silence and agent mentions, then follows project membership edits | `new_project_section_serializes_with_h2_silence_and_agent_mentions_then_follows_project_membership_edits` | 6 -> 6 | Failed on product bug P5 (fixed). |
 | room Stop fences a completed root with live/queued invited members; exact lost-response retry survives restart and new generation | `room_stop_fences_a_completed_root_with_live_queued_invited_members_exact_lost_response_retry_survives_restart_and_new_generation` | 11 -> 11 |  |
-| room Stop cancels fan-out, delegated descendants and pending addressed guidance; other roots and direct tasks continue | `room_stop_cancels_fan_out_delegated_descendants_and_pending_addressed_guidance_other_roots_and_direct_tasks_continue` | 4 -> 4 |  |
+| room Stop cancels fan-out, delegated descendants and pending addressed guidance; other roots and direct tasks continue | `room_stop_cancels_fan_out_delegated_descendants_and_pending_addressed_guidance_other_roots_and_direct_tasks_continue` | 4 -> 6 | B7 (#89 integration): the steer to the running child is a linked restart (receipt `restart` targeting the child), which cancels the child at once ("Stopped for restart.") and runs the guidance as its own turn, held at the model. Stop cancels the root and that turn (2 entries; Node: root, child, pending guidance = 3), and every cancelled row, the child included, ends without a reply. |
 | addressed API room Steer consumes once at safe point and completion winner queues once; cross-room targets fail | `addressed_api_room_steer_consumes_once_at_safe_point_and_completion_winner_queues_once_cross_room_targets_fail` | 4 -> 4 |  |
 | addressed root restart retains peers; Stop before completion prevents final and queued mentions | `addressed_root_restart_retains_peers_stop_before_completion_prevents_final_and_queued_mentions` | 4 -> 4 |  |
 | room Stop cancels queued mention invitations before provider admission | `room_stop_cancels_queued_mention_invitations_before_provider_admission` | 2 -> 2 | Waits until the running invitation's provider call arrived before Stop. |
 | room Stop rejects foreign origins, bearer callers, payload changes, wrong generation and archived scope | `room_stop_rejects_foreign_origins_bearer_callers_payload_changes_wrong_generation_and_archived_scope` | 2 -> 2 |  |
 | serialized broadcast yields send_message to parallel children and resumes once | `serialized_broadcast_yields_send_message_to_parallel_children_and_resumes_once` | 5 -> 5 | Shared helper. |
-| serialized broadcast yields delegate_task to parallel children and resumes once | `serialized_broadcast_yields_delegate_task_to_parallel_children_and_resumes_once` | 5 -> 5 | The Assistant count leaves out the step after the paused delegation (B1); the strict count stays in Node. The gateway peer waits a `delegate_task {wait: true}` with its own `wait_task` (G13), so the journal holds those two calls once each instead of one row. |
+| serialized broadcast yields delegate_task to parallel children and resumes once | `serialized_broadcast_yields_delegate_task_to_parallel_children_and_resumes_once` | 5 -> 5 | Full since the #89 integration: strict Assistant count (2) and one journaled call, as in Node; a paused `delegate_task {wait: true}` now parks the parent before the gateway's own `wait_task` (G13) runs. |
 | separate Sections and direct chats progress while root order holds within one Section | `separate_sections_and_direct_chats_progress_while_root_order_holds_within_one_section` | 2 -> 2 |  |
 | mention storms deduplicate sources, settle pass obligations and never invite self | `mention_storms_deduplicate_sources_settle_pass_obligations_and_never_invite_self` | 5 -> 5 |  |
 | same-name Unicode speakers retain distinct IDs in bounded committed context; user brief survives truncation | `same_name_unicode_speakers_retain_distinct_ids_in_bounded_committed_context_user_brief_survives_truncation` | 7 -> 7 | Both speaker IDs are checked in one loop. |
-| failure releases serialized lane without lead fallback or provider replay | `failure_releases_serialized_lane_without_lead_fallback_or_provider_replay` | 3 -> 3 | Kit fix: `fake-gateway` now fails the turn on a tool call without a function name, as Codex does; it used to send it to MCP and loop to the tool budget (93 calls). |
+| failure releases serialized lane without lead fallback or provider replay | `failure_releases_serialized_lane_without_lead_fallback_or_provider_replay` | 3 -> 3 | Kit fix: `fake-gateway` fails the turn on a tool call without a function name, as Codex does; it used to send it to MCP and loop to the tool budget (93 calls). The #87-89-base merge dropped this check; the #89 integration restored it. |
 | admission cutoff and unpublished watermarks survive restarts | `admission_cutoff_and_unpublished_watermarks_survive_restarts` | 8 -> 8 | Waits for the gated peer's provider call before stopping. |
 
 ### `app/hub-link.test.ts` (41 cases, 39 Rust tests, 2 Node cases kept)
