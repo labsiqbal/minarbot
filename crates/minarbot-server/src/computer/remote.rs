@@ -15,9 +15,15 @@ fn db<T>(state: &AppState, work: impl FnOnce(&Connection) -> Result<T>) -> Resul
 fn transaction<T>(state: &AppState, work: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     db(state, |db| super::transaction(db, work))
 }
-pub fn initialize(db: &Connection) -> Result<()> {
-    db.execute_batch("UPDATE turns SET status='interrupted',paused=0,error='Remote send is uncertain after restart. It will not be replayed.' WHERE id IN(SELECT delivery FROM remote_agent_calls WHERE state='sending'); UPDATE remote_agent_calls SET state='uncertain',status='interrupted',error='Remote send is uncertain after restart. It will not be replayed.' WHERE state='sending'; UPDATE turns SET status='queued',paused=0,error=NULL WHERE id IN(SELECT delivery FROM remote_agent_calls WHERE state='sent') AND status='interrupted'; UPDATE turns SET status='queued',paused=0,error=NULL WHERE status='interrupted' AND (EXISTS(SELECT 1 FROM agent_requests WHERE turn=turns.id AND expects_reply=1 AND settled=1) OR EXISTS(SELECT 1 FROM delegation_tasks d JOIN turns child ON child.id=d.delivery WHERE d.creator_turn=turns.id AND child.status='done' AND d.wake_delivered=0));")?;
+fn recover_waiting_turns(db: &Connection) -> Result<()> {
+    if crate::data::table(db, "agent_requests")? && crate::data::table(db, "delegation_tasks")? {
+        db.execute("UPDATE turns SET status='queued',paused=0,error=NULL WHERE status='interrupted' AND (EXISTS(SELECT 1 FROM agent_requests WHERE turn=turns.id AND expects_reply=1 AND settled=1) OR EXISTS(SELECT 1 FROM delegation_tasks d JOIN turns child ON child.id=d.delivery WHERE d.creator_turn=turns.id AND child.status='done' AND d.wake_delivered=0))", [])?;
+    }
     Ok(())
+}
+pub fn initialize(db: &Connection) -> Result<()> {
+    db.execute_batch("UPDATE turns SET status='interrupted',paused=0,error='Remote send is uncertain after restart. It will not be replayed.' WHERE id IN(SELECT delivery FROM remote_agent_calls WHERE state='sending'); UPDATE remote_agent_calls SET state='uncertain',status='interrupted',error='Remote send is uncertain after restart. It will not be replayed.' WHERE state='sending'; UPDATE turns SET status='queued',paused=0,error=NULL WHERE id IN(SELECT delivery FROM remote_agent_calls WHERE state='sent') AND status='interrupted';")?;
+    recover_waiting_turns(db)
 }
 fn role(value: &Value) -> String {
     let cleaned: String = value
@@ -262,10 +268,7 @@ pub async fn worker(state: AppState) {
             result=jobs.join_next(),if !jobs.is_empty()=>{if let Some(Ok(id))=result {active.remove(&id);}},
             _=timer.tick()=>{
                 if crate::updates::pending(&state) { continue; }
-                let _ = transaction(&state, |db| {
-                    db.execute("UPDATE turns SET status='queued',paused=0,error=NULL WHERE status='interrupted' AND (EXISTS(SELECT 1 FROM agent_requests WHERE turn=turns.id AND expects_reply=1 AND settled=1) OR EXISTS(SELECT 1 FROM delegation_tasks d JOIN turns child ON child.id=d.delivery WHERE d.creator_turn=turns.id AND child.status='done' AND d.wake_delivered=0))", [])?;
-                    Ok(())
-                });
+                let _ = transaction(&state, recover_waiting_turns);
                 let pending=db(&state,|db|Ok(one(db,"SELECT 1 FROM remote_agent_calls WHERE state IN('intent','sent') OR cancel_sent=0 AND delivery IN(SELECT id FROM turns WHERE status='cancelled') LIMIT 1",[])?.is_some())).unwrap_or(false);
                 if !pending { continue; }
                 let ready=transaction(&state,|db|{
