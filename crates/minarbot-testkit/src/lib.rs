@@ -36,6 +36,7 @@ pub mod pdf;
 pub mod protocol;
 pub mod providers;
 pub mod proxy;
+pub mod reap;
 pub mod server;
 pub mod upload;
 pub mod vnc;

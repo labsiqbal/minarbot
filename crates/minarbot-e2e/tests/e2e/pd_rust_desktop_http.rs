@@ -252,6 +252,30 @@ async fn harness_stdio_mcp_bridge_delivers_computer_images_input_scoped_access_a
         "computerWait: {}",
         requested["computerWait"]
     );
+    // Each pause stopped the harness run, descendants included.
+    let workspace = app
+        .database()
+        .parent()
+        .ok_or("data dir")?
+        .join("agent-workspaces")
+        .join(&agent);
+    let descendants: Vec<u64> = fakes::native_log(&workspace)?
+        .iter()
+        .filter(|row| row["type"] == "descendant")
+        .filter_map(|row| row["pid"].as_u64())
+        .collect();
+    ensure!(descendants.len() == 2, "descendants: {descendants:?}");
+    for pid in descendants {
+        until(
+            format!("harness descendant {pid} exits after the pause"),
+            || async {
+                let state =
+                    std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+                Ok((state.is_empty() || state.contains(") Z ")).then_some(()))
+            },
+        )
+        .await?;
+    }
     Ok(())
 }
 
