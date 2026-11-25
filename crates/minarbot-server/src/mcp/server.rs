@@ -647,7 +647,8 @@ mod tests {
 
     #[test]
     fn send_schema_supports_batch_coordination() -> Result<()> {
-        let send = tools()
+        let definitions = tools();
+        let send = definitions
             .as_array()
             .and_then(|items| items.iter().find(|item| item["name"] == "send_message"))
             .ok_or_else(|| Failure::storage())?;
