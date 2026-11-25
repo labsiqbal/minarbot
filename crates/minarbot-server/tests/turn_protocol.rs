@@ -369,6 +369,7 @@ async fn seeded_sse_frames_wake_after_visibility_and_file_lane_commits() -> Resu
     )
     .await?;
     assert_eq!(stream.snapshot().await?["partial"]["text"], "Latest answer");
+    stream.drain_ready().await;
     let writes = [
         app.post(&format!("/api/agents/{agent}/files/{}", id())).header(header::CONTENT_TYPE, "application/octet-stream").header("X-File-Name", "fixture.txt").body("file change"),
         app.post(&format!("/api/agents/{agent}/sites")).json(&json!({"id":id(),"name":"Fixture","source":"<p>Fixture</p>"})),
