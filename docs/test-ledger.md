@@ -128,6 +128,7 @@ each iteration as a case.
 | `app/artifacts.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/avatar-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/site-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/base-instructions-scenario.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 
 <!-- fixture-summary -->
 
@@ -205,6 +206,12 @@ each iteration as a case.
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
 | site tools bind sent files and owner, journal results and never replay old mutation on restart | `fx_tools::site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_old_mutation_on_restart` | 44 -> 33 | Changed by #87: an unoffered `publish_site` in a channel is refused over MCP (403) and the turn ends `done`; the test asserts the refusal. Everything else is full; the Node count includes three helper asserts. |
+
+### `app/base-instructions-scenario.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| synthetic scenarios record panel without duplicate writes, inline links, workspace context and approved shell | `fx_tools::synthetic_scenarios_record_panel_without_duplicate_writes_inline_links_workspace_context_and_approved_shell` | 29 -> 27 | Changed by #87: `<runtime_info>` names the Codex instance (`through the codex runtime, model fixture`) instead of `api`. The agent session for the native MCP call is minted by inserting a hashed token, as the Node MCP facade did. |
 
 <!-- fixture-cases -->
 
