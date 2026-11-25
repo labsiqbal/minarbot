@@ -74,7 +74,12 @@ impl Tp {
     }
 
     pub async fn start_in(servers: &Servers) -> Result<Self> {
-        let app = HostedApp::start(TestRoot::new()?, servers).await?;
+        Self::start_env(servers, &[]).await
+    }
+
+    /// Start with extra server environment (for example `TZ`).
+    pub async fn start_env(servers: &Servers, env: &[(&str, &str)]) -> Result<Self> {
+        let app = HostedApp::start_env(TestRoot::new()?, servers, env).await?;
         let target = Arc::new(Mutex::new(app.origin()));
         let hook: Arc<Mutex<Option<FaultHook>>> = Arc::default();
         let (shared, faults) = (target.clone(), hook.clone());
@@ -482,4 +487,27 @@ impl Home {
             .map(|row| row["content"].clone())
             .ok_or_else(|| format!("no result for {action}: {detail}").into())
     }
+}
+
+/// `encodeURIComponent`.
+pub fn encode(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Session account id of `subject`.
+pub async fn account(tp: &Tp, subject: &str) -> Result<String> {
+    Ok(
+        tp.send_as("/api/session", None, subject, None).await?.1["data"]["accountId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+    )
 }

@@ -26,12 +26,26 @@ pub struct WorkflowHome {
     pub workflow: String,
     pub list: String,
     pub detail: String,
+    pub graph: Value,
 }
 
 impl WorkflowHome {
     pub async fn start() -> Result<Self> {
-        let tp = Tp::start().await?;
-        let options = HostOptions::new(&tp.dir().join("workflow-home.sqlite"), tp.proxy.origin())?;
+        Self::start_with(Tp::start().await?).await
+    }
+
+    pub async fn start_with(tp: Tp) -> Result<Self> {
+        Self::start_env(tp, &[]).await
+    }
+
+    /// With extra environment for the home's processes (for example `TZ`).
+    pub async fn start_env(tp: Tp, env: &[(&str, &str)]) -> Result<Self> {
+        let mut options =
+            HostOptions::new(&tp.dir().join("workflow-home.sqlite"), tp.proxy.origin())?;
+        options.env = env
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
         enroll(&options, &tp.jwt("user_owner")?, "new").await?;
         let home = tp.data("/api/devices").await?[0].clone();
         let (project, other, agent, workflow) = (new_id(), new_id(), new_id(), new_id());
@@ -54,6 +68,7 @@ impl WorkflowHome {
         Ok(Self {
             list: format!("/api/projects/{project}/agents/{agent}/workflows"),
             detail: format!("/api/projects/{project}/workflows/{workflow}"),
+            graph: json!({"entry": "out", "maxSteps": 1, "nodes": [{"id": "out", "kind": "output"}]}),
             tp,
             options,
             home,

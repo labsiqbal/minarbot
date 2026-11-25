@@ -140,6 +140,15 @@ pub fn session_token(subject: &str, origin: &str) -> Result<String> {
 impl HostedApp {
     /// Start on a fresh database in `root` (inside `servers`).
     pub async fn start(root: TestRoot, servers: &Servers) -> Result<Self> {
+        Self::start_env(root, servers, &[]).await
+    }
+
+    /// [`HostedApp::start`] with extra server environment (for example `TZ`).
+    pub async fn start_env(
+        root: TestRoot,
+        servers: &Servers,
+        env: &[(&str, &str)],
+    ) -> Result<Self> {
         let keys = Arc::new(WebhookKeys {
             service: format!("minarbot/server/{}/routine-webhooks", crate::new_id()),
             ..WebhookKeys::default()
@@ -158,7 +167,10 @@ impl HostedApp {
         let mut last = None;
         for _ in 0..5 {
             let port = free_port()?;
-            let config = Self::config(&bridge, port);
+            let mut config = Self::config(&bridge, port);
+            for (name, value) in env {
+                config = config.env(*name, *value);
+            }
             match root.start_in(servers, config.clone()).await {
                 Ok(server) => {
                     return Ok(Self {

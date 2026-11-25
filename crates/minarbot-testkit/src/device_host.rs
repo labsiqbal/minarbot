@@ -76,6 +76,8 @@ pub struct HostOptions {
     pub database: PathBuf,
     pub server: String,
     pub keyring: PathBuf,
+    /// Extra environment for every host process (for example `TZ`).
+    pub env: Vec<(String, String)>,
 }
 
 impl HostOptions {
@@ -92,6 +94,7 @@ impl HostOptions {
             database: database.to_owned(),
             server: server.to_owned(),
             keyring,
+            env: Vec::new(),
         })
     }
 
@@ -114,6 +117,9 @@ impl HostOptions {
             .env("MINARBOT_DEVICE_DB", &self.database)
             .env("MINARBOT_DEVELOPMENT", "1")
             .kill_on_drop(true);
+        for (name, value) in &self.env {
+            command.env(name, value);
+        }
         Ok(command)
     }
 
