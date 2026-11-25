@@ -1045,7 +1045,7 @@ async fn disaster_restore_closes_pending_provisions_and_activated_wait_reference
     Ok(())
 }
 
-use crate::sb_task_support::Task;
+use crate::sb_task_support::{expected_revisions, Task};
 
 async fn query(
     f: &TaskFixture,
@@ -4560,4 +4560,436 @@ async fn canonical_provider_settings_read_binding_metadata_only_in_direct_and_st
 #[tokio::test]
 async fn canonical_provider_settings_read_binding_metadata_only_in_side_and_stays_private() -> Result<()> {
     provider_settings(true).await
+}
+
+/// Acquire an admitted task by id; `actor` looks it up.
+async fn begin(f: &TaskFixture, id: &str, actor: &minarbot_testkit::canonical::Account) -> Result<Task> {
+    let (token, ownership, _) = f.acquire_task(id).await?;
+    Ok(Task { id: id.to_owned(), token, ownership, actor: actor.clone(), sequence: 0 })
+}
+
+/// Admit a `kind` task for `agent` in `project` as `actor`; side threads and
+/// channels must already exist (`root`).
+async fn admit_for(
+    f: &TaskFixture,
+    agent: &str,
+    actor: &minarbot_testkit::canonical::Account,
+    project: &str,
+    kind: &str,
+    root: &str,
+    text: &str,
+) -> Result<String> {
+    let payload = match kind {
+        "side" => side_payload(root, text),
+        "channel" => channel_payload(root, text),
+        _ => json!({"v": 1, "kind": "direct", "message": {"text": text, "files": []}}),
+    };
+    let command = f.command(json!({"agentId": agent, "projectId": project, "expectedRevisions": expected_revisions(&payload), "payload": payload}));
+    f.admit(actor, &command).await?.expect_ok()?;
+    Ok(command["requestId"].as_str().ok_or("task")?.to_owned())
+}
+
+fn side_thread(f: &TaskFixture, agent: &str, account: &str, project: &str) -> Result<String> {
+    let thread = new_id();
+    f.db().execute("INSERT INTO threads(id,agent,name) VALUES (?,?,'Side')", [&thread, agent])?;
+    f.db().execute(
+        "INSERT INTO record_scopes VALUES ('threads',?,?,?,'owner','thread',?)",
+        [json!([thread]).to_string(), account.to_owned(), project.to_owned(), thread.clone()],
+    )?;
+    Ok(thread)
+}
+
+fn lead_channel(f: &TaskFixture, members: &[&str]) -> Result<String> {
+    let channel = new_id();
+    f.db().execute("INSERT INTO channels(id,name,instructions,lead) VALUES (?,'Room','',?)", [&channel, &f.agent])?;
+    for member in members {
+        f.db().execute("INSERT INTO channel_members VALUES (?,?)", [&channel, *member])?;
+    }
+    f.db().execute(
+        "INSERT INTO record_scopes VALUES ('channels',?,?,?,'project','channel',?)",
+        [json!([channel]).to_string(), f.owner.account_id.clone(), f.project.clone(), channel.clone()],
+    )?;
+    Ok(channel)
+}
+
+#[tokio::test]
+async fn canonical_setup_restricts_host_actions_and_forced_tools_and_requires_a_complete_profile_edit() -> Result<()> {
+    let f = TaskFixture::new(&["edit_profile", "ask_user", "read_history"], None).await?;
+    let binding = new_id();
+    let agent = new_id();
+    f.db().execute(
+        "INSERT INTO provider_bindings VALUES (?,?,?,'openai-compatible','setup','Setup','ready',1)",
+        [&binding, &f.home, &f.owner.account_id],
+    )?;
+    f.human(
+        minarbot_testkit::http::Method::POST,
+        "/api/agents",
+        Some(with(agent_body(&agent, "Setup", &f), json!({"instructions": "Research", "providerBinding": {"bindingId": binding, "expectedRevision": 1}, "setup": true}))),
+        &f.owner,
+    )
+    .await?
+    .expect_ok()?;
+    let mut task = begin(&f, &agent, &f.owner).await?;
+    let context = f
+        .task_op("context", &agent, json!({"requestId": new_id(), "ownership": task.ownership, "expectedTaskRevision": 2}), &task.token)
+        .await?
+        .expect_ok()?;
+    let reference = context.data()["snapshotRef"].clone();
+    for kind in ["read", "compute", "local", "browser"] {
+        let action = new_id();
+        let digest = sha256_hex("forbidden");
+        let intent = digest_command(&json!([agent, action, 0, task.ownership, digest, kind, reference["snapshotId"], reference["digest"], null, null, 1, null, null, null]));
+        f.prepare(&agent, &action, json!({"requestId": new_id(), "sequence": 0, "ownership": task.ownership, "payloadDigest": digest, "actionKind": kind,
+            "contextSnapshotId": reference["snapshotId"], "contextDigest": reference["digest"], "grantRevision": 1, "expectedTaskRevision": 2,
+            "journalSequence": 1, "intentDigest": intent}), &task.token)
+            .await?
+            .expect_code("execution_denied")?;
+    }
+    forced(&f, &task, "read_history", "{}").await?.expect_code("execution_denied")?;
+    ensure!(status_of(&f, &mut task, json!({"revision": 1, "name": "Incomplete"}), "edit_profile").await? == 400, "name-only edit");
+    ensure!(status_of(&f, &mut task, json!({"revision": 1, "instructions": "Incomplete"}), "edit_profile").await? == 400, "instructions-only edit");
+    let edited = run_tool(&f, &mut task, "edit_profile", json!({"revision": 1, "name": "Research partner", "instructions": "Cite evidence"})).await?;
+    ensure!(edited == json!({"name": "Research partner", "role": "", "instructions": "Cite evidence", "revision": 2}), "edit: {edited}");
+    Ok(())
+}
+
+async fn profile_edit(side: bool) -> Result<()> {
+    let f = TaskFixture::new(&["edit_profile"], None).await?;
+    let actor = if side { f.member.clone() } else { f.owner.clone() };
+    let payload = if side {
+        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &actor.account_id, &f.agent])?;
+        side_payload(&insert_thread(&f, &actor.account_id)?, "Edit profile")
+    } else {
+        json!({"v": 1, "kind": "direct", "message": {"text": "Edit profile", "files": []}})
+    };
+    let mut task = start(&f, &actor, Some(payload)).await?;
+    let edit = "edit_profile";
+    let first = run_tool(&f, &mut task, edit, json!({"revision": 1, "name": "Renamed", "role": " Orchestration agent "})).await?;
+    ensure!(first == json!({"name": "Renamed", "role": "Orchestration agent", "instructions": "Research", "revision": 2}), "rename: {first}");
+    let stale = run_tool(&f, &mut task, edit, json!({"revision": 1, "instructions": "Stale"})).await?;
+    ensure!(stale == json!({"error": "Profile changed. Ask the user for guidance before changing it again.", "status": 409}), "stale: {stale}");
+    let mut invalid = vec![json!({"revision": 2}), json!({"revision": 2, "name": ""}), json!({"revision": 2, "name": null})];
+    for role in [Value::Null, json!(42), json!("x".repeat(61)), json!("bad\nrole"), json!("bad\u{85}role"), json!("bad\u{2028}role")] {
+        invalid.push(json!({"revision": 2, "role": role}));
+    }
+    invalid.push(json!({"revision": 2, "name": "x".repeat(81)}));
+    for instructions in ["\u{0}".to_owned(), " ".to_owned(), "x".repeat(8001)] {
+        invalid.push(json!({"revision": 2, "instructions": instructions}));
+    }
+    for revision in [json!(0), json!(-1), json!(1.5), json!(9_007_199_254_740_991_i64)] {
+        invalid.push(json!({"revision": revision, "name": "No"}));
+    }
+    for args in invalid {
+        ensure!(status_of(&f, &mut task, args.clone(), edit).await? == 400, "accepted {args}");
+    }
+    let updated = run_tool(&f, &mut task, edit, json!({"revision": 2, "role": "", "instructions": "  Updated instructions  "})).await?;
+    ensure!(updated == json!({"name": "Renamed", "role": "", "instructions": "Updated instructions", "revision": 3}), "update: {updated}");
+    f.db().execute_batch("CREATE TRIGGER fail_profile_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'fixture_result_fail'); END;")?;
+    let pending = stage(&f, &mut task, &json!({"revision": 3, "name": "Rolled back"}), edit).await?;
+    pending.run(&f).await?.expect_code("storage_failed")?;
+    ensure!(field(&f, "SELECT revision FROM agents WHERE id=?", [&f.agent], "revision")? == 3, "profile kept a failed edit");
+    f.db().execute_batch("DROP TRIGGER fail_profile_result")?;
+    let recovered = pending.run(&f).await?.expect_ok()?;
+    ensure!(
+        result_content(&recovered) == json!({"name": "Rolled back", "role": "", "instructions": "Updated instructions", "revision": 4}),
+        "recovered: {}",
+        result_content(&recovered)
+    );
+    ensure!(canonical_json(&pending.run(&f).await?.expect_ok()?.body) == canonical_json(&recovered.body), "replay changed");
+    for name in ["agentId", "model", "providerAccount", "permissions", "homeDeviceId"] {
+        let mut args = json!({"revision": 4, "name": "No"});
+        args[name] = json!(new_id());
+        forced(&f, &task, edit, &args.to_string()).await?.expect_code("unknown_field")?;
+    }
+    let channel = lead_channel(&f, &[&f.agent])?;
+    let payload = channel_payload(&channel, "Forced profile edit");
+    let command = f.command(json!({"payload": payload, "expectedRevisions": with(expected_revisions(&payload), json!({"agent": 4}))}));
+    f.admit(&f.owner, &command).await?.expect_ok()?;
+    let room = begin(&f, command["requestId"].as_str().ok_or("task")?, &f.owner).await?;
+    ensure!(offered_tools(&f, &room).await? == json!([]), "channel tools offered");
+    forced(&f, &room, edit, &json!({"revision": 2, "name": "No"}).to_string()).await?.expect_code("execution_denied")?;
+    ensure!(field(&f, "SELECT instructions FROM agents WHERE id=?", [&f.agent], "instructions")? == "Updated instructions", "instructions changed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn canonical_profile_edit_in_direct_keeps_atomic_cas_errors_and_channel_privacy() -> Result<()> {
+    profile_edit(false).await
+}
+
+#[tokio::test]
+async fn canonical_profile_edit_in_side_keeps_atomic_cas_errors_and_channel_privacy() -> Result<()> {
+    profile_edit(true).await
+}
+
+#[tokio::test]
+async fn canonical_agent_directory_pages_authorized_teammates_and_scopes_activity_to_project_human_and_channel(
+) -> Result<()> {
+    let f = TaskFixture::new(&["list_agents"], None).await?;
+    let other = new_project(&f, "Other").await?;
+    let add = |project: String| {
+        let f = &f;
+        async move {
+            let agent = new_id();
+            f.human(
+                minarbot_testkit::http::Method::POST,
+                "/api/agents",
+                Some(with(agent_body(&agent, "Peer", f), json!({"role": "Research agent", "instructions": "x".repeat(400), "projectId": project}))),
+                &f.owner,
+            )
+            .await?
+            .expect_ok()?;
+            Ok::<_, minarbot_testkit::Error>(agent)
+        }
+    };
+    let mut visible = Vec::new();
+    for _ in 0..11 {
+        visible.push(add(f.project.clone()).await?);
+    }
+    visible.sort();
+    let hidden = add(f.project.clone()).await?;
+    let deleted = add(f.project.clone()).await?;
+    let foreign = add(other.clone()).await?;
+    let unowned = new_id();
+    f.db().execute_batch("CREATE TABLE IF NOT EXISTS agent_visibility(agent TEXT PRIMARY KEY,hidden INTEGER,revision INTEGER);")?;
+    f.db().execute("INSERT INTO agent_visibility VALUES (?,1,1)", [&hidden])?;
+    f.db().execute("UPDATE agent_projects SET deleted=1 WHERE agent=?", [&deleted])?;
+    f.db().execute("INSERT INTO agents(id,name,model,instructions) VALUES (?,'Foreign','fixture','PRIVATE_PROFILE')", [&unowned])?;
+    f.db().execute("INSERT INTO agent_projects VALUES (?,?,'','{\"tools\":[]}',1,0)", [&f.project, &unowned])?;
+    f.db().execute("INSERT INTO agent_authority VALUES (?,?,?,NULL,1)", [&unowned, &f.foreign.account_id, &f.home])?;
+    for agent in [&f.agent, &visible[0]] {
+        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, agent])?;
+    }
+    f.db().execute("INSERT INTO response_policies VALUES (?,?,?,0,1)", [&f.project, &f.member.account_id, &visible[0]])?;
+    let channel = lead_channel(&f, &[&f.agent, &visible[0], &foreign, &hidden])?;
+    let (owner, member) = (f.owner.clone(), f.member.clone());
+    let ids = |page: &Value| -> Vec<Value> { page["agents"].as_array().map(|rows| rows.iter().map(|row| row["id"].clone()).collect()).unwrap_or_default() };
+    let list = "list_agents";
+    let direct = admit_for(&f, &f.agent, &owner, &f.project, "direct", "", "Directory").await?;
+    let mut main = begin(&f, &direct, &owner).await?;
+    let first = run_tool(&f, &mut main, list, json!({})).await?;
+    let first_page: Vec<Value> = visible[..10].iter().map(|id| json!(id)).collect();
+    ensure!(ids(&first) == first_page, "first page: {first}");
+    ensure!(first["next_after"] == visible[9].as_str(), "cursor: {first}");
+    ensure!(
+        first["agents"].as_array().is_some_and(|rows| rows.iter().all(|row| row["role"] == "Research agent"
+            && row["description"].as_str().map(|text| text.chars().count()) == Some(300)
+            && row["status"] == "idle"
+            && row["queuedMessages"] == 0)),
+        "rows: {first}"
+    );
+    let second = run_tool(&f, &mut main, list, json!({"after": first["next_after"]})).await?;
+    ensure!(ids(&second) == [json!(visible[10])], "second page: {second}");
+    ensure!(second["next_after"].is_null(), "last cursor: {second}");
+    for after in [json!(""), Value::Null, json!(42), json!("bad")] {
+        ensure!(status_of(&f, &mut main, json!({"after": after}), list).await? == 400, "after {after} accepted");
+    }
+    let peer = visible[0].clone();
+    let thread = side_thread(&f, &f.agent, &member.account_id, &f.project)?;
+    let side_id = admit_for(&f, &f.agent, &member, &f.project, "side", &thread, "Directory").await?;
+    let mut side = begin(&f, &side_id, &member).await?;
+    let room_id = admit_for(&f, &f.agent, &member, &f.project, "channel", &channel, "Directory").await?;
+    let mut room = begin(&f, &room_id, &member).await?;
+    ensure!(ids(&run_tool(&f, &mut side, list, json!({})).await?) == [json!(peer)], "side directory");
+    ensure!(ids(&run_tool(&f, &mut room, list, json!({})).await?) == [json!(peer)], "room directory");
+    let private_id = admit_for(&f, &peer, &owner, &f.project, "direct", "", "Directory").await?;
+    begin(&f, &private_id, &owner).await?;
+    ensure!(run_tool(&f, &mut side, list, json!({})).await?["agents"][0]["status"] == "idle", "side sees owner work");
+    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["status"] == "idle", "room sees owner work");
+    ensure!(run_tool(&f, &mut main, list, json!({})).await?["agents"][0]["status"] == "working", "owner work hidden");
+    f.db().execute(
+        "INSERT INTO agent_projects SELECT ?,agent,rules,capabilities_json,1,0 FROM agent_projects WHERE project=? AND agent=?",
+        [&other, &f.project, &peer],
+    )?;
+    let elsewhere = admit_for(&f, &peer, &owner, &other, "direct", "", "Directory").await?;
+    begin(&f, &elsewhere, &owner).await?;
+    f.control(&owner, &private_id, json!({"requestId": new_id(), "expectedRevision": 2, "operation": "cancel"})).await?.expect_ok()?;
+    ensure!(run_tool(&f, &mut main, list, json!({})).await?["agents"][0]["status"] == "idle", "other-project work counted");
+    admit_for(&f, &peer, &member, &f.project, "direct", "", "Directory").await?;
+    let queued = run_tool(&f, &mut side, list, json!({})).await?;
+    ensure!(queued["agents"][0]["status"] == "waiting", "queued status: {queued}");
+    ensure!(run_tool(&f, &mut side, list, json!({})).await?["agents"][0]["queuedMessages"] == 1, "queued count");
+    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["status"] == "idle", "room sees direct work");
+    let shared_id = admit_for(&f, &peer, &member, &f.project, "channel", &channel, "Directory").await?;
+    begin(&f, &shared_id, &member).await?;
+    let working = run_tool(&f, &mut room, list, json!({})).await?;
+    ensure!(working["agents"][0]["status"] == "working", "room work: {working}");
+    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["queuedMessages"] == 0, "room queue");
+    f.control(&member, &shared_id, json!({"requestId": new_id(), "expectedRevision": 2, "operation": "pause"})).await?.expect_ok()?;
+    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"][0]["status"] == "waiting", "paused room work");
+    f.db().execute(
+        "UPDATE collaborator_agents SET enabled=0,revision=revision+1 WHERE project=? AND account=? AND agent=?",
+        [&f.project, &member.account_id, &peer],
+    )?;
+    ensure!(run_tool(&f, &mut side, list, json!({})).await?["agents"] == json!([]), "revoked side directory");
+    ensure!(run_tool(&f, &mut room, list, json!({})).await?["agents"] == json!([]), "revoked room directory");
+    forced(&f, &main, list, &json!({"projectId": other}).to_string()).await?.expect_code("unknown_field")?;
+    let revision = task_revision(&f, &main).await?;
+    f.control(&owner, &main.id, json!({"requestId": new_id(), "expectedRevision": revision, "operation": "pause"})).await?.expect_ok()?;
+    let paused = task_revision(&f, &main).await?;
+    let moved = f
+        .control(&owner, &main.id, json!({"requestId": new_id(), "expectedRevision": paused, "operation": "reassign", "recipientAgentId": peer}))
+        .await?
+        .expect_ok()?;
+    let mut successor = begin(&f, moved.data()["taskId"].as_str().ok_or("successor")?, &owner).await?;
+    let page = run_tool(&f, &mut successor, list, json!({})).await?;
+    ensure!(!ids(&page).iter().any(|id| *id == f.agent.as_str() || *id == peer.as_str()), "successor directory: {page}");
+    Ok(())
+}
+
+fn children(f: &TaskFixture, request: &Value) -> Result<Vec<String>> {
+    Ok(f.db()
+        .rows("SELECT turn FROM agent_deliveries WHERE request=? ORDER BY turn", [request.as_str().unwrap_or_default()])?
+        .iter()
+        .filter_map(|row| row["turn"].as_str().map(str::to_owned))
+        .collect())
+}
+
+async fn send(f: &TaskFixture, task: &mut Task, recipients: &[&str], expects_reply: bool) -> Result<Vec<String>> {
+    let sent = run_tool(f, task, "send_message", json!({"recipients": recipients, "text": "Explicit work", "expects_reply": expects_reply})).await?;
+    children(f, &sent["request"])
+}
+
+async fn task_state(f: &TaskFixture, actor: &minarbot_testkit::canonical::Account, task: &str) -> Result<Value> {
+    Ok(lookup_data(f, actor, task).await?["state"].clone())
+}
+
+#[tokio::test]
+async fn canonical_interruption_isolates_sender_human_and_project_while_preserving_terminal_outcomes_and_atomic_notice_rollback(
+) -> Result<()> {
+    let f = TaskFixture::new(&["send_message", "interrupt_agent"], None).await?;
+    let (beta, gamma, delta, epsilon) = (new_id(), new_id(), new_id(), new_id());
+    for agent in [&beta, &gamma, &delta, &epsilon] {
+        f.human(
+            minarbot_testkit::http::Method::POST,
+            "/api/agents",
+            Some(with(agent_body(agent, agent, &f), json!({"instructions": "Teammate"}))),
+            &f.owner,
+        )
+        .await?
+        .expect_ok()?;
+    }
+    for agent in [&f.agent, &beta, &gamma, &delta, &epsilon] {
+        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&f.project, &f.member.account_id, agent])?;
+    }
+    let channel = lead_channel(&f, &[&f.agent, &beta])?;
+    let other = new_project(&f, "Other").await?;
+    f.db().execute("INSERT INTO project_members VALUES (?,?,'member',1,0)", [&other, &f.member.account_id])?;
+    for agent in [&f.agent, &beta] {
+        f.db().execute(
+            "INSERT INTO agent_projects SELECT ?,agent,rules,capabilities_json,1,0 FROM agent_projects WHERE project=? AND agent=?",
+            [&other, &f.project, agent],
+        )?;
+        f.db().execute("INSERT INTO collaborator_agents VALUES (?,?,?,1,1)", [&other, &f.member.account_id, agent])?;
+    }
+    let (owner, member, me) = (f.owner.clone(), f.member.clone(), f.agent.clone());
+    let main_id = admit_for(&f, &me, &member, &f.project, "direct", "", "Task").await?;
+    let mut main = begin(&f, &main_id, &member).await?;
+    let own_id = send(&f, &mut main, &[&beta], true).await?[0].clone();
+    let mut own = begin(&f, &own_id, &member).await?;
+    ensure!(
+        status_of(&f, &mut own, json!({"recipient": me, "reason": "Cannot interrupt requester"}), "interrupt_agent").await? == 409,
+        "requester interrupted"
+    );
+    let nested = send(&f, &mut own, &[&gamma, &delta, &epsilon], false).await?;
+    let mut by_agent = std::collections::HashMap::new();
+    for turn in &nested {
+        by_agent.insert(field(&f, "SELECT agent FROM tasks WHERE id=?", [turn], "agent")?.as_str().unwrap_or_default().to_owned(), turn.clone());
+    }
+    let finished = by_agent.get(&gamma).ok_or("gamma child")?.clone();
+    let failed = by_agent.get(&epsilon).ok_or("epsilon child")?.clone();
+    let unfinished = by_agent.get(&delta).ok_or("delta child")?.clone();
+    f.db().execute("UPDATE tasks SET state='completed' WHERE id=?", [&finished])?;
+    f.db().execute("UPDATE turns SET status='done',reply='Preserved outcome' WHERE id=?", [&finished])?;
+    f.db().execute("UPDATE tasks SET state='failed' WHERE id=?", [&failed])?;
+    f.db().execute("UPDATE turns SET status='failed',error='Preserved failure' WHERE id=?", [&failed])?;
+    let revision = lookup_data(&f, &member, &own_id).await?["revision"].clone();
+    f.control(&member, &own_id, json!({"requestId": new_id(), "expectedRevision": revision, "operation": "pause"})).await?.expect_ok()?;
+    let delta_task = admit_for(&f, &delta, &member, &f.project, "direct", "", "Task").await?;
+    let sender_other = send(&f, &mut begin(&f, &delta_task, &member).await?, &[&beta], false).await?[0].clone();
+    let owner_task = admit_for(&f, &me, &owner, &f.project, "direct", "", "Task").await?;
+    let human_other = send(&f, &mut begin(&f, &owner_task, &owner).await?, &[&beta], false).await?[0].clone();
+    let other_task = admit_for(&f, &me, &member, &other, "direct", "", "Task").await?;
+    let project_other = send(&f, &mut begin(&f, &other_task, &member).await?, &[&beta], false).await?[0].clone();
+    let user_work = admit_for(&f, &beta, &member, &f.project, "direct", "", "Task").await?;
+    let room_id = admit_for(&f, &me, &member, &f.project, "channel", &channel, "Task").await?;
+    let channel_child = send(&f, &mut begin(&f, &room_id, &member).await?, &[&beta], true).await?[0].clone();
+    let mut room_child = begin(&f, &channel_child, &member).await?;
+    let child_tools = offered_tools(&f, &room_child).await?;
+    ensure!(
+        !child_tools.as_array().is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == "interrupt_agent")),
+        "channel child offered interrupt_agent"
+    );
+    stage(&f, &mut room_child, &json!({"recipient": gamma, "reason": "Private only"}), "interrupt_agent").await?.run(&f).await?.expect_code("execution_denied")?;
+    let caller_id = admit_for(&f, &me, &member, &f.project, "channel", &channel, "Task").await?;
+    let mut room_caller = begin(&f, &caller_id, &member).await?;
+    stage(&f, &mut room_caller, &json!({"recipient": beta, "reason": "Private only"}), "interrupt_agent").await?.run(&f).await?.expect_code("execution_denied")?;
+    let mut no_reply = begin(&f, &sender_other, &member).await?;
+    stage(&f, &mut no_reply, &json!({"recipient": gamma, "reason": "No notification loops"}), "interrupt_agent").await?.run(&f).await?.expect_code("execution_denied")?;
+    let thread = side_thread(&f, &me, &member.account_id, &f.project)?;
+    let stopper_id = admit_for(&f, &me, &member, &f.project, "side", &thread, "Task").await?;
+    let mut stopper = begin(&f, &stopper_id, &member).await?;
+    for args in [
+        json!({"recipient": beta, "reason": ""}),
+        json!({"recipient": beta, "reason": "x".repeat(2001)}),
+        json!({"recipient": beta, "reason": "\u{0}"}),
+        json!({"recipient": "bad", "reason": "Invalid ID"}),
+        json!({"recipient": new_id(), "reason": "Unavailable"}),
+        json!({"recipient": me, "reason": "Self"}),
+    ] {
+        ensure!(status_of(&f, &mut stopper, args.clone(), "interrupt_agent").await?.is_number(), "no error status for {args}");
+    }
+    let key = json!([own_id]).to_string();
+    let scope = one(&f, "SELECT table_name,key_json,account,project,visibility,root_kind,root_id FROM record_scopes WHERE table_name='agent_deliveries' AND key_json=?", [&key])?;
+    f.db().execute("DELETE FROM record_scopes WHERE table_name='agent_deliveries' AND key_json=?", [&key])?;
+    ensure!(status_of(&f, &mut stopper, json!({"recipient": beta, "reason": "Scope required"}), "interrupt_agent").await? == 403, "unscoped delivery");
+    let values: Vec<String> = ["table_name", "key_json", "account", "project", "visibility", "root_kind", "root_id"]
+        .iter()
+        .map(|column| scope[*column].as_str().unwrap_or_default().to_owned())
+        .collect();
+    let values: [String; 7] = values.try_into().map_err(|_| "scope row")?;
+    f.db().execute("INSERT INTO record_scopes VALUES (?,?,?,?,?,?,?)", values)?;
+    let interrupt = stage(&f, &mut stopper, &json!({"recipient": beta.to_uppercase(), "reason": "Changed direction"}), "interrupt_agent").await?;
+    let before = field(&f, "SELECT count(*) n FROM tasks", [], "n")?;
+    f.db().execute_batch("CREATE TRIGGER fail_interrupt_notice BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT,'notice failed'); END")?;
+    interrupt.run(&f).await?.expect_code("storage_failed")?;
+    f.db().execute_batch("DROP TRIGGER fail_interrupt_notice")?;
+    ensure!(task_state(&f, &member, &own_id).await? == "paused", "notice failure kept the cancellation");
+    ensure!(field(&f, "SELECT count(*) n FROM tasks", [], "n")? == before, "notice failure kept tasks");
+    f.db().execute_batch("CREATE TRIGGER fail_interrupt_result BEFORE INSERT ON task_results BEGIN SELECT RAISE(ABORT,'result journal failed'); END")?;
+    interrupt.run(&f).await?.expect_code("storage_failed")?;
+    f.db().execute_batch("DROP TRIGGER fail_interrupt_result")?;
+    ensure!(field(&f, "SELECT count(*) n FROM tasks", [], "n")? == before, "result failure kept tasks");
+    ensure!(task_state(&f, &member, &own_id).await? == "paused", "result failure kept the cancellation");
+    ensure!(task_state(&f, &member, &unfinished).await? != "cancelled", "result failure cancelled the descendant");
+    let result = interrupt.run(&f).await?.expect_ok()?;
+    let content = result_content(&result);
+    ensure!(content["status"] == "interrupted", "status: {content}");
+    ensure!(content["recipient"] == beta.as_str(), "recipient: {content}");
+    let mut cancelled = vec![own_id.clone(), unfinished.clone()];
+    cancelled.sort();
+    ensure!(content["cancelled"] == json!(cancelled), "cancelled: {content}");
+    ensure!(canonical_json(&interrupt.run(&f).await?.expect_ok()?.body) == canonical_json(&result.body), "replay changed");
+    for task in [&own_id, &unfinished] {
+        ensure!(task_state(&f, &member, task).await? == "cancelled", "{task} not cancelled");
+    }
+    for task in [&sender_other, &human_other, &project_other, &user_work, &channel_child] {
+        ensure!(field(&f, "SELECT state FROM tasks WHERE id=?", [task], "state")? != "cancelled", "{task} cancelled");
+    }
+    ensure!(task_state(&f, &member, &failed).await? == "failed", "failed outcome");
+    ensure!(field(&f, "SELECT error FROM turns WHERE id=?", [&failed], "error")? == "Preserved failure", "failure text");
+    ensure!(task_state(&f, &member, &finished).await? == "completed", "completed outcome");
+    ensure!(field(&f, "SELECT reply FROM turns WHERE id=?", [&finished], "reply")? == "Preserved outcome", "reply text");
+    let notice = children(&f, &content["request"])?;
+    ensure!(notice.len() == 1, "notice deliveries: {notice:?}");
+    ensure!(field(&f, "SELECT expects_reply FROM agent_requests WHERE id=?", [content["request"].as_str().unwrap_or_default()], "expects_reply")? == 0, "notice expects a reply");
+    ensure!(
+        field(&f, "SELECT text FROM turns WHERE id=?", [&notice[0]], "text")?.as_str().is_some_and(|text| text.contains("Changed direction")),
+        "notice text"
+    );
+    let revision = task_revision(&f, &main).await?;
+    f.task_op("context", &main.id, json!({"requestId": new_id(), "ownership": main.ownership, "expectedTaskRevision": revision}), &main.token)
+        .await?
+        .expect_ok()?;
+    Ok(())
 }
