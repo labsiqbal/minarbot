@@ -91,5 +91,4 @@ mod sb_task_support;
 mod sb_transcript;
 mod sb_usage;
 mod sb_workspace_writes;
-mod support;
 mod threads;

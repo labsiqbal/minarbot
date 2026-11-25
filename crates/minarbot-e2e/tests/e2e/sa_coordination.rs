@@ -57,17 +57,6 @@ async fn coordination_durable_delegation_transfer_cancellation_rejection_and_rec
     let allow_paused = Arc::new(AtomicBool::new(false));
     let (log, paused) = (calls.clone(), allow_paused.clone());
     model.respond(move |request| {
-        // Like B1: delegate and transfer return null and the harness takes
-        // one more step before the server parks or stops the turn. End that
-        // step with empty text (the server keeps the turn waiting) and leave
-        // it out of the call log.
-        if request
-            .tool_results()
-            .last()
-            .is_some_and(|m| m["content"] == "null")
-        {
-            return Reply::text("");
-        }
         let task = request.last_user_text();
         if let Ok(mut log) = log.lock() {
             log.push((request.model().to_owned(), task.clone()));

@@ -85,57 +85,6 @@ pub fn tool_json(message: &Value) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// B1 (`docs/test-ledger.md`): `ask_user` and `wait_for_event` pause the
-/// turn and return `null` at once, so the harness takes one more model step
-/// right after them. Tests answer that step with [`pause_reply`] and leave it
-/// out of model-call counts; the strict counts stay in the kept Node case.
-pub fn after_pause(request: &minarbot_testkit::model::ModelRequest) -> bool {
-    paused_by(request).is_some()
-}
-
-fn paused_by(request: &minarbot_testkit::model::ModelRequest) -> Option<String> {
-    let last_tool = request
-        .tool_calls()
-        .last()
-        .and_then(|call| call["function"]["name"].as_str().map(str::to_owned))?;
-    let null_result = request
-        .messages()
-        .last()
-        .is_some_and(|message| message["role"] == "tool" && message["content"] == "null");
-    (null_result && matches!(last_tool.as_str(), "ask_user" | "wait_for_event"))
-        .then_some(last_tool)
-}
-
-/// Answer for the B1 step. After `ask_user` it fails at once (the server
-/// already stopped that turn for the question). After `wait_for_event` it
-/// ends the harness turn with text: a failed harness turn would fail the
-/// waiting Minarbot turn, while a finished one leaves it waiting.
-pub fn pause_reply_for(
-    request: &minarbot_testkit::model::ModelRequest,
-) -> minarbot_testkit::gated::Answer {
-    match paused_by(request).as_deref() {
-        Some("wait_for_event") => minarbot_testkit::gated::Answer::text("Waiting for the event."),
-        _ => pause_reply(),
-    }
-}
-
-/// Failing answer for the B1 step after `ask_user`.
-pub fn pause_reply() -> minarbot_testkit::gated::Answer {
-    minarbot_testkit::gated::Answer::Status(
-        500,
-        json!({"error": "no model step after a pausing tool (B1)"}),
-    )
-}
-
-/// Model requests that are real work (every request except B1 steps).
-pub fn work_calls(model: &GatedModel) -> Vec<minarbot_testkit::model::ModelRequest> {
-    model
-        .requests()
-        .into_iter()
-        .filter(|request| !after_pause(request))
-        .collect()
-}
-
 /// Statuses of every row, for waits whose timeout should say what is left.
 pub async fn statuses(app: &Server, path: &str) -> Result<Vec<(String, String)>> {
     Ok(rows(app, path)

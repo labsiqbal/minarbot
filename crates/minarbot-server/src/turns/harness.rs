@@ -212,7 +212,15 @@ pub async fn tool(
         return Ok(json!({"taskId":args["taskId"],"status":"waiting"}));
     }
     let call = json!({"id":call_id,"type":"function","function":{"name":name,"arguments":args.to_string()}});
-    let running = if name == "ask_user" {
+    // A tool that parks its turn (question, event wait, coordination,
+    // reply-expecting message, Computer hand-off) stops the harness run. Its
+    // reply is held until the worker has stopped, so the harness never takes
+    // another model step; the scheduler resumes the turn.
+    let parking = matches!(
+        name,
+        "ask_user" | "wait_for_event" | "transfer_task" | "delegate_task" | "send_message"
+    ) || crate::computer::actions::is_computer_tool(name);
+    let running = if parking {
         state.turns.running(turn)?
     } else {
         None
@@ -224,9 +232,22 @@ pub async fn tool(
         journal_refusal(state, &row, &call, refusal)?;
     }
     let mut result = result?;
-    if let Some(mut running) = running {
-        // The question is stored. Hold the reply until the worker has stopped its harness.
-        while running.changed().await.is_ok() {}
+    let parked = match name {
+        "ask_user" => true,
+        "wait_for_event" | "transfer_task" | "delegate_task" => result.is_null(),
+        "send_message" => result["status"] == "waiting",
+        _ => parking && result["status"] == "waiting_for_user",
+    };
+    if parked && crate::computer::actions::is_computer_tool(name) {
+        // The user takes over; the run after hand-back starts a new session.
+        let guard = state.database.lock().map_err(|_| Failure::storage())?;
+        guard.connection.execute(
+            "DELETE FROM harness_sessions WHERE agent=?",
+            [string(&row, "agent")],
+        )?;
+    }
+    if parked && name != "transfer_task" {
+        state.turns.cancel(turn);
     }
     if name == "transfer_task" && result.is_null() {
         // The task now belongs to the recipient; count the call against the
@@ -240,6 +261,10 @@ pub async fn tool(
             )?;
         }
         state.turns.cancel(turn);
+    }
+    if let Some(mut running) = running.filter(|_| parked) {
+        // The pause is stored. Hold the reply until the worker has stopped its harness.
+        while running.changed().await.is_ok() {}
     }
     if name == "read_attachment" {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -309,13 +334,6 @@ pub async fn tool(
             )
             .optional()?
             .flatten();
-        if result["status"] == "waiting_for_user" {
-            db.execute(
-                "DELETE FROM harness_sessions WHERE agent=?",
-                [string(&row, "agent")],
-            )?;
-            state.turns.cancel(turn);
-        }
         let mut content = vec![json!({"type":"text","text":result.to_string()})];
         if let Some(image) = image {
             content.push(json!({"type":"image","mimeType":"image/png","data":base64::engine::general_purpose::STANDARD.encode(image)}));

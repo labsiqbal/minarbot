@@ -2,10 +2,7 @@
 //! offline recovery, cooldowns, interactive decisions and shared channels
 //! (port of `app/slack.test.ts`).
 
-use crate::{
-    sa_support::{lock, RawProvider, Shared},
-    support::{after_question, after_question_reply, work_calls},
-};
+use crate::sa_support::{lock, RawProvider, Shared};
 use minarbot_testkit::{
     chat_connector::{
         self, connector_app, slack_envelope, Connector, Fault, Platform, Reply as Answer,
@@ -104,9 +101,6 @@ async fn question_flow(buttons: bool) -> Result<()> {
     let model = ScriptedModel::start().await?;
     let choice = yes.clone();
     model.respond(move |request| {
-        if after_question(request) {
-            return after_question_reply();
-        }
         if crate::sa_support::turn_tool_results(request).is_empty()
             && !request
                 .tool_results()
@@ -181,11 +175,7 @@ async fn question_flow(buttons: bool) -> Result<()> {
     let turns = script_posts(&connector, "/turns", false);
     ensure!(turns.len() == 2, "turn posts: {}", turns.len());
     ensure!(same(&turns[0], &turns[1]), "turn retry differs");
-    ensure!(
-        work_calls(&model) == 1,
-        "model calls: {}",
-        work_calls(&model)
-    );
+    ensure!(model.calls() == 1, "model calls: {}", model.calls());
     let foreign = incoming!(
         &format!("!answer {qid} Yes"),
         "UOTHER",
@@ -280,7 +270,7 @@ async fn question_flow(buttons: bool) -> Result<()> {
             db.scalar::<String>("SELECT answer FROM slack_question_callbacks", [])? == yes,
             "callback answer"
         );
-        ensure!(work_calls(&model) == 1, "revoked click reached the model");
+        ensure!(model.calls() == 1, "revoked click reached the model");
         scripts(&app, &agent, 2, true).await?;
         fault(&connector, "answer", true);
         connector.start()?;
@@ -334,11 +324,7 @@ async fn question_flow(buttons: bool) -> Result<()> {
     let answers = script_posts(&connector, "/answer", true);
     ensure!(answers.len() == 2, "answer posts: {}", answers.len());
     ensure!(same(&answers[0], &answers[1]), "answer retry differs");
-    ensure!(
-        work_calls(&model) == 2,
-        "model calls: {}",
-        work_calls(&model)
-    );
+    ensure!(model.calls() == 2, "model calls: {}", model.calls());
     ensure!(
         app.get(&format!("/api/agents/{agent}/turns")).await? == json!([]),
         "main history"
@@ -346,7 +332,7 @@ async fn question_flow(buttons: bool) -> Result<()> {
     scripts(&app, &agent, if buttons { 3 } else { 1 }, false).await?;
     let _ = incoming!("No longer authorized", "UUSER", None, "DCHAT");
     connector.expected_failure("403").await?;
-    ensure!(work_calls(&model) == 2, "revoked message reached the model");
+    ensure!(model.calls() == 2, "revoked message reached the model");
     Ok(())
 }
 
@@ -463,10 +449,7 @@ async fn slack_socket_mode_runner_acknowledges_journaled_event_and_delivers_once
 async fn slack_status_and_stop_scope_to_requester_root_and_preserve_cancellation_identity_after_lost_responses(
 ) -> Result<()> {
     let model = ScriptedModel::start().await?;
-    model.respond(|request| {
-        if after_question(request) {
-            return after_question_reply();
-        }
+    model.respond(|_| {
         Reply::tool_call(
             "ask",
             "ask_user",
@@ -541,7 +524,7 @@ async fn slack_status_and_stop_scope_to_requester_root_and_preserve_cancellation
     )?;
     connector.start()?;
     until(stop["turn"].as_str().unwrap_or_default()).await?;
-    ensure!(work_calls(&model) == 0, "unsent task reached the model");
+    ensure!(model.calls() == 0, "unsent task reached the model");
     ensure!(
         script_posts(&connector, "/turns", false).is_empty(),
         "unsent task submitted"
@@ -675,7 +658,7 @@ async fn slack_status_and_stop_scope_to_requester_root_and_preserve_cancellation
     connector
         .expected_failure("Local agent request failed")
         .await?;
-    let prior = work_calls(&model);
+    let prior = model.calls();
     let before_turn = before["turn"].as_str().unwrap_or_default().to_owned();
     let unavailable = seed(
         &format!("!stop {before_turn}"),
@@ -688,10 +671,7 @@ async fn slack_status_and_stop_scope_to_requester_root_and_preserve_cancellation
         status(&before_turn)?.as_deref() == Some("unavailable"),
         "lost submission status"
     );
-    ensure!(
-        work_calls(&model) == prior,
-        "lost submission reached the model"
-    );
+    ensure!(model.calls() == prior, "lost submission reached the model");
     ensure!(
         app.get(&format!(
             "/api/threads/{}/turns",

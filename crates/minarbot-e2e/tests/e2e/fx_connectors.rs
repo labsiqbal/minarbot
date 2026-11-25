@@ -2,7 +2,7 @@
 //! `app/workflow-files.test.ts` and the journal and runner cases of
 //! `app/rust-connectors.test.ts`).
 
-use crate::fx_support::{after_pause, id, pause_reply_for, rows};
+use crate::fx_support::{id, rows};
 use minarbot_testkit::{
     connector,
     db::{Fixture, Inspector},
@@ -244,9 +244,6 @@ async fn task_files(kind: Kind, mode: &'static str) -> Result<()> {
     let model = GatedModel::start().await?;
     let (recipient, nested_leaf, ask) = (worker.clone(), leaf.clone(), partial.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         let calls = request.tool_calls();
         let model = request.model();
         if calls.is_empty() {
@@ -646,9 +643,6 @@ async fn workflow_files(kind: Kind, mode: &'static str) -> Result<()> {
     let model = GatedModel::start().await?;
     let (team, grand) = (teammate.clone(), grandchild.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         if request.messages().iter().any(|message| message["role"] == "tool") {
             return Answer::text("Done");
         }
@@ -1213,9 +1207,6 @@ async fn runner(kind: Kind, mode: &'static str) -> Result<()> {
     let workflow_id = new_id();
     let model = GatedModel::start().await?;
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         let tool = (question || file)
             && !request
                 .messages()
@@ -1445,7 +1436,7 @@ async fn runner(kind: Kind, mode: &'static str) -> Result<()> {
         "fake checks {:?}",
         runner.problems
     );
-    let calls = crate::fx_support::work_calls(&model).len();
+    let calls = model.calls();
     let expected_calls = if workflow {
         0
     } else if file {

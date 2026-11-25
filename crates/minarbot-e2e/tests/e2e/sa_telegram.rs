@@ -1,10 +1,7 @@
 //! Telegram connector: question buttons, offline recovery, the side-thread
 //! bridge and the runner (port of `app/telegram.test.ts`).
 
-use crate::{
-    sa_support::{lock, RawProvider, Shared},
-    support::{after_question, after_question_reply},
-};
+use crate::sa_support::{lock, RawProvider, Shared};
 use minarbot_testkit::{
     chat_connector::{
         self, connector_app, telegram_update, Connector, Fault, Platform, Reply as Answer,
@@ -43,9 +40,6 @@ async fn telegram_question_buttons_answer_the_owning_task_once_across_restart_an
     let free = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (seen, offered, script_free) = (answers.clone(), choices.clone(), free.clone());
     model.respond(move |request| {
-        if after_question(request) {
-            return after_question_reply();
-        }
         let answer = request
             .messages()
             .iter()
@@ -712,9 +706,6 @@ struct Runner {
 async fn telegram_runner_releases_owned_journal_on_shutdown(ask: bool) -> Result<()> {
     let model = ScriptedModel::start().await?;
     model.respond(move |request| {
-        if after_question(request) {
-            return after_question_reply();
-        }
         if ask
             && !request
                 .messages()
@@ -800,7 +791,7 @@ async fn telegram_runner_releases_owned_journal_on_shutdown(ask: bool) -> Result
     chat_connector::run(&options, &root.path().join("logs"), stop).await?;
     let state = lock(&state)?;
     ensure!(state.errors.is_empty(), "telegram fake: {:?}", state.errors);
-    let work = crate::support::work_calls(&model);
+    let work = model.calls();
     ensure!(work == if ask { 2 } else { 1 }, "model calls: {work}");
     ensure!(
         state.delivered == if ask { 3 } else { 1 },

@@ -1,9 +1,7 @@
 //! Script discovery and script messages (ports of
 //! `app/script-discovery.test.ts` and `app/script-messages.test.ts`).
 
-use crate::fx_support::{
-    after_pause, api_agent, gated, id, pause_reply, statuses, terminal, work_calls,
-};
+use crate::fx_support::{api_agent, gated, id, statuses, terminal};
 use minarbot_testkit::{
     gated::{Answer, GatedModel},
     http::{Method, SplitRequest},
@@ -282,10 +280,6 @@ async fn discovery_rejects_unsafe_directories_and_symlink_destinations_without_c
     Ok(())
 }
 
-fn work_count(model: &GatedModel) -> usize {
-    work_calls(model).len()
-}
-
 #[tokio::test]
 async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_rate_admission(
 ) -> Result<()> {
@@ -293,9 +287,6 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
     let model = GatedModel::start().await?;
     let reply = format!("Done {token}");
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply();
-        }
         if request.last_text() == "ASK" {
             Answer::tool_id(
                 "ask",
@@ -437,11 +428,7 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         "reply {}",
         result["reply"]
     );
-    ensure!(
-        work_count(&model) == 2,
-        "model calls {}",
-        work_count(&model)
-    );
+    ensure!(model.calls() == 2, "model calls {}", model.calls());
     app.restart().await?;
     expect(
         &app,
@@ -465,7 +452,7 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
             == accepted,
         "answer receipt after restart"
     );
-    ensure!(work_count(&model) == 2, "replay ran the model");
+    ensure!(model.calls() == 2, "replay ran the model");
     let mut changed = answer.clone();
     changed["text"] = json!("No");
     expect(&app, Method::POST, &answer_path, &token, Some(changed), 409).await?;
@@ -689,7 +676,7 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
         "drain: {:?}",
         statuses(&app, &ui_path).await?
     );
-    let side_calls = work_count(&model);
+    let side_calls = model.calls();
     app.restart().await?;
     expect(
         &app,

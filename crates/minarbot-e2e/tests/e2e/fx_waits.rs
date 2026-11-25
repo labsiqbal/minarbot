@@ -1,8 +1,6 @@
 //! Event waits (port of `app/turn-waits.test.ts`).
 
-use crate::fx_support::{
-    after_pause, api_agent, gated, id, pause_reply_for, row, rows, settle, tool_json,
-};
+use crate::fx_support::{api_agent, gated, id, row, rows, settle, tool_json};
 use minarbot_testkit::{
     db::{Fixture, Inspector},
     gated::{Answer, GatedModel},
@@ -85,8 +83,8 @@ async fn waiting(app: &Server, path: &str) -> Result<Value> {
 }
 
 /// Resume, retrying only while the server says the stopped harness turn has
-/// not exited yet ("Try after the local stop completes"). With B1 the
-/// harness is still finishing its extra step when the test pauses.
+/// not exited yet ("Try after the local stop completes"): the wait is visible
+/// before the worker has stopped the harness run it parked.
 async fn resume_when_stopped(app: &Server, path: &str, body: Value) -> Result<Value> {
     until(format!("resume {path}"), || async {
         let reply = app.call(Method::POST, path, Some(body.clone())).await?;
@@ -118,9 +116,6 @@ async fn agent_event_waits_release_workers_survive_restart_honor_pause_and_accep
     let model = GatedModel::start().await?;
     let (seen, bad) = (continuations.clone(), invalid.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         let received = !request.tool_results().is_empty();
         let ordinary = request.last_user_text() == "ordinary";
         if received {
@@ -465,24 +460,12 @@ async fn routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upl
     let (files, done_count, problems) =
         (files_requested.clone(), completed.clone(), failures.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         let fail = |message: String| {
             if let Ok(mut problems) = problems.lock() {
                 problems.push(message);
             }
             Answer::Status(500, json!({}))
         };
-        // The one-time verification reminder follows the first final answer;
-        // with B1 that can be the extra step's answer before the event, so it
-        // is answered without counting (see the ledger).
-        if request
-            .last_user_text()
-            .starts_with("One verification reminder")
-        {
-            return Answer::text("Routine resumed.");
-        }
         if !request
             .tool_names()
             .iter()
@@ -617,11 +600,9 @@ async fn routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upl
         "provider checks {:?}",
         failures.lock().map(|f| f.clone())
     );
-    // Node counts 2: the event continuation and the one-time verification
-    // reminder. With B1 the reminder can follow the extra step instead, so
-    // reminders are not counted and only the continuation remains.
+    // The event continuation and the one-time verification reminder.
     ensure!(
-        completed.load(Ordering::SeqCst) == 1,
+        completed.load(Ordering::SeqCst) == 2,
         "completed {}",
         completed.load(Ordering::SeqCst)
     );
@@ -702,7 +683,7 @@ async fn routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upl
         "event accepted after cancellation"
     );
     ensure!(
-        completed.load(Ordering::SeqCst) == 1,
+        completed.load(Ordering::SeqCst) == 2,
         "cancelled wait continued"
     );
     ensure!(
@@ -753,7 +734,7 @@ async fn routine_waits_preserve_artifacts_and_reject_events_cancelled_before_upl
         expired[0]
     );
     ensure!(
-        completed.load(Ordering::SeqCst) == 1,
+        completed.load(Ordering::SeqCst) == 2,
         "expired wait continued"
     );
     ensure!(
@@ -787,9 +768,6 @@ async fn cancellation_closes_waiting_descendants(boundary: Boundary) -> Result<(
     let model = GatedModel::start().await?;
     let (target, continued) = (recipient.clone(), child_continuations.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         let resumed = !request.tool_results().is_empty();
         let source = request.model() == "source";
         if !source && resumed {

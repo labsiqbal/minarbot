@@ -1,7 +1,6 @@
 //! Agent creation: prompt setup turns, local role receipts and canonical
 //! (hosted) creation authority (port of `app/agent-create.test.ts`).
 
-use crate::support::{after_question, after_question_reply};
 use minarbot_testkit::{
     model::{ModelRequest, Reply, ScriptedModel},
     prelude::*,
@@ -22,9 +21,6 @@ fn setup_reply(script: &Mutex<Setup>, request: &ModelRequest) -> Reply {
     let Ok(mut script) = script.lock() else {
         return Reply::status(500, json!({"error": "poisoned"}));
     };
-    if after_question(request) {
-        return after_question_reply();
-    }
     script.calls += 1;
     let mut tools = request.tool_names();
     tools.sort();

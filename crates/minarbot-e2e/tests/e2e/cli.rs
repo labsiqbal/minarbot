@@ -2,7 +2,6 @@
 //! stable identity across lost replies and restarts, waits, routines,
 //! workflows, approvals and answers (port of `app/cli.test.ts`).
 
-use crate::support::{after_question, after_question_reply};
 use minarbot_testkit::{
     cli::{Run, Script},
     http::{Method, SplitRequest},
@@ -70,7 +69,6 @@ async fn script_cli_discovers_only_grants_sends_once_waits_preserves_retry_id_an
 ) -> Result<()> {
     let model = ScriptedModel::start().await?;
     model.respond(|request| match request.last_text().as_str() {
-        _ if after_question(request) => after_question_reply(),
         "HOLD" => Reply::hold(),
         "ASK" => Reply::tool_call(
             "question",
@@ -1552,9 +1550,6 @@ async fn cli_answers_retain_receipt_identity_across_lost_replies_and_restart() -
     let answers = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let seen = answers.clone();
     model.respond(move |request| {
-        if after_question(request) {
-            return after_question_reply();
-        }
         if request.last_text() == "ASK" {
             return Reply::tool_call(
                 "ask",

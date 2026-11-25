@@ -359,11 +359,11 @@ fn run_reserved(state: &AppState, active: &mut HashMap<String, Active>, id: Stri
                 if failure.message == "Turn stopped."
                     && exists(
                         &db.connection,
+                        // A tool parked the turn (question, transfer,
+                        // event or delegation wait, Computer hand-off) and
+                        // stopped its run; it stays queued for its resume.
                         "SELECT 1 FROM computer_waits WHERE turn=?1
-                         UNION ALL SELECT 1 FROM questions q JOIN turns t ON t.id=q.turn
-                         WHERE q.turn=?1 AND t.status='queued'
-                         UNION ALL SELECT 1 FROM coordination c JOIN turns t ON t.id=c.turn
-                         WHERE c.turn=?1 AND c.kind='transfer_task' AND t.status='queued'",
+                         UNION ALL SELECT 1 FROM turns WHERE id=?1 AND status='queued'",
                         [&id],
                     )
                     .unwrap_or(false)

@@ -760,32 +760,6 @@ async fn waiting(app: &Server, turns: &str, id: &str) -> Result<Value> {
     .await
 }
 
-/// Product bug B1 (`docs/test-ledger.md`), here for `computer_request_user`
-/// and clicks under human control: the tool pauses the turn and answers
-/// `waiting_for_user`, and the harness takes one more model step. That step
-/// fails at once and is left out of model-call counts; the strict counts
-/// stay in the retained Node case.
-fn after_pause(request: &minarbot_testkit::model::ModelRequest) -> bool {
-    request.messages().last().is_some_and(|message| {
-        message["role"] == "tool"
-            && message["content"]
-                .as_str()
-                .is_some_and(|content| content.contains("waiting_for_user"))
-    })
-}
-
-fn after_pause_reply() -> Reply {
-    Reply::status(500, json!({"error": "no model step after a pause (B1)"}))
-}
-
-fn work_calls(model: &ScriptedModel) -> usize {
-    model
-        .requests()
-        .iter()
-        .filter(|request| !after_pause(request))
-        .count()
-}
-
 #[derive(Default)]
 struct Control {
     action: &'static str,
@@ -807,9 +781,6 @@ async fn http_control_and_user_input_enforce_origin_revision_validation_and_rate
         let Ok(mut state) = state.lock() else {
             return Reply::status(500, json!({}));
         };
-        if after_pause(request) {
-            return after_pause_reply();
-        }
         match request
             .messages()
             .iter()
@@ -887,7 +858,7 @@ async fn http_control_and_user_input_enforce_origin_revision_validation_and_rate
         "computerWait: {}",
         paused["computerWait"]
     );
-    ensure!(work_calls(&model) == 1, "calls: {}", work_calls(&model));
+    ensure!(model.calls() == 1, "calls: {}", model.calls());
     let agents = app.get("/api/agents").await?;
     ensure!(
         agents["agents"]
@@ -1010,7 +981,7 @@ async fn http_control_and_user_input_enforce_origin_revision_validation_and_rate
         app.get(&path).await?["control"] == taken["control"],
         "control after restart"
     );
-    ensure!(work_calls(&model) == 1, "restart called the model");
+    ensure!(model.calls() == 1, "restart called the model");
 
     // Hand-back resumes the paused turn exactly once.
     let back = json!({"id": new_id(), "revision": 1, "operation": "hand-back"});
@@ -1021,9 +992,9 @@ async fn http_control_and_user_input_enforce_origin_revision_validation_and_rate
         "resume tool result: {}",
         last_tool()
     );
-    ensure!(work_calls(&model) == 2, "calls: {}", work_calls(&model));
+    ensure!(model.calls() == 2, "calls: {}", model.calls());
     app.post(&format!("{path}/control"), back.clone()).await?;
-    ensure!(work_calls(&model) == 2, "hand-back replay resumed again");
+    ensure!(model.calls() == 2, "hand-back replay resumed again");
     ensure!(
         fixture.commands().len() == 1,
         "commands: {}",
@@ -1043,7 +1014,7 @@ async fn http_control_and_user_input_enforce_origin_revision_validation_and_rate
     );
     app.restart().await?;
     app.post(&format!("{path}/control"), back.clone()).await?;
-    ensure!(work_calls(&model) == 2, "hand-back replay after restart");
+    ensure!(model.calls() == 2, "hand-back replay after restart");
 
     // Dismissing a request resumes with user_declined, once.
     let next = new_id();
@@ -1059,10 +1030,10 @@ async fn http_control_and_user_input_enforce_origin_revision_validation_and_rate
         "dismiss result: {}",
         last_tool()
     );
-    ensure!(work_calls(&model) == 4, "calls: {}", work_calls(&model));
+    ensure!(model.calls() == 4, "calls: {}", model.calls());
     app.post(&format!("{path}/control"), dismiss.clone())
         .await?;
-    ensure!(work_calls(&model) == 4, "dismiss replay resumed again");
+    ensure!(model.calls() == 4, "dismiss replay resumed again");
     ensure!(
         post_status(
             &app,

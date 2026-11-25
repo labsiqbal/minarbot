@@ -1,9 +1,6 @@
 //! Telegram generated-artifact delivery (port of `app/telegram-output.test.ts`).
 
-use crate::{
-    sa_support::{lock, Shared},
-    support::{after_question, after_question_reply},
-};
+use crate::sa_support::{lock, Shared};
 use minarbot_testkit::{
     chat_connector::{self, connector_app, telegram_update, Connector, Platform, Reply as Answer},
     model::{ModelRequest, Reply, ScriptedModel},
@@ -69,9 +66,6 @@ async fn telegram_sends_exact_generated_artifacts_retains_uncertain_delivery_and
     let question = Arc::new(AtomicBool::new(false));
     let asking = question.clone();
     model.respond(move |request| {
-        if after_question(request) {
-            return after_question_reply();
-        }
         if reminder(request) {
             return Reply::text("File ready");
         }
@@ -93,14 +87,8 @@ async fn telegram_sends_exact_generated_artifacts_retains_uncertain_delivery_and
         Reply::text("File ready")
     });
     // Model steps, the done-check reminder included (it was a step in the
-    // API runtime too); the B1 step after a question is left out.
-    let work = |model: &ScriptedModel| {
-        model
-            .requests()
-            .iter()
-            .filter(|r| !after_question(r))
-            .count()
-    };
+    // API runtime too).
+    let work = |model: &ScriptedModel| model.calls();
     let deliveries: Shared<Vec<Value>> = Shared::default();
     let messages: Shared<Vec<Value>> = Shared::default();
     let lost = Arc::new(AtomicBool::new(true));

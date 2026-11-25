@@ -10,7 +10,6 @@
 //! scoped history, the saved artifact and no replay. One test per scope.
 
 use crate::sb_support::{after_tool, id, settle};
-use crate::support::after_question;
 use minarbot_testkit::{
     control::{Answer, ControlModel},
     model::ModelRequest,
@@ -34,11 +33,6 @@ fn source(
     initial: &Arc<AtomicUsize>,
     request: &ModelRequest,
 ) -> Answer {
-    // Product bug B1: one stray model step follows every question; it fails
-    // at once (see `support::after_question_reply`).
-    if after_question(request) {
-        return Answer::Status(500, json!({"error": "no model step after a question (B1)"}));
-    }
     let phase = phase.lock().map(|phase| *phase).unwrap_or("seed");
     if phase == "seed" {
         return Answer::text("Seed answer");

@@ -372,15 +372,6 @@ async fn legacy_channel_transfers_share_attempt_budget_beyond_eight_coordination
     let next: Shared<String> = Shared::default();
     let recipient = next.clone();
     let f = fixture(move |request| {
-        // Like B1: after a transfer returns null the harness may take one
-        // more step before the server stops it; never answer that step.
-        if request
-            .tool_results()
-            .last()
-            .is_some_and(|m| m["content"] == "null")
-        {
-            return Reply::hold();
-        }
         if !offered(request) {
             return Reply::text("Transferred work. Reply \"continue\".");
         }
@@ -442,16 +433,7 @@ async fn legacy_channel_transfers_share_attempt_budget_beyond_eight_coordination
         "budget: {}",
         done["activity"]["budget_stopped"]
     );
-    let work = f
-        .model
-        .requests()
-        .iter()
-        .filter(|r| {
-            !r.tool_results()
-                .last()
-                .is_some_and(|m| m["content"] == "null")
-        })
-        .count();
+    let work = f.model.calls();
     ensure!(work == 11, "requests: {work}");
     ensure!(
         !offered(f.model.requests().last().ok_or("no request")?),
@@ -722,9 +704,6 @@ async fn automatic_question_continuation_retains_attempt_budget_across_restart()
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
     let mut f = fixture(move |request| {
-        if crate::support::after_question(request) {
-            return crate::support::after_question_reply();
-        }
         if !offered(request) {
             return Reply::text("Progress saved. Reply \"continue\".");
         }
@@ -773,18 +752,7 @@ async fn automatic_question_continuation_retains_attempt_budget_across_restart()
         "budget: {}",
         done["activity"]["budget_stopped"]
     );
-    // B1: the harness takes one more step after `ask_user` returns null;
-    // here it is the budget summary of the first run.
-    let work = f
-        .model
-        .requests()
-        .iter()
-        .filter(|r| {
-            !r.tool_results()
-                .last()
-                .is_some_and(|m| m["content"] == "null")
-        })
-        .count();
+    let work = f.model.calls();
     ensure!(work == 11, "requests: {work}");
     ensure!(
         !offered(f.model.requests().last().ok_or("no request")?),

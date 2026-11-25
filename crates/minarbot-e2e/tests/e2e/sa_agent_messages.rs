@@ -49,8 +49,22 @@ async fn teammate_messages_correlate_groups_isolate_context_persist_receipts_and
         let prompt = request.last_user_text();
         let mode = state.mode;
         if request.model() == "alpha" {
-            if prompt.contains("user bypass") {
+            if prompt == "user bypass" {
                 return Reply::text("independent reply");
+            }
+            // A waiting parent resumes once its replies settle; its resumed
+            // transcript carries the completed group result before the note
+            // on replies delivered earlier. The consumer's own follow-up note
+            // carries no group result.
+            if prompt.starts_with("Some teammate results were attached") {
+                let group = request
+                    .messages()
+                    .iter()
+                    .rev()
+                    .filter_map(|message| message["content"].as_str())
+                    .filter_map(|text| serde_json::from_str::<Value>(text).ok())
+                    .find(|value| value["replies"].is_array());
+                return Reply::text(group.map_or_else(|| "Noted.".to_owned(), |group| group.to_string()));
             }
             match results.last() {
                 None => return Reply::tool_call(&new_id(), "list_agents", json!({})),
@@ -195,6 +209,10 @@ async fn teammate_messages_correlate_groups_isolate_context_persist_receipts_and
         items.len() == 2 && items.iter().any(|item| item["status"] == "done")
     })
     .await?;
+    ensure!(
+        waiting["status"] == "queued",
+        "parent not waiting: {waiting}"
+    );
     ensure!(waiting["reply"].is_null(), "reply while waiting: {waiting}");
     let beta_message = messages(&waiting)
         .into_iter()
@@ -223,45 +241,46 @@ async fn teammate_messages_correlate_groups_isolate_context_persist_receipts_and
         app.get(&beta_path).await?.as_array().map(Vec::len) == Some(1),
         "delivery in beta main history"
     );
-    // The harness keeps the parent run open while `send_message` waits, so a
-    // later user message on the same thread queues behind it instead of
-    // consuming the earlier reply (no `delivered_earlier`, see ledger).
+    // The waiting parent frees its conversation: a later user message runs
+    // at once and receives the reply that is already ready.
     let bypass = new_id();
     app.post_expect(&path, json!({"id": bypass, "text": "user bypass"}), 202)
         .await?;
-    until_held(&gate).await?;
-    ensure!(
-        app.row(&path, &bypass).await?.ok_or("bypass")?["status"] == "queued",
-        "bypass ran while the parent waited"
-    );
-    gate.release();
-    let done = until(&app, &path, &request_id, |row| row["status"] == "done").await?;
-    let result: Value = serde_json::from_str(done["reply"].as_str().unwrap_or("null"))?;
-    ensure!(result["status"] == "completed", "group result: {result}");
-    let replies: Vec<Value> = result["replies"]
-        .as_array()
-        .map(|rows| rows.iter().map(|row| row["reply"].clone()).collect())
-        .unwrap_or_default();
-    ensure!(
-        replies == [json!("beta result"), json!("gamma result")],
-        "group replies: {replies:?}"
-    );
-    ensure!(
-        result["delivered_earlier"]
-            .as_array()
-            .is_some_and(Vec::is_empty),
-        "delivered earlier: {result}"
-    );
     let bypassed = until(&app, &path, &bypass, |row| row["status"] == "done").await?;
     ensure!(
         bypassed["reply"] == "independent reply",
         "bypass: {bypassed}"
     );
     ensure!(
-        bypassed["receivedAgentReplies"]
-            .as_array()
-            .is_none_or(Vec::is_empty),
-        "bypass received replies: {bypassed}"
+        app.row(&path, &request_id).await?.ok_or("request")?["status"] == "queued",
+        "parent stopped waiting"
+    );
+    until_held(&gate).await?;
+    gate.release();
+    let done = until(&app, &path, &request_id, |row| row["status"] == "done").await?;
+    let result: Value = serde_json::from_str(done["reply"].as_str().unwrap_or("null"))
+        .map_err(|error| format!("group reply {}: {error}", done["reply"]))?;
+    ensure!(result["status"] == "completed", "group result: {result}");
+    let replies: Vec<Value> = result["replies"]
+        .as_array()
+        .map(|rows| rows.iter().map(|row| row["reply"].clone()).collect())
+        .unwrap_or_default();
+    ensure!(
+        replies == [json!("gamma result")],
+        "group replies: {replies:?}"
+    );
+    ensure!(
+        result["delivered_earlier"].as_array().map(Vec::len) == Some(1),
+        "delivered earlier: {result}"
+    );
+    ensure!(
+        result["delivered_earlier"][0]["consumer"] == bypass.as_str(),
+        "early consumer: {result}"
+    );
+    ensure!(
+        app.row(&path, &bypass).await?.ok_or("bypass")?["receivedAgentReplies"][0]["reply"]
+            == "beta result",
+        "bypass did not receive the ready reply"
     );
     ensure!(
         messages(&done).len() == 2,

@@ -1,6 +1,6 @@
 //! Agent delegation (port of `app/agent-delegation.test.ts`).
 
-use crate::fx_support::{after_pause, id, pause_reply_for, row, rows, tool_json};
+use crate::fx_support::{id, row, rows, tool_json};
 use minarbot_testkit::{
     db::Inspector,
     gated::{Answer, Gate, GatedModel},
@@ -89,7 +89,7 @@ impl Fixture {
         self.model
             .requests()
             .iter()
-            .filter(|request| request.model() == model && !after_pause(request))
+            .filter(|request| request.model() == model)
             .count()
     }
 }
@@ -230,9 +230,6 @@ async fn durable_task_wait(mode: WaitMode) -> Result<()> {
     let model = GatedModel::start().await?;
     let (agent, gate, calls) = (target.clone(), child.clone(), child_calls.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         let rs = results(request);
         if request.model() == "Child" {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -575,9 +572,6 @@ async fn delegated_task_authority_denies_unrelated_caller_cancel_stops_entire_mi
     let model = GatedModel::start().await?;
     let (shared, gate) = (state.clone(), held.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         let rs = results(request);
         let Ok(mut tree) = shared.lock() else {
             return Answer::Status(500, json!({}));
@@ -916,9 +910,6 @@ async fn nested_async_children(cancel: bool) -> Result<()> {
     let model = GatedModel::start().await?;
     let (agents, gate) = (ids.clone(), held.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         let rs = results(request);
         let (child, grandchild) = agents.lock().map(|ids| ids.clone()).unwrap_or_default();
         match request.model() {
@@ -1138,9 +1129,6 @@ async fn completion_wakes_a_parent_waiting_for_user_input_and_preserves_its_pend
     let model = GatedModel::start().await?;
     let (agent, gate) = (target.clone(), held.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         if request.model() == "Child" {
             return Answer::after(&gate, Answer::text("Result while waiting"));
         }
@@ -1214,9 +1202,6 @@ async fn concurrent_child_limit_counts_tasks_still_waiting_on_their_async_descen
     let model = GatedModel::start().await?;
     let (agents, started, gate) = (ids.clone(), spare_started.clone(), held.clone());
     model.respond(move |request| {
-        if after_pause(request) {
-            return pause_reply_for(request);
-        }
         let rs = results(request);
         let (child, spare, grandchild) = agents.lock().map(|ids| ids.clone()).unwrap_or_default();
         match request.model() {

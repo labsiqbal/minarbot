@@ -111,9 +111,9 @@ async fn sigkill_after_delegated_provider_acceptance_does_not_replay_parent_or_c
     let recipient = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let target = recipient.clone();
     model.respond(move |request| {
-        // The child step and the parent's step after the delegation
-        // receipt stay in flight until the crash.
-        if request.last_user_text() == "child" || crate::sb_support::after_tool(request) {
+        // The child step stays in flight until the crash; the delegation
+        // parks the parent, which takes no further step.
+        if request.last_user_text() == "child" {
             return Answer::Defer;
         }
         let beta = target.lock().map(|id| id.clone()).unwrap_or_default();
@@ -153,9 +153,8 @@ async fn sigkill_after_delegated_provider_acceptance_does_not_replay_parent_or_c
     )
     .await?;
     let child_step = model.deferred().await?;
-    let parent_step = model.deferred().await?;
     app.crash().await?;
-    drop((child_step, parent_step));
+    drop(child_step);
     let accepted = model.calls();
     app.restart().await?;
     let rows = app.get(&path).await?;
@@ -179,9 +178,7 @@ async fn sigkill_after_delegated_provider_acceptance_does_not_replay_parent_or_c
         coordination[0]["child"] == child["id"],
         "coordination child: {parent}"
     );
-    // Node counted 2 requests (parent, child); the harness parent also takes
-    // its step after the delegation receipt before the crash.
-    ensure!(accepted == 3, "provider calls before the crash: {accepted}");
+    ensure!(accepted == 2, "provider calls before the crash: {accepted}");
     never(
         "restart replays parent or child",
         Duration::from_millis(150),
