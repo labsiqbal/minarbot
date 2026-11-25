@@ -184,8 +184,9 @@ impl Peer {
     }
 
     /// One provider request; streamed responses are folded into a
-    /// non-streamed completion plus the original content deltas.
-    async fn provider(&self, body: &Value) -> Result<(Value, Vec<String>)> {
+    /// non-streamed completion. Each content delta goes to `on_delta` as it
+    /// arrives, as Codex forwards a live answer.
+    async fn provider(&self, body: &Value, on_delta: impl Fn(&str)) -> Result<(Value, bool)> {
         let mut request = self
             .client
             .post(format!(
@@ -207,58 +208,76 @@ impl Peer {
             return Err(format!("Gateway provider returned {}", status.as_u16()).into());
         }
         if body["stream"] != true {
-            return Ok((response.json().await?, Vec::new()));
+            return Ok((response.json().await?, false));
         }
-        let text = response.text().await?;
+        let mut response = response;
+        let mut pending = Vec::new();
+        let mut lines = Vec::new();
         let mut content = String::new();
-        let mut deltas = Vec::new();
+        let mut streamed = false;
         let mut calls: Vec<Value> = Vec::new();
         let mut finish = Value::Null;
         let mut usage = Value::Null;
-        for line in text.lines() {
-            let Some(data) = line.strip_prefix("data:") else {
-                continue;
-            };
-            let data = data.trim();
-            if data.is_empty() || data == "[DONE]" {
-                continue;
+        loop {
+            let chunk = response.chunk().await?;
+            match &chunk {
+                Some(bytes) => pending.extend_from_slice(bytes),
+                None if pending.is_empty() => break,
+                None => pending.push(b'\n'),
             }
-            let chunk: Value = serde_json::from_str(data)?;
-            let choice = &chunk["choices"][0];
-            let delta = &choice["delta"];
-            if let Some(text) = delta["content"].as_str() {
-                deltas.push(text.to_owned());
-                content.push_str(text);
+            while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = pending.drain(..=end).collect();
+                lines.push(String::from_utf8_lossy(&line).trim_end().to_owned());
             }
-            for call in delta["tool_calls"].as_array().into_iter().flatten() {
-                let index = call["index"]
-                    .as_u64()
-                    .and_then(|index| usize::try_from(index).ok())
-                    .unwrap_or(calls.len());
-                while calls.len() <= index {
-                    let position = calls.len();
-                    calls.push(json!({"id": format!("call-{position}"), "type": "function",
+            for line in lines.drain(..) {
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data.is_empty() || data == "[DONE]" {
+                    continue;
+                }
+                let chunk: Value = serde_json::from_str(data)?;
+                let choice = &chunk["choices"][0];
+                let delta = &choice["delta"];
+                if let Some(text) = delta["content"].as_str() {
+                    on_delta(text);
+                    streamed = true;
+                    content.push_str(text);
+                }
+                for call in delta["tool_calls"].as_array().into_iter().flatten() {
+                    let index = call["index"]
+                        .as_u64()
+                        .and_then(|index| usize::try_from(index).ok())
+                        .unwrap_or(calls.len());
+                    while calls.len() <= index {
+                        let position = calls.len();
+                        calls.push(json!({"id": format!("call-{position}"), "type": "function",
                         "function": {"name": "", "arguments": ""}}));
-                }
-                let item = &mut calls[index];
-                if let Some(id) = call["id"].as_str().filter(|id| !id.is_empty()) {
-                    item["id"] = json!(id);
-                }
-                for field in ["name", "arguments"] {
-                    if let Some(part) = call["function"][field].as_str() {
-                        let joined = format!(
-                            "{}{part}",
-                            item["function"][field].as_str().unwrap_or_default()
-                        );
-                        item["function"][field] = json!(joined);
+                    }
+                    let item = &mut calls[index];
+                    if let Some(id) = call["id"].as_str().filter(|id| !id.is_empty()) {
+                        item["id"] = json!(id);
+                    }
+                    for field in ["name", "arguments"] {
+                        if let Some(part) = call["function"][field].as_str() {
+                            let joined = format!(
+                                "{}{part}",
+                                item["function"][field].as_str().unwrap_or_default()
+                            );
+                            item["function"][field] = json!(joined);
+                        }
                     }
                 }
+                if finish.is_null() {
+                    finish = choice["finish_reason"].clone();
+                }
+                if usage.is_null() {
+                    usage = chunk["usage"].clone();
+                }
             }
-            if finish.is_null() {
-                finish = choice["finish_reason"].clone();
-            }
-            if usage.is_null() {
-                usage = chunk["usage"].clone();
+            if chunk.is_none() {
+                break;
             }
         }
         if finish.is_null() {
@@ -273,7 +292,7 @@ impl Peer {
         if !usage.is_null() {
             completion["usage"] = usage;
         }
-        Ok((completion, deltas))
+        Ok((completion, streamed))
     }
 }
 
@@ -475,7 +494,16 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
             LOG,
             &json!({"stage": "provider", "pid": std::process::id(), "messages": body["messages"].as_array().map_or(0, Vec::len)}),
         );
-        let (value, deltas) = peer.provider(&body).await?;
+        let id = Uuid::new_v4().to_string();
+        let emit = |text: &str| {
+            if !text.is_empty() {
+                peer.notify(
+                    "item/agentMessage/delta",
+                    json!({"itemId": id, "delta": text}),
+                );
+            }
+        };
+        let (value, streamed) = peer.provider(&body, emit).await?;
         let choice = &value["choices"][0];
         let message = &choice["message"];
         if !choice.is_object() || !message.is_object() {
@@ -611,20 +639,9 @@ async fn run(peer: Peer, prompt: String, additional: Value) -> Result<()> {
         if !tool_calls.is_empty() {
             return Err("Gateway provider returned tools after budget exhaustion".into());
         }
-        let id = Uuid::new_v4().to_string();
         let content = message["content"].as_str().unwrap_or_default().to_owned();
-        let emit = |text: &str| {
-            if !text.is_empty() {
-                peer.notify(
-                    "item/agentMessage/delta",
-                    json!({"itemId": id, "delta": text}),
-                );
-            }
-        };
-        if deltas.is_empty() {
+        if !streamed {
             emit(&content);
-        } else {
-            deltas.iter().for_each(|delta| emit(delta));
         }
         peer.notify(
             "item/completed",
