@@ -17,6 +17,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod bridge;
 pub mod canonical;
 pub mod cli;
 pub mod db;

@@ -767,7 +767,7 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                 let additional = params["additionalContext"].clone();
                 let worker = peer.clone();
                 let finished = key.clone();
-                let task = tokio::spawn(async move {
+                let task = super::spawn(async move {
                     if let Err(error) = run(worker.clone(), prompt, additional).await {
                         super::log(
                             LOG,
@@ -781,12 +781,12 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                     }
                     worker.with(|state| state.runs.remove(&finished));
                 });
-                peer.with(|state| state.runs.insert(key, task.abort_handle()));
+                peer.with(|state| state.runs.insert(key, task));
             }
             Some("model/list") => {
                 let peer = peer.clone();
                 let id = id.clone();
-                tokio::spawn(async move {
+                super::spawn(async move {
                     match peer.models().await {
                         Ok(result) => peer.out.send(&json!({"id": id, "result": result})),
                         Err(error) => peer.out.send(&json!({"id": id,

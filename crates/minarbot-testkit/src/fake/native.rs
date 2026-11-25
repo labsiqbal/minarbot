@@ -307,7 +307,7 @@ fn result_message(session: &str, text: &str, input: u64, output: u64) -> Value {
 
 fn later(peer: &Shared, delay: Duration, action: impl FnOnce(&Shared) + Send + 'static) {
     let peer = peer.clone();
-    tokio::spawn(async move {
+    super::spawn(async move {
         tokio::time::sleep(delay).await;
         action(&peer);
     });
@@ -356,7 +356,7 @@ fn run(peer: &Shared, text: String) {
     peer.delta("Harness ");
     if text.contains("FIRST_PARTIAL_GATE") {
         let peer = peer.clone();
-        tokio::spawn(async move {
+        super::spawn(async move {
             released().await;
             run_rest(&peer, &text);
         });
@@ -381,7 +381,7 @@ fn run_rest(peer: &Shared, text: &str) {
     }
     if text.contains("NATIVE_SETUP_FIXTURE") && text.contains("Initial needs:") {
         let peer = peer.clone();
-        tokio::spawn(async move {
+        super::spawn(async move {
             if let Err(error) = native_setup(&peer).await {
                 log(LOG, &json!({"setupError": error.to_string()}));
                 std::process::exit(1);
@@ -580,7 +580,7 @@ fn stream_gate(peer: &Shared, text: String) {
     }
     log(LOG, &json!({"type": "stream-gate"}));
     let peer = peer.clone();
-    tokio::spawn(async move {
+    super::spawn(async move {
         released().await;
         let session = peer.session();
         if text.contains("STREAM_CRASH") {
@@ -937,7 +937,9 @@ fn run_workspace_shell(raw_config: &str) -> Result<()> {
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(format!("{request}\n").as_bytes())?;
     }
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    // Node allowed 5 s. A test-mode approval (B8 in docs/test-ledger.md)
+    // can hold the call while the test answers it, so wait up to 30 s.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;

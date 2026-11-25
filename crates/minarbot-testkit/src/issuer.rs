@@ -74,7 +74,7 @@ impl SessionIssuer {
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let origin = format!("http://{}", listener.local_addr()?);
         let bridge = Arc::new(Bridge {
-            token: Uuid::new_v4().simple().to_string(),
+            token: crate::bridge::token(),
             log: Mutex::new(Log::default()),
         });
         let app = Router::new()

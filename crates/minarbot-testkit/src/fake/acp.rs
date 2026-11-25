@@ -271,7 +271,7 @@ fn prompt(peer: &Peer, value: &Value) -> Result<()> {
         std::process::exit(2);
     }
     let peer = peer.clone();
-    tokio::spawn(async move {
+    super::spawn(async move {
         if let Err(error) = scripted(&peer, &id, &content).await {
             eprintln!("fake-acp failed: {error}");
             std::process::exit(1);

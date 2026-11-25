@@ -93,7 +93,13 @@ pub fn read_log(path: impl AsRef<Path>) -> Result<Vec<Value>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(format!("{}: {error}", path.display()).into()),
     };
-    text.lines()
+    // A peer may be appending right now: ignore an unterminated last line.
+    let complete = match text.rfind('\n') {
+        Some(end) => &text[..=end],
+        None => "",
+    };
+    complete
+        .lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| Ok(serde_json::from_str(line)?))
         .collect()
@@ -107,6 +113,11 @@ pub fn native_log(workspace: impl AsRef<Path>) -> Result<Vec<Value>> {
 /// `fake-acp-log.jsonl` of the ACP peer.
 pub fn acp_log(workspace: impl AsRef<Path>) -> Result<Vec<Value>> {
     read_log(workspace.as_ref().join(crate::fake::acp::LOG))
+}
+
+/// `fake-gateway-log.jsonl` of the gateway peer.
+pub fn gateway_log(workspace: impl AsRef<Path>) -> Result<Vec<Value>> {
+    read_log(workspace.as_ref().join(crate::fake::gateway::LOG))
 }
 
 /// Entries of a native log whose `type` is `turn`.

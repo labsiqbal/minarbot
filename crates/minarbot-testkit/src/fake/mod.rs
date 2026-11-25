@@ -64,10 +64,11 @@ impl Out {
     }
 }
 
-/// Append one JSON line to `file` in the working directory.
+/// Append one JSON line to `file` in the working directory with a single
+/// `write`, so concurrent writers and readers never see a split line.
 pub fn log(file: &str, value: &Value) {
     if let Ok(mut handle) = OpenOptions::new().create(true).append(true).open(file) {
-        let _ = writeln!(handle, "{value}");
+        let _ = handle.write_all(format!("{value}\n").as_bytes());
     }
 }
 
@@ -119,6 +120,37 @@ pub fn spawn_idle_child(stubborn: bool, detached: bool) -> std::io::Result<u32> 
     Ok(child.id())
 }
 
+static TASKS: Mutex<Vec<tokio::task::JoinHandle<()>>> = Mutex::new(Vec::new());
+
+/// Spawn peer work that keeps the process alive after stdin closes, the way
+/// pending timers and requests kept the Node fixtures alive.
+pub fn spawn(
+    task: impl std::future::Future<Output = ()> + Send + 'static,
+) -> tokio::task::AbortHandle {
+    let handle = tokio::spawn(task);
+    let abort = handle.abort_handle();
+    match TASKS.lock() {
+        Ok(mut tasks) => tasks.push(handle),
+        Err(poisoned) => poisoned.into_inner().push(handle),
+    }
+    abort
+}
+
+async fn drain() {
+    loop {
+        let pending: Vec<_> = match TASKS.lock() {
+            Ok(mut tasks) => tasks.drain(..).collect(),
+            Err(poisoned) => poisoned.into_inner().drain(..).collect(),
+        };
+        if pending.is_empty() {
+            return;
+        }
+        for task in pending {
+            let _ = task.await;
+        }
+    }
+}
+
 /// Run a fake: helper child modes first, then `body` on a Tokio runtime.
 pub fn main<F, Fut>(body: F) -> ExitCode
 where
@@ -152,7 +184,11 @@ where
             }
         })
     }
-    match runtime.block_on(body(args)) {
+    match runtime.block_on(async move {
+        let code = body(args).await;
+        drain().await;
+        code
+    }) {
         Ok(code) => code,
         Err(error) => {
             eprintln!("fake peer failed: {error}");

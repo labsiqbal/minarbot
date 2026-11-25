@@ -7,6 +7,7 @@
 //! process stored.
 
 use crate::{
+    bridge::Bridge,
     fakes::{self, Fake},
     http::Reply,
     issuer::SessionIssuer,
@@ -120,6 +121,8 @@ pub struct ServerConfig {
     issuer: Option<SessionIssuer>,
     environment: Vec<(String, String)>,
     sync_key: Option<[u8; 32]>,
+    /// Test bridges by server option name; kept alive with the config.
+    bridges: Vec<(&'static str, Value, Bridge)>,
 }
 
 impl Default for ServerConfig {
@@ -132,6 +135,7 @@ impl Default for ServerConfig {
             issuer: None,
             environment: Vec::new(),
             sync_key: None,
+            bridges: Vec::new(),
         }
     }
 }
@@ -276,6 +280,50 @@ impl ServerConfig {
         self
     }
 
+    fn bridge(mut self, option: &'static str, config: Value, bridge: &Bridge) -> Self {
+        self.bridges.retain(|(name, ..)| *name != option);
+        self.bridges.push((option, config, bridge.clone()));
+        self
+    }
+
+    /// Computer bridge (`testComputerBridge`): clock, peer tokens, peer HTTP,
+    /// desktop runtime and hub transport operations.
+    pub fn computer_bridge(self, bridge: &Bridge) -> Self {
+        let config = bridge.config();
+        self.bridge("testComputerBridge", config, bridge)
+    }
+
+    /// Canonical bridge (`testCanonicalBridge`) for Clerk, mail keys and
+    /// routine webhook keys; the flags say which operations it serves.
+    pub fn canonical_bridge(self, bridge: &Bridge, clerk: bool, mail: bool, webhook: bool) -> Self {
+        let mut config = bridge.config();
+        config["clerk"] = json!(clerk);
+        config["mail"] = json!(mail);
+        config["webhook"] = json!(webhook);
+        self.bridge("testCanonicalBridge", config, bridge)
+    }
+
+    /// PDF fault bridge (`testPdfBridge`, the Node `pdfFault` option).
+    pub fn pdf_bridge(self, bridge: &Bridge) -> Self {
+        let config = bridge.config();
+        self.bridge("testPdfBridge", config, bridge)
+    }
+
+    /// Composio endpoint plus the key bridge (`testConnectorBridge`).
+    pub fn composio(self, base_url: &str, key: &Bridge) -> Self {
+        let config = key.config();
+        self.option("composio", json!({"baseURL": base_url}))
+            .bridge("testConnectorBridge", config, key)
+    }
+
+    /// Token of the computer bridge, for `X-Minarbot-Test-Refresh`.
+    pub fn computer_bridge_token(&self) -> Option<&str> {
+        self.bridges
+            .iter()
+            .find(|(name, ..)| *name == "testComputerBridge")
+            .map(|(_, _, bridge)| bridge.token())
+    }
+
     /// Use a specific server binary instead of discovery.
     pub fn binary(mut self, path: impl Into<PathBuf>) -> Self {
         self.binary = Some(path.into());
@@ -343,6 +391,9 @@ impl ServerConfig {
         if let Some(issuer) = &self.issuer {
             options.insert("testHarnessBridge".into(), issuer.bridge_config());
         }
+        for (name, config, _) in &self.bridges {
+            options.insert((*name).into(), config.clone());
+        }
         Ok(Value::Object(options))
     }
 
@@ -394,16 +445,19 @@ impl TestRoot {
 
     /// Start a server on this root's database.
     pub async fn start(&self, config: ServerConfig) -> Result<Server> {
+        let slot = slots().acquire_owned().await?;
         let process = spawn(self, &config).await?;
         Ok(Server {
             root: self.clone(),
             config,
             process: Some(process),
+            _slot: slot,
         })
     }
 
     /// Start and expect startup to fail; returns the server's error output.
     pub async fn start_error(&self, config: ServerConfig) -> Result<String> {
+        let _slot = slots().acquire_owned().await?;
         match spawn(self, &config).await {
             Ok(_) => Err("server started although a startup failure was expected".into()),
             Err(error) => Ok(error.to_string()),
@@ -453,6 +507,23 @@ pub fn server_binary(explicit: Option<&Path>) -> Result<PathBuf> {
         binary.display()
     )
     .into())
+}
+
+/// At most this many servers run at once per test process
+/// (`MINARBOT_TEST_SERVERS`, default 2), so a parallel test run on a shared
+/// host keeps each server responsive enough for its wait budgets.
+fn slots() -> Arc<tokio::sync::Semaphore> {
+    static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    SLOTS
+        .get_or_init(|| {
+            let count = std::env::var("MINARBOT_TEST_SERVERS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .filter(|count| *count > 0)
+                .unwrap_or(2);
+            Arc::new(tokio::sync::Semaphore::new(count))
+        })
+        .clone()
 }
 
 async fn spawn(root: &TestRoot, config: &ServerConfig) -> Result<Process> {
@@ -575,6 +646,8 @@ pub struct Server {
     root: TestRoot,
     config: ServerConfig,
     process: Option<Process>,
+    /// Concurrency slot, kept across restarts and crashes.
+    _slot: tokio::sync::OwnedSemaphorePermit,
 }
 
 impl Server {
@@ -764,6 +837,25 @@ impl Server {
         let config = self.config.clone();
         self.start_stopped(config).await?;
         value
+    }
+
+    /// Re-run machine health checks now (the Node `refreshMachines`); needs
+    /// [`ServerConfig::computer_bridge`].
+    pub async fn refresh_machines(&self) -> Result<Value> {
+        let token = self
+            .config
+            .computer_bridge_token()
+            .ok_or("refresh_machines needs a computer bridge")?
+            .to_owned();
+        let response = self
+            .client()?
+            .get(self.url("/api/machines"))
+            .header("X-Minarbot-Test-Refresh", token)
+            .send()
+            .await?;
+        Reply::read(&Method::GET, "/api/machines", response)
+            .await?
+            .ok()
     }
 
     /// Tail of the server's stdout and stderr.
