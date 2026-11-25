@@ -18,6 +18,7 @@ pub struct StdioServer {
     pub name: String,
     command: String,
     args: Vec<String>,
+    env: Vec<(String, String)>,
 }
 
 impl StdioServer {
@@ -40,6 +41,7 @@ impl StdioServer {
                                         .collect()
                                 })
                                 .unwrap_or_default(),
+                            env: Vec::new(),
                         })
                     })
                     .collect()
@@ -47,9 +49,26 @@ impl StdioServer {
             .unwrap_or_default()
     }
 
-    async fn request(&self, cwd: &Path, method: &str, params: Value) -> Result<Value> {
+    /// A stdio MCP server started as `command args` with extra environment
+    /// (for example `minarbot-server --mcp-stdio` with its URL and token).
+    pub fn new(name: &str, command: &str, args: &[&str], env: &[(&str, &str)]) -> Self {
+        Self {
+            name: name.to_owned(),
+            command: command.to_owned(),
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+            env: env
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
+        }
+    }
+
+    /// One request in a fresh session; a JSON-RPC error becomes an
+    /// `isError` tool result carrying its message.
+    pub async fn request(&self, cwd: &Path, method: &str, params: Value) -> Result<Value> {
         let mut child = Command::new(&self.command)
             .args(&self.args)
+            .envs(self.env.iter().map(|(name, value)| (name, value)))
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

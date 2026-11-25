@@ -59,12 +59,17 @@ type Pdf = dyn Fn(&[u8]) -> Option<(u16, String)> + Send + Sync;
 pub type PdfFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = Option<(u16, String)>> + Send>>;
 type PdfAsync = dyn Fn(Bytes) -> PdfFuture + Send + Sync;
+/// Future of an asynchronous operations handler.
+pub type OperationFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, BridgeError>> + Send>>;
+type OperationsAsync = dyn Fn(String, Value) -> OperationFuture + Send + Sync;
 
 enum Kind {
     Operations(Arc<Operations>),
     Paths(Arc<Operations>),
     Pdf(Arc<Pdf>),
     PdfAsync(Arc<PdfAsync>),
+    OperationsAsync(Arc<OperationsAsync>),
     Key(String),
 }
 
@@ -126,6 +131,13 @@ async fn operation(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: 
                 body["operation"].as_str().unwrap_or_default(),
                 &body["args"],
             ))
+        }
+        Kind::OperationsAsync(handler) => {
+            let Ok(body) = serde_json::from_slice::<Value>(&body) else {
+                return answer(Err(BridgeError::new(400, "Invalid bridge request.")));
+            };
+            let operation = body["operation"].as_str().unwrap_or_default().to_owned();
+            answer(handler(operation, body["args"].clone()).await)
         }
         Kind::Pdf(handler) => pdf_answer(handler(&body)),
         Kind::PdfAsync(handler) => pdf_answer(handler(body).await),
@@ -206,6 +218,14 @@ impl Bridge {
         handler: impl Fn(&str, &Value) -> Result<Value, BridgeError> + Send + Sync + 'static,
     ) -> Result<Self> {
         Self::start(Kind::Operations(Arc::new(handler))).await
+    }
+
+    /// `{operation, args}` bridge whose handler may wait (for example to
+    /// hold a desktop action while the test changes server state).
+    pub async fn operations_async(
+        handler: impl Fn(String, Value) -> OperationFuture + Send + Sync + 'static,
+    ) -> Result<Self> {
+        Self::start(Kind::OperationsAsync(Arc::new(handler))).await
     }
 
     /// `POST /<operation>` bridge (the canonical bridge).
