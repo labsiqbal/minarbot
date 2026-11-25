@@ -5,6 +5,8 @@
 
 mod agent_create;
 mod cli;
+mod fx_queues;
+mod fx_support;
 mod goals;
 mod harness;
 mod kit;

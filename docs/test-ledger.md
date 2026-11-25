@@ -105,6 +105,32 @@ the bug is fixed.
 
 No product hook was added; `crates/minarbot-server/src` is unchanged.
 
+## #89 fixture slice
+
+Twenty-one Node suites that drove agent turns through the removed direct API
+runtime, ported case by case to `crates/minarbot-e2e/tests/e2e/fx_*.rs`.
+Agent replies come from `minarbot_testkit::gated::GatedModel` behind the
+gateway peer (`runtime: "api"` in test mode). Assertion counts are
+`assert*` calls plus explicit status checks in the Node case, and `ensure!`,
+`*_expect` and status checks in the Rust test; parameterized Node loops count
+each iteration as a case.
+
+| Node file | Node runtime cases | Rust tests | Dropped | Node cases kept |
+| --- | ---: | ---: | ---: | --- |
+| `app/queue-edits.test.ts` | 3 | 3 | 0 | 0 (deleted) |
+
+<!-- fixture-summary -->
+
+### `app/queue-edits.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| queue edit holds survive restart, preserve order and original receipt, reject competing editors and completed cancellations | `fx_queues::queue_edit_holds_survive_restart_preserve_order_and_original_receipt_reject_competing_editors_and_completed_cancellations` | 37 -> 32 | Full. The Node count includes three helper asserts. |
+| abandoned edit lease expires and drains its message and following queue in order | `fx_queues::abandoned_edit_lease_expires_and_drains_its_message_and_following_queue_in_order` | 7 -> 4 | Full; the Node count includes the request helper. |
+| Rust expires migrated permanent queue holds and fences the prior revision once | `fx_queues::rust_expires_migrated_permanent_queue_holds_and_fences_the_prior_revision_once` | 7 -> 7 | Full. Lease deadlines use SQLite's wall clock, so the seeded deadline does too. |
+
+<!-- fixture-cases -->
+
 ## #67 hosted Hub test migration
 
 The app test runner discovers Hub Link once and starts the Rust hosted listener.
