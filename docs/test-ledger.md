@@ -130,6 +130,7 @@ each iteration as a case.
 | `app/site-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/base-instructions-scenario.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/turn-waits.test.ts` | 5 | 5 | 0 | 1 (B1) |
+| `app/acp-harness.test.ts` | 17 | 17 | 0 | 0 (deleted) |
 
 <!-- fixture-summary -->
 
@@ -223,6 +224,28 @@ each iteration as a case.
 | workflow cancellation closes waiting descendants of completed steps | `fx_waits::workflow_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full (shared helper `cancellation_closes_waiting_descendants`). |
 | channel cancellation closes waiting descendants of completed steps | `fx_waits::channel_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full. |
 | thread cancellation closes waiting descendants of completed steps | `fx_waits::thread_cancellation_closes_waiting_descendants_of_completed_steps` | 17 -> 10 | Full. |
+
+### `app/acp-harness.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| hermes: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::hermes_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| antigravity: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::antigravity_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| grok: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::grok_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| opencode: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::opencode_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| gemini: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::gemini_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| kiro: initialize, supervised session, stream segments, tool, one-use permission and done | `fx_acp::kiro_initialize_supervised_session_stream_segments_tool_one_use_permission_and_done` | 18 -> 18 | Full. The MCP token is the kit issuer's `SESSION_TOKEN`. The prompt now carries the transcript as `<minarbot-message>` tags, so the last tag is checked to be the user's `hello` instead of a trailing `user: hello` line. |
+| ACP resume suppresses replay and keeps cwd and credentials scoped | `fx_acp::acp_resume_suppresses_replay_and_keeps_cwd_and_credentials_scoped` | 6 -> 6 | Full. |
+| ACP file requests reject outside paths and symlinks, require write approval | `fx_acp::acp_file_requests_reject_outside_paths_and_symlinks_require_write_approval` | 5 -> 5 | Full. |
+| ACP read-only workspace rejects file writes without approval | `fx_acp::acp_read_only_workspace_rejects_file_writes_without_approval` | 3 -> 3 | Full. |
+| Pi RPC streams, requests tool approval, selects model, and cancels | `fx_acp::pi_rpc_streams_requests_tool_approval_selects_model_and_cancels` | 7 -> 7 | Full. |
+| ACP denied permission never grants persistent option | `fx_acp::acp_denied_permission_never_grants_persistent_option` | 3 -> 3 | Full. |
+| ACP CRASH: fail bounded, no replay | `fx_acp::acp_crash_fail_bounded_no_replay` | 3 -> 3 | Full (shared helper `bounded_failure`). |
+| ACP INVALID: fail bounded, no replay | `fx_acp::acp_invalid_fail_bounded_no_replay` | 3 -> 3 | Full. |
+| ACP WAIT: fail bounded, no replay | `fx_acp::acp_wait_fail_bounded_no_replay` | 3 -> 3 | Full. |
+| ACP cancel reaches child, kills detached tool process and preserves inspect diagnostics | `fx_acp::acp_cancel_reaches_child_kills_detached_tool_process_and_preserves_inspect_diagnostics` | 13 -> 12 | Full; the Node `assert(start)` is the `ok_or` on the process start time. |
+| ACP runtimes work through server: approvals, segments and runtime picker | `fx_acp::acp_runtimes_work_through_server_approvals_segments_and_runtime_picker` | 6 -> 4 | Full; the Node count includes two helper asserts. |
+| ACP room queue, checkpoints and stop preserve peer approvals | `fx_acp::acp_room_queue_checkpoints_and_stop_preserve_peer_approvals` | 6 -> 4 | Full; project folders must sit in the server's home, so the Git workspace is under `home/`. The Node count includes two helper asserts. |
 
 <!-- fixture-cases -->
 

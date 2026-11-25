@@ -5,6 +5,7 @@
 
 mod agent_create;
 mod cli;
+mod fx_acp;
 mod fx_agents;
 mod fx_queues;
 mod fx_scripts;
