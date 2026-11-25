@@ -54,7 +54,7 @@ pub fn workspace(
             [project],
         )?;
         let Some(first) = folders.first() else {
-            return Ok(None);
+            return data::agent_folders::effective(state, db, string(turn, "agent")).map(Some);
         };
         let directory = context["folder"]
             .as_str()
@@ -78,9 +78,6 @@ pub fn workspace(
             },
         )?;
         return Ok(Some(binding));
-    }
-    if super::messaging::channel(db, string(turn, "id"))?.is_some() {
-        return Ok(None);
     }
     data::agent_folders::effective(state, db, string(turn, "agent")).map(Some)
 }
@@ -740,4 +737,90 @@ fn file_tool(
         result["path"] = json!(name);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    struct Scratch(std::path::PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn channel_without_project_uses_agent_managed_workspace() -> crate::db::Result<()> {
+        let scratch = Scratch(
+            std::env::temp_dir().join(format!("minarbot-tools-test-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir(&scratch.0)?;
+        let config: crate::config::Config = serde_json::from_value(json!({
+            "database": scratch.0.join("data/minarbot.sqlite")
+        }))?;
+        let database = crate::db::open(&config.database, false, 0)?;
+        crate::files::init(&database.connection)?;
+        crate::data::initialize(&database)?;
+        crate::turns::initialize(&database.connection).map_err(|e| e.message)?;
+        crate::connectors::initialize(&database.connection).map_err(|e| e.message)?;
+        crate::automation::initialize(&database.connection).map_err(|e| e.message)?;
+        crate::harness::initialize(&database.connection).map_err(|e| e.message)?;
+        crate::mcp::initialize(&database.connection).map_err(|e| e.message)?;
+        crate::computer::initialize(&database.connection)?;
+
+        let agent = uuid::Uuid::new_v4().to_string();
+        let turn_id = uuid::Uuid::new_v4().to_string();
+        let channel = uuid::Uuid::new_v4().to_string();
+        database.connection.execute(
+            "INSERT INTO agents(id,name,model,instructions) VALUES(?,'Fixture','','')",
+            [&agent],
+        )?;
+        database.connection.execute(
+            "INSERT INTO channels(id,name,instructions,lead) VALUES(?,'Fixture','',?)",
+            rusqlite::params![channel, agent],
+        )?;
+        database.connection.execute(
+            "INSERT INTO channel_members(channel,agent) VALUES(?,?)",
+            rusqlite::params![channel, agent],
+        )?;
+        database.connection.execute(
+            "INSERT INTO turns(id,agent,channel,text,status,created) VALUES(?,?,?,'Message','queued',?)",
+            rusqlite::params![turn_id, agent, channel, "2026-01-01T00:00:00.000Z"],
+        )?;
+        let state = AppState {
+            database: Arc::new(Mutex::new(database)),
+            computer: Arc::new(crate::computer::Manager::new(&config)?),
+            config: Arc::new(config),
+            origin: "http://127.0.0.1".into(),
+            auth: None,
+            events: crate::events::Hub::new(),
+            turns: crate::turns::Runtime::default(),
+            whatsapp: Default::default(),
+            trial_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let guard = state
+            .database
+            .lock()
+            .map_err(|_| "Database lock poisoned")?;
+        let turn = one(
+            &guard.connection,
+            "SELECT * FROM turns WHERE id=?",
+            [&turn_id],
+        )
+        .map_err(|e| e.message)?
+        .ok_or("Turn missing")?;
+        let binding = workspace(&state, &guard.connection, &turn)
+            .map_err(|e| e.message)?
+            .ok_or("Workspace missing")?;
+        assert_eq!(
+            binding.directory,
+            scratch.0.join("data/agent-workspaces").join(&agent)
+        );
+        assert!(binding.write);
+        assert!(binding.managed);
+        Ok(())
+    }
 }

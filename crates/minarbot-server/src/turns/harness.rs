@@ -96,6 +96,7 @@ pub fn specs(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Valu
             "create_text_file",
             "read_attachment",
             "read_workspace_file",
+            "inspect_workspace_file",
             "open_file_in_panel",
             "ask_user",
             "edit_profile",

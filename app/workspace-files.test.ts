@@ -140,7 +140,14 @@ for (const metadata of [false,true]) test(`workspace tools metadata=${metadata} 
     const side=await request(`/api/agents/${agent}/threads`,{id:randomUUID(),name:'Side'});assert.equal((await send(`/api/threads/${side.id}/turns`)).reply,expected);
     assert.equal((await send(`/api/agents/${other}/turns`)).reply,'Workspace file unavailable.');assert(advertised);
     const channel=await request('/api/channels',{id:randomUUID(),name:'Team',instructions:'Help',members:[agent],lead:agent});
-    assert.equal((await send(`/api/channels/${channel.id}/turns`)).status,'failed');assert(!advertised);
+    const channelTurn = await send(`/api/channels/${channel.id}/turns`);
+    assert.equal(channelTurn.status, 'done', channelTurn.error);
+    assert.equal(channelTurn.reply, expected);
+    assert(advertised);
+    const isolatedChannel = await request('/api/channels', { id: randomUUID(), name: 'Isolated', instructions: 'Help', members: [other], lead: other });
+    const managedChannelTurn = await send(`/api/channels/${isolatedChannel.id}/turns`);
+    assert.equal(managedChannelTurn.status, 'done', managedChannelTurn.error);
+    assert.equal(managedChannelTurn.reply, 'Workspace file unavailable.');
     await app.close();app=await startApp(options);assert.equal((await send(`/api/agents/${agent}/turns`)).reply,expected);
     await app.close();app=await startApp({...options,workspaces:[]});assert.equal((await send(`/api/agents/${agent}/turns`)).reply,'Workspace file unavailable.');assert(advertised);
   } finally {await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
