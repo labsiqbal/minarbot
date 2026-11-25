@@ -127,6 +127,7 @@ each iteration as a case.
 | `app/routine-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/artifacts.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 | `app/avatar-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
+| `app/site-tools.test.ts` | 1 | 1 | 0 | 0 (deleted) |
 
 <!-- fixture-summary -->
 
@@ -198,6 +199,12 @@ each iteration as a case.
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
 | avatar tool scopes files, journals atomic changes and preserves user changes on restart | `fx_tools::avatar_tool_scopes_files_journals_atomic_changes_and_preserves_user_changes_on_restart` | 33 -> 27 | Found F2 (fixed): the refused (409) `set_avatar` call was not journaled. Changed by #87: an unoffered `set_avatar` in a channel and the journal-trigger storage failure no longer fail the turn; over MCP the harness gets the refusal (403) or the error (500) and the turn ends `done`. The test asserts those results and that the avatar is unchanged. The 512x512 generated image is `noise::noise_png`. |
+
+### `app/site-tools.test.ts` (deleted)
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | ---: | --- |
+| site tools bind sent files and owner, journal results and never replay old mutation on restart | `fx_tools::site_tools_bind_sent_files_and_owner_journal_results_and_never_replay_old_mutation_on_restart` | 44 -> 33 | Changed by #87: an unoffered `publish_site` in a channel is refused over MCP (403) and the turn ends `done`; the test asserts the refusal. Everything else is full; the Node count includes three helper asserts. |
 
 <!-- fixture-cases -->
 
