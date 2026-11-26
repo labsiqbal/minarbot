@@ -549,7 +549,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt caller liveness and resource-boundary checks to Minarbot agents, current conversations and member projects; native Node/SQLite guards recheck access before writes and receipt replay.",
-      "compatibilityCheck": "app/mcp-feature-tools.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/rg_mcp_feature_tools.rs"
     },
     {
       "sourcePath": "apps/server/src/mcp/ThreadMetadataMcpService.ts",
@@ -565,7 +565,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt caller-namespaced metadata commands and stable results to durable request digests/plans/receipts; reuse Minarbot UI routes for validation, revisions and side effects.",
-      "compatibilityCheck": "app/mcp-feature-tools.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/rg_mcp_feature_tools.rs"
     }
   ],
   "workspaceSourceControlEntries": [
