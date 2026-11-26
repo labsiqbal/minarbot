@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -85,6 +85,9 @@ exec /bin/sh -c "$2"
     assert.equal(choices.find(choice => choice.runtime === 'codex')?.signedIn, false);
   } finally {
     await stop(child, closed);
+    // The server's container probe may let rootless Podman create storage in
+    // this HOME, with overlay work folders that have no permissions.
+    spawnSync('chmod', ['-R', 'u+rwX', directory]);
     rmSync(directory, { recursive: true, force: true });
   }
 });

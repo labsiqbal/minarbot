@@ -1,0 +1,6 @@
+# CI, release builds and local checks use the same Rust, so a new stable
+# release cannot turn CI red on its own. Raise this deliberately.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]

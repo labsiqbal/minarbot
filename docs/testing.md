@@ -26,7 +26,10 @@ the launcher path, and `MINARBOT_FAKE_BIN_DIR` the fake peer directory. One test
 host has CPUs, from 2 to 8 (`MINARBOT_TEST_SERVERS` overrides this), so waits
 stay meaningful on a loaded host. A helper that writes one-shot input to a
 command wraps the write in `input_written`: the command may reject its
-arguments and exit before it reads stdin. `crates/minarbot-e2e/tests/e2e/main.rs` is the only test binary, with
+arguments and exit before it reads stdin. A stored or streamed partial answer
+withholds a tail that could begin a secret, such as the turn's random
+base64url MCP token, so scripted partial text that a test matches exactly
+ends in a character outside that alphabet (`.` or a space). `crates/minarbot-e2e/tests/e2e/main.rs` is the only test binary, with
 one module per area.
 
 ## Kit overview

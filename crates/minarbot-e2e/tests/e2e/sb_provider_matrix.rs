@@ -52,8 +52,8 @@ fn answer(mode: &str, request: &minarbot_testkit::model::ModelRequest) -> Answer
             400,
             json!({"error": {"message": KEY, "param": "temperature"}}),
         ),
-        "stream-cut" => Answer::StreamError("Partial answer".into(), KEY.into()),
-        "stream-socket-cut" => Answer::StreamCut("Partial answer".into()),
+        "stream-cut" => Answer::StreamError("Partial answer.".into(), KEY.into()),
+        "stream-socket-cut" => Answer::StreamCut("Partial answer.".into()),
         "stream-secret" => Answer::StreamCut(KEY.into()),
         "after-tool" if !after_tool(request) => Answer::tool(
             "create_text_file",
@@ -577,7 +577,7 @@ async fn stream_cut(scenario: &str) -> Result<()> {
     );
     ensure!(row["reply"].is_null(), "{scenario} reply: {row}");
     ensure!(
-        row["partial"]["text"] == "Partial answer",
+        row["partial"]["text"] == "Partial answer.",
         "{scenario} partial: {}",
         row["partial"]
     );
