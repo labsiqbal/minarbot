@@ -57,6 +57,7 @@ mod rg_media;
 mod rg_self_verification;
 mod rg_slack_media;
 mod rg_support;
+mod rg_telegram_media;
 mod sa_agent_interrupt;
 mod sa_agent_messages;
 mod sa_agent_result_files;
