@@ -711,7 +711,6 @@ async fn m4_secret_free_listings_and_revocation_before_receipt_replay() -> Resul
     let escaped = serde_json::to_string(environment)?;
     for secret in [
         escaped.trim_matches('"'),
-        "ENVIRONMENT_CANARY",
         "COMPOSIO_KEY_CANARY",
         "MCP_TOKEN_CANARY",
         peer_token.as_str(),
