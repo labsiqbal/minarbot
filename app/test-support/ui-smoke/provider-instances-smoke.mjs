@@ -29,7 +29,7 @@ const providers = [codex, claude];
 const requests = [];
 const profileId = '0035128a-b125-450c-a39c-1b678657d2ec';
 let onboardingMode = false;
-let profile = { id: profileId, name: 'Smoke Profile', role: 'Fixture agent', hidden: false, runnable: true, revision: 1, avatarRevision: 0, visibilityRevision: 0, model: 'gpt-smoke', instructions: 'Help with smoke tests.', threadLimit: 2, toolBudget: 90, providerInstance: 'codex-smoke', provider_instance: 'codex-smoke', modelOptions: { reasoningEffort: 'low', serviceTier: 'auto' }, model_options: { reasoningEffort: 'low', serviceTier: 'auto' }, providerAvailable: true };
+let profile = { id: profileId, name: 'Smoke Profile', role: 'Fixture agent', hidden: false, runnable: true, revision: 1, avatarRevision: 0, visibilityRevision: 0, model: 'gpt-smoke', instructions: 'Help with smoke tests.', threadLimit: 2, toolBudget: 90, provider_instance: 'codex-smoke', model_options: { reasoningEffort: 'low', serviceTier: 'auto' }, providerAvailable: true };
 
 function response(route, body, status = 200) { return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }); }
 function envelope() { return { providers: providers.map(provider => ({ ...provider, environment: provider.environment.map(value => value.secret ? { ...value, value: '', valueRedacted: true } : value) })) }; }
@@ -54,18 +54,22 @@ try {
     if (request.method() !== 'POST') return route.continue();
     const body = request.postDataJSON() ?? {};
     requests.push({ path, body });
+    // The server rejects every POST without a UUID v4 request id (data.rs).
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.id ?? '')) return response(route, { error: 'Field id is invalid (maximum 36 characters).' }, 400);
+    // The server answers in snake_case only; two spellings of one field break the client's parse.
+    const { id: _requestId, providerInstance: _instance, modelOptions: _options, ...changes } = body;
     if (path === '/api/provider-instances') {
       const created = { ...codex, ...body, id: body.instanceId, revision: 1, auth: { status: 'unauthenticated', reason: 'No sign-in found in this instance home.' } };
       providers.push(created);
       return response(route, created, 201);
     }
     if (path === '/api/agents') {
-      profile = { ...profile, ...body, provider_instance: body.providerInstance ?? '', model_options: body.modelOptions ?? {}, revision: profile.revision + 1 };
+      profile = { ...profile, ...changes, id: body.id, provider_instance: body.providerInstance ?? '', model_options: body.modelOptions ?? {}, revision: profile.revision + 1 };
       return response(route, profile, 201);
     }
     const agentEdit = path.match(/^\/api\/agents\/([^/]+)\/edit$/);
     if (agentEdit) {
-      profile = { ...profile, ...body, provider_instance: body.providerInstance ?? profile.provider_instance, model_options: body.modelOptions ?? profile.model_options, revision: profile.revision + 1 };
+      profile = { ...profile, ...changes, provider_instance: body.providerInstance ?? profile.provider_instance, model_options: body.modelOptions ?? profile.model_options, revision: profile.revision + 1 };
       return response(route, profile);
     }
     const match = path.match(/^\/api\/provider-instances\/([^/]+)\/(update|refresh|delete|sign-in)$/);
@@ -77,7 +81,7 @@ try {
       return response(route, { deleted: true });
     }
     if (match[2] === 'update') {
-      Object.assign(provider, body, { revision: provider.revision + 1 });
+      Object.assign(provider, changes, { revision: provider.revision + 1 });
       if (body.environment) provider.environment = body.environment.map(value => value.secret && value.valueRedacted ? { ...value, value: 'encrypted-secret' } : value);
       return response(route, provider);
     }
@@ -176,7 +180,7 @@ try {
   await profileDialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Smoke Profile Saved');
   await profileDialog.getByRole('button', { name: 'Create agent', exact: true }).click();
   await profileDialog.waitFor({ state: 'hidden' });
-  assert.deepEqual(profile.modelOptions, { reasoningEffort: 'high', serviceTier: 'fast' });
+  assert.deepEqual(profile.model_options, { reasoningEffort: 'high', serviceTier: 'fast' });
   await page.reload();
   await page.getByLabel('Create new', { exact: true }).waitFor();
   const savedRow = page.locator('.sidebar-agent').filter({ hasText: 'Smoke Profile Saved' }).first();

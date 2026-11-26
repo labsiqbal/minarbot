@@ -205,7 +205,7 @@ pub fn panel() -> impl IntoView {
                                                 let reload = providers.reload;
                                                 let error = error;
                                                 let id = toggle_provider.id.clone();
-                                                spawn_local(async move { if let Err(message) = api::post::<Value>(&format!("{PATH}/{id}/update"), &body).await { error.set(message); } reload.run(()); });
+                                                spawn_local(async move { if let Err(message) = api::command::<Value>(&format!("{PATH}/{id}/update"), body).await { error.set(message); } reload.run(()); });
                                             }) />
                                     </div>
                                 }
@@ -217,7 +217,7 @@ pub fn panel() -> impl IntoView {
                 </div>
             </Show>
             <Show when=move || adding.get()>
-                <AddProvider close=close_add.clone() saved=move || { providers.reload.run(()); adding.set(false); } error=error />
+                <AddProvider close=close_add.clone() reload=providers.reload saved=move || { providers.reload.run(()); adding.set(false); } error=error />
             </Show>
         </div>
     }
@@ -262,7 +262,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
         let error = error;
         let request_id = save_id.clone();
         spawn_local(async move {
-            match api::post::<Instance>(&format!("{PATH}/{request_id}/update"), &body).await {
+            match api::command::<Instance>(&format!("{PATH}/{request_id}/update"), body).await {
                 Ok(_) => { saved.set("Saved".into()); reload.run(()); }
                 Err(message) => error.set(message),
             }
@@ -276,7 +276,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
         let reload = reload;
         let error = error;
         spawn_local(async move {
-            match api::post::<Value>(&format!("{PATH}/{id}/sign-in"), &json!({"instanceId":id})).await {
+            match api::command::<Value>(&format!("{PATH}/{id}/sign-in"), json!({"instanceId":id})).await {
                 Ok(_) => { saved.set("Sign-in started".into()); reload.run(()); }
                 Err(message) => error.set(message),
             }
@@ -290,7 +290,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
         let reload = reload;
         let error = error;
         spawn_local(async move {
-            let result = api::post::<Value>(&format!("{PATH}/{id}/refresh"), &json!({"instanceId":id})).await;
+            let result = api::command::<Value>(&format!("{PATH}/{id}/refresh"), json!({"instanceId":id})).await;
             if let Err(message) = result { error.set(message); } else { saved.set("Checked just now".into()); reload.run(()); }
             busy.set(false);
         });
@@ -303,7 +303,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
         confirm_open.set(false);
         spawn_local(async move {
             let request_id = id;
-            match api::post::<Value>(&format!("{PATH}/{request_id}/delete"), &json!({"instanceId":request_id,"revision":provider_revision})).await {
+            match api::command::<Value>(&format!("{PATH}/{request_id}/delete"), json!({"instanceId":request_id,"revision":provider_revision})).await {
                 Ok(_) => reload.run(()),
                 Err(message) => error.set(message),
             }
@@ -357,7 +357,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
 }
 
 #[component]
-fn AddProvider(close: UiAction, saved: impl Fn() + Copy + Send + 'static, error: RwSignal<String>) -> impl IntoView {
+fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + Copy + Send + 'static, error: RwSignal<String>) -> impl IntoView {
     let machine = query::<MachineEnvironment>(|| "/api/environment".into());
     let step = RwSignal::new(0u8);
     let kind = RwSignal::new("codex".to_owned());
@@ -378,12 +378,16 @@ fn AddProvider(close: UiAction, saved: impl Fn() + Copy + Send + 'static, error:
         if display.is_empty() { error.set("Display name is required.".into()); return; }
         let sign_in = event.submitter().and_then(|button| button.get_attribute("value")) == Some("signin".into());
         let kind_value = kind.get_untracked();
-        let body = json!({"id":uuid(),"instanceId":id,"kind":kind_value,"displayName":display,"binaryPath":binary.get_untracked().trim(),"homePath":home.get_untracked().trim(),"shadowHomePath":shadow.get_untracked().trim(),"launchArgs":args.get_untracked().lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>(),"environment":[]});
+        let body = json!({"instanceId":id,"kind":kind_value,"displayName":display,"binaryPath":binary.get_untracked().trim(),"homePath":home.get_untracked().trim(),"shadowHomePath":shadow.get_untracked().trim(),"launchArgs":args.get_untracked().lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>(),"environment":[]});
         busy.set(true);
         sign_in_status.set(String::new());
         spawn_local(async move {
-            let result = match api::post::<Instance>(PATH, &body).await {
-                Ok(_) if sign_in => api::post::<Value>(&format!("{PATH}/{id}/sign-in"), &json!({"instanceId":id})).await.map(|_| ()),
+            let result = match api::command::<Instance>(PATH, body).await {
+                Ok(_) if sign_in => {
+                    // The provider exists now; show it even while sign-in runs.
+                    reload.run(());
+                    api::command::<Value>(&format!("{PATH}/{id}/sign-in"), json!({"instanceId":id})).await.map(|_| ())
+                }
                 Ok(_) => Ok(()),
                 Err(message) => Err(message),
             };
