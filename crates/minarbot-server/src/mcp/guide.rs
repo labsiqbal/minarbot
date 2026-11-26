@@ -552,6 +552,22 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    #[test]
+    fn guide_pages_link_only_known_screens() -> Result<()> {
+        let screens = screens()?;
+        let missing: Vec<&str> = PAGES
+            .split("[[")
+            .skip(1)
+            .filter_map(|rest| rest.split_once("]]").map(|(key, _)| key))
+            .filter(|key| screens.get(*key).is_none())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "guide links without a screen: {missing:?}"
+        );
+        Ok(())
+    }
+
     struct Scratch(PathBuf);
     impl Drop for Scratch {
         fn drop(&mut self) {

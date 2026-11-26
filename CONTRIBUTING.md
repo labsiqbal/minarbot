@@ -44,13 +44,15 @@ npm run build
 npm test
 ```
 
-`npm test` drives the Rust server end to end. Build the workspace and Leptos first. Suites that need a real desktop are named `*.integration.test.ts` and run only when you pass them to `node --test` directly.
+`cargo test --workspace` includes the end-to-end suite in `crates/minarbot-e2e`, which starts the built server against the kit's fake peers. Pick the layer for a new test from [docs/testing.md](docs/testing.md).
+
+`npm test` runs the remaining Node tests while they move to Rust ([#89](https://github.com/labsiqbal/minarbot/issues/89)). Do not add Node tests. Build the workspace and Leptos first. Suites that need a real desktop are named `*.integration.test.ts` and run only when you pass them to `node --test` directly.
 
 ## Code rules
 
 - **Rust:** tests return `Result` and propagate errors with `?`. Do not use `unwrap` or `expect`.
 - **TypeScript:** lint runs with zero warnings allowed. The rules in `app/lint/` also check the client and server boundary and other project conventions.
-- **Tests:** every new behavior comes with a test. A bug fix starts with a test that fails without the fix.
+- **Tests:** every new behavior comes with a Rust test at the lowest layer that proves it. A bug fix starts with a test that fails without the fix.
 - **Honest states:** the UI and API never report success for work that did not happen. When an outcome is unknown, show it as unknown.
 - **Copy:** all user-visible text is English.
 - **Third-party code:** you may adapt code under compatible licenses (for example MIT or Apache-2.0). Keep the original license next to it and record the source in the nearby `provenance.json`. Do not copy code from projects with non-commercial or unclear licenses.

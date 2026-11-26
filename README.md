@@ -15,8 +15,8 @@ Minarbot is free and open source under the [Apache License 2.0](LICENSE).
 - **Projects** group agents around one piece of work. **Sections** inside a project are group chats for different kinds of work, such as design or backend.
 
 **Agent engines**
-- Coding harnesses: Codex, Claude Code, and ACP engines (Hermes, Antigravity, Grok, Pi, Gemini, OpenCode). First run picks up Codex or Claude Code already signed in on the machine, so no API key is needed.
-- Plain model APIs: OpenAI-compatible, Anthropic and Gemini accounts, managed in Settings.
+- Coding harnesses: Codex, Claude Code, and ACP engines (Hermes, Antigravity, Grok, Pi, Gemini, OpenCode), added as providers in **Settings > Providers**. Codex and Claude Code sign in with a ChatGPT or Claude account, so no API key is needed.
+- An agent picks a provider, one of its models, and model options such as reasoning effort.
 - Shared base instructions and a self-check before an agent reports a task as done.
 - Web search and fetch for every agent, through a search backend you choose (for example a local SearXNG).
 
@@ -65,7 +65,7 @@ For the desktop app, download the Windows installer. If SmartScreen blocks it, c
 
 ### After install
 
-Open <http://127.0.0.1:4317>. Sign in to your preferred agent engine or add an API key in **Settings > Provider accounts**. Use **Settings > Updates** for server updates.
+Open <http://127.0.0.1:4317>. Add a provider in **Settings > Providers**, sign in, and choose it for your first agent. Use **Settings > Updates** for server updates.
 
 If your data directory was created by Minarbot 0.14.0 or earlier, move it aside before installing. This release requires a fresh data directory.
 
@@ -139,7 +139,8 @@ current release, then reload the page. Restart the hosted Hub after rebuilding.
 | `crates/minarbot-launcher` | Rust launcher that starts the server, installs updates and rolls back |
 | `app/src` | TypeScript browser adapters and test helpers |
 | `crates/web` | Leptos route groups, WASM bootstrap, and hosted Hub assets |
-| `app/*.test.ts` | Node test suite that drives the Rust server end to end |
+| `crates/minarbot-e2e`, `crates/minarbot-testkit` | Rust end-to-end tests and the kit that runs the server against fake peers |
+| `app/*.test.ts` | Remaining Node tests, moving to Rust in [#89](https://github.com/labsiqbal/minarbot/issues/89) |
 | `desktop` | Electron desktop app (AppImage, DMG, NSIS) |
 | `crates/xtask` | Release, packaging, smoke tests and gates |
 | `scripts` | Install scripts and release budgets |
