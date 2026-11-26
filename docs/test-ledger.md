@@ -557,7 +557,7 @@ Behaviour that changed with #87, and how the ports treat it:
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | ---: | --- |
-| incremental compaction keeps source scopes, originals, provenance and failure fallback | `sb_compaction::incremental_compaction_keeps_source_scopes_originals_provenance_and_failure_fallback` | 24 -> 20 | Dropped: `data.tools === undefined` on the summary request (a harness CLI always exposes MCP tools). The 1 s `timeout` still bounds each harness call, so a stalled summary falls back to history. |
+| incremental compaction keeps source scopes, originals, provenance and failure fallback | `sb_compaction::incremental_compaction_keeps_source_scopes_originals_provenance_and_failure_fallback` | 24 -> 20 | Dropped: `data.tools === undefined` on the summary request (a harness CLI always exposes MCP tools). The 5 s `timeout` bounds each harness call on shared hosts, so a stalled summary falls back to history. |
 | Rust compaction fences stale responses, changed sources, cancelled turns and future watermarks | `sb_compaction::rust_compaction_fences_stale_responses_changed_sources_cancelled_turns_and_future_watermarks` | 14 -> 17 | Full. |
 
 ### `app/crash.test.ts`

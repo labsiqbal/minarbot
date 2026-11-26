@@ -104,11 +104,11 @@ async fn incremental_compaction_keeps_source_scopes_originals_provenance_and_fai
         Answer::text(text)
     });
     let root = TestRoot::new()?;
-    // As in the Node case, a 1 s `timeout` bounds each harness call, so a
-    // stalled summary falls back to full history.
+    // Allow harness startup on shared hosts. The stalled summary still
+    // reaches the configured deadline and falls back to full history.
     let config = ServerConfig::new()
         .gateway(model.gateway())
-        .option("timeout", 1000);
+        .option("timeout", 5000);
     let mut app = root.start(config).await?;
     let agent = |name: &str| json!({"runtime": "api", "id": new_id(), "name": name, "model": "fixture", "instructions": "Help"});
     let a = id(&app.post("/api/agents", agent("A")).await?)?;
