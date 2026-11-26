@@ -24,8 +24,8 @@ let stream = env('MINARBOT_GATEWAY_STREAM') === 'true';
 let toolBudget = Number(env('MINARBOT_TOOL_BUDGET')) || 200;
 let workspace = process.cwd();
 let savedMessages;
-const persistSession = true;
-const saveSession = messages => { if (persistSession) { savedMessages = messages; writeFileSync(`${workspace}/.fake-gateway-${session}.json`, JSON.stringify(messages)); } };
+const sessionFile = () => `${env('MINARBOT_GATEWAY_SESSION_DIR') || workspace}/.fake-gateway-${session}.json`;
+const saveSession = messages => { savedMessages = messages; writeFileSync(sessionFile(), JSON.stringify(messages)); };
 const activeRuns = new Map();
 let nextId = 1;
 
@@ -90,6 +90,7 @@ const providerRequest = async (body, signal) => {
     signal,
     body: JSON.stringify(body),
   });
+  if (response.status === 400) throw new Error('The provider rejected the request (HTTP 400). Check model and provider compatibility.');
   if (!response.ok) throw new Error(`Gateway provider returned ${response.status}`);
   if (!body.stream) return response.json();
   const text = await response.text();
@@ -248,7 +249,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       workspace = value.params?.cwd ?? workspace;
       session = value.params?.threadId ?? session;
       model = value.params?.model ?? model;
-      const saved = `${workspace}/.fake-gateway-${session}.json`;
+      const saved = sessionFile();
       if (value.method === 'thread/resume' && existsSync(saved)) {
         try { savedMessages = JSON.parse(readFileSync(saved, 'utf8')); } catch { savedMessages = undefined; }
       }

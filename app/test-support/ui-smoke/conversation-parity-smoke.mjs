@@ -61,6 +61,7 @@ try {
       { name: 'MINARBOT_PROVIDER_KEY', value: 'synthetic', secret: true },
       { name: 'MINARBOT_GATEWAY_MODEL', value: model },
       { name: 'MINARBOT_GATEWAY_STREAM', value: 'false' },
+      { name: 'MINARBOT_GATEWAY_SESSION_DIR', value: work },
     ] });
   const agent = await api('/api/agents', { id: ids.agent, name: 'Conversation fixture', instructions: 'Reply to fixture prompts.', model, providerInstance: 'codex-test-gateway' });
   const main = `/agents/${agent.id}`;
