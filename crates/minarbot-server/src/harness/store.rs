@@ -303,6 +303,7 @@ pub async fn approve(
             None => Some(""),
         };
         let mut secrets = vec![token.to_owned()];
+        secrets.extend(state.computer.hub.meter.secret(turn_id));
         if let Some(instance) = crate::data::provider_instances::launch_config_from_db(
             state,
             db,
@@ -554,6 +555,7 @@ async fn execute(
     launch_args: Option<Vec<String>>,
     model_options: Value,
     clock: Option<config::TurnClock>,
+    meter: Option<&crate::hub::meter::Handle<'_>>,
 ) -> Result<String> {
     let executable = executable.ok_or_else(|| {
         error(
@@ -774,6 +776,21 @@ async fn execute(
     if let Some(extra) = launch_args {
         args.extend(extra);
     }
+    if let Some((meter, provider)) = meter.and_then(|meter| {
+        meter
+            .codex_provider
+            .as_deref()
+            .map(|provider| (meter, provider))
+    }) {
+        let key = format!("model_providers.{provider}");
+        for option in [
+            format!("model_provider={}", json!(provider)),
+            format!("{key}.base_url={}", json!(meter.url)),
+            format!("{key}.supports_websockets=false"),
+        ] {
+            args.extend(["-c".into(), option]);
+        }
+    }
     let turn_id = string(turn, "id");
     let mut child = TurnProcess {
         process: Some({
@@ -826,6 +843,9 @@ async fn execute(
         }
         if !native_model.is_empty() {
             params["model"] = json!(native_model);
+        }
+        if let Some(provider) = meter.and_then(|meter| meter.codex_provider.as_deref()) {
+            params["modelProvider"] = json!(provider);
         }
         if let Some(effort) = model_options["reasoningEffort"].as_str() {
             params["modelReasoningEffort"] = json!(effort);
@@ -984,17 +1004,16 @@ async fn execute(
     let mut claude_tools = HashMap::<String, (String, Option<String>)>::new();
     for pass in 0..2 {
         let prompt_id;
-        let provider_effect = crate::computer::hub::before_effect(
-            state,
-            turn_id,
-            "provider",
-            json!({"model": model, "phase": phase}),
-        )
-        .await?;
-        // Provider inference has no user-visible side effect. Reserve its
-        // hub budget before dispatch and close receipt before the harness can
-        // wait on tool approvals or other work.
-        crate::computer::hub::finish_effect(state, provider_effect, "succeeded").await?;
+        if meter.is_none() {
+            let effect = crate::computer::hub::before_effect(
+                state,
+                turn_id,
+                "provider",
+                json!({"model": model, "phase": phase}),
+            )
+            .await?;
+            crate::computer::hub::finish_effect(state, effect, "succeeded").await?;
+        }
         if runtime == "codex" {
             let context = additional_context(&instructions);
             let mut input = vec![json!({"type":"text","text":prompt})];
@@ -1197,7 +1216,7 @@ async fn execute(
                     return Err(if message.is_empty() {
                         process::stopped()
                     } else {
-                        error(502, message)
+                        error(502, redact(message, &native_secrets, false))
                     });
                 }
             } else if runtime == "claude" {
@@ -1730,6 +1749,28 @@ pub async fn run(
         )?);
     }
     env.extend(instance_environment.clone());
+    let test_gateway = state.config.harness.test_mode && instance_id == "codex-test-gateway";
+    let meter = crate::hub::meter::start(
+        state,
+        turn_id,
+        runtime,
+        &env,
+        instance_args.as_deref().unwrap_or_default(),
+        test_gateway,
+        json!({"model": model, "phase": phase}),
+    )?;
+    if let Some(meter) = &meter {
+        match runtime {
+            "claude" => env.insert("ANTHROPIC_BASE_URL".into(), meter.url.clone()),
+            "codex" if test_gateway => {
+                env.insert("MINARBOT_GATEWAY_BASE_URL".into(), meter.url.clone())
+            }
+            _ => None,
+        };
+        // Provider clients must reach the in-process meter directly.
+        env.insert("NO_PROXY".into(), "*".into());
+        env.insert("no_proxy".into(), "*".into());
+    }
     if let Some(tool_budget) = profile["tool_budget"].as_i64() {
         // A continuation (question answer, restart) keeps the attempt's
         // budget; resume and reassign reset `tool_budget_used` first.
@@ -1885,6 +1926,7 @@ pub async fn run(
         data::provider_instances::secret_environment_values(state, &guard.connection, instance_id)?
     };
     let mut secrets = vec![token.clone()];
+    secrets.extend(meter.as_ref().map(|meter| meter.secret().to_owned()));
     secrets.extend(instance_secrets);
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -1917,6 +1959,7 @@ pub async fn run(
             instance_args.clone(),
             model_options.clone(),
             clock,
+            meter.as_ref(),
         )
     };
     // Dropping execute flushes partial output and schedules the ACP cancel. The turn worker
@@ -1936,6 +1979,11 @@ pub async fn run(
             result = operation(Some(active.clock.clone())) => result,
         }
     };
+    let result = match meter.as_ref().and_then(|meter| meter.failure()) {
+        Some(failure) => Err(failure),
+        None => result,
+    };
+    drop(meter);
     if memory && result.is_err() {
         let db = state.database.lock().map_err(|_| Failure::storage())?;
         db.connection.execute(
