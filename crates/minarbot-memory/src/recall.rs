@@ -206,11 +206,11 @@ fn vectors(db: &Connection, q: &Query<'_>, vector: &[f32; DIMENSIONS]) -> Result
         let dot = row
             .get_ref(1)?
             .as_blob()?
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .zip(vector)
-            .map(|(bytes, value)| {
-                f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) * value
-            })
+            .map(|(bytes, value)| f32::from_le_bytes(*bytes) * value)
             .sum::<f32>();
         scored.push((row.get(0)?, dot));
     }
