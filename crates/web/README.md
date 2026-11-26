@@ -69,24 +69,12 @@ and [test ledger](../../docs/test-ledger.md#67-ui-coverage-ledger).
 
 ## Verify
 
-Install the pinned Playwright dependencies and Chromium:
+The Rust browser smokes in `crates/minarbot-e2e/tests/e2e/browser_smokes.rs`
+drive this client in headless Chrome. Build the client first, then run them
+with the e2e suite (see [testing](../../docs/testing.md#ui-smokes)):
 
 ```sh
-npm ci --prefix app/test-support/ui-smoke
-(cd app/test-support/ui-smoke && npx playwright-core install --with-deps chromium)
-```
-
-Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`, `CHROME_PATH`, or `CHROME_BIN` when the
-smoke runner needs an external Chromium executable. See the
-[golden gate guide](../../app/test-support/ui-smoke/PARITY.md) for commands,
-timing ceilings, and screenshot thresholds.
-
-The release browser smoke expects an extracted dry-run runtime archive and a
-screenshot directory. It launches on loopback with an isolated installation
-and a synthetic provider. It opens main routes with both empty and copied
-synthetic data, checks journal recovery, and checks for duplicate sends.
-
-```sh
-cd app
-node --experimental-strip-types test-support/ui-smoke/release-browser-smoke.mjs <extracted-runtime> <screenshot-directory>
+~/.cache/minarbot-cargo-slot.sh cargo xtask leptos
+~/.cache/minarbot-cargo-slot.sh cargo build -p minarbot-server -p minarbot-testkit -p minarbot-launcher
+~/.cache/minarbot-cargo-slot.sh cargo test -p minarbot-e2e browser_smokes
 ```

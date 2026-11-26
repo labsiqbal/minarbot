@@ -25,6 +25,9 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: cargo fmt --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      # The e2e browser smokes serve the built client in the runner's Chrome.
+      - name: Build Leptos web client
+        run: cargo xtask leptos
       - run: cargo test --locked --workspace
       - run: cargo build --locked --workspace
       - working-directory: app
@@ -32,13 +35,6 @@ jobs:
       - name: Lint and type-check Node tests and browser adapters
         working-directory: app
         run: npm run lint && npm run build
-      - name: Build Leptos web client
-        run: cargo xtask leptos
-      - working-directory: app/test-support/ui-smoke
-        run: |
-          npm ci
-          npx playwright-core install --with-deps chromium
-          node appearance-smoke.mjs
       - name: App tests against Rust workspace and hosted Hub
         working-directory: app
         env:
