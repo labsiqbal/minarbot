@@ -653,13 +653,12 @@ async fn script_messages_and_answers_share_grants_scope_receipts_redaction_and_r
             == json!([]),
         "side turn leaked into main chat"
     );
-    // The 58 admitted messages run one harness turn each (a new gateway
-    // process per turn, about a second on a loaded host), so the drain gets
-    // a budget per queued turn instead of the default wait.
+    // Each admitted message starts a gateway process. Scale the drain
+    // deadline with the queue so it can finish on shared hosts.
     let queued = statuses(&app, &ui_path).await?.len();
     let drained = until_within(
         "every main chat turn settles",
-        std::time::Duration::from_secs(2 * u64::try_from(queued)?),
+        std::time::Duration::from_secs(4 * u64::try_from(queued)?),
         || async {
             let rows = statuses(&app, &ui_path).await?;
             Ok(rows

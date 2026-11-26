@@ -314,7 +314,7 @@ failed MCP tool calls (several cases), all removed with the #87 API runtime.
 
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | ---: | --- |
-| script messages and answers share grants, scope, receipts, redaction and rate admission | `fx_scripts::script_messages_and_answers_share_grants_scope_receipts_redaction_and_rate_admission` | 45 -> 50 | Full, with the strict `calls === 2` since the #89 integration. The fixed clock replaces the mocked `Date`. The 58 admitted messages each run one harness turn, so the drain before the restart waits 2 s per queued turn. |
+| script messages and answers share grants, scope, receipts, redaction and rate admission | `fx_scripts::script_messages_and_answers_share_grants_scope_receipts_redaction_and_rate_admission` | 45 -> 50 | Full, with the strict `calls === 2` since the #89 integration. The fixed clock replaces the mocked `Date`. The 58 admitted messages each run one harness turn. The drain before restart allows 4 s per queued turn on shared hosts. |
 
 ### `app/flow-tools.test.ts` (deleted)
 
