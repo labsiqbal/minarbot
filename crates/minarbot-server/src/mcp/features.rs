@@ -1044,6 +1044,9 @@ async fn delegation(state: &AppState, c: &Value, name: &str, a: &Value) -> Resul
         }
     };
     if name == "wait_task" {
+        // Registered before the durable row exists, so `messaging::settle`
+        // leaves this wait to the call until it returns.
+        let _blocking = messaging::BlockingWait::start(string(a, "taskId"));
         let (delivery, wait_id) = {
             let guard = state.database.lock().map_err(|_| Failure::storage())?;
             let db = &guard.connection;

@@ -201,7 +201,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Rust-native durable evidence stamps and artifact receipts preserve self-verification behavior.",
-      "compatibilityCheck": "app/self-verification.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/rg_self_verification.rs"
     }
   ],
   "licenseSha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",
@@ -518,7 +518,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/mcp-server.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/rg_mcp_server.rs"
     },
     {
       "sourcePath": "apps/server/src/mcp/McpHttpServer.ts",
@@ -533,7 +533,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/mcp-server.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/rg_mcp_server.rs"
     },
     {
       "sourcePath": "apps/server/src/mcp/threadAccess.ts",
@@ -549,7 +549,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt caller liveness and resource-boundary checks to Minarbot agents, current conversations and member projects; native Node/SQLite guards recheck access before writes and receipt replay.",
-      "compatibilityCheck": "app/mcp-feature-tools.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/rg_mcp_feature_tools.rs"
     },
     {
       "sourcePath": "apps/server/src/mcp/ThreadMetadataMcpService.ts",
@@ -565,7 +565,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt caller-namespaced metadata commands and stable results to durable request digests/plans/receipts; reuse Minarbot UI routes for validation, revisions and side effects.",
-      "compatibilityCheck": "app/mcp-feature-tools.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/rg_mcp_feature_tools.rs"
     }
   ],
   "workspaceSourceControlEntries": [
@@ -2453,7 +2453,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Adapt runtime identity and inline Markdown file links to Minarbot file URLs; Minarbot extends the app guidance with bounded verification, request review and work-log evidence.",
-      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; crates/minarbot-e2e/tests/e2e/harness.rs; app/acp-harness.test.ts; app/self-verification.test.ts; app/navigation.test.ts"
+      "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; crates/minarbot-e2e/tests/e2e/harness.rs; app/acp-harness.test.ts; crates/minarbot-e2e/tests/e2e/rg_self_verification.rs; app/navigation.test.ts"
     },
     {
       "sourcePath": "apps/server/src/provider/CodexDeveloperInstructions.ts",
@@ -2489,7 +2489,7 @@
       "notice": "app/t3/NOTICE",
       "dependencies": [],
       "adaptation": "Rust-owned JSON instruction layer preserves runtime safety and tool guidance; no Node runtime import.",
-      "compatibilityCheck": "app/base-instructions-scenario.test.ts; app/self-verification.test.ts"
+      "compatibilityCheck": "app/base-instructions-scenario.test.ts; crates/minarbot-e2e/tests/e2e/rg_self_verification.rs"
     }
   ],
   "rustHarnessSourceEntries": [

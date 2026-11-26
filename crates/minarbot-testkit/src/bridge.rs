@@ -211,6 +211,9 @@ impl Bridge {
             .route("/", post(operation))
             .route("/composio-key", get(key))
             .route("/{name}", post(path))
+            // PDF renders carry attachments up to 10 MiB; axum's default
+            // 2 MiB limit answered them 413 (the Node bridge had none).
+            .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
             .with_state(shared);
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let origin = format!("http://{}", listener.local_addr()?);

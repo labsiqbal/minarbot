@@ -2,6 +2,47 @@
 
 use super::*;
 
+/// Tasks a blocking MCP `wait_task` call is waiting on, by count. Its
+/// `delegation_waits` row only keeps the wait durable across a restart:
+/// while the call is still in flight, [`settle`] must neither resume nor
+/// wake the parked turn, or the turn is requeued under its live harness run
+/// and the run's MCP session is fenced.
+static BLOCKING_WAITS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, usize>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn blocking_waits() -> std::sync::MutexGuard<'static, std::collections::HashMap<String, usize>> {
+    BLOCKING_WAITS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Marks `task` as awaited by an in-flight MCP call until dropped.
+pub struct BlockingWait(String);
+
+impl BlockingWait {
+    pub fn start(task: &str) -> Self {
+        *blocking_waits().entry(task.to_owned()).or_default() += 1;
+        Self(task.to_owned())
+    }
+}
+
+impl Drop for BlockingWait {
+    fn drop(&mut self) {
+        let mut waits = blocking_waits();
+        if let Some(count) = waits.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                waits.remove(&self.0);
+            }
+        }
+    }
+}
+
+fn blocking(task: &str) -> bool {
+    blocking_waits().contains_key(task)
+}
+
 fn ancestors(db: &Connection, turn: &str) -> Result<Vec<Value>> {
     all(db,"WITH RECURSIVE tree AS(SELECT id,parent,agent,channel,thread,message_depth FROM turns WHERE id=? UNION ALL SELECT t.id,t.parent,t.agent,t.channel,t.thread,t.message_depth FROM turns t JOIN tree ON t.id=tree.parent) SELECT * FROM tree",[turn])
 }
@@ -814,6 +855,9 @@ pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
         "SELECT * FROM delegation_waits WHERE status='waiting'",
         [],
     )? {
+        if blocking(string(&wait, "task")) {
+            continue;
+        }
         let caller = one(
             db,
             "SELECT * FROM turns WHERE id=?",
@@ -851,6 +895,9 @@ pub fn settle(state: &AppState, db: &Connection) -> Result<()> {
         )?;
     }
     for task in all(db,"SELECT d.* FROM delegation_tasks d JOIN turns t ON t.id=d.delivery WHERE d.wake_delivered=0 AND t.status IN('done','failed','cancelled','interrupted')",[])? {
+        if blocking(string(&task, "id")) {
+            continue;
+        }
         let parent=one(db,"SELECT * FROM turns WHERE id=?",[string(&task,"creator_turn")])?.ok_or_else(Failure::storage)?;
         let result=status(db,&parent,string(&task,"id"))?;
         if ["queued","running","waiting"].contains(&string(&result,"status")) {continue;}
