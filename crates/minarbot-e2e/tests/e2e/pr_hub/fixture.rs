@@ -904,8 +904,18 @@ impl Hub {
         target: Option<&Project>,
     ) -> Result<Proposal> {
         let policy = self.policy(node, invocation, target).await?;
+        self.grant(node, &policy, 100, target).await
+    }
+
+    pub async fn grant(
+        &self,
+        node: &Node,
+        policy: &Value,
+        provider_max: i64,
+        target: Option<&Project>,
+    ) -> Result<Proposal> {
         let proposal = self
-            .propose(&node.account, &node.agent_id, &policy, 100, target)
+            .propose(&node.account, &node.agent_id, policy, provider_max, target)
             .await?;
         self.consent(&proposal, target).await?;
         let target = target.unwrap_or(&self.project);
@@ -914,7 +924,7 @@ impl Hub {
             "/api/hub-link/grants/approve",
             Some(json!({"projectId": target.project_id, "participationId": proposal.participation_id,
                 "agentId": node.agent_id, "localAgentId": node.agent["id"], "revision": proposal.revision,
-                "policy": policy, "providerMaxCostMicros": 100})),
+                "policy": policy, "providerMaxCostMicros": provider_max})),
             200,
         )
         .await?;

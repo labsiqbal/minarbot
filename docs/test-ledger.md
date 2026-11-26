@@ -1263,7 +1263,7 @@ travels across machines and stops ping-pong" (`pr_remote_agents::delegation_dept
 broadcast yields delegate_task to parallel children and resumes once"
 (`pr_room_chat::serialized_broadcast_yields_delegate_task_to_parallel_children_and_resumes_once`,
 5 -> 5). `app/room-chat.test.ts` is deleted; `app/remote-agents.test.ts`
-keeps its TypeScript-module case. P6 stays in `app/hub-link.test.ts`.
+keeps its TypeScript-module case.
 
 ### Node cases left from #89
 
@@ -1272,8 +1272,7 @@ Every remaining case tests a TypeScript module and stays until #89 S3:
 `composio` (1), `dispatch` (1), `turn-stream` (1), `memory` (1),
 `memory-selection` (1), `workflow-http` (1), `tool-budget` (1) and
 `remote-agents` (1), all `app/<name>.test.ts`, plus the peers slice's
-TS-module cases in `app/hub-link.test.ts` and its P6 case, which needs an
-Owner decision.
+TypeScript signature case in `app/hub-link.test.ts`.
 
 ## #67 hosted Hub test migration
 
@@ -1772,7 +1771,7 @@ Node `receive` hook and `WebSocket.prototype.send` patches. The shared
 | provider partial snapshots stream over real WebSockets before final | `pr_hub::cases::provider_partial_snapshots_stream_over_real_websockets_before_final` | 4 -> 4 |  |
 | browser code alone cannot redeem enrollment; node upgrade rejects browser credentials | `pr_hub::cases::browser_code_alone_cannot_redeem_enrollment_node_upgrade_rejects_browser_credentials` | 2 -> 2 |  |
 | reconnect fences old generation; session expiry renews with node key and never replays completed work | `pr_hub::cases::reconnect_fences_old_generation_session_expiry_renews_with_node_key_and_never_replays_completed_work` | 3 -> 3 |  |
-| local provider spend ceiling refuses next request before dispatch | Kept in Node | 1 -> - | Open product gap P6, needs an Owner decision. |
+| local provider spend ceiling refuses next request before dispatch | `pr_hub::meter::local_provider_spend_ceiling_refuses_next_request_before_dispatch` | 1 -> 5 | P6. Checks hub failure, one model call, 100 micros reserved, the local budget error and the original file content. |
 | lost enrollment redemption response recovers with signed node proof | `pr_hub::cases::lost_enrollment_redemption_response_recovers_with_signed_node_proof` | 2 -> 2 |  |
 | changed local agent policy rejects an existing hub grant before provider dispatch | `pr_hub::cases::changed_local_agent_policy_rejects_an_existing_hub_grant_before_provider_dispatch` | 1 -> 1 |  |
 | revoking alpha preserves simultaneous beta work on the same node | `pr_hub::cases::revoking_alpha_preserves_simultaneous_beta_work_on_the_same_node` | 5 -> 5 |  |
@@ -2030,11 +2029,11 @@ lose the receiver's apply reply.
 | 25 KB/s control keeps fan-out open beyond 60 seconds | `kb_per_second_25_control_keeps_fan_out_open_beyond_60_seconds` | 3 -> 3 | Opt-in in Node (`MINARBOT_PEER_CONTROL=1`); runs every time in Rust (about 65 s). |
 | 20.8 MB peer archive reaches launcher at N KB/s | Not ported | 5 -> - | A loop over `MINARBOT_PEER_TEST_RATES`, which is empty by default, so it produced no runtime case. It is a manual throughput benchmark (about 12 minutes at 30 KB/s), not a contract. |
 
-### Open product gaps (Node case kept)
+### Product gap resolved after the peers port
 
-| Gap | Kept Node case | Detail |
+| Gap | Rust test | Detail |
 | --- | --- | --- |
-| P6 | `app/hub-link.test.ts` "local provider spend ceiling refuses next request before dispatch" | `harness/store.rs` reserves the hub provider budget (`before_effect(... "provider")`) once per harness pass. A CLI harness makes several model calls inside one pass (here: the call after an approved tool), so a grant with room for one paid request still makes two. The turn then fails on `spend_limit` at the next pass. Enforcing a per-request ceiling under native harnesses needs a design decision (count MCP tool steps, or refuse multi-step passes for capped grants). |
+| P6 | `pr_hub::meter::local_provider_spend_ceiling_refuses_next_request_before_dispatch` | Resolved in #87. The loopback meter reserves before each provider POST and refuses requests over the grant ceiling. |
 
 ## #89 regressed files
 
@@ -2061,7 +2060,7 @@ is not counted.
 | self-verification: synthetic done without verification gets one nudge ... | Stale. Harness turns get the verification reminder as the follow-up user prompt. The system message that the API runtime rewrote is gone. The Node script looked only at `messages[0]`. | The port's script detects the reminder in the last user message. The nudge, its order and the reply are unchanged. |
 | slack-media: Slack files snapshot bytes and retry uploads and turns without duplicate work | Stale fixture. Since #87 (cfe9f09d), images reach Codex as `input_image` items. `app/fixtures/fake-gateway-harness.mjs` forwarded only the text, so the image never reached the provider. The Rust `fake-gateway` forwards these items. | No product change. |
 | telegram-media: Telegram media uploads once in requester thread ... | Stale fixture, as for Slack. | No product change. |
-| hub-link: local provider spend ceiling refuses next request before dispatch | Open product gap P6. | Kept in Node, unchanged. |
+| hub-link: local provider spend ceiling refuses next request before dispatch | P6: the harness reserved once per pass. | Ported to Rust after #87 added the per-request meter. |
 
 ### Product fix
 
@@ -2088,8 +2087,8 @@ other helper is in the new `rg_support.rs` and `rg_media.rs` modules.
 | `app/self-verification.test.ts` | 1 | 1 | 0, file deleted |
 | `app/slack-media.test.ts` | 1 | 1 | 0, file deleted |
 | `app/telegram-media.test.ts` | 1 | 1 | 0, file deleted |
-| `app/hub-link.test.ts` | 2 | 0 | 2 (TS module, P6) |
-| Total | 21 | 18 | 3 |
+| `app/hub-link.test.ts` | 2 | 1 | 1 (TS module) |
+| Total | 21 | 19 | 2 |
 
 ### Case map
 
@@ -2116,7 +2115,7 @@ other helper is in the new `rg_support.rs` and `rg_media.rs` modules.
 | slack-media: Slack files snapshot bytes and retry uploads and turns without duplicate work | `rg_slack_media::slack_files_snapshot_bytes_and_retry_uploads_and_turns_without_duplicate_work` | 33 -> 33 | Uses `platform::ConnectorFixture` with path-matching faults. A recorder in front of Minarbot keeps the upload requests for the identity check. Bot-token checks on the fake file API are collected and asserted at the end. |
 | telegram-media: Telegram media uploads once in requester thread and retries lost uploads/messages with original bytes | `rg_telegram_media::telegram_media_uploads_once_in_requester_thread_and_retries_lost_uploads_messages_with_original_bytes` | 36 -> 35 | The late upload is a `SplitRequest` whose last bytes arrive after the revocation. |
 | hub-link: signed envelopes reject forged payloads, keys and directions | Kept in Node | 5 -> - | Tests `app/test-support/hub-node-signature.ts`. |
-| hub-link: local provider spend ceiling refuses next request before dispatch | Kept in Node | 1 -> - | Open product gap P6 (see the peers slice). |
+| hub-link: local provider spend ceiling refuses next request before dispatch | `pr_hub::meter::local_provider_spend_ceiling_refuses_next_request_before_dispatch` | 1 -> 5 | P6, see the peers slice. |
 
 ## #89 history
 

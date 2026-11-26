@@ -29,6 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 type Result<T> = std::result::Result<T, Failure>;
 #[derive(Default)]
 pub struct Hub {
+    pub(crate) meter: crate::hub::meter::Registry,
     current: Mutex<Current>,
     stopped: AtomicBool,
     calls: Mutex<HashMap<String, oneshot::Sender<Result<Value>>>>,
@@ -842,6 +843,14 @@ pub fn check(state: &AppState, turn: &str) -> Result<Option<Value>> {
     let frame: Value = serde_json::from_str(text(&row, "frame")).map_err(|_| Failure::storage())?;
     authorize(state, &frame, true)?;
     Ok(Some(frame))
+}
+
+pub fn provider_ceiling(state: &AppState, turn: &str) -> Result<bool> {
+    let Some(frame) = check(state, turn)? else {
+        return Ok(false);
+    };
+    let local = local_grant(state, &frame)?;
+    Ok(local["policy"]["maxCostMicros"].is_u64() && local["providerMaxCostMicros"].is_u64())
 }
 fn cancel(state: &AppState, turn: &str) -> Result<()> {
     db(state, |db| {

@@ -1,6 +1,7 @@
 mod authority;
 mod browser;
 mod fixture;
+pub(crate) mod meter;
 mod node;
 mod routing;
 #[cfg(test)]

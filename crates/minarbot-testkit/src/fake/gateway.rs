@@ -569,7 +569,8 @@ async fn run(peer: Peer, prompt: String, additional: Value, images: Vec<String>)
         }
         super::log(
             LOG,
-            &json!({"stage": "provider", "pid": std::process::id(), "messages": body["messages"].as_array().map_or(0, Vec::len)}),
+            &json!({"stage": "provider", "pid": std::process::id(), "messages": body["messages"].as_array().map_or(0, Vec::len),
+                "hubMeter": peer.provider_url.contains("/api/hub-meter/")}),
         );
         let item = Uuid::new_v4().to_string();
         let (value, deltas) = peer.provider(&body, &item).await?;

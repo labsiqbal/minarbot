@@ -853,6 +853,7 @@ async fn main() -> db::Result<()> {
             state.clone(),
             auth::pairing::gate,
         ))
+        .merge(hub::meter::routes())
         .with_state(state);
     println!("Minarbot: {origin}");
     let result = if let Some(tls) = tls {
