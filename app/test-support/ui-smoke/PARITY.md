@@ -14,7 +14,7 @@ cd app
 ```
 
 Each of 16 groups runs its Leptos smoke once against disposable data. The gate
-matches 576 captures to `baselines/<group>/<pair>.png`, frozen from `820e994`.
+matches 572 captures to `baselines/<group>/<pair>.png`, frozen from `820e994`.
 It fails on missing or extra PNGs, failed smokes, mismatched dimensions, more
 than 100 changed RGB pixels, or more than 24 pixels with a channel delta above
 16. The formerly exempt ten narrow Hub baselines are Leptos captures and use
@@ -45,9 +45,8 @@ the live test uses an ephemeral port or temporary root. Assertions still use
 the real disposable fixture. Capture-only text substitutions restore the
 original values before the smoke continues, so future captures stay stable.
 
-The automation gateway redacts the synthetic word `fixture` in agent replies.
-Automation captures restore `Automation [REDACTED] completed.` to
-`Automation fixture completed.` inside the reply text bounds.
+Automation agents set their model explicitly. The gateway fixture leaves its
+default model unset so sidebar redaction preserves `Automation fixture completed.`.
 
 No frozen PNG was replaced for #67. A fixture-only replacement is allowed when
 the original UUID, port, or timestamp cannot be recovered cheaply. Review the

@@ -39,7 +39,7 @@ const fixtureIds = { agent: randomUUID(), other: randomUUID(), workflow: randomU
 
 async function exercise(client) {
   const app = await startApp({ database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, fixedClock: fixtureClock,
-    defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', stream: false });
+    baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', stream: false });
   const context = await browser.newContext({ viewport: sizes.desktop, timezoneId: 'UTC' });
   const errors = [], failedExpected = [];
   await context.addInitScript(() => {
@@ -82,7 +82,7 @@ async function exercise(client) {
       for (const theme of ['dark', 'light']) {
         await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${client} ${name} overflows ${viewport}`);
-        await withFixtureText(page, [['Automation [redacted] completed.', 'Automation fixture completed.']], () => parityShot(page, join(output, `${client}-${name}-${viewport}-${theme}.png`)));
+        await parityShot(page, join(output, `${client}-${name}-${viewport}-${theme}.png`));
       }
     }
     await page.setViewportSize(sizes.desktop);
@@ -243,7 +243,7 @@ async function exercise(client) {
     await page.getByText('Daily summary', { exact: true }).click();
     await button('Open run').click();
     await page.locator('.workflow-run-node').filter({ hasText: 'Completed' }).first().waitFor();
-    await page.locator('main .markdown strong').filter({ hasText: 'Automation [redacted] completed.' }).first().waitFor();
+    await page.locator('main .markdown strong').filter({ hasText: 'Automation fixture completed.' }).first().waitFor();
     await inspectGraph('completed run');
     await capture('workflow-run', heading('Run history'));
     {
@@ -273,7 +273,7 @@ async function exercise(client) {
     }
     await issue1Smoke({ page, routineId: fixtureIds.webhookRoutine,
       check: async (name, run) => { if (name.startsWith('Routine templates')) await run(); },
-      screenshot: name => withFixtureText(page, [[origin, 'http://127.0.0.1:33797'], ['Automation [redacted] completed.', 'Automation fixture completed.']],
+      screenshot: name => withFixtureText(page, [[origin, 'http://127.0.0.1:33797']],
         () => parityShot(page, join(output, `${client}-${name}.png`))),
     });
     await open('/workflows', 'Workflows');
@@ -283,7 +283,7 @@ async function exercise(client) {
     await button('Enable browser notifications').waitFor();
     await page.getByText('Daily summary', { exact: true }).click();
     await heading('Daily summary').waitFor();
-    await page.locator('main .markdown strong').filter({ hasText: 'Automation [redacted] completed.' }).first().waitFor();
+    await page.locator('main .markdown strong').filter({ hasText: 'Automation fixture completed.' }).first().waitFor();
     await button('Back to workflows').click();
     await button('New workflow').click();
     dialog = page.getByRole('dialog', { name: 'New workflow' });
