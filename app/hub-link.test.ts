@@ -254,18 +254,3 @@ test('signed envelopes reject forged payloads, keys and directions', () => {
         assert.throws(() => verifiedNodeMessage(value, key, 'hub'));
     assert.throws(() => verifiedNodeMessage(envelope, key, 'node'));
 });
-// Kept for open product gap P6 (docs/test-ledger.md): native harness turns reserve the hub
-// provider budget once per harness pass, so the second paid call is not refused.
-test('local provider spend ceiling refuses next request before dispatch', async (t) => {
-    const f = await fixture(t, body => body.messages.some((m: any) => m.role === 'tool') ? 'Second paid call' : ({ id: 'budget-tool', type: 'function', function: { name: 'create_text_file', arguments: JSON.stringify({ name: 'budget.txt', text: 'One local file' }) } })), node = await f.node('Budget', f.alice);
-    const policy: ParticipationPolicy = { sectionIds: [f.project.sectionId], invocation: { mode: 'owner' }, scopes: ['read', 'invoke'], localPolicyDigest: (await api(node.app, `/api/hub-link/agents/${node.agent.id}/policy`)).localPolicyDigest, payerBindingRef: 'local_provider', maxCostMicros: 100 };
-    const p = await f.propose(f.alice, node.agentId, policy);
-    await f.consent(p);
-    await api(node.app, '/api/hub-link/grants/approve', { projectId: f.project.projectId, participationId: p.participationId, agentId: node.agentId, localAgentId: node.agent.id, revision: p.revision, policy, providerMaxCostMicros: 100 });
-    const post = await f.post(f.alice, [p.participationId]);
-    await until(() => node.app.hubLink!.approvals().length === 1);
-    const prompt = node.app.hubLink!.approvals()[0];
-    await api(node.app, '/api/hub-link/approvals', { actionId: prompt.actionId, actionDigest: prompt.actionDigest, approved: true });
-    await until(() => f.turn(post.turnIds[0]).state === 'failed');
-    assert.equal(f.calls, 1);
-});

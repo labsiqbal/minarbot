@@ -11,3 +11,4 @@
 mod cases;
 mod effects;
 mod fixture;
+mod meter;
