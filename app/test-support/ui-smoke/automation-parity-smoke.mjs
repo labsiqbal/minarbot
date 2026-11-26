@@ -143,6 +143,12 @@ async function exercise(client) {
     await page.getByRole('tab', { name: 'Overview' }).press('Enter');
     await button('Run now').click();
     await page.getByText('Done', { exact: true }).first().waitFor();
+    await page.waitForFunction(async agent => {
+      const response = await fetch('/api/sidebar/summary');
+      if (!response.ok) return false;
+      const { summaries } = await response.json();
+      return summaries.some(row => row.agent === agent && row.preview.startsWith('Morning digest edited · Done'));
+    }, agent.id, { polling: 100 });
     await button('All routines').click();
     const createdRoutine = page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname === `/api/agents/${agent.id}/routines`);
