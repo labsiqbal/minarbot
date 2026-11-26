@@ -42,11 +42,12 @@ async fn respond(State(fixture): State<Arc<Fixture>>, request: Request<Body>) ->
     let mode = fixture.mode.load(Ordering::Relaxed);
     let (status, body) = match request.uri().path() {
         "/latest/download/latest.json" => (200, fixture.manifest.clone().into_bytes()),
-        "/latest/download/latest.json.sig" if mode == 1 => (200, STANDARD.encode([0; 64]).into_bytes()),
+        "/latest/download/latest.json.sig" if mode == 1 => {
+            (200, STANDARD.encode([0; 64]).into_bytes())
+        }
         "/latest/download/latest.json.sig" => (200, fixture.signature.clone().into_bytes()),
         path if path == fixture.archive_url && mode == 2 => (200, vec![0; fixture.archive.len()]),
         path if path == fixture.archive_url => (200, fixture.archive.clone()),
-        "/v1/chat/completions" => (200, json!({"choices": [{"finish_reason": "stop", "message": {"content": "Installed and ready."}}]}).to_string().into_bytes()),
         _ => (404, Vec::new()),
     };
     (
@@ -106,8 +107,10 @@ fn request(client: &Client, origin: &str, path: &str, body: Option<Value>) -> Re
         None => client.get(url),
     };
     let response = request.send()?;
-    if !response.status().is_success() {
-        return Err(format!("{path}: HTTP {}", response.status()).into());
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().unwrap_or_default();
+        return Err(format!("{path}: HTTP {status}: {body}").into());
     }
     Ok(response.json()?)
 }
@@ -126,6 +129,8 @@ pub fn command(root: &Path, args: &[String]) -> Result<()> {
     for name in ["minarbot-server", "minarbot-launcher"] {
         copy(&binaries.join(name), &stage.join("bin").join(name))?;
     }
+    let codex = fs::canonicalize(binaries.join("fake-codex"))
+        .map_err(|_| "Missing fake-codex beside the server: build minarbot-testkit first")?;
     let app = root.join("app");
     let version = release::version(&app)?;
     crate::leptos::require_build(&app)?;
@@ -190,7 +195,9 @@ pub fn command(root: &Path, args: &[String]) -> Result<()> {
                     .await
             })
     });
-    let result = exercise(root, scratch, &installer, &base, &fixture, &version, &id);
+    let result = exercise(
+        root, scratch, &installer, &base, &fixture, &version, &id, &codex,
+    );
     let _ = shutdown.send(());
     server
         .join()
@@ -198,6 +205,7 @@ pub fn command(root: &Path, args: &[String]) -> Result<()> {
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn exercise(
     root: &Path,
     scratch: &Path,
@@ -206,6 +214,7 @@ fn exercise(
     fixture: &Fixture,
     version: &str,
     id: &str,
+    codex: &Path,
 ) -> Result<()> {
     let mac = cfg!(target_os = "macos");
     let launch_domain = if mac {
@@ -290,8 +299,8 @@ echo "$!" > "$HOME/launcher.pid"
         }
     }
     fixture.mode.store(0, Ordering::Relaxed);
-    let provider = format!("OPENAI_BASE_URL={base}/v1\nOPENAI_MODEL=fixture\n");
-    durable(&env_file, provider.as_bytes(), 0o600)?;
+    let environment = "MINARBOT_SMOKE_CONFIG=private\n";
+    durable(&env_file, environment.as_bytes(), 0o600)?;
     let stdout = output(&mut launch(&home, port))?;
     if !stdout.contains("is ready at") {
         return Err("Installer did not report readiness".into());
@@ -307,7 +316,7 @@ echo "$!" > "$HOME/launcher.pid"
     if fs::read_to_string(&opened)?.trim() != origin
         || fs::read_link(&current)? != Path::new(id)
         || fs::metadata(&config_file)?.permissions().mode() & 0o777 != 0o600
-        || fs::read_to_string(&env_file)? != provider
+        || fs::read_to_string(&env_file)? != environment
     {
         return Err(
             "Installer did not retain private config, select the release and open the origin"
@@ -345,6 +354,21 @@ echo "$!" > "$HOME/launcher.pid"
         .ok_or("Missing installed UI bundle")?;
     let url = reqwest::Url::parse(&origin)?.join(&bundle[1])?;
     client.get(url).send()?.error_for_status()?;
+    // Turns run through a provider CLI (#87). The kit's fake Codex is signed
+    // in when its home holds auth.json and replies "finished".
+    let codex_home = scratch.join("codex-home");
+    files::mkdir(&codex_home)?;
+    durable(&codex_home.join("auth.json"), b"{}", 0o600)?;
+    request(
+        &client,
+        &origin,
+        "/api/provider-instances",
+        Some(
+            json!({"id": Uuid::new_v4(), "instanceId": "smoke-codex", "kind": "codex",
+            "displayName": "Smoke Codex", "enabled": true, "binaryPath": codex,
+            "homePath": codex_home}),
+        ),
+    )?;
     let agent = Uuid::new_v4();
     let turn = Uuid::new_v4().to_string();
     let turns = format!("/api/agents/{agent}/turns");
@@ -353,7 +377,7 @@ echo "$!" > "$HOME/launcher.pid"
         &origin,
         "/api/agents",
         Some(
-            json!({"id": agent, "name": "Smoke", "instructions": "Answer.", "model": "fixture", "runtime": "api"}),
+            json!({"id": agent, "name": "Smoke", "instructions": "Answer.", "model": "fixture", "providerInstance": "smoke-codex"}),
         ),
     )?;
     if mac {
@@ -376,24 +400,28 @@ echo "$!" > "$HOME/launcher.pid"
         Some(json!({"id": turn, "text": "Reply."})),
     )?;
     let mut ready = false;
-    for _ in 0..100 {
+    let mut last = Value::Null;
+    for _ in 0..300 {
         let rows = request(&client, &origin, &turns, None)?;
         if let Some(row) = rows
             .as_array()
             .and_then(|rows| rows.iter().find(|row| row["id"] == turn))
         {
             if row["status"] == "failed" {
-                return Err("Installed provider turn failed".into());
+                return Err(format!("Installed provider turn failed: {}", row["error"]).into());
             }
+            last = row.clone();
             if row["status"] == "done" {
-                ready = row["reply"] == "Installed and ready.";
+                ready = row["reply"] == "finished";
                 break;
             }
         }
         thread::sleep(Duration::from_millis(100));
     }
     if !ready {
-        return Err("Installed provider turn did not return the fixture reply".into());
+        return Err(
+            format!("Installed provider turn did not return the fixture reply: {last}").into(),
+        );
     }
     output(&mut launch(&home, port))?;
     if !mac {
