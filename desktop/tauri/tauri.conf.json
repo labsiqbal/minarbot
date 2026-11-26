@@ -24,7 +24,7 @@
   "bundle": {
     "active": true,
     "icon": [
-      "../assets/icon.png",
+      "icons/icon.png",
       "icons/icon.ico",
       "icons/icon.icns"
     ],

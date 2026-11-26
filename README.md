@@ -51,7 +51,9 @@ curl -fsSL https://raw.githubusercontent.com/labsiqbal/minarbot/main/scripts/ins
 
 To install and pair, copy the command from **Machines > Add machine > Install Minarbot** on your existing installation. Set up reachable HTTPS addresses on both machines first, and put each machine's own address first in `MINARBOT_ALLOWED_ORIGINS` in its `launcher.env`.
 
-For the desktop app, download the AppImage for Linux or the DMG for macOS. If macOS blocks Minarbot on first launch, choose **System Settings > Privacy & Security > Open Anyway**. [Releases](https://github.com/labsiqbal/minarbot/releases/latest)
+For Linux desktop, download the `Minarbot-Tauri-*-linux-*.AppImage` for your architecture, mark it executable, and open it. If FUSE mounting fails, launch it with `APPIMAGE_EXTRACT_AND_RUN=1 ./Minarbot-Tauri-<version>-linux-<arch>.AppImage`. For macOS, open the `Minarbot-Tauri-*-darwin-*.dmg` and drag the app into Applications. If macOS blocks first launch, choose **System Settings > Privacy & Security > Open Anyway**. [Releases](https://github.com/labsiqbal/minarbot/releases/latest)
+
+On first launch, Minarbot Desktop imports the server list, active server and usable window bounds from the previous Electron app. On Linux, it reads `$XDG_CONFIG_HOME/minarbot-desktop/settings.json`, with `~/.config` as the default config directory.
 
 ### Windows 11
 
@@ -61,7 +63,7 @@ Install from PowerShell. If Ubuntu is missing, run `wsl --install -d Ubuntu` in 
 irm https://raw.githubusercontent.com/labsiqbal/minarbot/main/scripts/install.ps1 | iex
 ```
 
-For the desktop app, download the Windows installer. If SmartScreen blocks it, choose **More info > Run anyway**. [Releases](https://github.com/labsiqbal/minarbot/releases/latest)
+For the desktop app, run the `Minarbot-Tauri-*-windows-x86_64.exe` installer. If SmartScreen blocks it, choose **More info > Run anyway**. [Releases](https://github.com/labsiqbal/minarbot/releases/latest)
 
 ### After install
 
@@ -141,13 +143,13 @@ current release, then reload the page. Restart the hosted Hub after rebuilding.
 | `crates/web` | Leptos route groups, WASM bootstrap, and hosted Hub assets |
 | `crates/minarbot-e2e`, `crates/minarbot-testkit` | Rust end-to-end tests and the kit that runs the server against fake peers |
 | `app/*.test.ts` | Remaining Node tests, moving to Rust in [#89](https://github.com/labsiqbal/minarbot/issues/89) |
-| `desktop` | Electron desktop app (AppImage, DMG, NSIS) |
+| `desktop/tauri` | Tauri desktop app (AppImage, DMG, NSIS) |
 | `crates/xtask` | Release, packaging, smoke tests and gates |
 | `scripts` | Install scripts and release budgets |
 
 ## Release tooling
 
-Run from a clean checkout at the release commit. Install dependencies with `(cd app && npm ci)` and `(cd desktop && npm ci)`. Keep local branches named in the shipped issues' claim comments until after the release.
+Run from a clean checkout at the release commit. Install web dependencies with `npm ci --prefix app`. For `--desktop`, install the [Tauri build prerequisites](desktop/tauri/README.md#build-and-release). Keep local branches named in the shipped issues' claim comments until after the release.
 
 ```sh
 cargo xtask release --releases ~/.local/share/minarbot-build/releases \
@@ -158,7 +160,7 @@ Release runs app lint, TypeScript checks, the Leptos build, and app tests. It ru
 
 Retry a completed local build with `cargo xtask release --github-only <release-id> --releases <directory>`. CI packages runtimes with `--pack-ci <binary-directory> --output <directory> --notes <notes>` and uploads a draft with `--draft-ci <directory> --notes <notes>`. Finalize that draft using `cargo xtask release --sign-ci <version>`. Signing uses `--signing-key`, `MINARBOT_RELEASE_SIGNING_KEY`, or the default `~/.config/minarbot-release/signing-ed25519.pem`.
 
-For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after running `cargo xtask leptos` and building `target/release`. This stages the Leptos runtime and unsigned manifest locally. Pass `--desktop` for the Electron AppImage and updater metadata. See the [Tauri pilot](desktop/tauri/README.md) to include Tauri. `--issues` reads issue comments and checks their branch tips.
+For artifact inspection, run `cargo xtask release --dry-run --releases "$(mktemp -d)" --notes "Dry run"` after running `cargo xtask leptos` and building `target/release`. This stages the Leptos runtime and unsigned manifest locally. Pass `--desktop` to stage the Tauri AppImage and updater metadata with disposable signing credentials. `--issues` reads issue comments and checks their branch tips.
 
 Use `cargo xtask install-smoke target/debug` to exercise the installer against a local fixture. Check a served build with `cargo xtask check-served <origin> --present <text> --expect-version <version>`.
 

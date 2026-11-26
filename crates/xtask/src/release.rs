@@ -43,10 +43,9 @@ pub struct Identity {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Ready {
     pub release: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub desktop: Option<[String; 2]>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tauri: BTreeMap<String, String>,
 }
@@ -364,23 +363,7 @@ fn run_build(root: &Path, source: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn desktop_assets(directory: &Path, version: &str) -> Result<[PathBuf; 2]> {
-    let name = format!("Minarbot-{version}-x86_64.AppImage");
-    let image = directory.join(&name);
-    let metadata = directory.join("latest-linux.yml");
-    let yaml = fs::read_to_string(&metadata)?;
-    if !image.is_file()
-        || !yaml.lines().any(|line| line == format!("path: {name}"))
-        || !yaml
-            .lines()
-            .any(|line| line == format!("version: {version}"))
-    {
-        return Err(
-            "Desktop build did not produce the matching AppImage and latest-linux.yml.".into(),
-        );
-    }
-    Ok([image, metadata])
-}
+type DesktopBuilder = fn(&Path, &Path, &Path, &str, bool) -> Result<[String; 3]>;
 
 fn build_desktop(
     root: &Path,
@@ -388,36 +371,20 @@ fn build_desktop(
     directory: &Path,
     version: &str,
     dry_run: bool,
-    tauri_pilot: bool,
-) -> Result<([String; 2], BTreeMap<String, String>)> {
+    build: DesktopBuilder,
+) -> Result<BTreeMap<String, String>> {
     files::mkdir(directory)?;
     let stage = private_stage(".desktop-", directory)?;
     let archive_path = stage.path().join("runtime.tar.gz");
     archive(runtime, &archive_path)?;
-    let tauri_names = desktop::release(
-        root,
-        &archive_path,
-        stage.path(),
-        version,
-        dry_run,
-        tauri_pilot,
-    )?;
-    let [image, yaml] = desktop_assets(stage.path(), version)?;
-    let hashes = [sha256(&image)?, sha256(&yaml)?];
     let mut tauri = BTreeMap::new();
-    for name in tauri_names {
+    for name in build(root, &archive_path, stage.path(), version, dry_run)? {
         let file = stage.path().join(&name);
         tauri.insert(name.clone(), sha256(&file)?);
         fs::rename(file, directory.join(name))?;
     }
-    for file in [image, yaml] {
-        fs::rename(
-            &file,
-            directory.join(file.file_name().ok_or("Missing desktop asset name")?),
-        )?;
-    }
     files::sync_dir(directory)?;
-    Ok((hashes, tauri))
+    Ok(tauri)
 }
 
 fn metadata(path: &Path, info: &Info, pretty: bool) -> Result<()> {
@@ -609,7 +576,6 @@ const SWITCHES: &[&str] = &[
     "--allow-dirty",
     "--no-github",
     "--desktop",
-    "--tauri-pilot",
     "--no-image",
     "--dry-run",
 ];
@@ -626,6 +592,15 @@ const VALUES: &[&str] = &[
 ];
 
 pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
+    command_with_desktop(root, args, public_key, desktop::release)
+}
+
+pub(super) fn command_with_desktop(
+    root: &Path,
+    args: &[String],
+    public_key: &[u8],
+    desktop_builder: DesktopBuilder,
+) -> Result<()> {
     let mut flags = options(args, SWITCHES, VALUES)?;
     let key = flags
         .get("--signing-key")
@@ -683,10 +658,6 @@ pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
     let allow_dirty = flags.contains_key("--allow-dirty");
     let dry_run = flags.contains_key("--dry-run");
     let desktop = flags.contains_key("--desktop");
-    let tauri_pilot = flags.contains_key("--tauri-pilot");
-    if tauri_pilot && !desktop {
-        return Err("--tauri-pilot requires --desktop.".into());
-    }
     if dry_run
         && !args
             .iter()
@@ -750,18 +721,17 @@ pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
             b"Prebuilt inputs. Publication is disabled.\n",
         )?;
     }
-    let (desktop, tauri) = if desktop {
-        let (legacy, tauri) = build_desktop(
+    let tauri = if desktop {
+        build_desktop(
             root,
             &releases.join(&info.id),
             &directory,
             &info.version,
             dry_run,
-            tauri_pilot,
-        )?;
-        (Some(legacy), tauri)
+            desktop_builder,
+        )?
     } else {
-        (None, BTreeMap::new())
+        BTreeMap::new()
     };
     if (!allow_dirty || dry_run) && notes.is_some_and(|notes| !notes.trim().is_empty()) {
         if !allow_dirty {
@@ -770,7 +740,6 @@ pub fn command(root: &Path, args: &[String], public_key: &[u8]) -> Result<()> {
         files::mkdir(&directory)?;
         let ready = Ready {
             release: sha256(&releases.join(&info.id).join("release.json"))?,
-            desktop,
             tauri,
         };
         durable(

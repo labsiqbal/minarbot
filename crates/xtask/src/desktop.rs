@@ -11,7 +11,12 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-const CLI: &str = "@tauri-apps/cli@2.12.6";
+const CLI_VERSION: &str = "2.12.6";
+const SIGNING_ENV: [&str; 3] = [
+    "TAURI_SIGNING_PRIVATE_KEY",
+    "TAURI_SIGNING_PRIVATE_KEY_PATH",
+    "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
+];
 const GITHUB: &str = "https://github.com/labsiqbal/minarbot/releases";
 #[cfg(unix)]
 pub const PLATFORMS: [&str; 5] = [
@@ -64,43 +69,53 @@ fn run(command: &mut Command) -> Result<()> {
     Ok(())
 }
 
-fn cli(root: &Path) -> Command {
-    let mut command = Command::new(if cfg!(windows) { "npx.cmd" } else { "npx" });
-    command
-        .current_dir(root.join("desktop/tauri"))
-        .args(["--yes", CLI]);
+fn without_signing_env(command: &mut Command) -> &mut Command {
+    for key in SIGNING_ENV {
+        command.env_remove(key);
+    }
     command
 }
 
-fn electron(root: &Path, runtime: &Path, output: &Path, version: &str, dry: bool) -> Result<()> {
-    let mut command = Command::new("node");
+fn cargo() -> Command {
+    Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+}
+
+fn install_cli(root: &Path) -> Result<PathBuf> {
+    let installation = root.join("target/tauri-cli");
+    let binary = installation
+        .join("bin")
+        .join(format!("cargo-tauri{}", env::consts::EXE_SUFFIX));
+    if !without_signing_env(&mut Command::new(&binary))
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout)
+                    .split_whitespace()
+                    .last()
+                    == Some(CLI_VERSION)
+        })
+    {
+        run(without_signing_env(&mut cargo())
+            .current_dir(root)
+            .args([
+                "install",
+                "--locked",
+                "--force",
+                "tauri-cli",
+                "--version",
+                CLI_VERSION,
+                "--root",
+            ])
+            .arg(installation))?;
+    }
+    Ok(binary)
+}
+
+fn cli(root: &Path, binary: &Path) -> Command {
+    let mut command = Command::new(binary);
+    command.current_dir(root.join("desktop/tauri"));
     command
-        .current_dir(root)
-        .arg("desktop/scripts/build.mjs")
-        .arg(version)
-        .arg(output);
-    if cfg!(windows) {
-        command.env("MINARBOT_LINUX_ARCHIVE", runtime);
-    }
-    for name in [
-        "TAURI_SIGNING_PRIVATE_KEY",
-        "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
-        "TAURI_SIGNING_PRIVATE_KEY_PATH",
-    ] {
-        command.env_remove(name);
-    }
-    if dry {
-        for name in [
-            "CSC_LINK",
-            "CSC_KEY_PASSWORD",
-            "WIN_CSC_LINK",
-            "WIN_CSC_KEY_PASSWORD",
-        ] {
-            command.env_remove(name);
-        }
-        command.env("CSC_IDENTITY_AUTO_DISCOVERY", "false");
-    }
-    run(&mut command)
 }
 
 fn append_extension(path: &Path, extension: &str) -> PathBuf {
@@ -150,6 +165,7 @@ fn assert_signature(public: &str, artifact: &Path, signature: &str, version: &st
 
 fn build_tauri(
     root: &Path,
+    binary: &Path,
     runtime: &Path,
     output: &Path,
     version: &str,
@@ -209,42 +225,62 @@ fn build_tauri(
             );
         }
     }
+    let overrides = json!({
+        "productName": "Minarbot Tauri",
+        "version": version,
+        "bundle": {"resources": resources},
+        "plugins": {"updater": {
+            "pubkey": public.trim(),
+            "endpoints": [endpoint],
+            "requireSignedVersion": true,
+            "dangerousInsecureTransportProtocol": fixture.is_some()
+        }}
+    });
     let config = tempfile::Builder::new().suffix(".json").tempfile()?;
-    serde_json::to_writer(
-        config.as_file(),
-        &json!({
-            "productName": "Minarbot Tauri",
-            "version": version,
-            "bundle": {"resources": resources},
-            "plugins": {"updater": {
-                "pubkey": public.trim(),
-                "endpoints": [endpoint],
-                "requireSignedVersion": true,
-                "dangerousInsecureTransportProtocol": fixture.is_some()
-            }}
-        }),
-    )?;
-    let mut build = cli(root);
-    build
+    serde_json::to_writer(config.as_file(), &overrides)?;
+
+    // The CLI's build command probes npm for JS packages. This desktop embeds static assets.
+    let tauri = root.join("desktop/tauri");
+    let mut build = cargo();
+    without_signing_env(&mut build)
+        .current_dir(&tauri)
         .env("CARGO_TARGET_DIR", &target)
+        .env("TAURI_CONFIG", overrides.to_string())
         .env(
             "MINARBOT_DESKTOP_RUNTIME_SHA256",
             format!("{:x}", hash.finalize()),
         )
         .env_remove("MINARBOT_DESKTOP_FIXTURE_PORT")
-        .env_remove("TAURI_SIGNING_PRIVATE_KEY")
-        .env_remove("TAURI_SIGNING_PRIVATE_KEY_PATH")
-        .env_remove("TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
-        .args(["build", "--ci", "--bundles", bundle, "--config"])
-        .arg(config.path());
-    if let Some(fixture) = fixture {
-        build.env("MINARBOT_DESKTOP_FIXTURE_PORT", fixture.port.to_string());
-        if debug {
-            build.arg("--debug");
+        .args([
+            "build",
+            "--locked",
+            "--bins",
+            "--features",
+            "tauri/custom-protocol",
+        ]);
+    if cfg!(target_os = "macos") {
+        let base: Value = serde_json::from_slice(&fs::read(tauri.join("tauri.conf.json"))?)?;
+        if let Some(minimum) = base["bundle"]["macOS"]["minimumSystemVersion"].as_str() {
+            build.env("MACOSX_DEPLOYMENT_TARGET", minimum);
         }
     }
-    build.args(["--", "--locked"]);
+    if let Some(fixture) = fixture {
+        build.env("MINARBOT_DESKTOP_FIXTURE_PORT", fixture.port.to_string());
+    }
+    if !debug {
+        build.arg("--release");
+    }
     run(&mut build)?;
+
+    let mut package = cli(root, binary);
+    without_signing_env(&mut package)
+        .env("CARGO_TARGET_DIR", &target)
+        .args(["bundle", "--ci", "--bundles", bundle, "--config"])
+        .arg(config.path());
+    if debug {
+        package.arg("--debug");
+    }
+    run(&mut package)?;
     let extension = artifact_name
         .rsplit_once('.')
         .ok_or("Missing bundle extension.")?
@@ -260,7 +296,7 @@ fn build_tauri(
     let stage = tempfile::tempdir_in(output)?;
     let artifact = stage.path().join(&artifact_name);
     fs::copy(bundled, &artifact)?;
-    let mut sign = cli(root);
+    let mut sign = cli(root, binary);
     sign.env("TAURI_SIGNING_PRIVATE_KEY", key.trim())
         .env_remove("TAURI_SIGNING_PRIVATE_KEY_PATH")
         .args(["signer", "sign", "--app-version", version])
@@ -311,16 +347,12 @@ pub fn release(
     output: &Path,
     version: &str,
     dry: bool,
-    pilot: bool,
-) -> Result<Vec<String>> {
-    electron(root, runtime, output, version, dry)?;
-    if !dry && !pilot {
-        return Ok(Vec::new());
-    }
+) -> Result<[String; 3]> {
+    let binary = install_cli(root)?;
     let temp = tempfile::tempdir()?;
     let fixture = if dry {
         let key = temp.path().join("fixture.key");
-        run(cli(root)
+        run(without_signing_env(&mut cli(root, &binary))
             .args(["signer", "generate", "--ci", "--write-keys"])
             .arg(&key))?;
         Some(Fixture {
@@ -331,19 +363,16 @@ pub fn release(
     } else {
         None
     };
-    build_tauri(root, runtime, output, version, fixture.as_ref())?;
-    Ok(tauri_names(version, platform()?).into())
+    build_tauri(root, &binary, runtime, output, version, fixture.as_ref())?;
+    Ok(tauri_names(version, platform()?))
 }
 
 pub fn command(args: &[String]) -> Result<()> {
     // Match existing release commands' explicit, fixed arguments.
     let mut args = args.iter();
     let mut options = std::collections::BTreeMap::new();
-    let (mut legacy_only, mut tauri_only) = (false, false);
     while let Some(flag) = args.next() {
         match flag.as_str() {
-            "--legacy-only" => legacy_only = true,
-            "--tauri-only" => tauri_only = true,
             "--runtime" | "--output" | "--version" | "--fixture-key" | "--fixture-feed"
             | "--fixture-port" => {
                 let value = args
@@ -377,9 +406,6 @@ pub fn command(args: &[String]) -> Result<()> {
     )?
     .to_string();
     let fixture = if options.keys().any(|flag| flag.starts_with("--fixture-")) {
-        if !tauri_only || legacy_only {
-            return Err("Fixture builds require --tauri-only.".into());
-        }
         let feed = url::Url::parse(get("--fixture-feed")?)?;
         if feed.scheme() != "http"
             || !matches!(feed.host_str(), Some("127.0.0.1" | "[::1]"))
@@ -403,14 +429,36 @@ pub fn command(args: &[String]) -> Result<()> {
     } else {
         None
     };
-    if legacy_only && tauri_only {
-        return Err("Choose at most one desktop lane.".into());
-    }
-    if !tauri_only {
-        electron(&root, &runtime, &output, &version, false)?;
-    }
-    if !legacy_only {
-        build_tauri(&root, &runtime, &output, &version, fixture.as_ref())?;
-    }
+    let binary = install_cli(&root)?;
+    build_tauri(
+        &root,
+        &binary,
+        &runtime,
+        &output,
+        &version,
+        fixture.as_ref(),
+    )
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn mac_feed_matches_artifact_architecture() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let [signature, artifact, feed] = tauri_names("2.0.0", "darwin-aarch64");
+    assert_eq!(artifact, "Minarbot-Tauri-2.0.0-darwin-aarch64.dmg");
+    assert_eq!(feed, "tauri-latest-darwin-aarch64.json");
+    fs::write(directory.path().join(signature), "fixture signature")?;
+    let path = directory.path().join(feed);
+    let metadata = |arch| {
+        json!({
+            "version": "2.0.0",
+            "url": format!("{GITHUB}/download/v2.0.0/Minarbot-Tauri-2.0.0-darwin-{arch}.dmg"),
+            "signature": "fixture signature",
+        })
+    };
+    fs::write(&path, metadata("aarch64").to_string())?;
+    verify_feed(directory.path(), "2.0.0", "darwin-aarch64")?;
+    fs::write(&path, metadata("x86_64").to_string())?;
+    assert!(verify_feed(directory.path(), "2.0.0", "darwin-aarch64").is_err());
     Ok(())
 }
