@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-gateway-harness.mjs', import.meta.url));
@@ -53,8 +56,10 @@ async function runGateway(mode: 'stream' | 'tool' | 'error') {
   const mcpAddress = mcp.address();
   assert(providerAddress && typeof providerAddress !== 'string');
   assert(mcpAddress && typeof mcpAddress !== 'string');
+  // The fake saves its session file in its working directory.
+  const workspace = await mkdtemp(join(tmpdir(), 'minarbot-gateway-harness-'));
   const child = spawn(process.execPath, [fixture], {
-    cwd: process.cwd(),
+    cwd: workspace,
     env: {
       ...process.env,
       MINARBOT_GATEWAY_BASE_URL: `http://127.0.0.1:${providerAddress.port}/v1`,
@@ -98,6 +103,7 @@ async function runGateway(mode: 'stream' | 'tool' | 'error') {
     new Promise<void>(resolve => provider.close(() => resolve())),
     new Promise<void>(resolve => mcp.close(() => resolve())),
   ]);
+  await rm(workspace, { recursive: true });
   return { calls, events, output, errors, key };
 }
 
