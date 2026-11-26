@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
 import { issue1Smoke } from './issue1-smoke.mjs';
@@ -75,6 +76,14 @@ async function exercise(client) {
     assert(response.ok, `${path} returned ${response.status}`);
     return response.json();
   }
+  async function waitForApi(path, ready) {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      if (ready(await api(path))) return;
+      await delay(100);
+    }
+    assert.fail(`Timed out waiting for ${path}`);
+  }
   const capture = async (name, anchor) => {
     for (const [viewport, size] of Object.entries(sizes)) {
       await page.setViewportSize(size);
@@ -143,12 +152,8 @@ async function exercise(client) {
     await page.getByRole('tab', { name: 'Overview' }).press('Enter');
     await button('Run now').click();
     await page.getByText('Done', { exact: true }).first().waitFor();
-    await page.waitForFunction(async agent => {
-      const response = await fetch('/api/sidebar/summary');
-      if (!response.ok) return false;
-      const { summaries } = await response.json();
-      return summaries.some(row => row.agent === agent && row.preview.startsWith('Morning digest edited · Done'));
-    }, agent.id, { polling: 100 });
+    await waitForApi('/api/sidebar/summary', ({ summaries }) => summaries.some(row =>
+      row.agent === agent.id && row.preview.startsWith('Morning digest edited · Done')));
     await button('All routines').click();
     const createdRoutine = page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname === `/api/agents/${agent.id}/routines`);
@@ -237,16 +242,14 @@ async function exercise(client) {
       && response.request().method() === 'POST');
     await button('Retry request').click();
     assert((await replay).ok());
-    await page.waitForFunction(async id => {
-      const response = await fetch('/api/workflow-runs/' + id);
-      return response.ok && (await response.json()).status === 'done';
-    }, runBody[0].id);
+    await waitForApi(`/api/workflow-runs/${runBody[0].id}`, run => run.status === 'done');
     assert.deepEqual(runBody[0], runBody[1]);
     assert.equal((await api(`/api/workflows/${workflow.id}/runs`)).length, 1);
     await page.waitForFunction(key => !sessionStorage.getItem(key), `minarbot:workflow-command:${agent.id}`);
     // Replay selects the run itself. Open it separately from a fresh history view.
     await open('/workflows', 'Workflows');
     await page.getByText('Daily summary', { exact: true }).click();
+    await page.locator('main').getByText('Done', { exact: true }).waitFor();
     await button('Open run').click();
     await page.locator('.workflow-run-node').filter({ hasText: 'Completed' }).first().waitFor();
     await page.locator('main .markdown strong').filter({ hasText: 'Automation fixture completed.' }).first().waitFor();
