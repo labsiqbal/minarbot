@@ -198,7 +198,11 @@ pub(super) fn ScheduleFields(
         let current = version.get_untracked();
         let zone = zone.get();
         if !active.get() {
-            output.set(Some(json!({"nextAt":next_at,"intervalSeconds":interval_ms.map(|ms| ms/1000),"zone":zone})));
+            let mut timing = json!({"nextAt":next_at,"intervalSeconds":interval_ms.map(|ms| ms/1000)});
+            if !zone.is_empty() {
+                timing["zone"] = json!(zone);
+            }
+            output.set(Some(timing));
             return None;
         }
         let mode = mode.get();
