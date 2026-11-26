@@ -1979,9 +1979,23 @@ pub async fn run(
             result = operation(Some(active.clock.clone())) => result,
         }
     };
-    let result = match meter.as_ref().and_then(|meter| meter.failure()) {
-        Some(failure) => Err(failure),
-        None => result,
+    let result = if let Some(failure) = meter.as_ref().and_then(|meter| meter.failure()) {
+        Err(failure)
+    } else if meter.is_some() && result.is_err() {
+        let db = state.database.lock().map_err(|_| Failure::storage())?;
+        // A tool can park the turn before the CLI's next POST. Preserve the
+        // queue even if a local decision already cleared the paused flag.
+        if exists(
+            &db.connection,
+            "SELECT 1 FROM turns WHERE id=? AND status='queued'",
+            [turn_id],
+        )? {
+            Err(error(409, "Turn stopped."))
+        } else {
+            result
+        }
+    } else {
+        result
     };
     drop(meter);
     if memory && result.is_err() {
