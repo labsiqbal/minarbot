@@ -102,3 +102,4 @@ mod sb_transcript;
 mod sb_usage;
 mod sb_workspace_writes;
 mod threads;
+mod ui_api;

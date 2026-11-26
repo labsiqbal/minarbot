@@ -805,6 +805,20 @@ pub async fn route(
     if *method == Method::GET && parts.len() == 2 {
         return Ok(json_response(200, list(state)?));
     }
+    if let ["api", "provider-instances", id, "models"] = parts {
+        let requested = if *method == Method::GET {
+            true
+        } else if *method == Method::POST {
+            body_instance_id(body)? == *id
+        } else {
+            false
+        };
+        if requested {
+            return crate::harness::model_catalog::models_for_instance(state, id, true)
+                .await
+                .map(|catalog| json_response(200, catalog));
+        }
+    }
     if *method != Method::POST {
         return Err(error(405, "Use GET or POST for provider instances."));
     }
@@ -823,12 +837,7 @@ pub async fn route(
                 Some(previous.ok_or_else(|| error(404, "Provider instance not found."))?),
             ),
             "delete" if closed(body, &["id", "instanceId", "revision"]) => remove(state, &id),
-            "refresh" | "sign-in" | "signin" | "models" => {
-                if *action == "models" {
-                    return crate::harness::model_catalog::models_for_instance(state, &id, true)
-                        .await
-                        .map(|catalog| json_response(200, catalog));
-                }
+            "refresh" | "sign-in" | "signin" => {
                 if *action == "sign-in" || *action == "signin" {
                     return sign_in(state, &id).await;
                 }
