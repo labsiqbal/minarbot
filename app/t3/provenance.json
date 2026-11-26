@@ -518,7 +518,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/mcp-server.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/rg_mcp_server.rs"
     },
     {
       "sourcePath": "apps/server/src/mcp/McpHttpServer.ts",
@@ -533,7 +533,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "compatibilityCheck": "app/mcp-server.test.ts"
+      "compatibilityCheck": "crates/minarbot-e2e/tests/e2e/rg_mcp_server.rs"
     },
     {
       "sourcePath": "apps/server/src/mcp/threadAccess.ts",

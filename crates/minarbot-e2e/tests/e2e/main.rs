@@ -50,6 +50,8 @@ mod pr_support;
 mod pr_tp;
 mod pr_updates;
 mod questions;
+mod rg_mcp_server;
+mod rg_support;
 mod sa_agent_interrupt;
 mod sa_agent_messages;
 mod sa_agent_result_files;
