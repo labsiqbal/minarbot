@@ -20,6 +20,7 @@ mod fx_tools;
 mod fx_waits;
 mod goals;
 mod harness;
+mod history;
 mod kit;
 mod pd_agent_reply_capture;
 mod pd_channel_context;

@@ -1646,7 +1646,7 @@ Paths below are relative to `app/`. Playwright remains in `test-support/ui-smoke
   `channel-context.test.ts`, `cli.test.ts`, `compaction.test.ts`, `conversation-panel.test.ts`,
   `coordination.test.ts`, `crash.test.ts`, `dispatch.test.ts`, `files.test.ts`,
   `flow-tools.test.ts`, `flows-http.test.ts`, `flows.test.ts`, `goals.test.ts`,
-  `history-tools.test.ts`, `history.test.ts`, `html-preview.test.ts`,
+  `history-tools.test.ts`, `html-preview.test.ts`,
   `image-attachment.test.ts`, `image-generation.test.ts`, `local-projects.test.ts`,
   `local-routines.test.ts`, `machines.test.ts`, `memory-selection.test.ts`,
   `memory-tools.test.ts`, `memory.test.ts`, `pdf-text.test.ts`, `profile-tools.test.ts`,
@@ -2117,3 +2117,9 @@ other helper is in the new `rg_support.rs` and `rg_media.rs` modules.
 | telegram-media: Telegram media uploads once in requester thread and retries lost uploads/messages with original bytes | `rg_telegram_media::telegram_media_uploads_once_in_requester_thread_and_retries_lost_uploads_messages_with_original_bytes` | 36 -> 35 | The late upload is a `SplitRequest` whose last bytes arrive after the revocation. |
 | hub-link: signed envelopes reject forged payloads, keys and directions | Kept in Node | 5 -> - | Tests `app/test-support/hub-node-signature.ts`. |
 | hub-link: local provider spend ceiling refuses next request before dispatch | Kept in Node | 1 -> - | Open product gap P6 (see the peers slice). |
+
+## #89 history
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | --- | --- |
+| `app/history.test.ts`: history pages preserve order and conversation boundaries across restart | `history::history_pages_preserve_order_and_conversation_boundaries_across_restart` | 25 -> 22 `ensure!` + 3 kit checks | The kit checks POST and GET status and waits for each turn to finish. Its model handles listener startup. Rust also checks the oldest page length explicitly. |
