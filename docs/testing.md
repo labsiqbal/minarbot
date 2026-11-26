@@ -22,9 +22,11 @@ first. On shared hosts, run everything through the slot script:
 ```
 
 `MINARBOT_SERVER_BINARY` overrides the server path, `MINARBOT_LAUNCHER_BINARY`
-the launcher path, and `MINARBOT_FAKE_BIN_DIR` the fake peer directory. One test process runs at most two servers at a time
-(`MINARBOT_TEST_SERVERS` overrides this), so waits stay meaningful on a loaded
-host. `crates/minarbot-e2e/tests/e2e/main.rs` is the only test binary, with
+the launcher path, and `MINARBOT_FAKE_BIN_DIR` the fake peer directory. One test process runs at most half as many servers as the
+host has CPUs, from 2 to 8 (`MINARBOT_TEST_SERVERS` overrides this), so waits
+stay meaningful on a loaded host. A helper that writes one-shot input to a
+command wraps the write in `input_written`: the command may reject its
+arguments and exit before it reads stdin. `crates/minarbot-e2e/tests/e2e/main.rs` is the only test binary, with
 one module per area.
 
 ## Kit overview

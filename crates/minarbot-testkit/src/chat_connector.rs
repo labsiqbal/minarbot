@@ -588,7 +588,7 @@ pub fn journal(
         .stderr(Stdio::piped())
         .spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.to_string().as_bytes())?;
+        crate::input_written(stdin.write_all(input.to_string().as_bytes()))?;
     }
     let output = child.wait_with_output()?;
     Ok(JournalOutput {

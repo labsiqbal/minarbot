@@ -109,7 +109,7 @@ pub fn run(
     }
     let mut child = command.spawn()?;
     if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        stdin.write_all(input.as_bytes())?;
+        crate::input_written(stdin.write_all(input.as_bytes()))?;
     }
     let output = child.wait_with_output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);

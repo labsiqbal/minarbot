@@ -129,8 +129,15 @@ impl Script {
         if let Some(mut stdin) = child.stdin.take() {
             for (bytes, delay) in chunks {
                 tokio::time::sleep(*delay).await;
-                stdin.write_all(bytes).await?;
-                stdin.flush().await?;
+                let written = match stdin.write_all(bytes).await {
+                    Ok(()) => stdin.flush().await,
+                    Err(error) => Err(error),
+                };
+                if written.is_err() {
+                    // The script closed its input; it is no longer reading.
+                    crate::input_written(written)?;
+                    break;
+                }
             }
         }
         let output = tokio::time::timeout(Duration::from_secs(60), child.wait_with_output())

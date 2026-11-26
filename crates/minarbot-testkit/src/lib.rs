@@ -78,6 +78,16 @@ pub use server::{Server, ServerConfig, Servers, TestRoot, FIXED_CLOCK, WAIT};
 /// Re-exported for tests that build fixture payloads.
 pub use base64;
 
+/// Result of writing one-shot input to a child's stdin, where a closed pipe
+/// is not an error: a command may reject its arguments and exit before it
+/// reads stdin, and its exit status and output are what the test checks.
+pub fn input_written(result: std::io::Result<()>) -> std::io::Result<()> {
+    match result {
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other,
+    }
+}
+
 /// Fail the current test with a formatted message unless `condition` holds.
 ///
 /// Tests return `Result`, so this replaces `assert!` where the message must
@@ -105,4 +115,32 @@ pub mod prelude {
 /// A fresh lowercase UUID v4, the identifier format every Minarbot command uses.
 pub fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    #[test]
+    fn input_written_accepts_a_command_that_exits_before_reading_stdin() -> Result<()> {
+        let mut child = Command::new("true").stdin(Stdio::piped()).spawn()?;
+        let mut stdin = child.stdin.take().ok_or("stdin")?;
+        ensure!(child.wait()?.success(), "true failed");
+        let closed = stdin.write_all(b"{}");
+        ensure!(
+            closed
+                .as_ref()
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::BrokenPipe),
+            "write to an exited command: {closed:?}"
+        );
+        input_written(closed)?;
+        let other = std::io::Error::other("disk full");
+        ensure!(
+            input_written(Err(other)).is_err(),
+            "other errors pass through"
+        );
+        Ok(())
+    }
 }

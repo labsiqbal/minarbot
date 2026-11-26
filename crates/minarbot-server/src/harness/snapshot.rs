@@ -196,7 +196,10 @@ impl Snapshot {
         transaction(db, || {
             for index in &self.dirty {
                 let s = &self.segments[*index];
-                db.execute("INSERT INTO provider_stream_segments VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(call,ordinal) DO UPDATE SET text=excluded.text,state=excluded.state,final=excluded.final,revision=excluded.revision",rusqlite::params![self.call,*index as i64,string(s,"id"),string(s,"kind"),redact(string(s,"text"),&self.secrets,s["final"]!=1),string(s,"state"),s["final"].as_i64(),self.revision])?;
+                // Only streaming text can end in the start of a secret; a tool
+                // name arrives whole.
+                let streaming = s["kind"] == "text" && s["final"] != 1;
+                db.execute("INSERT INTO provider_stream_segments VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(call,ordinal) DO UPDATE SET text=excluded.text,state=excluded.state,final=excluded.final,revision=excluded.revision",rusqlite::params![self.call,*index as i64,string(s,"id"),string(s,"kind"),redact(string(s,"text"),&self.secrets,streaming),string(s,"state"),s["final"].as_i64(),self.revision])?;
             }
             db.execute("INSERT INTO provider_streams VALUES(?,?) ON CONFLICT(call) DO UPDATE SET text=excluded.text",rusqlite::params![self.call,redact(self.current(),&self.secrets,self.segments.last().is_none_or(|s|s["final"]!=1))])?;
             Ok(())
@@ -235,9 +238,8 @@ impl Drop for Snapshot {
 mod tests {
     use super::*;
 
-    #[test]
-    fn snapshot_coalesces_writes_and_flushes_terminal_tails_without_subscribers(
-    ) -> crate::db::Result<()> {
+    /// A database with one running turn and two pending provider calls.
+    fn fixture() -> crate::db::Result<(process::ProbeHome, AppState)> {
         use std::sync::{Arc, Mutex};
 
         let scratch = process::ProbeHome::new()?;
@@ -264,6 +266,13 @@ mod tests {
             whatsapp: Default::default(),
             trial_pending: Arc::default(),
         };
+        Ok((scratch, state))
+    }
+
+    #[test]
+    fn snapshot_coalesces_writes_and_flushes_terminal_tails_without_subscribers(
+    ) -> crate::db::Result<()> {
+        let (_scratch, state) = fixture()?;
         let read = |call: i64| -> crate::db::Result<(i64, String)> {
             let db = state
                 .database
@@ -319,6 +328,44 @@ mod tests {
                 {"call":1,"ordinal":1,"kind":"tool","text":"Read","final":0},
                 {"call":1,"ordinal":2,"kind":"text","text":"OK","final":1},
                 {"call":2,"ordinal":0,"kind":"text","text":"First buffered tail","final":0}
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tool_names_keep_their_tail_when_it_starts_a_secret() -> crate::db::Result<()> {
+        let (_scratch, state) = fixture()?;
+        let secrets = vec!["e4W8sK3pPROJECT_CANARY".to_owned()];
+        let mut writer = Snapshot::new(&state, 1, "turn", secrets);
+        writer
+            .text("Before e", None, false)
+            .map_err(|e| e.message)?;
+        writer
+            .tool(
+                "room-file",
+                "create_text_file",
+                "running",
+                &Value::Null,
+                &Value::Null,
+            )
+            .map_err(|e| e.message)?;
+        let db = state
+            .database
+            .lock()
+            .map_err(|_| "database lock poisoned")?;
+        let segments = all(
+            &db.connection,
+            "SELECT kind,text FROM provider_stream_segments WHERE call=1 ORDER BY ordinal",
+            [],
+        )
+        .map_err(|e| e.message)?;
+        // A streaming text tail that may begin a secret is still held back.
+        assert_eq!(
+            json!(segments),
+            json!([
+                {"kind":"text","text":"Before "},
+                {"kind":"tool","text":"create_text_file"}
             ])
         );
         Ok(())

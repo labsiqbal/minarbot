@@ -39,16 +39,24 @@ fn stream_work(turn: &Value) -> Vec<(String, String)> {
 }
 
 /// Read snapshots until the root turn's partial text is `text`.
+///
+/// A streaming partial withholds a tail that could begin a secret (the turn's
+/// random base64url MCP token), so a waited-for text ends in a character
+/// outside that alphabet.
 async fn wait_for_text(stream: &mut SseReader, root: &str, text: &str) -> Result<()> {
-    loop {
-        let snapshot = stream
-            .next()
-            .await?
-            .ok_or("stream ended before the snapshot")?;
-        if snapshot["id"] == root && snapshot["partial"]["text"] == text {
-            return Ok(());
+    tokio::time::timeout(minarbot_testkit::WAIT, async {
+        loop {
+            let snapshot = stream
+                .next()
+                .await?
+                .ok_or("stream ended before the snapshot")?;
+            if snapshot["id"] == root && snapshot["partial"]["text"] == text {
+                return Ok(());
+            }
         }
-    }
+    })
+    .await
+    .map_err(|_| format!("partial text {text:?} never streamed"))?
 }
 
 #[tokio::test]
@@ -97,9 +105,9 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
             return Answer::Stream(
                 vec![
                     Chunk::Wait(draft2.clone()),
-                    Chunk::Text("Draft".into()),
+                    Chunk::Text("Draft ".into()),
                     Chunk::Wait(answer2.clone()),
-                    Chunk::Text(" answer.".into()),
+                    Chunk::Text("answer.".into()),
                 ],
                 "stop".into(),
             );
@@ -238,7 +246,9 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
             .ok_or_else(|| "root row missing".into())
     };
     tool.open();
-    attempt_started.wait().await;
+    tokio::time::timeout(minarbot_testkit::WAIT, attempt_started.wait())
+        .await
+        .map_err(|_| "the model never received the tool result")?;
     let empty = find(rows(&app, &discussion).await?)?;
     // #87: a harness turn is one provider call record, so a new model step
     // shows as a new stream segment of the same `seq`, not a new attempt.
@@ -273,11 +283,11 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
         stream_work(&empty)
     );
     draft_gate.open();
-    wait_for_text(&mut stream, &root_turn, "Draft").await?;
+    wait_for_text(&mut stream, &root_turn, "Draft ").await?;
     let draft = find(rows(&app, &discussion).await?)?;
     let count = model.calls();
     ensure!(
-        draft["partial"]["text"] == "Draft",
+        draft["partial"]["text"] == "Draft ",
         "draft {}",
         draft["partial"]
     );
@@ -293,7 +303,9 @@ async fn room_polling_retains_active_members_beyond_full_history_and_orders_pros
     ensure!(model.calls() == count, "polling called the model");
     answer.open();
     // A second room member starts only after the first member's result commits.
-    next_member_started.wait().await;
+    tokio::time::timeout(minarbot_testkit::WAIT, next_member_started.wait())
+        .await
+        .map_err(|_| "the next room member never started")?;
     let done = find(rows(&app, &discussion).await?)?;
     ensure!(done["status"] == "done", "status {}", done["status"]);
     ensure!(done["reply"] == "Draft answer.", "reply {}", done["reply"]);

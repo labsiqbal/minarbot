@@ -682,7 +682,7 @@ pub async fn export_recovery(options: &HostOptions, input: &Value) -> Result<Val
         .stderr(Stdio::piped())
         .spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.to_string().as_bytes()).await?;
+        crate::input_written(stdin.write_all(input.to_string().as_bytes()).await)?;
     }
     let output = tokio::time::timeout(Duration::from_secs(15), child.wait_with_output())
         .await

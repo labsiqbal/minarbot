@@ -556,8 +556,9 @@ pub fn server_binary(explicit: Option<&Path>) -> Result<PathBuf> {
 }
 
 /// At most this many servers run at once per test process
-/// (`MINARBOT_TEST_SERVERS`, default 2), so a parallel test run on a shared
-/// host keeps each server responsive enough for its wait budgets.
+/// (`MINARBOT_TEST_SERVERS`, default half the CPUs, from 2 to 8), so a
+/// parallel test run on a shared host keeps each server responsive enough
+/// for its wait budgets.
 fn slots() -> Arc<tokio::sync::Semaphore> {
     static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
     SLOTS
@@ -570,7 +571,11 @@ fn slot_count() -> usize {
         .ok()
         .and_then(|value| value.parse().ok())
         .filter(|count| *count > 0)
-        .unwrap_or(2)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map_or(2, |cpus| cpus.get() / 2)
+                .clamp(2, 8)
+        })
 }
 
 async fn spawn(root: &TestRoot, config: &ServerConfig) -> Result<Process> {
