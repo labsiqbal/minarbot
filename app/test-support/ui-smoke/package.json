@@ -1,8 +1,0 @@
-{
-  "name": "minarbot-ui-smoke",
-  "private": true,
-  "type": "module",
-  "engines": { "node": ">=22.23.4" },
-  "scripts": { "test": "node smoke.mjs", "test:computer-setup": "node --experimental-strip-types computer-setup-smoke.mjs" },
-  "dependencies": { "playwright-core": "1.64.1" }
-}

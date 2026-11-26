@@ -1320,7 +1320,9 @@ transaction boundary.
 ## #67 UI coverage ledger
 
 The route ownership ledger lists each public surface and its Leptos document.
-The golden gate runs Leptos against disposable servers and committed screenshots.
+The screenshot gate below ran Leptos against disposable servers and committed
+screenshots until #89 removed it (Owner scope cut, 2026-11-27). The Rust
+browser smokes in `crates/minarbot-e2e/tests/e2e/browser_smokes.rs` now cover the main journeys.
 [Route ownership](../crates/web/README.md#route-ownership)
 
 | Gate group | Required pairs | Functional coverage |
@@ -1342,12 +1344,8 @@ The golden gate runs Leptos against disposable servers and committed screenshots
 | shell | 36 | Workspace navigation, Quick switcher, prompts, command recovery, sidebar controls |
 | system | 32 | Usage, updates, devices, shared data, backup and external access, mutation recovery |
 
-The golden gate covers 16 groups and 576 pairs. All pairs use the same pixel
-thresholds, including the ten narrow Hub Leptos baselines.
-
-See the screenshot parity guide for the gate command and failure thresholds.
-Retained Node and Rust API cases below still cover the shared contracts.
-[Parity guide](../app/test-support/ui-smoke/PARITY.md)
+The gate covered 16 groups and 576 pairs. Retained Node and Rust API cases
+below still cover the shared contracts.
 
 ### Stage B retirement and retained coverage
 
@@ -1357,8 +1355,8 @@ backoff, visibility, LRU and identity-clear policies. The shared download
 case moved to download-blob.test.ts. The optimistic-turns and right-panel
 state unit suites retired when Leptos took over their UI contracts.
 Presentation keeps the palette contrast case. Shared tests exercise production
-adapter code. Timing sources and ceilings are recorded
-in the [golden gate guide](../app/test-support/ui-smoke/PARITY.md).
+adapter code. The timing gate and its ceilings
+were removed in #89.
 
 | Node test | Coverage decision |
 | --- | --- |
@@ -1394,7 +1392,7 @@ session-storage parser case retired with the hook. Leptos queue controls
 keep the journal format. Leptos transcript and minimap checks cover the retired React status labels,
 poll cadence, turn projection and rail geometry. Shared preview and run
 inspector tests keep exercising their adapters. The conversation and rich
-golden groups own the old chat-like-t3 harness coverage.
+screenshot groups owned the old chat-like-t3 harness coverage until #89.
 
 ### Leptos polling
 
@@ -1600,7 +1598,7 @@ still feed `updates.test.ts`, `github-updates.test.ts` and the xtask checks.
 
 ### Other retained suites
 
-Paths below are relative to `app/`. Playwright remains in `test-support/ui-smoke/` for browser journeys and screenshots.
+Paths below are relative to `app/`. Browser journeys run as Rust CDP smokes in `crates/minarbot-e2e/tests/e2e/browser_smokes.rs` (#89).
 
 - **Opt-in external**. Real engines and desktop need opt-in fixtures and remain outside the default gate.
   `acp-harness.integration.test.ts`, `rust-desktop.integration.test.ts`.

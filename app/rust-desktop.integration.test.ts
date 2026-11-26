@@ -11,7 +11,6 @@ import { promisify } from 'node:util';
 import sharp from 'sharp';
 import { startApp } from './test-bridge.ts';
 import { connectVnc } from './test-support/agent-desktop-test-client.ts';
-import { benchmarkDesktop } from './test-support/rust-desktop-benchmark.ts';
 
 if (process.env.MINARBOT_DESKTOP_IT !== '1') throw new Error('Opt-in check: MINARBOT_DESKTOP_IT=1 node --experimental-strip-types --test rust-desktop.integration.test.ts');
 
@@ -159,8 +158,4 @@ test('Linux sandbox: public fixture, input, file isolation, loopback denial, SIG
     await Promise.all([http, tls].map(server => new Promise<void>(resolve => server.close(() => resolve()))));
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test('loopback desktop input-to-screen latency and frame rate improve against task baseline', { timeout: 180_000 }, async () => {
-  console.log(JSON.stringify(await benchmarkDesktop()));
 });
