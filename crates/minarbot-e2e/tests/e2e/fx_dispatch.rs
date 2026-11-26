@@ -114,7 +114,7 @@ fn responder(request: &ModelRequest) -> Answer {
         // never reached before the restart command).
         return Answer::Stream(
             vec![
-                Chunk::Text("Partial answer before restart".into()),
+                Chunk::Text("Partial answer before restart.".into()),
                 Chunk::Wait(Gate::new()),
             ],
             "stop".into(),
@@ -512,7 +512,7 @@ async fn restart_cancels_and_links_a_new_turn_carries_partial_text_and_saved_res
     let restart = &calls[position];
     let transcript = restart.body["messages"].to_string();
     ensure!(
-        transcript.contains("Partial answer before restart"),
+        transcript.contains("Partial answer before restart."),
         "partial text not carried: {}",
         Inspector::open(f.app.database())?
             .rows("SELECT context FROM dispatch_links", [])?
