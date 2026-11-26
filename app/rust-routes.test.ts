@@ -65,6 +65,7 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
     ['/api/vault', 'Lists Vault entry metadata or saves an entry with agent grants.'],
     ['/api/vault/delete', 'Deletes a Vault entry at the expected revision.'],
     ['/api/vault/respond', 'Resolves a Computer secure-fill request.'],
+    ['/api/hub-meter/{*path}', 'Meters one hub turn\'s provider requests on loopback.'],
   ]);
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));

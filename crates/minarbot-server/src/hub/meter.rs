@@ -259,10 +259,7 @@ pub(crate) fn start<'a>(
 }
 
 pub(crate) fn routes() -> Router<AppState> {
-    Router::new()
-        .route(PREFIX, any(proxy))
-        .route("/api/hub-meter/", any(proxy))
-        .route("/api/hub-meter/{*path}", any(proxy))
+    Router::new().route("/api/hub-meter/{*path}", any(proxy))
 }
 
 async fn proxy(State(state): State<AppState>, request: Request) -> Response {
