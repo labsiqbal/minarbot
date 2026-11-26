@@ -53,6 +53,7 @@ mod questions;
 mod rg_craft_anything;
 mod rg_mcp_feature_tools;
 mod rg_mcp_server;
+mod rg_self_verification;
 mod rg_support;
 mod sa_agent_interrupt;
 mod sa_agent_messages;
