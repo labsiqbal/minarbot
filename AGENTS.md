@@ -18,7 +18,7 @@ cargo build -p minarbot-server -p minarbot-testkit -p minarbot-launcher
 cargo test -p minarbot-testkit -p minarbot-e2e
 ```
 
-The remaining Node suite is legacy coverage during the #89 migration. Do not add Node tests.
+All tests are Rust. Do not add Node tests.
 
 ## Rust
 

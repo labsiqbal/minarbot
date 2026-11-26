@@ -7,8 +7,8 @@ restarts and multi-step server flows. Agent-turn tests use the kit's fake
 peers and scripted model only for agent replies, tool calls, waits, resume,
 streaming and approvals. UI smokes cover browser journeys.
 
-New integration tests use `crates/minarbot-testkit`. Do not add
-`app/*.test.ts` or `app/fixtures/*.mjs`.
+All tests are Rust; integration tests use `crates/minarbot-testkit`. Do not
+add Node tests (`app/*.test.ts`) or Node fixtures (`app/fixtures/*.mjs`).
 
 ## Build and run
 
@@ -216,7 +216,6 @@ only temporary directories and loopback ports. Servers get a hermetic `PATH`
 ## Honest tests
 
 A failing test means a product bug or a named removed behaviour. Skipped,
-ignored or loosened tests count as failures. When a ported case hits a
-product bug, leave that assertion out of the Rust test, keep the Node case,
-and record the bug with the exact assertion in `docs/test-ledger.md`.
-Never use `#[ignore]`.
+ignored or loosened tests count as failures. When a test hits a product bug,
+fix the bug, or leave that assertion out and record the bug with the exact
+assertion in `docs/test-ledger.md`. Never use `#[ignore]`.

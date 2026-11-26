@@ -164,7 +164,7 @@ const scriptLint = new ESLint({
     { files: ['desktop/src/*-renderer.mjs'], languageOptions: { globals: globals.browser } },
   ],
 });
-const scriptProblems = (await scriptLint.lintFiles(['desktop/scripts/*.mjs', 'desktop/src/*.mjs', 'app/scripts/*.mjs', 'app/t3/*.mjs']))
+const scriptProblems = (await scriptLint.lintFiles(['desktop/scripts/*.mjs', 'desktop/src/*.mjs', 'app/t3/*.mjs']))
   .flatMap(result => result.messages.map(message => `${result.filePath}:${message.line} ${message.message}`));
 assert.deepEqual(scriptProblems, [], 'Repository scripts must not reference undefined names.');
 

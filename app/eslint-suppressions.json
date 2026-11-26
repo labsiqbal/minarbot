@@ -8,10 +8,5 @@
     "no-restricted-globals": {
       "count": 2
     }
-  },
-  "test-support/script-client.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
   }
 }

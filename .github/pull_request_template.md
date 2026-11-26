@@ -9,5 +9,4 @@
 - [ ] `cargo test --workspace`
 - [ ] `npm run lint` in `app/`
 - [ ] `npm run build` in `app/`
-- [ ] `npm test` in `app/`
 - [ ] Screenshot attached for UI changes

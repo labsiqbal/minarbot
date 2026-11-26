@@ -2464,7 +2464,6 @@
         "buildCodexAdditionalContext"
       ],
       "localPaths": [
-        "app/test-support/additional-context.ts",
         "crates/minarbot-server/src/harness/store.rs",
         "app/harness.ts",
         "app/harness-store.ts"

@@ -203,15 +203,14 @@ fn scripts(source: &Path, lint: &str) -> Result<()> {
     package["scripts"] = json!({
         "lint": lint,
         "build": "echo yes > built",
-        "test": "test -f built || exit 8; echo yes > tested",
+        "test": "echo yes > tested",
     });
     fs::write(file, package.to_string())?;
     Ok(())
 }
 
 #[test]
-fn release_lint_failure_stops_build_tests_and_packaging_successful_gates_run_in_order() -> Result<()>
-{
+fn release_lint_failure_stops_build_and_packaging_successful_gates_skip_node_tests() -> Result<()> {
     let dir = Scratch::new()?;
     let source = dir.0.join("source");
     let releases = dir.0.join("releases");
@@ -224,9 +223,6 @@ fn release_lint_failure_stops_build_tests_and_packaging_successful_gates_run_in_
     if !failed.contains("Command failed") {
         return Err(format!("lint failure: {failed}").into());
     }
-    if source.join("tested").exists() {
-        return Err("tests ran after a lint failure".into());
-    }
     if source.join("built").exists() {
         return Err("build ran after a lint failure".into());
     }
@@ -238,8 +234,9 @@ fn release_lint_failure_stops_build_tests_and_packaging_successful_gates_run_in_
     if !source.join("built").exists() {
         return Err("build gate did not run".into());
     }
-    if !source.join("tested").exists() {
-        return Err("test gate did not run after build".into());
+    // All tests are Rust (#89): the release gate never runs `npm test`.
+    if source.join("tested").exists() {
+        return Err("the release gate ran the Node test script".into());
     }
     Ok(())
 }
