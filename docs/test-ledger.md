@@ -2035,3 +2035,85 @@ lose the receiver's apply reply.
 | Gap | Kept Node case | Detail |
 | --- | --- | --- |
 | P6 | `app/hub-link.test.ts` "local provider spend ceiling refuses next request before dispatch" | `harness/store.rs` reserves the hub provider budget (`before_effect(... "provider")`) once per harness pass. A CLI harness makes several model calls inside one pass (here: the call after an approved tool), so a grant with room for one paid request still makes two. The turn then fails on `spend_limit` at the next pass. Enforcing a per-request ceiling under native harnesses needs a design decision (count MCP tool steps, or refuse multi-step passes for capped grants). |
+
+## #89 regressed files
+
+Seven Node files passed at 33781f3 and failed on c59fbae. Their runtime
+cases moved to `crates/minarbot-e2e/tests/e2e/rg_<area>.rs`, one Rust test
+per Node case, including the cases that still passed. Shared helpers live in
+`rg_support.rs` (an MCP HTTP client shaped like the SDK client, raw
+JSON-RPC calls, and the `mcpServer` facade as direct token rows) and
+`rg_media.rs` (a recorder for the connector's script requests, the PDF
+fault switch, and journal polling). Assertion counts are static sites:
+Node `assert*(...)` in the case, Rust `ensure!` and `*_expect` in the test,
+plus the module helpers it calls. Node fixture plumbing (`assert(address)`)
+is not counted.
+
+### Failure causes
+
+| Node case | Cause | Fix |
+| --- | --- | --- |
+| craft-anything: Craft Anything is built in and maps its approvals to allow-once cards | Stale. Since #87 (5528da5e), a native tool that refuses a call answers with an MCP tool error carrying its reason. The HTTP 403 `MCP authorization failed.` was removed on purpose. | The port asserts the tool error `{"error": "Deep mode requires prior owner permission for this project.", "status": 403}`. |
+| mcp-server: agent session binds agent/turn, reuses conversation history rules, and revokes at run end | Stale. Since #87 (aa2feb07), a session's `list_agents` is the native coordination tool under the `orchestration` scope. Every harness session carries that scope (`registry::mint`). The Node session had only `agents:read`, `agents:message` and `history:read`, so the call was refused with 403. Revocation at run end works. | The port mints the session with `orchestration` as well. |
+| mcp-feature-tools: M4 real owner and session MCP HTTP clients read and write feature families | Stale. Since #87 (5528da5e), sessions get the native `list_routines` and `read_routine`, and the native `read_routine` takes `{id}`. `{routine}` answered `Invalid routine ID.` | The port reads with `{id}`. |
+| mcp-feature-tools: manual routine creation defaults to authenticated agent without inventing a schedule | Stale, as above. | The session reads `{id}`. The run history (`runs`) comes from the owner peer's feature `read_routine`. |
+| mcp-feature-tools: M4 delegation MCP tools preserve parent session and caller receipts | Two causes. Stale: since #87 (aa2feb07), a session delegates through the native `delegate_task` (`{agent, task, wait}`), which keeps no caller receipt. Regression (R1): once the Node case got past the receipt check, the feature `wait_task` requeued the parent turn under its live harness run, and the session's next call (`cancel_task`) was refused with 403. | The port delegates natively from the session and checks receipt replay and the 409 conflict on the owner peer's feature `delegate_task` (with `turn`). R1 is fixed in the product. |
+| self-verification: synthetic done without verification gets one nudge ... | Stale. Harness turns get the verification reminder as the follow-up user prompt. The system message that the API runtime rewrote is gone. The Node script looked only at `messages[0]`. | The port's script detects the reminder in the last user message. The nudge, its order and the reply are unchanged. |
+| slack-media: Slack files snapshot bytes and retry uploads and turns without duplicate work | Stale fixture. Since #87 (cfe9f09d), images reach Codex as `input_image` items. `app/fixtures/fake-gateway-harness.mjs` forwarded only the text, so the image never reached the provider. The Rust `fake-gateway` forwards these items. | No product change. |
+| telegram-media: Telegram media uploads once in requester thread ... | Stale fixture, as for Slack. | No product change. |
+| hub-link: local provider spend ceiling refuses next request before dispatch | Open product gap P6. | Kept in Node, unchanged. |
+
+### Product fix
+
+| Bug | Symptom | Cause and fix |
+| --- | --- | --- |
+| R1 | A harness agent that called `wait_task` over MCP lost its session for the rest of the run: every later MCP call answered 403. If the child had already finished, the turn could also be queued again and given an extra "Delegated task completed" wake turn. | 93410e87 (#87) parked the turn and wrote a `delegation_waits` row, so the blocking feature `wait_task` survives a restart. `messaging::settle` resumed that row while the MCP call was still in flight. It requeued the turn (`paused=0`) under its live run, and the call's own cleanup then found nothing to restore. `turns/messaging.rs` now tracks tasks with an in-flight blocking wait (`BlockingWait`, held by `mcp/features.rs` for the whole call). `settle` skips these tasks for both the wait row and the wake, and after a restart it handles the row as before. Regression: `rg_mcp_feature_tools::m4_delegation_mcp_tools_preserve_parent_session_and_caller_receipts` asserts that the parent is still running after `wait_task` and that `cancel_task` then succeeds. |
+
+### Kit change
+
+`minarbot-testkit/src/bridge.rs`: the bridge router now accepts bodies up to
+16 MiB (`DefaultBodyLimit`). With axum's default 2 MiB limit, the PDF fault
+bridge answered a 5 MiB attachment with a plain 413. The server could not
+read that reply and failed the turn with 500 `storage_failed`. The Node
+bridge had no limit. This is the only change to an existing kit file. Every
+other helper is in the new `rg_support.rs` and `rg_media.rs` modules.
+
+### Files
+
+| Node file | Node runtime cases | Rust tests | Node cases kept |
+| --- | ---: | ---: | ---: |
+| `app/craft-anything.test.ts` | 1 (+1 opt-in) | 1 | 0, file deleted |
+| `app/mcp-server.test.ts` | 8 | 7 | 1 (TS module) |
+| `app/mcp-feature-tools.test.ts` | 7 | 7 | 0, file deleted |
+| `app/self-verification.test.ts` | 1 | 1 | 0, file deleted |
+| `app/slack-media.test.ts` | 1 | 1 | 0, file deleted |
+| `app/telegram-media.test.ts` | 1 | 1 | 0, file deleted |
+| `app/hub-link.test.ts` | 2 | 0 | 2 (TS module, P6) |
+| Total | 21 | 18 | 3 |
+
+### Case map
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | --- | --- |
+| craft-anything: Craft Anything is built in and maps its approvals to allow-once cards | `rg_craft_anything::craft_anything_is_built_in_and_maps_its_approvals_to_allow_once_cards` | 18 -> 18 | Stale 403 (see above). The release fixture goes beside the database, as `root(state)` expects. |
+| craft-anything: Craft Anything installs its signed release and captures a public page in Computer | Not ported | 8 -> - | Opt-in (`MINARBOT_CRAFT_LIVE=1`), not a default runtime case. It downloads the real GitHub release and opens example.com. |
+| mcp-server: real MCP client calls all tools, isolated peer history, stable send receipts and payload conflict | `rg_mcp_server::real_mcp_client_calls_all_tools_isolated_peer_history_stable_send_receipts_and_payload_conflict` | 27 -> 27 | Full. |
+| mcp-server: MCP scope, credential failures, schema checks and browser boundaries | `rg_mcp_server::mcp_scope_credential_failures_schema_checks_and_browser_boundaries` | 17 -> 17 | The fixed clock stands still, so a session stored with no lifetime left stands in for the one that expired after 1 ms. |
+| mcp-server: cancel_message cannot cancel another peer or owner work | `rg_mcp_server::cancel_message_cannot_cancel_another_peer_or_owner_work` | 7 -> 6 | The two repeated cancels are one loop site. |
+| mcp-server: owner peer token routes are idempotent, reveal once, validate boundaries and never persist bearer canaries | `rg_mcp_server::owner_peer_token_routes_are_idempotent_reveal_once_validate_boundaries_and_never_persist_bearer_canaries` | 17 -> 19 | `verifyBearer` is an `initialize` call. The log check reads the server's stdout and stderr. The database check also reads the WAL file. |
+| mcp-server: agent session binds agent/turn, reuses conversation history rules, and revokes at run end | `rg_mcp_server::agent_session_binds_agent_turn_reuses_conversation_history_rules_and_revokes_at_run_end` | 9 -> 10 | Stale scope (see above). The two refused mints check the test facade's preconditions, as the Node facade did. |
+| mcp-server: session registry uses exact hash lookup, bounded expiry and explicit revocation | Kept in Node | 6 -> - | Tests `app/t3/mcp-session-registry.ts`. |
+| mcp-server: failed bearer authentication is rate-limited with uniform responses | `rg_mcp_server::failed_bearer_authentication_is_rate_limited_with_uniform_responses` | 3 -> 3 | Full. |
+| mcp-server: interrupted peer work keeps its original receipt across restart and never replays | `rg_mcp_server::interrupted_peer_work_keeps_its_original_receipt_across_restart_and_never_replays` | 5 -> 5 | Full. |
+| mcp-feature-tools: M4 real owner and session MCP HTTP clients read and write feature families | `rg_mcp_feature_tools::m4_real_owner_and_session_mcp_http_clients_read_and_write_feature_families` | 10 -> 10 | Stale `read_routine` arguments (see above). Composio and the external MCP server are one loopback stub. |
+| mcp-feature-tools: M4 scope families and session resource isolation | `rg_mcp_feature_tools::m4_scope_families_and_session_resource_isolation` | 5 -> 5 | Full. |
+| mcp-feature-tools: M4 idempotency, confirmed deletes, active-work guard and cursor bounds | `rg_mcp_feature_tools::m4_idempotency_confirmed_deletes_active_work_guard_and_cursor_bounds` | 13 -> 13 | Full. |
+| mcp-feature-tools: M4 secret-free listings and revocation before receipt replay | `rg_mcp_feature_tools::m4_secret_free_listings_and_revocation_before_receipt_replay` | 5 -> 5 | The environment canary is checked in its JSON-escaped form, as it would appear in a reply, and by its prefix. |
+| mcp-feature-tools: M4 delegation MCP tools preserve parent session and caller receipts | `rg_mcp_feature_tools::m4_delegation_mcp_tools_preserve_parent_session_and_caller_receipts` | 6 -> 8 | Stale native delegation, plus the R1 regression (see above). |
+| mcp-feature-tools: M4 route-backed workflow and MCP cursors do not skip ten-item page tails | `rg_mcp_feature_tools::m4_route_backed_workflow_and_mcp_cursors_do_not_skip_ten_item_page_tails` | 7 -> 7 | Full. |
+| mcp-feature-tools: manual routine creation defaults to authenticated agent without inventing a schedule | `rg_mcp_feature_tools::manual_routine_creation_defaults_to_authenticated_agent_without_inventing_a_schedule` | 7 -> 8 | Stale `read_routine` (see above). |
+| self-verification: synthetic done without verification gets one nudge, checks precede final, evidence stays outside reply | `rg_self_verification::synthetic_done_without_verification_gets_one_nudge_checks_precede_final_evidence_stays_outside_reply` | 14 -> 11 | The Node provider's three in-script asserts are recorded as script errors and checked once. `app.post` requires 2xx. |
+| slack-media: Slack files snapshot bytes and retry uploads and turns without duplicate work | `rg_slack_media::slack_files_snapshot_bytes_and_retry_uploads_and_turns_without_duplicate_work` | 33 -> 33 | Uses `platform::ConnectorFixture` with path-matching faults. A recorder in front of Minarbot keeps the upload requests for the identity check. Bot-token checks on the fake file API are collected and asserted at the end. |
+| telegram-media: Telegram media uploads once in requester thread and retries lost uploads/messages with original bytes | `rg_telegram_media::telegram_media_uploads_once_in_requester_thread_and_retries_lost_uploads_messages_with_original_bytes` | 36 -> 35 | The late upload is a `SplitRequest` whose last bytes arrive after the revocation. |
+| hub-link: signed envelopes reject forged payloads, keys and directions | Kept in Node | 5 -> - | Tests `app/test-support/hub-node-signature.ts`. |
+| hub-link: local provider spend ceiling refuses next request before dispatch | Kept in Node | 1 -> - | Open product gap P6 (see the peers slice). |
