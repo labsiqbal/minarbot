@@ -7,6 +7,7 @@ import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { startApp } from '../../test-bridge.ts';
+import { testDatabase } from '../database.ts';
 import { deleteAgentSmoke } from './delete-agent-smoke.mjs';
 import { fixDate, fixtureClock, parityChromiumArgs, parityShot, withFixtureText } from './parity-shot.mjs';
 
@@ -185,13 +186,14 @@ async function mutations(page) {
   const edit = await profile(page);
   await edit.getByRole('textbox', { name: 'Name', exact: true }).fill('Lifecycle updated');
   await edit.getByRole('tab', { name: 'Model', exact: true }).click();
+  await edit.getByLabel('Provider instance', { exact: true }).selectOption('codex-test-gateway');
+  await edit.locator('input[name=model]').fill('fixture');
   await edit.getByRole('switch', { name: 'Learn from conversations' }).click();
   await edit.getByText('Goal judge model', { exact: true }).click();
   await edit.getByLabel('Goal judge model').fill('alternate');
   await edit.getByRole('tab', { name: 'Advanced', exact: true }).click();
   assert.equal(await edit.getByRole('switch', { name: 'Library docs', exact: true }).count(), 0);
   await button(edit, 'Save changes').click();
-  if (await edit.isVisible().catch(() => false)) await page.keyboard.press('Escape');
   await edit.waitFor({ state: 'hidden' });
   await agentRow(page, 'Lifecycle updated').waitFor();
 
@@ -248,6 +250,8 @@ async function mutations(page) {
       await create.getByRole('radio', { name: 'Draft with AI', exact: true }).click();
       await create.getByLabel(/Temporary name/).fill('Drafted agent');
       await create.getByLabel(/Brief/).fill('Draft a profile for scheduling.');
+      await create.getByLabel('Provider instance', { exact: true }).selectOption('codex-test-gateway');
+      await create.locator('input[name=model]').fill('fixture');
       await button(create, 'Create and draft').click();
     })(),
   ]);
@@ -338,8 +342,9 @@ const receipt = {};
 try {
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, args: parityChromiumArgs });
   for (const client of clients) {
+    const database = join(scratch, client + '.sqlite');
     const app = await startApp({
-      database: join(scratch, client + '.sqlite'), dist: resolve('dist'), port: 0, defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', stream: false, projectRoot: scratch, fixedClock: fixtureClock,
+      database, dist: resolve('dist'), port: 0, defaultModel: 'fixture', baseURL: 'http://127.0.0.1:' + provider.address().port + '/v1', apiKey: 'synthetic', stream: false, projectRoot: scratch, fixedClock: fixtureClock,
     });
     try {
       const response = await fetch(app.origin + '/api/agents', {
@@ -347,6 +352,11 @@ try {
         body: JSON.stringify({ id: agentId, providerInstance: 'codex-test-gateway', name: 'Lifecycle fixture', model: 'fixture', instructions: 'Help the user.' }),
       });
       assert.equal(response.status, 201, await response.text());
+      // The frozen profile shows a migrated agent with no bound provider.
+      const db = testDatabase(database);
+      try {
+        db.prepare("UPDATE agents SET provider_instance='' WHERE id=?").run(agentId);
+      } finally { db.close(); }
       const timing = await benchmark(browser, app.origin, client);
       const errors = [];
       let commands;
