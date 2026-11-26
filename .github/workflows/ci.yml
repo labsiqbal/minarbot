@@ -39,6 +39,7 @@ jobs:
           npm ci
           npx playwright-core install --with-deps chromium
           node appearance-smoke.mjs
+          node provider-instances-smoke.mjs
       - name: App tests against Rust workspace and hosted Hub
         working-directory: app
         env:
