@@ -119,10 +119,19 @@ fn runtime_blocked_reason(
     state: &AppState,
     db: &Connection,
     id: &str,
+    instance: &str,
     runtime: &str,
     workspace_connected: bool,
 ) -> Result<Option<&'static str>> {
-    if executable(state, runtime).is_none() {
+    // Same rule as `provider_instances::ready`: the instance's own binary
+    // path, else the engine on PATH.
+    let binary = one(
+        db,
+        "SELECT binary_path FROM provider_instances WHERE id=?",
+        [instance],
+    )?
+    .is_some_and(|row| !string(&row, "binary_path").is_empty());
+    if !binary && executable(state, runtime).is_none() {
         return Ok(Some("This engine is unavailable on this host."));
     }
     // ponytail: use the existing probe result when present, without probing on directory polls.
@@ -201,6 +210,7 @@ pub fn list(state: &AppState, db: &Connection) -> Result<Value> {
             state,
             db,
             &id,
+            string(a, "provider_instance"),
             &runtime,
             workspace_connected,
         )?);

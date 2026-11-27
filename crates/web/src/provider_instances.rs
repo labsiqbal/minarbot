@@ -146,6 +146,8 @@ pub fn panel() -> impl IntoView {
     let adding = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let checked = RwSignal::new("Checked just now".to_owned());
+    // Lives with the panel: a reload after Save rebuilds the detail view.
+    let saved = RwSignal::new(String::new());
 
     Effect::new(move |_| {
         if selected.get_untracked().is_none() {
@@ -180,7 +182,7 @@ pub fn panel() -> impl IntoView {
                 <div class="provider-instances-layout">
                     <nav class="k-card provider-instances-list" aria-label="Providers">
                         <For each=move || providers.data.with(|data| data.clone().unwrap_or_default().providers)
-                            key=|provider| provider.id.clone()
+                            key=|provider| (provider.id.clone(), provider.revision, status_line(provider))
                             children=move |provider| {
                                 let id = provider.id.clone();
                                 let active_id = id.clone();
@@ -191,7 +193,7 @@ pub fn panel() -> impl IntoView {
                                 view! {
                                     <div class="provider-instance-row" class:is-active=active>
                                         <button type="button" class="provider-instance-row__select" aria-current=move || active_for_button().then_some("true")
-                                            on:click=move |_| selected.set(Some(id.clone()))>
+                                            on:click=move |_| { saved.set(String::new()); selected.set(Some(id.clone())); }>
                                             <span class="provider-instance-row__icon"><ProviderMark kind=provider.kind.clone() /></span>
                                             <span class="provider-instance-row__main">
                                                 <strong>{provider.display_name.clone()}</strong>
@@ -205,14 +207,14 @@ pub fn panel() -> impl IntoView {
                                                 let reload = providers.reload;
                                                 let error = error;
                                                 let id = toggle_provider.id.clone();
-                                                spawn_local(async move { if let Err(message) = api::post::<Value>(&format!("{PATH}/{id}/update"), &body).await { error.set(message); } reload.run(()); });
+                                                spawn_local(async move { if let Err(message) = api::command::<Value>(&format!("{PATH}/{id}/update"), body).await { error.set(message); } reload.run(()); });
                                             }) />
                                     </div>
                                 }
                             } />
                     </nav>
                     <Show when=move || current().is_some() fallback=|| view! { <Empty title="Choose a provider" icon="server" /> }>
-                        {move || current().map(|provider| detail(provider, providers.reload, error))}
+                        {move || current().map(|provider| detail(provider, providers.reload, error, saved))}
                     </Show>
                 </div>
             </Show>
@@ -223,7 +225,7 @@ pub fn panel() -> impl IntoView {
     }
 }
 
-fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyView {
+fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: RwSignal<String>) -> AnyView {
     let name = RwSignal::new(provider.display_name.clone());
     let binary = RwSignal::new(provider.binary_path.clone());
     let home = RwSignal::new(provider.home_path.clone());
@@ -231,7 +233,6 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
     let args = RwSignal::new(provider.launch_args.join("\n"));
     let environment = RwSignal::new(provider.environment.clone());
     let busy = RwSignal::new(false);
-    let saved = RwSignal::new(String::new());
     let confirm_open = RwSignal::new(false);
     let save_id = provider.id.clone();
     let provider_id = provider.id.clone();
@@ -262,7 +263,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
         let error = error;
         let request_id = save_id.clone();
         spawn_local(async move {
-            match api::post::<Instance>(&format!("{PATH}/{request_id}/update"), &body).await {
+            match api::command::<Instance>(&format!("{PATH}/{request_id}/update"), body).await {
                 Ok(_) => { saved.set("Saved".into()); reload.run(()); }
                 Err(message) => error.set(message),
             }
@@ -276,7 +277,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
         let reload = reload;
         let error = error;
         spawn_local(async move {
-            match api::post::<Value>(&format!("{PATH}/{id}/sign-in"), &json!({"instanceId":id})).await {
+            match api::command::<Value>(&format!("{PATH}/{id}/sign-in"), json!({"instanceId":id})).await {
                 Ok(_) => { saved.set("Sign-in started".into()); reload.run(()); }
                 Err(message) => error.set(message),
             }
@@ -290,7 +291,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
         let reload = reload;
         let error = error;
         spawn_local(async move {
-            let result = api::post::<Value>(&format!("{PATH}/{id}/refresh"), &json!({"instanceId":id})).await;
+            let result = api::command::<Value>(&format!("{PATH}/{id}/refresh"), json!({"instanceId":id})).await;
             if let Err(message) = result { error.set(message); } else { saved.set("Checked just now".into()); reload.run(()); }
             busy.set(false);
         });
@@ -303,7 +304,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
         confirm_open.set(false);
         spawn_local(async move {
             let request_id = id;
-            match api::post::<Value>(&format!("{PATH}/{request_id}/delete"), &json!({"instanceId":request_id,"revision":provider_revision})).await {
+            match api::command::<Value>(&format!("{PATH}/{request_id}/delete"), json!({"instanceId":request_id,"revision":provider_revision})).await {
                 Ok(_) => reload.run(()),
                 Err(message) => error.set(message),
             }
@@ -383,7 +384,7 @@ fn AddProvider(close: UiAction, saved: impl Fn() + Copy + Send + 'static, error:
         sign_in_status.set(String::new());
         spawn_local(async move {
             let result = match api::post::<Instance>(PATH, &body).await {
-                Ok(_) if sign_in => api::post::<Value>(&format!("{PATH}/{id}/sign-in"), &json!({"instanceId":id})).await.map(|_| ()),
+                Ok(_) if sign_in => api::command::<Value>(&format!("{PATH}/{id}/sign-in"), json!({"instanceId":id})).await.map(|_| ()),
                 Ok(_) => Ok(()),
                 Err(message) => Err(message),
             };

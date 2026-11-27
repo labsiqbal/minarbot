@@ -4,6 +4,7 @@
 //! The Node origin of every test is recorded in `docs/test-ledger.md`.
 
 mod agent_create;
+mod browser_smokes;
 mod cli;
 mod fx_acp;
 mod fx_agents;

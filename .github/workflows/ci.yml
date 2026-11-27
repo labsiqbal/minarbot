@@ -25,20 +25,16 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: cargo fmt --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo test --locked --workspace
-      - run: cargo build --locked --workspace
       - working-directory: app
         run: npm ci
       - name: Lint and type-check browser adapters
         working-directory: app
         run: npm run lint && npm run build
+      # The e2e browser smokes serve the built client in the runner's Chrome.
       - name: Build Leptos web client
         run: cargo xtask leptos
-      - working-directory: app/test-support/ui-smoke
-        run: |
-          npm ci
-          npx playwright-core install --with-deps chromium
-          node appearance-smoke.mjs
+      - run: cargo test --locked --workspace
+      - run: cargo build --locked --workspace
       - run: cargo xtask install-smoke target/debug
       - name: Check Tauri desktop
         working-directory: desktop/tauri

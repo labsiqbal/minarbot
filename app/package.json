@@ -9,7 +9,6 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
-    "parity:gate": "node --experimental-strip-types test-support/ui-smoke/parity-gate.mjs",
     "test:phase-0": "node t3/provenance-check.mjs --phase --receipt t3/phase-0.json",
     "lint": "eslint . --max-warnings 0 && node lint/check.mjs && node lint/markdown-paths.mjs"
   },

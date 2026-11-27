@@ -11,7 +11,7 @@ npm run build --prefix app
 cargo xtask leptos
 ```
 
-Write integration tests with `minarbot-testkit` as described in `docs/testing.md`. Build the server, the launcher and the kit's fake peers before running them:
+Write integration tests with `minarbot-testkit` as described in `docs/testing.md`. Build the server, the launcher, the kit's fake peers and, for the UI smokes, the Leptos client (`cargo xtask leptos`) before running them:
 
 ```sh
 cargo build -p minarbot-server -p minarbot-testkit -p minarbot-launcher
