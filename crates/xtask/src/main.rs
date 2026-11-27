@@ -13,6 +13,9 @@ mod github;
 mod leptos;
 
 #[cfg(unix)]
+mod preview;
+
+#[cfg(unix)]
 mod release;
 
 #[cfg(all(unix, test))]

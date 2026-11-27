@@ -129,6 +129,8 @@ cargo run --release -p minarbot-server
 
 Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_DIR` to keep data somewhere other than `~/.local/share/minarbot/new-app`. Rebuild the web client with `cargo xtask leptos` from the repository root. `npm run build` in `app/` type-checks the browser adapter code and leaves `app/dist` intact.
 
+To try a branch beside an installed Minarbot without a release, run `cargo xtask preview` from the checkout. It builds the checkout, stages it under `~/.local/share/minarbot-preview` with its own data, and runs it as the `minarbot-preview` systemd user service on port 4327 (`--port` to change). With Tailscale it also serves the port over tailnet HTTPS and prints the URL. Run it again after each change; `--stop` stops it. It skips the release gates.
+
 Leptos serves the workspace and hosted Hub. Missing or invalid web builds show
 a recovery page. Rebuild from source with `cargo xtask leptos` or reinstall the
 current release, then reload the page. Restart the hosted Hub after rebuilding.
