@@ -248,8 +248,8 @@ fn release_lint_failure_stops_build_tests_and_packaging_successful_gates_run_in_
 fn desktop_build_follows_dirty_guard_and_packages_release_version_without_changing_tracked_desktop_version(
 ) -> Result<()> {
     let dir = Scratch::new()?;
-    let root = &dir.0;
-    for folder in ["app", "scripts", "desktop/scripts", "desktop/src"] {
+    let root = &dir.0.join("repo");
+    for folder in ["app", "scripts", "desktop/tauri"] {
         fs::create_dir_all(root.join(folder))?;
     }
     for name in ["install-machine.sh", "uninstall-machine.sh"] {
@@ -258,8 +258,8 @@ fn desktop_build_follows_dirty_guard_and_packages_release_version_without_changi
             root.join("scripts").join(name),
         )?;
     }
-    let mut desktop: Value =
-        serde_json::from_slice(&fs::read(repository().join("desktop/package.json"))?)?;
+    let config = "desktop/tauri/tauri.conf.json";
+    let mut desktop: Value = serde_json::from_slice(&fs::read(repository().join(config))?)?;
     let app = json!({"name": "release-fixture", "version": "1.0.1", "type": "module",
         "scripts": {"lint": "true", "test": "true", "build": "true"}});
     fs::write(root.join("app/package.json"), app.to_string())?;
@@ -273,16 +273,7 @@ fn desktop_build_follows_dirty_guard_and_packages_release_version_without_changi
     fs::create_dir_all(root.join("app/dist/_leptos"))?;
     fs::write(root.join("app/dist/_leptos/conversation.html"), "fixture")?;
     desktop["version"] = json!("1.0.0");
-    fs::write(root.join("desktop/package.json"), desktop.to_string())?;
-    fs::write(
-        root.join("desktop/package-lock.json"),
-        json!({"version": "1.0.0", "packages": {"": {"version": "1.0.0"}}}).to_string(),
-    )?;
-    // The product runs `node desktop/scripts/build.mjs <version> <out>`.
-    fs::write(
-        root.join("desktop/scripts/build.mjs"),
-        "import {writeFileSync} from 'node:fs';import {join} from 'node:path';const [version, out] = process.argv.slice(2);const name = 'Minarbot-' + version + '-x86_64.AppImage';writeFileSync(join(out,name),version);writeFileSync(join(out,'latest-linux.yml'),'version: ' + version + '\\npath: ' + name + '\\n');",
-    )?;
+    fs::write(root.join(config), desktop.to_string())?;
     git(root, &["init"])?;
     git(root, &["add", "."])?;
     git(
@@ -297,17 +288,26 @@ fn desktop_build_follows_dirty_guard_and_packages_release_version_without_changi
             "Fixture",
         ],
     )?;
-    let releases = root.join("releases");
-    let args: Vec<String> = ["--desktop", "--no-github", "--releases"]
-        .iter()
-        .map(|arg| (*arg).to_owned())
-        .chain([releases.to_string_lossy().into_owned()])
-        .collect();
+    let releases = dir.0.join("releases");
+    let args: Vec<String> = [
+        "--desktop",
+        "--no-github",
+        "--notes",
+        "Fixture",
+        "--signing-key",
+        "unused.pem",
+        "--releases",
+    ]
+    .iter()
+    .map(|arg| (*arg).to_owned())
+    .chain([releases.to_string_lossy().into_owned()])
+    .collect();
     fs::write(root.join("dirty"), "uncommitted")?;
-    let dirty = err_text(release::command(
+    let dirty = err_text(release::command_with_desktop(
         root,
         &args,
         &minarbot_launcher::RELEASE_PUBLIC_KEY,
+        desktop_fixture,
     ))?;
     if !dirty.contains("dirty worktree") {
         return Err(format!("dirty desktop release: {dirty}").into());
@@ -316,24 +316,63 @@ fn desktop_build_follows_dirty_guard_and_packages_release_version_without_changi
         return Err("dirty desktop release wrote releases".into());
     }
     fs::remove_file(root.join("dirty"))?;
-    release::command(root, &args, &minarbot_launcher::RELEASE_PUBLIC_KEY)?;
+    release::command_with_desktop(
+        root,
+        &args,
+        &minarbot_launcher::RELEASE_PUBLIC_KEY,
+        desktop_fixture,
+    )?;
     let id = latest(&releases)?.ok_or("no latest release")?;
     let info = release::verify(&releases, &id)?;
     if info.version != "1.0.1" {
         return Err(format!("release version {}", info.version).into());
     }
-    let image = fs::read_to_string(
-        releases
-            .join(".github")
-            .join(&info.id)
-            .join("Minarbot-1.0.1-x86_64.AppImage"),
-    )?;
-    if image != "1.0.1" {
-        return Err(format!("desktop image {image}").into());
+    let directory = releases.join(".github").join(&info.id);
+    let ready: release::Ready = serde_json::from_slice(&fs::read(directory.join("ready.json"))?)?;
+    let platform = format!("linux-{}", std::env::consts::ARCH);
+    let [_, image, _] = super::desktop::tauri_names("1.0.1", &platform);
+    assert_eq!(fs::read_to_string(directory.join(image))?, "1.0.1");
+    super::desktop::verify_feed(&directory, "1.0.1", &platform)?;
+    assert_eq!(
+        ready.release,
+        super::sha256(&releases.join(&info.id).join("release.json"))?
+    );
+    let older = json!({
+        "release": ready.release, "desktop": ["old-image", "old-feed"], "tauri": {}
+    });
+    assert!(serde_json::from_value::<release::Ready>(older).is_err());
+    assert_eq!(ready.tauri.len(), 3);
+    for (name, hash) in ready.tauri {
+        assert_eq!(hash, super::sha256(&directory.join(name))?);
     }
-    let tracked: Value = serde_json::from_slice(&fs::read(root.join("desktop/package.json"))?)?;
+    let tracked: Value = serde_json::from_slice(&fs::read(root.join(config))?)?;
     if tracked["version"] != "1.0.0" {
         return Err(format!("tracked desktop version changed: {}", tracked["version"]).into());
     }
     Ok(())
+}
+
+fn desktop_fixture(
+    _: &Path,
+    runtime: &Path,
+    output: &Path,
+    version: &str,
+    dry: bool,
+) -> Result<[String; 3]> {
+    assert!(!dry);
+    assert!(fs::metadata(runtime)?.len() > 0);
+    let names = super::desktop::tauri_names(version, &format!("linux-{}", std::env::consts::ARCH));
+    let [signature, artifact, feed] = &names;
+    fs::write(output.join(signature), "fixture signature")?;
+    fs::write(output.join(artifact), version)?;
+    fs::write(
+        output.join(feed),
+        json!({
+            "version": version,
+            "url": format!("https://github.com/labsiqbal/minarbot/releases/download/v{version}/{artifact}"),
+            "signature": "fixture signature",
+        })
+        .to_string(),
+    )?;
+    Ok(names)
 }

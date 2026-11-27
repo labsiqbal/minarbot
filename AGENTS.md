@@ -34,9 +34,9 @@ Before writing or changing a test, pick its layer, seam and commands from [docs/
 
 ## Release tooling
 
-Run `cargo xtask release` from the repository root. Use `npm ci` in `app/` and, for `--desktop`, in `desktop/` before running the release gate. Pass `--issues <numbers>` and keep all locally claimed branches until release verification finishes.
+Run `cargo xtask release` from the repository root. Run `npm ci --prefix app` before the release gate. For `--desktop`, follow the [Tauri build prerequisites](desktop/tauri/README.md#build-and-release). Pass `--issues <numbers>` and keep all locally claimed branches until release verification finishes.
 
-For artifact verification, run `cargo xtask leptos` and build the release binaries first. Run `cargo xtask release --dry-run --releases <temporary-directory> --notes <notes>`. Pass `--desktop` to include the AppImage. See the README for retry, CI and smoke commands.
+For artifact verification, run `cargo xtask leptos` and build the release binaries first. Run `cargo xtask release --dry-run --releases <temporary-directory> --notes <notes>`. Pass `--desktop` to include the fixture-signed Tauri AppImage and updater metadata. See the README for retry, CI and smoke commands.
 
 ## Issues
 
