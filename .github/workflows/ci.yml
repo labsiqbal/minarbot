@@ -21,34 +21,24 @@ jobs:
       - name: Install test tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap libdbus-1-dev libsqlite3-dev poppler-utils
+          sudo apt-get install -y bubblewrap libdbus-1-dev libsqlite3-dev poppler-utils libwebkit2gtk-4.1-dev
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: cargo fmt --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo test --locked --workspace
-      - run: cargo build --locked --workspace
       - working-directory: app
         run: npm ci
-      - name: Lint and type-check Node tests and browser adapters
+      - name: Lint and type-check browser adapters
         working-directory: app
         run: npm run lint && npm run build
+      # The e2e browser smokes serve the built client in the runner's Chrome.
       - name: Build Leptos web client
         run: cargo xtask leptos
-      - working-directory: app/test-support/ui-smoke
-        run: |
-          npm ci
-          npx playwright-core install --with-deps chromium
-          node appearance-smoke.mjs
-          node provider-instances-smoke.mjs
-      - name: App tests against Rust workspace and hosted Hub
-        working-directory: app
-        env:
-          NODE_OPTIONS: --max-old-space-size=2048
-          MINARBOT_XTASK_BINARY: ${{ github.workspace }}/target/debug/xtask
-          MINARBOT_RUST_BINARY: ${{ github.workspace }}/target/debug/minarbot-server
-          MINARBOT_HOSTED_HUB_BINARY: ${{ github.workspace }}/target/debug/minarbot-server
-          MINARBOT_RUST_LAUNCHER_BINARY: ${{ github.workspace }}/target/debug/minarbot-launcher
-        run: npm test
+      - run: cargo test --locked --workspace
+      - run: cargo build --locked --workspace
       - run: cargo xtask install-smoke target/debug
-      - working-directory: desktop
-        run: npm test
+      - name: Check Tauri desktop
+        working-directory: desktop/tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked

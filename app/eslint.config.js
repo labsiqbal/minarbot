@@ -90,14 +90,6 @@ const foundation = [
       message: 'Use readJson from src/http.ts to handle proxy and API errors.',
     }] },
   },
-  {
-    files: ['**/*.test.{ts,tsx,mjs,js}', 'test.ts', 'test-support/*.ts'],
-    ignores: ['test-support/database.ts'],
-    rules: { 'no-restricted-syntax': ['error', {
-      selector: "NewExpression[callee.name='DatabaseSync']",
-      message: 'Open test databases with testDatabase() so tests wait for server write locks.',
-    }] },
-  },
   // #39: product comments; test bodies and lint fixtures remain outside product scope.
   {
     files: ['**/*.{ts,tsx,mjs,js}'],

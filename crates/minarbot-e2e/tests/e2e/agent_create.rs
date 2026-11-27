@@ -61,7 +61,19 @@ fn setup_reply(script: &Mutex<Setup>, request: &ModelRequest) -> Reply {
         script.continued = true;
         return Reply::hold();
     }
-    if saved || script.mode == "no-save" || script.mode == "name-only" && !edits.is_empty() {
+    // One refused escape attempt proves the restriction. Retrying until the
+    // tool budget runs out takes 50+ round trips and outlasts the wait on a
+    // loaded host.
+    let escaped = script.mode == "escape"
+        && request
+            .tool_calls()
+            .iter()
+            .any(|call| call["function"]["name"] == "create_text_file");
+    if saved
+        || escaped
+        || script.mode == "no-save"
+        || script.mode == "name-only" && !edits.is_empty()
+    {
         return Reply::text("Profile setup checked.");
     }
     match script.mode {

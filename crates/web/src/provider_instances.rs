@@ -146,6 +146,8 @@ pub fn panel() -> impl IntoView {
     let adding = RwSignal::new(false);
     let error = RwSignal::new(String::new());
     let checked = RwSignal::new("Checked just now".to_owned());
+    // Lives with the panel: a reload after Save rebuilds the detail view.
+    let saved = RwSignal::new(String::new());
 
     Effect::new(move |_| {
         if selected.get_untracked().is_none() {
@@ -180,7 +182,7 @@ pub fn panel() -> impl IntoView {
                 <div class="provider-instances-layout">
                     <nav class="k-card provider-instances-list" aria-label="Providers">
                         <For each=move || providers.data.with(|data| data.clone().unwrap_or_default().providers)
-                            key=|provider| provider.id.clone()
+                            key=|provider| (provider.id.clone(), provider.revision, status_line(provider))
                             children=move |provider| {
                                 let id = provider.id.clone();
                                 let active_id = id.clone();
@@ -191,7 +193,7 @@ pub fn panel() -> impl IntoView {
                                 view! {
                                     <div class="provider-instance-row" class:is-active=active>
                                         <button type="button" class="provider-instance-row__select" aria-current=move || active_for_button().then_some("true")
-                                            on:click=move |_| selected.set(Some(id.clone()))>
+                                            on:click=move |_| { saved.set(String::new()); selected.set(Some(id.clone())); }>
                                             <span class="provider-instance-row__icon"><ProviderMark kind=provider.kind.clone() /></span>
                                             <span class="provider-instance-row__main">
                                                 <strong>{provider.display_name.clone()}</strong>
@@ -212,7 +214,7 @@ pub fn panel() -> impl IntoView {
                             } />
                     </nav>
                     <Show when=move || current().is_some() fallback=|| view! { <Empty title="Choose a provider" icon="server" /> }>
-                        {move || current().map(|provider| detail(provider, providers.reload, error))}
+                        {move || current().map(|provider| detail(provider, providers.reload, error, saved))}
                     </Show>
                 </div>
             </Show>
@@ -223,7 +225,7 @@ pub fn panel() -> impl IntoView {
     }
 }
 
-fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyView {
+fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: RwSignal<String>) -> AnyView {
     let name = RwSignal::new(provider.display_name.clone());
     let binary = RwSignal::new(provider.binary_path.clone());
     let home = RwSignal::new(provider.home_path.clone());
@@ -231,7 +233,6 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>) -> AnyV
     let args = RwSignal::new(provider.launch_args.join("\n"));
     let environment = RwSignal::new(provider.environment.clone());
     let busy = RwSignal::new(false);
-    let saved = RwSignal::new(String::new());
     let confirm_open = RwSignal::new(false);
     let save_id = provider.id.clone();
     let provider_id = provider.id.clone();

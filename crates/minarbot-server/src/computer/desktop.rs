@@ -154,7 +154,10 @@ struct Fixture {
 pub struct Desktop {
     id: String,
     sensitive: AtomicBool,
-    _profile_lock: Option<fs::File>,
+    /// Held while this Computer writes the shared browser profile. `stop`
+    /// releases it at once: other `Arc` holders (a reservation, a request in
+    /// flight) can outlive the stop by a moment.
+    profile_lock: std::sync::Mutex<Option<fs::File>>,
     fixture: Option<Fixture>,
     helper: AsyncMutex<Helper>,
     gate: AsyncMutex<()>,
@@ -713,7 +716,7 @@ impl Manager {
         let d = Arc::new(Desktop {
             id: uuid::Uuid::new_v4().to_string(),
             sensitive: AtomicBool::new(false),
-            _profile_lock: profile_lock,
+            profile_lock: std::sync::Mutex::new(profile_lock),
             fixture,
             helper: AsyncMutex::new(Helper {
                 child,
@@ -835,6 +838,10 @@ impl Manager {
         for file in ["vnc.sock".into(), format!("X{}", d.display)] {
             let _ = fs::remove_file(self.root.join(agent).join("x11").join(file));
         }
+        d.profile_lock
+            .lock()
+            .map_err(|_| Failure::storage())?
+            .take();
         self.release(agent)?;
         self.desktops
             .lock()

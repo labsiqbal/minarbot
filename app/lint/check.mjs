@@ -39,7 +39,6 @@ await check("import 'node:fs';", 'server.ts');
 await check("import '../server.ts';", 'hub/probe.ts');
 for (const module of browserSafeModules) {
   await check("import 'node:fs';", module, builtin);
-  await check("import './test-bridge.ts';", module, boundary);
   await check("import '@clerk/backend';", module, boundary);
 }
 await check("import { parseDocument } from 'yaml';", 'shared/skill-files.ts');
@@ -133,26 +132,15 @@ async function countRules(directory) {
 await countRules(root);
 console.log(`Lint: ${checks} assertions passed; ${browserSafeModules.length} shared modules guarded; yaml browser graph ${packageFiles.size} files; ${rules.size} enforced rules: ${[...rules].sort().join(', ')}.`);
 
-// #107: the Node server is gone; server code lives in Rust and app/ root keeps only test entry points.
+// #107, #89: server code and tests live in Rust; app/ root keeps only the Vite config.
 {
   const rootModules = readdirSync(root, { withFileTypes: true })
     .filter(entry => !entry.isDirectory() && entry.name.endsWith('.ts'))
     .map(entry => entry.name)
-    .filter(name => !name.endsWith('.test.ts') && !/^rust-.*\.ts$|^vite.*\.config\.ts$/.test(name)
-      && name !== 'test-bridge.ts' && name !== 'test.ts');
+    .filter(name => !/^vite.*\.config\.ts$/.test(name));
   assert.deepEqual(rootModules.sort(), [],
-    'Server code belongs in Rust. Put browser code under src/ or shared/, and test helpers under test-support/.');
+    'Server code and tests belong in Rust. Put browser code under src/ or shared/.');
 }
-
-// A port taken from listen(0) and released is in the kernel's ephemeral range, where another
-// test can be handed it before our server binds or while a launcher restarts it.
-const portHelpers = [];
-for (const directory of [root, resolve(root, 'test-support'), resolve(root, '../scripts')]) {
-  for (const name of readdirSync(directory).filter(name => /\.(?:ts|mts|mjs)$/.test(name) && !name.endsWith('.d.mts'))) {
-    if (/\bfunction\s+freePort\b|\bfreePort\s*=\s*(?:async\s*)?\(/.test(readFileSync(resolve(directory, name), 'utf8'))) portHelpers.push(name);
-  }
-}
-assert.deepEqual(portHelpers, ['test-process.ts'], 'Reserve test ports with freePort from app/test-support/test-process.ts.');
 
 // Repository scripts sit outside the app ESLint project, so an unbound name there only fails
 // when the release runs them.
@@ -161,10 +149,9 @@ const scriptLint = new ESLint({
   cwd: resolve(root, '..'), overrideConfigFile: true,
   overrideConfig: [
     { languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.node, WebSocket: 'readonly' } }, rules: { 'no-undef': 'error' } },
-    { files: ['desktop/src/*-renderer.mjs'], languageOptions: { globals: globals.browser } },
   ],
 });
-const scriptProblems = (await scriptLint.lintFiles(['desktop/scripts/*.mjs', 'desktop/src/*.mjs', 'app/scripts/*.mjs', 'app/t3/*.mjs']))
+const scriptProblems = (await scriptLint.lintFiles(['app/t3/*.mjs']))
   .flatMap(result => result.messages.map(message => `${result.filePath}:${message.line} ${message.message}`));
 assert.deepEqual(scriptProblems, [], 'Repository scripts must not reference undefined names.');
 

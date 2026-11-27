@@ -83,19 +83,25 @@ fn saved_bounds(window: &WebviewWindow) -> Option<Bounds> {
     })
 }
 
-fn fit(bounds: Bounds, display: &tauri::Monitor) -> bool {
+fn fit(bounds: Bounds, point: tauri::LogicalPosition<i32>, size: tauri::LogicalSize<i32>) -> bool {
     let (Some(x), Some(y)) = (bounds.x, bounds.y) else {
         return false;
     };
-    let scale = display.scale_factor();
-    let area = display.work_area();
-    let point = area.position.to_logical::<i32>(scale);
-    let size = area.size.to_logical::<i32>(scale);
     let (x, y) = (i64::from(x), i64::from(y));
     x >= i64::from(point.x) - 1
         && y >= i64::from(point.y) - 1
         && x + i64::from(bounds.width) <= i64::from(point.x) + i64::from(size.width) + 1
         && y + i64::from(bounds.height) <= i64::from(point.y) + i64::from(size.height) + 1
+}
+
+fn connect_page(url: &Url) -> bool {
+    matches!(
+        (url.scheme(), url.host_str()),
+        ("tauri", Some("localhost")) | ("http", Some("tauri.localhost"))
+    ) && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && matches!(url.path(), "/" | "/index.html")
 }
 
 fn window<'a>(
@@ -112,7 +118,15 @@ fn window<'a>(
         .devtools(false);
     if let Some(bounds) = bounds {
         let displays = app.available_monitors()?;
-        if displays.iter().any(|display| fit(bounds, display)) {
+        if displays.iter().any(|display| {
+            let area = display.work_area();
+            let scale = display.scale_factor();
+            fit(
+                bounds,
+                area.position.to_logical(scale),
+                area.size.to_logical(scale),
+            )
+        }) {
             if let (Some(x), Some(y)) = (bounds.x, bounds.y) {
                 builder = builder
                     .position(x.into(), y.into())
@@ -167,11 +181,7 @@ fn show_connect(app: &AppHandle, status: &str) -> Result<()> {
         WebviewUrl::App(format!("index.html?{query}").into()),
         bounds,
     )?
-    .on_navigation(|url| {
-        (url.scheme() == "tauri" && url.host_str() == Some("localhost")
-            || url.scheme() == "http" && url.host_str() == Some("tauri.localhost"))
-            && matches!(url.path(), "/" | "/index.html")
-    })
+    .on_navigation(connect_page)
     .on_new_window(|_, _| NewWindowResponse::Deny)
     .build()?;
     switch_window(app, next)
@@ -222,6 +232,11 @@ fn show_server(app: &AppHandle, url: Url, generation: u64, managed_local: bool) 
 }
 
 #[cfg(target_os = "linux")]
+fn notification_allowed(current: Option<&Url>, configured: &Url, focused: bool) -> bool {
+    focused && current.is_some_and(|url| same_origin(url, configured))
+}
+
+#[cfg(target_os = "linux")]
 fn linux_notifications(window: &WebviewWindow, configured: Url) -> Result<()> {
     use webkit2gtk::{
         glib::object::Cast, NotificationPermissionRequest, PermissionRequestExt, WebViewExt,
@@ -238,11 +253,12 @@ fn linux_notifications(window: &WebviewWindow, configured: Url) -> Result<()> {
                     request.deny();
                     return true;
                 }
-                let at_origin = webview
-                    .uri()
-                    .and_then(|uri| Url::parse(&uri).ok())
-                    .is_some_and(|url| same_origin(&url, &configured));
-                if !at_origin || !view.is_focused().unwrap_or(false) {
+                let current = webview.uri().and_then(|uri| Url::parse(&uri).ok());
+                if !notification_allowed(
+                    current.as_ref(),
+                    &configured,
+                    view.is_focused().unwrap_or(false),
+                ) {
                     request.deny();
                     return true;
                 }
@@ -563,7 +579,7 @@ fn menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) -> Result<()> {
     Ok(())
 }
 
-fn electron_settings(app: &tauri::App) -> Result<PathBuf> {
+fn legacy_settings(app: &tauri::App) -> Result<PathBuf> {
     #[cfg(target_os = "linux")]
     let directory = app.path().config_dir()?;
     #[cfg(not(target_os = "linux"))]
@@ -579,7 +595,7 @@ fn setup(app: &mut tauri::App) -> Result<()> {
         return Err("Fixture builds require a disposable HOME.".into());
     }
     let path = app.path().app_config_dir()?.join("settings.json");
-    let settings = Settings::load(&path, &electron_settings(app)?)?;
+    let settings = Settings::load(&path, &legacy_settings(app)?)?;
     let managed = settings.managed_local;
     let address = if managed {
         None
@@ -606,13 +622,7 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     )?;
     start_connection(app.handle(), address);
     let app = app.handle().clone();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(8)).await;
-            updates::check(&app, false);
-            tokio::time::sleep(std::time::Duration::from_secs(6 * 3600 - 8)).await;
-        }
-    });
+    tauri::async_runtime::spawn(updates::schedule(move || updates::check(&app, false)));
     Ok(())
 }
 
@@ -699,5 +709,104 @@ fn main() {
             eprintln!("Minarbot desktop failed: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restores_bounds_only_when_they_fit_a_display() -> Result<()> {
+        let bounds = Bounds {
+            x: Some(5),
+            y: Some(5),
+            width: 900,
+            height: 700,
+        };
+        let position = tauri::LogicalPosition::new(0, 0);
+        let size = tauri::LogicalSize::new(1920, 1080);
+        assert!(fit(bounds, position, size));
+        assert!(!fit(
+            Bounds {
+                x: Some(3000),
+                ..bounds
+            },
+            position,
+            size
+        ));
+        assert!(!fit(Bounds { x: None, ..bounds }, position, size));
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "servers": [], "activeServer": null, "window": {"width": "invalid"}
+        }))?;
+        assert!(settings.window.is_none());
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn notifications_require_the_focused_configured_origin() -> Result<()> {
+        let configured = origin("https://server.example:4317")?;
+        let conversation = configured.join("conversation?id=1")?;
+        assert!(notification_allowed(Some(&conversation), &configured, true));
+        assert!(!notification_allowed(
+            Some(&conversation),
+            &configured,
+            false
+        ));
+        assert!(!notification_allowed(None, &configured, true));
+        for address in [
+            "https://server.example:4318/",
+            "http://server.example:4317/",
+            "https://other.example/",
+            "about:blank",
+        ] {
+            assert!(
+                !notification_allowed(Some(&Url::parse(address)?), &configured, true),
+                "{address}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_bundled_connect_page_has_shell_ipc_permissions() -> Result<()> {
+        assert!(connect_page(&Url::parse(
+            "tauri://localhost/index.html?status=offline"
+        )?));
+        assert!(connect_page(&Url::parse("http://tauri.localhost/")?));
+        for address in [
+            "tauri://localhost/other.html",
+            "https://server.example/",
+            "file:///app/index.html",
+            "http://tauri.localhost:8080/",
+            "tauri://other.example/index.html",
+        ] {
+            assert!(!connect_page(&Url::parse(address)?), "{address}");
+        }
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/connect.json"))?;
+        assert_eq!(capability["webviews"], serde_json::json!(["connect"]));
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!(["allow-connect-server"])
+        );
+        assert!(capability.get("remote").is_none());
+        assert!(capability.get("windows").is_none());
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))?;
+        assert_eq!(
+            config["app"]["security"]["capabilities"],
+            serde_json::json!(["connect"])
+        );
+        let csp = config["app"]["security"]["csp"]
+            .as_str()
+            .ok_or("Missing connect CSP")?;
+        assert!(csp
+            .split("; ")
+            .any(|directive| directive == "frame-src 'none'"));
+        assert!(csp
+            .split("; ")
+            .any(|directive| directive == "frame-ancestors 'none'"));
+        Ok(())
     }
 }

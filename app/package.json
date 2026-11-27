@@ -1,6 +1,6 @@
 {
   "name": "minarbot",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
@@ -9,8 +9,6 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "node scripts/test.mjs",
-    "parity:gate": "node --experimental-strip-types test-support/ui-smoke/parity-gate.mjs",
     "test:phase-0": "node t3/provenance-check.mjs --phase --receipt t3/phase-0.json",
     "lint": "eslint . --max-warnings 0 && node lint/check.mjs && node lint/markdown-paths.mjs"
   },

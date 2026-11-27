@@ -7,16 +7,18 @@ restarts and multi-step server flows. Agent-turn tests use the kit's fake
 peers and scripted model only for agent replies, tool calls, waits, resume,
 streaming and approvals. UI smokes cover browser journeys.
 
-New integration tests use `crates/minarbot-testkit`. Do not add
-`app/*.test.ts` or `app/fixtures/*.mjs`.
+All tests are Rust; integration tests use `crates/minarbot-testkit`. Do not
+add Node tests (`app/*.test.ts`) or Node fixtures (`app/fixtures/*.mjs`).
 
 ## Build and run
 
 The e2e tests start `target/<profile>/minarbot-server`, the kit's fake peer
 binaries and, for the GitHub update cases, `minarbot-launcher`, so build them
-first. On shared hosts, run everything through the slot script:
+first, and the [browser smokes](#browser-smokes) serve the Leptos client, so build it
+too. On shared hosts, run everything through the slot script:
 
 ```sh
+~/.cache/minarbot-cargo-slot.sh cargo xtask leptos
 ~/.cache/minarbot-cargo-slot.sh cargo build -p minarbot-server -p minarbot-testkit -p minarbot-launcher
 ~/.cache/minarbot-cargo-slot.sh cargo test -p minarbot-testkit -p minarbot-e2e
 ```
@@ -41,6 +43,7 @@ one module per area.
 | `wait` | `until`, `until_within`, `until_value` (the timeout shows the last value) and `never`. |
 | `db` | `Inspector` (read-only, works while the server runs) and `Fixture` (writable, only for seeding the API cannot do and for fault triggers). |
 | `workspace` | `TempWorkspace`. |
+| `browser` | `smoke` runs a UI journey in headless Chrome over CDP and fails it on console errors, exceptions and failed or 4xx/5xx requests, saving a screenshot. `Browser` has `goto`, `reload`, `find`/`find_in` (role and exact accessible name), `query`, `gone`, `click`, `fill`, `select`, `key`, `wait_text`, `wait_no_text`, `text`, `evaluate`, `problems`/`take_problems` and `screenshot`. `client_dist` is the built Leptos client for the `dist` option. |
 | `model` | `ScriptedModel`: an OpenAI-compatible model that tests script with `push(Reply)` or `respond(closure)`. `Reply` covers `text`, `deltas`, `tool`, `tool_call`, `tool_calls`, `status`, `hold`, `.usage`, `.delay` and `.finish_reason`. It also serves `catalog` and `fail_catalog`, and records requests through `requests`, `calls`, `wait_calls` and `held`. |
 | `fakes` | Paths to `Fake::{Codex, Claude, Acp, Gateway}`, `install` (copy a peer to delete or replace it), and `native_log`, `acp_log`, `gateway_log`, `turns`. |
 | `issuer` | `SessionIssuer` records MCP session mints and revocations and issues the fixed token `SESSION_TOKEN`. |
@@ -123,6 +126,28 @@ For native harness turns, install `Fake::Codex` or `Fake::Claude`, pass them
 with `ServerConfig::executable`, script the turn with a prompt keyword
 (table below), and read `fake-log.jsonl` with `fakes::native_log`. See
 `crates/minarbot-e2e/tests/e2e/harness.rs`.
+
+## Browser smokes
+
+`crates/minarbot-e2e/tests/e2e/browser_smokes.rs` drives the main journeys
+in headless Chrome against the built Leptos client: fresh data, adding a
+provider, creating an agent and chatting, and opening every main route.
+Assert on visible text, roles and accessible names, never on pixels or
+timings. Add a smoke only for a journey that lower layers cannot prove.
+
+The smokes run with the e2e suite and need the client built first:
+
+```sh
+~/.cache/minarbot-cargo-slot.sh cargo xtask leptos
+~/.cache/minarbot-cargo-slot.sh cargo test -p minarbot-e2e browser_smokes
+```
+
+The browser is `MINARBOT_CHROME`, else `google-chrome`, `google-chrome-stable`,
+`chromium` or `chromium-browser` on `PATH`. A missing browser fails the
+smokes; `MINARBOT_SKIP_BROWSER=1` skips them. A failure names the step, the
+URL, the page problems and the visible text, and saves a screenshot to
+`target/<profile>/smoke-artifacts/<smoke>.png` (`MINARBOT_SMOKE_ARTIFACTS`
+overrides the directory).
 
 ## Fake peers
 
@@ -216,7 +241,6 @@ only temporary directories and loopback ports. Servers get a hermetic `PATH`
 ## Honest tests
 
 A failing test means a product bug or a named removed behaviour. Skipped,
-ignored or loosened tests count as failures. When a ported case hits a
-product bug, leave that assertion out of the Rust test, keep the Node case,
-and record the bug with the exact assertion in `docs/test-ledger.md`.
-Never use `#[ignore]`.
+ignored or loosened tests count as failures. When a test hits a product bug,
+fix the bug, or leave that assertion out and record the bug with the exact
+assertion in `docs/test-ledger.md`. Never use `#[ignore]`.

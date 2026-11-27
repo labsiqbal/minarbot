@@ -1,6 +1,6 @@
-# Minarbot Tauri desktop pilot
+# Minarbot Desktop
 
-The [Electron build](../package.json) remains the default during the packaged pilot. The Tauri app imports the saved Electron server list, active origin and usable window bounds on first launch. It stores later changes under `com.minarbot.desktop.tauri`. Both clients can be installed side by side.
+Minarbot Desktop imports the saved Electron server list, active origin and usable window bounds on first launch. It stores later changes under `com.minarbot.desktop.tauri` and leaves the original profile available for rollback.
 
 Tauri keeps the connect form and server content in distinct webviews. The bundled form can submit a server address. The server webview uses browser permissions and native menu actions, and has zero Tauri capabilities. There is no registered OS handler for `minarbot-connect:`.
 
@@ -9,16 +9,21 @@ On Linux and macOS, the desktop verifies the embedded runtime and starts the nor
 ## Build and release
 
 1. Build the server, launcher and web app. Package the runtime with `cargo xtask release --pack-ci target/release --output artifacts --notes '<notes>'`.
-2. Install Electron dependencies with `npm --prefix desktop ci`. On Linux, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) including WebKitGTK 4.1. From the repository root, run `cargo xtask desktop --runtime <platform-runtime.tar.gz> --output desktop-output`. Windows uses the Linux x86_64 archive. `cargo xtask release --desktop --tauri-pilot` includes both Linux x86_64 clients. `cargo xtask release --desktop --dry-run` stages both with disposable signing credentials.
-3. Set `MINARBOT_TAURI_UPDATER_PUBKEY` to the Tauri signer's public key. Set `TAURI_SIGNING_PRIVATE_KEY` and optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` on the signing job. For the release workflow, enable `tauri_pilot` to include every Tauri installer and `tauri-latest-<platform>.json` alongside legacy assets. The drafts continue through `cargo xtask release --sign-ci`. Run the release matrix for each published version while the pilot is active.
-4. Verify `latest.json.sig` against the existing Minarbot release key and check the Tauri installer SHA-256 against its `assets` entry before the one-time install. Keep the previous Electron installer and feed for rollback. Back up the dedicated Tauri updater key and password separately from the server key. For key rotation, deliver a verified installer with the replacement public key and rehearse migration from a build pinned to the prior key before changing the main feed.
+2. Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform, including WebKitGTK 4.1 on Linux. Set `MINARBOT_TAURI_UPDATER_PUBKEY` to the Tauri signer's public key. Set `TAURI_SIGNING_PRIVATE_KEY` and, for a password-protected key, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+3. From the repository root, run `cargo xtask desktop --runtime <platform-runtime.tar.gz> --output desktop-output`. Cargo installs `tauri-cli` 2.12.6 in `target/tauri-cli` on first use. Windows uses the Linux x86_64 archive. On Linux, `cargo xtask release --desktop --dry-run` stages the AppImage with disposable signing credentials. The release workflow stages each installer, signature and `tauri-latest-<platform>.json` feed. Finalize the draft with `cargo xtask release --sign-ci <version>`.
+4. Verify `latest.json.sig` against the existing Minarbot release key and check the Tauri installer SHA-256 against its `assets` entry before the one-time install. Keep the previous installer for rollback. Back up the dedicated Tauri updater key and password separately from the server key. For key rotation, deliver a verified installer with the replacement public key and rehearse migration from a build pinned to the prior key before changing the main feed.
 
 ### Fixture builds
 
-Generate a disposable key in a private directory with `npx --yes @tauri-apps/cli@2.12.6 signer generate --ci --write-keys <fixture.key>`. Build version N and N+1 with the same fixture key.
+Generate a disposable key in a private directory. Build version N and N+1 with the same key.
 
 ```sh
-cargo xtask desktop --tauri-only --runtime <runtime.tar.gz> --output <output> \
+cargo install --locked tauri-cli --version 2.12.6 --root target/tauri-cli
+target/tauri-cli/bin/cargo-tauri signer generate --ci --write-keys <fixture.key>
+```
+
+```sh
+cargo xtask desktop --runtime <runtime.tar.gz> --output <output> \
   --version <fixture-version> --fixture-key <fixture.key> \
   --fixture-feed http://127.0.0.1:<feed-port>/ --fixture-port <server-port>
 ```
@@ -35,4 +40,4 @@ Run in clean users or snapshots with disposable data and keys. For each OS, reco
 
 On each target, seed Electron's profile with two server origins and normal window bounds. Launch Tauri twice, alter its saved servers, and reopen Electron to confirm the original profile still works. Launch a second Tauri process and confirm it focuses the running window. Test keyboard submit and a stale probe completing after a newer connection. Verify same-origin links, external HTTP(S) links, blocked cross-origin redirects and server content with zero Tauri permissions. In the app, copy text, paste plain text and an image into the composer, and use Computer clipboard. Test right-click edit/link/image actions. Request notification permission from the foreground app and verify clicking a notification focuses the original window and conversation. Confirm framed or unrelated origins cannot request shell privileges.
 
-For the two-release rehearsal, update Electron N to N+1 from its existing feed. Update Tauri N to N+1 using its fixture feed. Test **Later**, interrupted download, missing artifact, wrong signature, modified artifact, a signed N payload advertised as N+1, and a lower version. Confirm N stays installed on rejection. On Linux, simulate an unwritable installation directory and verify the old AppImage still launches. After a successful update, quit and restore the sibling `Minarbot.previous.AppImage`. Confirm the previous build opens the same data. Keep Electron shipping until the full matrix passes.
+For the two-release rehearsal, update Tauri N to N+1 using its fixture feed. Test **Later**, interrupted download, missing artifact, wrong signature, modified artifact, a signed N payload advertised as N+1, and a lower version. Confirm N stays installed on rejection. On Linux, simulate an unwritable installation directory and verify the old AppImage still launches. After a successful update, quit and restore the sibling `<original-name>.previous.AppImage`. Confirm the previous build opens the same data.

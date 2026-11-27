@@ -33,6 +33,10 @@ tar = "0.4"
 gtk = "0.18"
 webkit2gtk = { version = "2", features = ["v2_40"] }
 
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+tokio = { version = "1", features = ["test-util"] }
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

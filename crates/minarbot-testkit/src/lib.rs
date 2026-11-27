@@ -20,6 +20,7 @@
 pub mod async_model;
 pub mod backup;
 pub mod bridge;
+pub mod browser;
 pub mod canonical;
 pub mod chat_connector;
 pub mod cli;

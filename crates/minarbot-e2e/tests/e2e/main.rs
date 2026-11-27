@@ -4,6 +4,7 @@
 //! The Node origin of every test is recorded in `docs/test-ledger.md`.
 
 mod agent_create;
+mod browser_smokes;
 mod cli;
 mod fx_acp;
 mod fx_agents;
@@ -111,4 +112,6 @@ mod sb_transcript;
 mod sb_usage;
 mod sb_workspace_writes;
 mod threads;
+mod tr_harness;
+mod tr_turns;
 mod ui_api;

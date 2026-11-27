@@ -983,8 +983,7 @@ async fn http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupte
     )
     .await?;
 
-    // Without the gateway the agents' provider instance cannot run (Node:
-    // `configured: false`).
+    // Restart without the gateway configuration (Node: `configured: false`).
     app.restart_with(config.clone().without("baseURL").without("harness"))
         .await?;
     ensure!(len(&app.get("/api/channels").await?) == 4, "channels");
@@ -994,14 +993,6 @@ async fn http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupte
         rows[2]["status"] == "cancelled",
         "third channel row: {}",
         rows[2]
-    );
-    let unbound = app.get("/api/agents").await?;
-    ensure!(
-        unbound["agents"]
-            .as_array()
-            .and_then(|rows| rows.iter().find(|row| row["id"] == agent_id.as_str()))
-            .is_some_and(|row| row["runnable"] == false && row["blocked_reason"].is_string()),
-        "agent still runnable without its instance: {unbound}"
     );
     // The seeded test instance keeps its binary path, so the instance-era
     // "no provider" is a disabled instance (re-enabled when the gateway
@@ -1018,6 +1009,14 @@ async fn http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupte
             "displayName": "Test gateway", "enabled": false, "revision": gateway["revision"]}),
     )
     .await?;
+    let unbound = app.get("/api/agents").await?;
+    ensure!(
+        unbound["agents"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == agent_id.as_str()))
+            .is_some_and(|row| row["runnable"] == false && row["blocked_reason"].is_string()),
+        "agent still runnable on a disabled instance: {unbound}"
+    );
     let (code, refused) =
         status(&app, &path, json!({"id": new_id(), "text": "no provider"})).await?;
     ensure!(code == 503, "turn without a provider: {code} {refused}");

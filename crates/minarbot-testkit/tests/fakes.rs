@@ -1130,10 +1130,20 @@ async fn gateway(
 async fn gateway_turn(peer: &mut Peer, id: u64, text: &str) -> Result<Value> {
     peer.seen.clear();
     peer.send(json!({"id": id, "method": "turn/start", "params": {"threadId": "thread-1", "input": [{"text": text}]}})).await?;
-    peer.expect("turn end", |v| {
-        v["method"] == "turn/completed" || v["method"] == "error"
-    })
-    .await
+    let end = peer
+        .expect("turn end", |v| {
+            v["method"] == "turn/completed" || v["method"] == "error"
+        })
+        .await?;
+    ensure!(
+        !peer
+            .seen
+            .iter()
+            .any(|v| v.to_string().contains("provider-key")),
+        "the provider key reached the gateway output: {:?}",
+        peer.seen
+    );
+    Ok(end)
 }
 
 #[tokio::test]
@@ -1272,7 +1282,11 @@ async fn g1_to_g7_g12_g13_g14_g17_gateway_tools_streaming_errors_and_normalizati
         tools == ["ask_user", "edit_profile"],
         "G12 setup tools: {tools:?}"
     );
-    peer.exit().await?;
+    let (_, stderr) = peer.exit().await?;
+    ensure!(
+        !stderr.contains("provider-key"),
+        "the provider key reached the gateway log: {stderr}"
+    );
     let log = fakes::gateway_log(workspace.path())?;
     ensure!(
         log.iter().any(|row| row["method"] == "turn/start"),

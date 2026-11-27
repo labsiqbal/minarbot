@@ -453,18 +453,6 @@ fn publish(
         return Err("Local release metadata changed after the release build.".into());
     }
     let mut desktop = Vec::new();
-    if let Some(expected) = ready.desktop {
-        for (path, hash) in release::desktop_assets(&directory, &info.version)?
-            .into_iter()
-            .zip(expected)
-        {
-            let asset = Asset::read(path)?;
-            if asset.hash != hash {
-                return Err("Local desktop assets changed after the release build.".into());
-            }
-            desktop.push(asset);
-        }
-    }
     if !ready.tauri.is_empty() {
         let platform = format!("linux-{}", env::consts::ARCH);
         let names = desktop::tauri_names(&info.version, &platform);
@@ -481,17 +469,7 @@ fn publish(
         }
     }
     let signer = Signer::read(key_path, public_key)?;
-    let mut assets = signed_assets(
-        releases,
-        &directory,
-        &info,
-        &signer,
-        if ready.tauri.is_empty() {
-            &[]
-        } else {
-            &desktop
-        },
-    )?;
+    let mut assets = signed_assets(releases, &directory, &info, &signer, &desktop)?;
     assets.extend(desktop);
     let tag = format!("v{}", info.version);
     let title = format!("Minarbot {}", info.version);
@@ -570,13 +548,6 @@ pub fn preview(releases: &Path, directory: &Path, info: &Info) -> Result<()> {
     let value = runtime_manifest(info, &asset)?;
     files::durable(&directory.join(SIGNED[0]), &serde_json::to_vec(&value)?)?;
     let mut names = vec![asset.name, SIGNED[0].into(), SIGNED[1].into()];
-    if directory.join("latest-linux.yml").is_file() {
-        names.extend(
-            release::desktop_assets(directory, &info.version)?
-                .iter()
-                .filter_map(|path| path.file_name()?.to_str().map(str::to_owned)),
-        );
-    }
     let tauri = desktop::tauri_names(&info.version, &format!("linux-{}", env::consts::ARCH));
     if tauri.iter().all(|name| directory.join(name).is_file()) {
         names.extend(tauri);
@@ -587,34 +558,20 @@ pub fn preview(releases: &Path, directory: &Path, info: &Info) -> Result<()> {
 }
 
 fn ci_names(version: &str) -> Vec<String> {
-    let mut names = TARGETS
+    TARGETS
         .map(|target| format!("minarbot-{version}-{target}.tar.gz"))
-        .to_vec();
-    names.extend([
-        format!("Minarbot-{version}-x86_64.AppImage"),
-        format!("Minarbot-{version}-arm64.AppImage"),
-        "latest-linux.yml".into(),
-        "latest-linux-arm64.yml".into(),
-        format!("Minarbot-{version}-macos-arm64.dmg"),
-        format!("Minarbot-{version}-macos-x64.dmg"),
-        format!("Minarbot-{version}-windows-x64.exe"),
-        format!("Minarbot-{version}-windows-x64.exe.blockmap"),
-        "latest.yml".into(),
-    ]);
-    names
-}
-
-fn ci_tauri_names(version: &str) -> impl Iterator<Item = String> + '_ {
-    desktop::PLATFORMS
         .into_iter()
-        .flat_map(|platform| desktop::tauri_names(version, platform))
+        .chain(
+            desktop::PLATFORMS
+                .into_iter()
+                .flat_map(|platform| desktop::tauri_names(version, platform)),
+        )
+        .collect()
 }
 
-fn verify_ci_tauri(directory: &Path, version: &str, names: &[String]) -> Result<()> {
-    if names.iter().any(|name| name.starts_with("tauri-latest-")) {
-        for platform in desktop::PLATFORMS {
-            desktop::verify_feed(directory, version, platform)?;
-        }
+fn verify_ci_tauri(directory: &Path, version: &str) -> Result<()> {
+    for platform in desktop::PLATFORMS {
+        desktop::verify_feed(directory, version, platform)?;
     }
     Ok(())
 }
@@ -678,16 +635,9 @@ pub fn draft_ci(root: &Path, directory: &Path, notes: String) -> Result<()> {
         notes,
     )?;
     let tag = format!("v{}", info.version);
-    let mut names = ci_names(&info.version);
+    let names = ci_names(&info.version);
+    verify_ci_tauri(directory, &info.version)?;
     let entries = fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
-    if entries.iter().any(|entry| {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        name.starts_with("Minarbot-Tauri-") || name.starts_with("tauri-latest-")
-    }) {
-        names.extend(ci_tauri_names(&info.version));
-        verify_ci_tauri(directory, &info.version, &names)?;
-    }
     for entry in entries {
         let name = entry.file_name();
         if name != CHECKSUMS
@@ -776,12 +726,7 @@ pub fn sign_ci(root: &Path, version: &str, key: &Path, public_key: &[u8]) -> Res
         return Err("Draft version does not match the release commit.".into());
     }
     let draft = check_draft(root, &tag, Some(draft), &info)?;
-    let mut names = ci_names(version);
-    if draft.assets.iter().any(|asset| {
-        asset.name.starts_with("Minarbot-Tauri-") || asset.name.starts_with("tauri-latest-")
-    }) {
-        names.extend(ci_tauri_names(version));
-    }
+    let names = ci_names(version);
     let required: Vec<&str> = names
         .iter()
         .map(String::as_str)
@@ -810,7 +755,7 @@ pub fn sign_ci(root: &Path, version: &str, key: &Path, public_key: &[u8]) -> Res
         command.args(["--pattern", name]);
     }
     output(&mut command)?;
-    verify_ci_tauri(directory, version, &names)?;
+    verify_ci_tauri(directory, version)?;
     let (mut assets, summary) = ci_assets(directory, &names)?;
     assets.push(Asset::read(directory.join(CHECKSUMS))?);
     for asset in &assets {

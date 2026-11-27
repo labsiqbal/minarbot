@@ -24,11 +24,16 @@
   "bundle": {
     "active": true,
     "icon": [
-      "../assets/icon.png",
+      "icons/icon.png",
       "icons/icon.ico",
       "icons/icon.icns"
     ],
     "category": "Utility",
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    },
     "macOS": {
       "minimumSystemVersion": "12.0",
       "signingIdentity": "-"

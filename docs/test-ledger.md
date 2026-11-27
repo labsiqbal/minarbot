@@ -624,7 +624,7 @@ Behaviour that changed with #87, and how the ports treat it:
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | ---: | --- |
-| HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 132 | Full since the #89 integration: both create replays while the instance is disabled return the edited receipt (B6), before and after a restart. "No provider" is a disabled instance (the seeded test instance keeps its binary); `configured: false` became `runnable: false` with a `blocked_reason`. Found S4 (teammate roster missing from prompts). The static page is a minimal Leptos shell in a test `dist`. |
+| HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 132 | Full since the #89 integration: both create replays while the instance is disabled return the edited receipt (B6), before and after a restart. "No provider" is a disabled instance (the seeded test instance keeps its binary); `configured: false` became `runnable: false` with a `blocked_reason`, checked once the instance is disabled (an enabled instance with its own binary path stays runnable). Found S4 (teammate roster missing from prompts). The static page is a minimal Leptos shell in a test `dist`. |
 
 ### `app/rust-workspace-writes-http.test.ts`
 
@@ -1320,7 +1320,9 @@ transaction boundary.
 ## #67 UI coverage ledger
 
 The route ownership ledger lists each public surface and its Leptos document.
-The golden gate runs Leptos against disposable servers and committed screenshots.
+The screenshot gate below ran Leptos against disposable servers and committed
+screenshots until #89 removed it (Owner scope cut, 2026-11-27). The Rust
+browser smokes in `crates/minarbot-e2e/tests/e2e/browser_smokes.rs` now cover the main journeys.
 [Route ownership](../crates/web/README.md#route-ownership)
 
 | Gate group | Required pairs | Functional coverage |
@@ -1342,12 +1344,8 @@ The golden gate runs Leptos against disposable servers and committed screenshots
 | shell | 36 | Workspace navigation, Quick switcher, prompts, command recovery, sidebar controls |
 | system | 32 | Usage, updates, devices, shared data, backup and external access, mutation recovery |
 
-The golden gate covers 16 groups and 576 pairs. All pairs use the same pixel
-thresholds, including the ten narrow Hub Leptos baselines.
-
-See the screenshot parity guide for the gate command and failure thresholds.
-Retained Node and Rust API cases below still cover the shared contracts.
-[Parity guide](../app/test-support/ui-smoke/PARITY.md)
+The gate covered 16 groups and 576 pairs. Retained Node and Rust API cases
+below still cover the shared contracts.
 
 ### Stage B retirement and retained coverage
 
@@ -1357,8 +1355,8 @@ backoff, visibility, LRU and identity-clear policies. The shared download
 case moved to download-blob.test.ts. The optimistic-turns and right-panel
 state unit suites retired when Leptos took over their UI contracts.
 Presentation keeps the palette contrast case. Shared tests exercise production
-adapter code. Timing sources and ceilings are recorded
-in the [golden gate guide](../app/test-support/ui-smoke/PARITY.md).
+adapter code. The timing gate and its ceilings
+were removed in #89.
 
 | Node test | Coverage decision |
 | --- | --- |
@@ -1394,7 +1392,7 @@ session-storage parser case retired with the hook. Leptos queue controls
 keep the journal format. Leptos transcript and minimap checks cover the retired React status labels,
 poll cadence, turn projection and rail geometry. Shared preview and run
 inspector tests keep exercising their adapters. The conversation and rich
-golden groups own the old chat-like-t3 harness coverage.
+screenshot groups owned the old chat-like-t3 harness coverage until #89.
 
 ### Leptos polling
 
@@ -1577,6 +1575,8 @@ Rust integration file `crates/minarbot-launcher/tests/launcher.rs` covers eight 
 
 ### Retained Node coverage and reasons
 
+Superseded: the #89 triage at the end of this ledger deleted every file below.
+
 | Node file | Default cases kept | Remaining assertions |
 | --- | ---: | --- |
 | `test.ts` | 1 | Composite HTTP lane still asserts channel routing, archive races, profile receipts and recovery across provider failure. |
@@ -1600,7 +1600,9 @@ still feed `updates.test.ts`, `github-updates.test.ts` and the xtask checks.
 
 ### Other retained suites
 
-Paths below are relative to `app/`. Playwright remains in `test-support/ui-smoke/` for browser journeys and screenshots.
+Superseded: the #89 triage at the end of this ledger deleted every remaining file.
+
+Paths below are relative to `app/`. Browser journeys run as Rust CDP smokes in `crates/minarbot-e2e/tests/e2e/browser_smokes.rs` (#89).
 
 - **Opt-in external**. Real engines and desktop need opt-in fixtures and remain outside the default gate.
   `acp-harness.integration.test.ts`, `rust-desktop.integration.test.ts`.
@@ -2122,3 +2124,110 @@ other helper is in the new `rg_support.rs` and `rg_media.rs` modules.
 | Node case | Rust test | Asserts | Notes |
 | --- | --- | --- | --- |
 | `app/history.test.ts`: history pages preserve order and conversation boundaries across restart | `history::history_pages_preserve_order_and_conversation_boundaries_across_restart` | 25 -> 22 `ensure!` + 3 kit checks | The kit checks POST and GET status and waits for each turn to finish. Its model handles listener startup. Rust also checks the oldest page length explicitly. |
+
+## #89 Node test triage
+
+The Owner cut the #89 scope on 2026-11-27: the remaining Node tests are
+triaged instead of ported. A file is deleted when Rust covers it or its value
+is low for a personal tool; only provider, harness and turn behaviour is
+ported. Every case below maps to a Rust test or to that decision. Baseline on
+de6a2f08: 75 default files passed, 0 failed; the opt-in
+`acp-harness.integration` and `rust-desktop.integration` did not run.
+
+### Ported cases
+
+| Node case | Rust test | Asserts | Notes |
+| --- | --- | --- | --- |
+| `rust-hermes-probe`: Rust Hermes probes can read the host install without changing it | `tr_harness::hermes_probes_read_the_host_install_without_changing_it` | 4 -> 3 `ensure!` + kit 2xx | The fake Hermes is a shell script with the same checks: committed facts, lock and lease writes, Hermes env, delayed `initialize`. |
+| `rust-rehearsal`: folder browser and runtime discovery retain JSON strings and advertised models | `tr_harness::folder_browser_and_runtime_discovery_retain_json_strings_and_advertised_models` | 8 -> 7 `ensure!` + kit 2xx | The memory limit is compared with this process's cgroup v2 `memory.max`/`memory.high` (the server's rule) instead of Node's `process.constrainedMemory()`. |
+| `path-hydration`: service launch discovers Codex exported only by the login shell | `tr_harness::service_launch_discovers_codex_exported_only_by_the_login_shell` | 17 -> 16 `ensure!` | Spawns the server outside test mode. The fixture `codex` dumps `env` from `/bin/sh`, so the dash-exported `PWD` is ignored in the key sets. |
+| `path-hydration`: broken login shell keeps service startup working | `tr_harness::broken_login_shell_keeps_service_startup_working` | 7 -> 7 `ensure!` | Same helper with the broken shell. |
+| `attachment-only`: attachment-only messages validate, recover and retry in direct chats, threads and rooms | `tr_turns::attachment_only_messages_validate_recover_and_retry_in_direct_chats_threads_and_rooms` | 19 -> 8 `ensure!`, 1 upload status `ensure!`, 13 `post_expect` status checks | The two `restoreChatCommand` (browser module) assertions are dropped. Provider-body checks run over every recorded request. |
+| `workspace-files`: workspace tools metadata=false ... across restart | `tr_turns::workspace_read_tool_shares_agent_direct_and_side_folder_and_isolates_managed_folders_and_rooms_across_restart` | 13 -> 11 `ensure!` | Full; two status/reply pairs are one `ensure!` each. |
+| `workspace-files`: workspace tools metadata=true ... across restart | `tr_turns::workspace_inspect_tool_shares_agent_direct_and_side_folder_and_isolates_managed_folders_and_rooms_across_restart` | 13 -> 11 `ensure!` | Full; two status/reply pairs are one `ensure!` each. |
+| `gateway-harness` (3 cases, self-test of the deleted Node fixture) | `minarbot-testkit` `fakes::g1_to_g7_g12_g13_g14_g17_gateway_tools_streaming_errors_and_normalization` | 19 -> existing G3/G4/G5/G10 checks + 2 | The provider key never reaching the peer's stdout or stderr was not checked in Rust; this triage adds both checks. |
+
+### All files
+
+Cases are from the baseline run; asserts count `assert*(`/`expect(` calls.
+Baseline is pass/fail/skip.
+
+| File | Cases | Asserts | Baseline | Verdict | Reason |
+| --- | --- | --- | --- | --- | --- |
+| `acp-harness.integration.test.ts` | 4 | 11 | 0/0/4 (opt-in) | delete-low-value | Opt-in only (`MINARBOT_ACP_IT=1`): real installed Hermes/Antigravity/Grok/Pi with copied host logins; never ran in CI or the release gate. The hermetic protocol path stays in `fx_acp::*_initialize_supervised_session...`, `pi_rpc_streams...`, `acp_cancel_reaches_child...` (not claimed as full coverage of real CLIs). |
+| `agent-create.test.ts` | 2 | 8 | 2/0/0 | delete-low-value | TS modules only: `shared/agent-create.ts` draft recovery (browser) and `test-support/canonical-agent-creation.ts` (a test helper). Server cases already in `agent_create.rs`. |
+| `agent-template.test.ts` | 4 | 41 | 4/0/0 | delete-low-value | Cases 1, 4: `shared/agent-template.ts` parser (browser). Cases 2, 3: template avatar import and profile export/import, not provider/harness/turn. |
+| `agent-visibility.test.ts` | 1 | 2 | 1/0/0 | delete-low-value | TS module `shared/agent-visibility.ts` (browser). |
+| `application-sync.test.ts` | 16 | 118 | 16/0/0 | delete-low-value | Canonical/hosted sync (hosted mode on hold). |
+| `attachment-only.test.ts` | 1 | 17 | 1/0/0 | port | Turn input. Server assertions -> `tr_turns::attachment_only_messages_validate_recover_and_retry_in_direct_chats_threads_and_rooms`; the 2 `restoreChatCommand` (browser module) assertions are dropped. |
+| `attachments.test.ts` | 1 | 3 | 1/0/0 | delete-low-value | Browser adapter `src/attachments.ts`. |
+| `audio-recording.test.ts` | 1 | 18 | 1/0/0 | delete-low-value | Browser adapter `src/audio-recording.ts`. |
+| `automation-calendar.test.ts` | 1 | 10 | 1/0/0 | delete-low-value | Routine calendar UI flow + `src/automation-calendar.ts`; not provider/harness/turn. |
+| `automation-migrations.test.ts` | 3 | 18 | 3/0/0 | delete-low-value | Old routine/workflow migration checks. |
+| `avatars.test.ts` | 1 | 23 | 1/0/0 | delete-low-value | Avatar upload HTTP; not provider/harness/turn. |
+| `backup.test.ts` | 3 | 46 | 3/0/0 | delete-low-value | Canonical server guard, v4 backup and live backup restore; not provider/harness/turn. |
+| `check-served.test.ts` | 11 | 21 | 11/0/0 | delete-low-value | Release tooling self-test (served-build checker). |
+| `clipboard.test.ts` | 6 | 13 | 6/0/0 | delete-low-value | Browser adapter `src/ui/clipboard.ts`. |
+| `composio.test.ts` | 1 | 5 | 1/0/0 | delete-low-value | Browser module `src/connected-app-command.ts`. |
+| `conversation-panel.test.ts` | 1 | 16 | 1/0/0 | delete-low-value | Panel file/Git/workspace reads; not provider/harness/turn (panel scope also exercised by `sa_file_output_panel`, `sa_workspace_git`). |
+| `devices.test.ts` | 1 | 42 | 1/0/0 | delete-low-value | Signed device enrollment (hosted/canonical mode). |
+| `dispatch.test.ts` | 1 | 3 | 1/0/0 | delete-low-value | Browser module `src/conversation-command.ts`. |
+| `download-blob.test.ts` | 1 | 11 | 1/0/0 | delete-low-value | Browser adapter `src/hooks/downloadBlob.ts`. |
+| `gateway-harness.test.ts` | 3 | 19 | 3/0/0 | delete-covered | Self-test of the Node fixture `fixtures/fake-gateway-harness.mjs`, deleted with it. The Rust fake is proven by `minarbot-testkit` `fakes::g1_to_g7_g12_g13_g14_g17_gateway_tools_streaming_errors_and_normalization`: stream deltas + `turn/completed` (G3/G4), MCP tool round trip with `mcpToolCall` item and second provider request carrying the tool result (G5), provider 500 -> `error` (G10). The "key never in stdout/stderr" assertions were missing there and are added in this branch. |
+| `html-preview.test.ts` | 1 | 22 | 1/0/0 | delete-low-value | HTML preview scope; not provider/harness/turn. |
+| `http.test.ts` | 4 | 7 | 4/0/0 | delete-low-value | Browser adapter `src/http.ts`. |
+| `hub-link.test.ts` | 1 | 14 | 1/0/0 | delete-low-value | Hosted hub (on hold). |
+| `hub/gateway-sessions.test.ts` | 21 | 141 | 21/0/0 | delete-low-value | Hosted hub (on hold). |
+| `hub/hosted-rust.test.ts` | 1 | 22 | 1/0/0 | delete-low-value | Hosted hub (on hold). |
+| `hub/hub.test.ts` | 1 | 2 | 1/0/0 | delete-low-value | Asserts `app/hub/` holds only tests; meaningless once they are gone. |
+| `install.test.ts` | 6 | 41 | 6/0/0 | delete-low-value | Machine installer tokens/pairing and installer script; not provider/harness/turn. |
+| `mail.test.ts` | 1 | 13 | 1/0/0 | delete-low-value | Canonical mail delivery (messaging on hold). |
+| `markdown-stream-blocks.test.ts` | 2 | 4 | 2/0/0 | delete-low-value | Browser adapter `src/ui/markdownStreamBlocks.ts`. |
+| `mcp-server.test.ts` | 1 | 6 | 1/0/0 | delete-low-value | TS module `t3/mcp-session-registry.ts`, which the Rust server does not use; server MCP sessions are in `rg_mcp_server.rs`. |
+| `mcp-update.test.ts` | 1 | 23 | 1/0/0 | delete-low-value | Editing a saved external MCP connection (settings CRUD). Test/save/grant/redaction stay in `sa_mcp::mcp_tests_before_save_protects_credentials...`; the update/rotation path itself is not covered. |
+| `memory-selection.test.ts` | 1 | 5 | 1/0/0 | delete-low-value | Browser module `src/memory-command.ts`. |
+| `memory.test.ts` | 1 | 3 | 1/0/0 | delete-low-value | Browser module `src/memory-command.ts`. |
+| `message-find.test.ts` | 2 | 9 | 2/0/0 | delete-low-value | Browser adapter `src/ui/transcript.ts`. |
+| `navigation.test.ts` | 1 | 2 | 1/0/0 | delete-low-value | Browser adapter `src/navigation.ts`. |
+| `next-frame.test.ts` | 1 | 5 | 1/0/0 | delete-low-value | Browser adapter `src/hooks/frame-queue.ts`. |
+| `path-hydration.test.ts` | 4 | 36 | 4/0/0 | port (2) + delete-low-value (2) | Cases 1-2 (server under a login shell) -> `tr_harness::service_launch_discovers_codex_exported_only_by_the_login_shell`, `tr_harness::broken_login_shell_keeps_service_startup_working`. Cases 3-4 test `t3/path.ts`, which only tests import; the server hydrates PATH in Rust (`harness::hydrate`). |
+| `presentation.test.ts` | 1 | 3 | 1/0/0 | delete-low-value | Theme contrast of `crates/web/assets/ui/themes.ts` (Vite asset input). |
+| `project-access.test.ts` | 3 | 35 | 3/0/0 | delete-low-value | Hosted project invitations/members (hosted mode on hold). |
+| `protocol.test.ts` | 2 | 9 | 2/0/0 | delete-low-value | TS module `shared/protocol.ts`. |
+| `questions.test.ts` | 1 | 2 | 1/0/0 | delete-low-value | Browser draft parser `src/question-answer.ts`; server question cards stay in `questions::question_cards_persist_answer_once_in_scope_and_resume_without_repeating_effects`. |
+| `release-gates.test.ts` | 15 | 120 | 14/0/1 | delete-low-value | Release-tooling self-test (drives xtask fixtures). |
+| `release-runtime-imports.test.ts` | 1 | 11 | 1/0/0 | delete-low-value | Release-tooling self-test. |
+| `remote-agents.test.ts` | 1 | 3 | 1/0/0 | delete-low-value | Browser module `src/remote-message-command.ts`. |
+| `restore.test.ts` | 6 | 61 | 6/0/0 | delete-low-value | Canonical restore and operator CLI (hosted mode on hold). |
+| `run-inspector.test.ts` | 2 | 3 | 2/0/0 | delete-low-value | Browser adapter `src/ui/transcript.ts` + `shared/turn-stream.ts`. |
+| `rust-data-gaps.test.ts` | 5 | 53 | 5/0/0 | delete-low-value | Node/Rust interop and migration parity (invitation ciphertext opened in Node, Node checkpoints). |
+| `rust-data.test.ts` | 3 | 51 | 3/0/0 | delete-low-value | Node-seeded data parity across restart; migration check. |
+| `rust-desktop.integration.test.ts` | 2 | 22 | not run (opt-in) | delete-low-value | Opt-in (`MINARBOT_DESKTOP_IT=1`) Computer sandbox and latency on a real desktop; never ran in CI. |
+| `rust-devices.test.ts` | 1 | 46 | 1/0/0 | delete-low-value | Signed devices "match Node contracts" (hosted/canonical mode). |
+| `rust-files.test.ts` | 7 | 91 | 7/0/0 | delete-low-value | Files/sites/skills/PDF/checkpoint parity with Node; not provider/harness/turn. |
+| `rust-hermes-probe.test.ts` | 1 | 4 | 1/0/0 | port | Hermes probe -> `tr_harness::hermes_probes_read_the_host_install_without_changing_it`. |
+| `rust-production-env.test.ts` | 2 | 5 | 2/0/0 | delete-low-value | Migration check: no "not ported" markers and env names read by TS sources. |
+| `rust-projects.test.ts` | 1 | 10 | 1/0/0 | delete-low-value | Project automation parity with Node; not provider/harness/turn. |
+| `rust-rehearsal.test.ts` | 1 | 8 | 1/0/0 | port | Runtime discovery (version, ACP models from `configOptions`) -> `tr_harness::folder_browser_and_runtime_discovery_retain_json_strings_and_advertised_models`. |
+| `rust-routes.test.ts` | 1 | 9 | 1/0/0 | delete-low-value | Migration check against the frozen Node route inventory. |
+| `rust-tasks.test.ts` | 1 | 53 | 1/0/0 | delete-low-value | Signed canonical task admission (hosted/canonical mode). |
+| `script-approvals.test.ts` | 1 | 28 | 1/0/0 | delete-low-value | Script API workflow approvals; not a turn. Workflow approvals over HTTP stay in `sa_workflows::workflow_http_versions_model_steps_approval_receipts...`. |
+| `scripts/test-discovery.test.ts` | 1 | 4 | 1/0/0 | delete-low-value | Self-test of the Node test runner, deleted with it. |
+| `sites.test.ts` | 1 | 21 | 1/0/0 | delete-low-value | Local sites; not provider/harness/turn. |
+| `skill-directory.test.ts` | 4 | 36 | 4/0/0 | delete-low-value | Skill discovery/export (TS modules + CLI); not provider/harness/turn. |
+| `skill-packs.test.ts` | 1 | 17 | 1/0/0 | delete-low-value | Skill packs; not provider/harness/turn. |
+| `skill-zip.test.ts` | 3 | 25 | 3/0/0 | delete-low-value | TS modules `shared/skill-zip.ts`, `shared/skill-files.ts`. |
+| `skills.test.ts` | 1 | 33 | 1/0/0 | delete-low-value | Skill revisions/installs; stored skills feature (`sb_skills`, `pd_skill_tools` cover parts). |
+| `slack-workflows.test.ts` | 2 | 27 | 2/0/0 | delete-low-value | Slack connector (messaging on hold). |
+| `speech-preference.test.ts` | 4 | 35 | 4/0/0 | delete-low-value | TS modules `shared/speech*.ts`. |
+| `speech.test.ts` | 6 | 37 | 6/0/0 | delete-low-value | TS module `shared/speech.ts`. |
+| `t3-connection.test.ts` | 5 | 50 | 5/0/0 | delete-low-value | Copied T3 TS helpers (`t3/connection-registry.ts`, `environment-*.ts`) that nothing imports; the Rust server has no T3 connection to port to. |
+| `telegram-workflows.test.ts` | 3 | 41 | 3/0/0 | delete-low-value | Telegram connector (messaging on hold). |
+| `threads.test.ts` | 1 | 3 | 1/0/0 | delete-low-value | Browser module `src/thread-command.ts`. |
+| `timeline-minimap.test.ts` | 1 | 6 | 1/0/0 | delete-low-value | Browser adapter `src/ui/timelineMinimapItems.ts`. |
+| `tool-budget.test.ts` | 1 | 2 | 1/0/0 | delete-low-value | TS modules `shared/agent-template.ts`, `agent-create.ts`; server half in `sa_tool_budget.rs`. |
+| `turn-stream.test.ts` | 1 | 11 | 1/0/0 | delete-low-value | Browser merge of partial snapshots `shared/turn-stream.ts`; server streaming stays in `fx_stream`, `harness`. |
+| `web-recovery.test.ts` | 1 | 7 | 1/0/0 | delete-low-value | Web client recovery page for a missing build; build path changes when Vite goes. |
+| `workflow-http.test.ts` | 1 | 4 | 1/0/0 | delete-low-value | TS module `src/workflow-editor-state.ts`; server case already `sa_workflows::autosave_stops_after_server_canonicalizes_condition_property_order`. |
+| `workflow-waits.test.ts` | 2 | 50 | 2/0/0 | delete-low-value | Case 1: `src/workflows.ts`. Case 2: signed workflow events; not a turn. |
+| `workspace-files.test.ts` | 4 | 53 | 4/0/0 | port (2) + delete-low-value (2) | Cases 3-4 (workspace tools in turns) -> `tr_turns::workspace_read_tool_shares...`, `tr_turns::workspace_inspect_tool_shares...`. Cases 1-2: workspace browser API paging; not provider/harness/turn. |

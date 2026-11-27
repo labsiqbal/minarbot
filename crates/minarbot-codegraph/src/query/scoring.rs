@@ -201,7 +201,7 @@ pub(super) fn test_query(query: &str) -> bool {
 
 #[test]
 fn ranks_test_support_as_test_code() -> crate::Result<()> {
-    let path = "app/test-support/ui-smoke/browser.mjs";
+    let path = "app/test-support/smoke/browser.mjs";
     assert!(is_test(path));
     assert!(is_test("src/browser/tests.rs"));
     assert!(PathRank::new("browser evaluation").score(path) < 0.0);
