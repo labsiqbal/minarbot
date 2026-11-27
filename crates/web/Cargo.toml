@@ -38,6 +38,15 @@ web-sys = { version = "=0.3.107", features = [
     "SpeechSynthesisUtterance", "SpeechSynthesisVoice", "Storage", "StorageEvent", "SubmitEvent", "SubtleCrypto", "Url", "UrlSearchParams", "VisibilityState",
 ] }
 
+# `cargo xtask leptos --dev`: fast rebuilds for trying UI changes.
+[profile.wasm-dev]
+inherits = "release"
+opt-level = 1
+lto = false
+codegen-units = 256
+incremental = true
+panic = "abort"
+
 [profile.wasm-release]
 inherits = "release"
 opt-level = "z"
