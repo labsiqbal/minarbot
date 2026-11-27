@@ -3,7 +3,6 @@ use crate::{data::provider_store, harness, json_response, web::Failure, AppState
 use axum::{http::Method, response::Response};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
-use std::process::Stdio;
 use std::{
     collections::BTreeSet,
     collections::HashMap,
@@ -182,6 +181,32 @@ fn public_environment(raw: &str) -> Value {
     }).collect())
 }
 
+/// The model provider a Codex home's `config.toml` selects when that
+/// provider needs no ChatGPT sign-in (an API-key or local provider).
+fn codex_api_provider(home: &std::path::Path) -> Option<String> {
+    let file = fs::File::open(home.join("config.toml")).ok()?;
+    let bytes = crate::operator_file::bounded_read(file, 1024 * 1024).ok()?;
+    let config = toml_edit::Document::parse(String::from_utf8(bytes).ok()?).ok()?;
+    let name = config.get("model_provider")?.as_str()?;
+    if name == "openai" {
+        return None;
+    }
+    let provider = config
+        .get("model_providers")
+        .and_then(|providers| providers.get(name));
+    let requires_openai = provider
+        .and_then(|provider| provider.get("requires_openai_auth"))
+        .and_then(toml_edit::Item::as_bool)
+        .unwrap_or(false);
+    (!requires_openai).then(|| {
+        provider
+            .and_then(|provider| provider.get("name"))
+            .and_then(toml_edit::Item::as_str)
+            .unwrap_or(name)
+            .to_owned()
+    })
+}
+
 fn auth_status(_state: &AppState, row: &Value) -> Value {
     let kind = string(row, "kind");
     if !matches!(kind, "codex" | "claude") {
@@ -200,6 +225,11 @@ fn auth_status(_state: &AppState, row: &Value) -> Value {
     } else {
         ".credentials.json"
     });
+    if kind == "codex" {
+        if let Some(provider) = codex_api_provider(&home) {
+            return json!({"status":"authenticated","method":provider});
+        }
+    }
     match fs::metadata(&credential) {
         Ok(metadata) if metadata.is_file() && metadata.len() > 0 => json!({
             "status":"authenticated",
@@ -753,6 +783,15 @@ async fn sign_in(state: &AppState, id: &str) -> Result<Response> {
             environment.extend(device_environment);
         }
     }
+    if !string(&row, "home_path").is_empty() {
+        // Sign in the home that readiness checks, not a Codex shadow home.
+        let variable = if kind == "codex" {
+            "CODEX_HOME"
+        } else {
+            "CLAUDE_CONFIG_DIR"
+        };
+        environment.insert(variable.into(), string(&row, "home_path").to_owned());
+    }
     let working_directory = if !string(&row, "home_path").is_empty() {
         PathBuf::from(string(&row, "home_path"))
     } else {
@@ -761,28 +800,62 @@ async fn sign_in(state: &AppState, id: &str) -> Result<Response> {
             .unwrap_or_else(|| PathBuf::from("."))
     };
     environment.insert("PATH".into(), harness::path(state));
+    // Device-code sign-in works from a browser on any machine.
     let args: &[&str] = if kind == "codex" {
-        &["login"]
+        &["login", "--device-auth"]
     } else {
         &["auth", "login"]
     };
-    let child = Command::new(&executable)
+    // Keep the CLI from opening a browser on this host.
+    environment.insert("BROWSER".into(), "true".into());
+    let mut command = Command::new(&executable);
+    command
         .args(args)
         .env_clear()
         .envs(&environment)
-        .current_dir(working_directory)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(false)
-        .spawn()
-        .map_err(|_| error(502, "Provider sign-in could not start."))?;
-    let pid = child.id();
-    drop(child);
-    Ok(json_response(
-        202,
-        json!({"started":true,"pid":pid,"provider":id}),
-    ))
+        .current_dir(working_directory);
+    let started = super::provider_sign_in::start(id, kind, command).await?;
+    Ok(json_response(200, started))
+}
+
+async fn sign_in_code(state: &AppState, id: &str, body: &Value) -> Result<Response> {
+    if !closed(body, &["id", "instanceId", "code"]) {
+        return Err(error(400, "Invalid sign-in code request."));
+    }
+    let code = body["code"]
+        .as_str()
+        .ok_or_else(|| error(400, "Paste the code from the sign-in page."))?;
+    super::provider_sign_in::submit(id, code).await?;
+    let row = instance(state, id)?.ok_or_else(|| error(404, "Provider instance not found."))?;
+    Ok(json_response(200, public(state, &row)))
+}
+
+/// Codex and Claude installed on this host without an instance of the same
+/// id yet, with the sign-in state of their default homes, so setup can offer
+/// them before anything is configured.
+fn detected(state: &AppState) -> Result<Value> {
+    let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let mut found = Vec::new();
+    for kind in ["claude", "codex"] {
+        if row(&guard.connection, kind)?.is_some() || harness::executable(state, kind).is_none() {
+            continue;
+        }
+        let virtual_row = json!({
+            "id":kind, "kind":kind, "display_name":kind_name(kind), "enabled":1,
+            "binary_path":"", "home_path":"", "shadow_home_path":"", "launch_args":"[]",
+            "environment":"[]", "accent_color":"", "revision":0,
+        });
+        found.push(public(state, &virtual_row));
+    }
+    Ok(json!({"providers":found}))
+}
+
+fn kind_name(kind: &str) -> &'static str {
+    if kind == "codex" {
+        "Codex"
+    } else {
+        "Claude"
+    }
 }
 
 pub fn list(state: &AppState) -> Result<Value> {
@@ -804,6 +877,9 @@ pub async fn route(
     }
     if *method == Method::GET && parts.len() == 2 {
         return Ok(json_response(200, list(state)?));
+    }
+    if *method == Method::GET && parts == ["api", "provider-instances", "detected"] {
+        return Ok(json_response(200, detected(state)?));
     }
     if let ["api", "provider-instances", id, "models"] = parts {
         let requested = if *method == Method::GET {
@@ -837,6 +913,7 @@ pub async fn route(
                 Some(previous.ok_or_else(|| error(404, "Provider instance not found."))?),
             ),
             "delete" if closed(body, &["id", "instanceId", "revision"]) => remove(state, &id),
+            "sign-in-code" => sign_in_code(state, &id, body).await,
             "refresh" | "sign-in" | "signin" => {
                 if *action == "sign-in" || *action == "signin" {
                     return sign_in(state, &id).await;

@@ -1,5 +1,6 @@
 use crate::{api, connection_ui::*};
 use crate::provider_icons::ProviderMark;
+use crate::provider_sign_in::{SignIn, Target};
 use leptos::{prelude::*, task::spawn_local};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -166,12 +167,14 @@ pub fn panel() -> impl IntoView {
             .or_else(|| data.providers.first().cloned())
     }));
     let close_add = UiAction::new(move |()| adding.set(false));
+    let signing = RwSignal::new(None::<Target>);
+    let sign_in = Callback::new(move |target: Target| { adding.set(false); signing.set(Some(target)); });
     view! {
         <div class="k-page bs-root provider-instances-page">
             <Header title="Providers" actions=Box::new(move || view! {
                 <span class="provider-check-status" role="status"><Icon name="refresh" />{checked}</span>
                 <Button label="Add provider" variant="primary" icon="plus" click=UiAction::new(move |()| adding.set(true)) />
-                <Button label="Refresh providers" aria="Refresh providers" icon="refresh" click=refresh.clone() busy=providers.busy />
+                <Button label="Refresh providers" aria="Refresh providers" icon="refresh" click=refresh busy=providers.busy />
             }.into_any()) />
             <ErrorNotice error=error.into() />
             <ErrorNotice error=providers.error.into() retry=providers.reload />
@@ -214,18 +217,22 @@ pub fn panel() -> impl IntoView {
                             } />
                     </nav>
                     <Show when=move || current().is_some() fallback=|| view! { <Empty title="Choose a provider" icon="server" /> }>
-                        {move || current().map(|provider| detail(provider, providers.reload, error, saved))}
+                        {move || current().map(|provider| detail(provider, providers.reload, error, saved, sign_in))}
                     </Show>
                 </div>
             </Show>
             <Show when=move || adding.get()>
-                <AddProvider close=close_add.clone() reload=providers.reload saved=move || { providers.reload.run(()); adding.set(false); } />
+                <AddProvider close=close_add reload=providers.reload saved=move || { providers.reload.run(()); adding.set(false); } sign_in=sign_in />
             </Show>
+            {move || signing.get().map(|target| view! {
+                <SignIn target close=UiAction::new(move |()| { signing.set(None); providers.reload.run(()); })
+                    signed_in=UiAction::new(move |()| { signing.set(None); saved.set("Signed in".into()); providers.reload.run(()); }) />
+            })}
         </div>
     }
 }
 
-fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: RwSignal<String>) -> AnyView {
+fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: RwSignal<String>, open_sign_in: Callback<Target>) -> AnyView {
     let name = RwSignal::new(provider.display_name.clone());
     let binary = RwSignal::new(provider.binary_path.clone());
     let home = RwSignal::new(provider.home_path.clone());
@@ -270,20 +277,8 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
             busy.set(false);
         });
     });
-    let sign_in_id = provider_id.clone();
-    let sign_in = UiAction::new(move |()| {
-        busy.set(true);
-        let id = sign_in_id.clone();
-        let reload = reload;
-        let error = error;
-        spawn_local(async move {
-            match api::command::<Value>(&format!("{PATH}/{id}/sign-in"), json!({"instanceId":id})).await {
-                Ok(_) => { saved.set("Sign-in started".into()); reload.run(()); }
-                Err(message) => error.set(message),
-            }
-            busy.set(false);
-        });
-    });
+    let sign_in_target = Target { id: provider_id.clone(), kind: provider.kind.clone(), name: provider.display_name.clone() };
+    let sign_in = UiAction::new(move |()| open_sign_in.run(sign_in_target.clone()));
     let refresh_id = provider_id.clone();
     let refresh = UiAction::new(move |()| {
         busy.set(true);
@@ -320,7 +315,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
                 <div class="provider-instance-title"><span class="provider-instance-detail__icon"><ProviderMark kind=provider_kind_view.clone() /></span><div><h2>{display_name.clone()}</h2><p>{kind_label(&provider_kind_view)}{version.clone().map(|version| format!(" · v{version}"))}</p></div></div>
                 <Badge success=provider_enabled>{if provider_enabled { "Enabled" } else { "Disabled" }}</Badge>
             </div>
-            <Section title="Status" actions=Box::new(move || view! { <div class="provider-detail-actions"><Button label="Re-check" icon="refresh" busy=busy click=refresh.clone() /><Button label="Sign in" icon="key" busy=busy disabled=move || kind_for_button != "codex" && kind_for_button != "claude" click=sign_in.clone() /></div> }.into_any())>
+            <Section title="Status" actions=Box::new(move || view! { <div class="provider-detail-actions"><Button label="Re-check" icon="refresh" busy=busy click=refresh /><Button label="Sign in" icon="key" busy=busy disabled=move || kind_for_button != "codex" && kind_for_button != "claude" click=sign_in /></div> }.into_any())>
                 <div class="provider-status-card"><span class="provider-status-dot" class:is-ready=auth_status == "authenticated" && provider_enabled></span><div><strong>{status}</strong>{(!auth_reason.is_empty()).then(|| view! { <p>{auth_reason.clone()}</p> })}</div></div>
             </Section>
             <form class="provider-detail-form" on:submit=move |event| { event.prevent_default(); save.run(()); }>
@@ -330,7 +325,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
                 <Section title="Runtime">
                     <label class="provider-field"><span>Binary path</span><input class="k-input" name="binaryPath" prop:value=binary on:input=move |event| binary.set(event_target_value(&event)) /></label>
                     <label class="provider-field"><span>{if provider_kind_view == "codex" { "CODEX_HOME path" } else { "Config directory" }}</span><input class="k-input" name="homePath" prop:value=home on:input=move |event| home.set(event_target_value(&event)) /></label>
-                    {(shadow_path != "" || provider_kind_view == "codex").then(|| view! { <label class="provider-field"><span>Shadow home path</span><input class="k-input" name="shadowHomePath" prop:value=shadow on:input=move |event| shadow.set(event_target_value(&event)) /></label> })}
+                    {(!shadow_path.is_empty() || provider_kind_view == "codex").then(|| view! { <label class="provider-field"><span>Shadow home path</span><input class="k-input" name="shadowHomePath" prop:value=shadow on:input=move |event| shadow.set(event_target_value(&event)) /></label> })}
                     <label class="provider-field"><span>Launch arguments</span><textarea class="k-input k-textarea provider-args" name="launchArgs" prop:value=args on:input=move |event| args.set(event_target_value(&event)) placeholder="One argument per line"></textarea></label>
                 </Section>
                 <Section title="Environment" actions=Box::new(move || view! { <Button label="Add variable" icon="plus" click=UiAction::new(move |()| environment.update(|rows| rows.push(Environment { name: format!("VARIABLE_{}", rows.len() + 1), ..Environment::default() }))) /> }.into_any())>
@@ -351,16 +346,18 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
             </form>
             <Show when=move || confirm_open.get()>
                 <Modal title="Delete provider instance?".to_owned() description="Agents using this instance will need another provider before they can run.".to_owned() confirm=true close=UiAction::new(move |()| confirm_open.set(false))
-                    footer=Box::new(move || view! { <Button label="Cancel" click=UiAction::new(move |()| confirm_open.set(false)) /><Button label="Delete instance" variant="danger" click=delete_request.clone() /> }.into_any()) />
+                    footer=Box::new(move || view! { <Button label="Cancel" click=UiAction::new(move |()| confirm_open.set(false)) /><Button label="Delete instance" variant="danger" click=delete_request /> }.into_any()) />
             </Show>
         </main>
     }.into_any()
 }
 
 /// The Add provider wizard, shared by Settings > Providers and setup.
-/// `reload` runs once the instance exists, `saved` after a manual setup.
+/// `reload` runs once the instance exists, `saved` after a manual setup and
+/// `sign_in` with the new Codex or Claude instance to sign in.
 #[component]
-pub(crate) fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + Copy + Send + 'static) -> impl IntoView {
+pub(crate) fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + Copy + Send + 'static, sign_in: Callback<Target>) -> impl IntoView {
+    let existing = query::<Envelope>(|| PATH.into());
     // Shown inside the modal: the page behind it sits under the backdrop.
     let error = RwSignal::new(String::new());
     let machine = query::<MachineEnvironment>(|| "/api/environment".into());
@@ -373,33 +370,33 @@ pub(crate) fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + 
     let shadow = RwSignal::new(String::new());
     let args = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
-    let sign_in_status = RwSignal::new(String::new());
     let submit = move |event: web_sys::SubmitEvent| {
         event.prevent_default();
         if busy.get_untracked() { return; }
         let display = name.get_untracked().trim().to_owned();
         let requested_id = instance_id.get_untracked();
-        let id = slug(if requested_id.trim().is_empty() { &display } else { requested_id.trim() });
+        let id = if requested_id.trim().is_empty() {
+            // A generated ID never collides with an existing instance.
+            let base = slug(&display);
+            let taken = existing.data.with_untracked(|data| data.as_ref().map(|data| data.providers.iter().map(|provider| provider.id.clone()).collect::<Vec<_>>()).unwrap_or_default());
+            (1..).map(|n| if n == 1 { base.clone() } else { format!("{base}-{n}") }).find(|id| !taken.contains(id)).unwrap_or(base)
+        } else {
+            slug(requested_id.trim())
+        };
         if display.is_empty() { error.set("Display name is required.".into()); return; }
-        let sign_in = event.submitter().and_then(|button| button.get_attribute("value")) == Some("signin".into());
+        let signing_in = event.submitter().and_then(|button| button.get_attribute("value")) == Some("signin".into());
         let kind_value = kind.get_untracked();
         let body = json!({"instanceId":id,"kind":kind_value,"displayName":display,"binaryPath":binary.get_untracked().trim(),"homePath":home.get_untracked().trim(),"shadowHomePath":shadow.get_untracked().trim(),"launchArgs":args.get_untracked().lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>(),"environment":[]});
         busy.set(true);
         error.set(String::new());
-        sign_in_status.set(String::new());
         spawn_local(async move {
-            let result = match api::command::<Instance>(PATH, body).await {
-                Ok(_) if sign_in => {
-                    // The provider exists now; show it even while sign-in runs.
-                    reload.run(());
-                    api::command::<Value>(&format!("{PATH}/{id}/sign-in"), json!({"instanceId":id})).await.map(|_| ())
-                }
-                Ok(_) => Ok(()),
-                Err(message) => Err(message),
-            };
-            busy.set(false);
+            let result = api::command::<Instance>(PATH, body).await;
+            let _ = busy.try_set(false);
             match result {
-                Ok(_) if sign_in => sign_in_status.set("Sign-in started. Finish in the provider home.".into()),
+                Ok(_) if signing_in => {
+                    reload.run(());
+                    sign_in.run(Target { id, kind: kind_value, name: display });
+                }
                 Ok(_) => saved(),
                 Err(message) => error.set(message),
             }
@@ -408,9 +405,9 @@ pub(crate) fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + 
     let kinds = [("codex", "Codex"), ("claude", "Claude"), ("hermes", "Hermes"), ("antigravity", "Antigravity"), ("grok", "Grok"), ("pi", "Pi"), ("opencode", "OpenCode"), ("gemini", "Gemini"), ("kiro", "Kiro")];
     let sign_in_kind = move || matches!(kind.get().as_str(), "codex" | "claude");
     view! {
-        <Modal title="Add provider".to_owned() size="lg" busy=busy close=close.clone()
+        <Modal title="Add provider".to_owned() size="lg" busy=busy close=close
             footer=Box::new(move || view! {
-                <Button label="Cancel" disabled=busy click=close.clone() />
+                <Button label="Cancel" disabled=busy click=close />
                 <Show when=move || step.get() == 0><Button label="Continue" variant="primary" click=UiAction::new(move |()| step.update(|value| *value = (*value + 1).min(2))) /></Show>
                 <Show when=move || step.get() == 1 && !sign_in_kind()><Button label="Continue" variant="primary" click=UiAction::new(move |()| step.update(|value| *value = (*value + 1).min(2))) /></Show>
                 <Show when=move || step.get() == 1 && sign_in_kind()>
@@ -443,7 +440,6 @@ pub(crate) fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + 
                     <label class="k-field"><span class="k-field__label">Shadow home path <span class="k-field__optional">Optional</span></span><input class="k-input" name="shadowHomePath" prop:value=shadow on:input=move |event| shadow.set(event_target_value(&event)) /></label>
                     <label class="k-field"><span class="k-field__label">Launch arguments <span class="k-field__optional">Optional</span></span><textarea class="k-input k-textarea provider-args" name="launchArgs" prop:value=args on:input=move |event| args.set(event_target_value(&event)) placeholder="One argument per line"></textarea></label>
                 </Show>
-                <Show when=move || !sign_in_status.get().is_empty()><p class="provider-wizard-status" role="status">{sign_in_status}</p></Show>
                 <ErrorNotice error=error.into() />
             </form>
         </Modal>

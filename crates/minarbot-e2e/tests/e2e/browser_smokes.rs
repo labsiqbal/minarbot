@@ -9,6 +9,7 @@
 
 use minarbot_testkit::{
     browser::{self, Browser},
+    fake::native::{CLAUDE_MODELS, SIGN_IN_CODE},
     fakes::{self, Fake},
     model::{Reply, ScriptedModel},
     prelude::*,
@@ -54,26 +55,132 @@ async fn seed_instance(app: &Server, root: &TestRoot, model: &ScriptedModel) -> 
     Ok(())
 }
 
+/// A server whose host has the fake Claude Code installed (signed out).
+async fn start_with_claude(root: &TestRoot) -> Result<Server> {
+    let dist = browser::client_dist()?.to_string_lossy().into_owned();
+    root.start(
+        ServerConfig::new()
+            .option("dist", dist)
+            .executable("claude", fakes::path(Fake::Claude)?),
+    )
+    .await
+}
+
+/// Paste the fake Claude code into the open sign-in dialog `title`.
+async fn finish_claude_sign_in(page: &Browser, title: &str) -> Result<()> {
+    let dialog = page.find("dialog", title).await?;
+    let open = page.find_in("link", "Open", Some(dialog)).await?;
+    let href = page.on(open, "function() { return this.href; }").await?;
+    ensure!(
+        href == "https://claude.ai/oauth/authorize?code=true&state=fixture",
+        "sign-in link: {href}"
+    );
+    page.fill("textbox", "Paste the code it shows", SIGN_IN_CODE)
+        .await?;
+    page.click_element(page.find_in("button", "Sign in", Some(dialog)).await?)
+        .await?;
+    page.gone("dialog", title).await
+}
+
+async fn checked(page: &Browser, radio: &str) -> Result<bool> {
+    let element = page.find("radio", radio).await?;
+    Ok(page
+        .on(
+            element,
+            "function() { return this.getAttribute('aria-checked'); }",
+        )
+        .await?
+        == "true")
+}
+
 #[tokio::test]
-async fn fresh_data_opens_setup_without_errors() -> Result<()> {
+async fn setup_signs_in_a_detected_provider_and_opens_the_agent_form() -> Result<()> {
     let root = TestRoot::new()?;
-    let app = start(&root).await?;
-    browser::smoke("fresh-data", async |page: &Browser| {
+    let app = start_with_claude(&root).await?;
+    browser::smoke("setup-sign-in", async |page: &Browser| {
         page.goto(&app.url("/")).await?;
         page.find("heading", "Set up Minarbot").await?;
         page.wait_text("Connect a provider").await?;
-        // Setup adds a provider in place, without a trip to Settings.
+        // Claude is offered as soon as it is installed, before any setup.
+        page.find("radio", "Claude").await?;
+        page.wait_text("Not signed in").await?;
+        page.click("button", "Sign in").await?;
+        finish_claude_sign_in(page, "Sign in to Claude").await?;
+        page.wait_text("Signed in").await?;
+        until("Claude chosen", || async {
+            Ok(checked(page, "Claude").await?.then_some(()))
+        })
+        .await?;
+        // The model list comes from the signed-in Claude.
+        let offered = wait_models(page).await?;
+        ensure!(offered == CLAUDE_MODELS, "offered models: {offered:?}");
+        page.fill("textbox", "Name", "Setup Agent").await?;
+        page.click("button", "Create agent").await?;
+        until("agent page", || async {
+            Ok(page.url().await?.contains("/agents/").then_some(()))
+        })
+        .await?;
+        page.find("textbox", "Message Setup Agent").await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn setup_adds_a_provider_in_the_wizard_and_signs_it_in() -> Result<()> {
+    let root = TestRoot::new()?;
+    let app = start_with_claude(&root).await?;
+    browser::smoke("setup-add-provider", async |page: &Browser| {
+        page.goto(&app.url("/")).await?;
+        page.find("heading", "Set up Minarbot").await?;
         page.click("button", "Add provider").await?;
         let dialog = page.find("dialog", "Add provider").await?;
-        page.click_element(page.find_in("button", "Codex", Some(dialog)).await?)
+        page.click_element(page.find_in("button", "Claude", Some(dialog)).await?)
             .await?;
         page.click_element(page.find_in("button", "Continue", Some(dialog)).await?)
             .await?;
-        page.fill("textbox", "Display name", "Setup Codex").await?;
-        page.click("button", "Configure manually").await?;
+        page.fill("textbox", "Display name", "Work Claude").await?;
+        page.click("button", "Sign in with Claude").await?;
         page.gone("dialog", "Add provider").await?;
+        finish_claude_sign_in(page, "Sign in to Work Claude").await?;
+        until("Work Claude chosen", || async {
+            Ok(checked(page, "Work Claude").await?.then_some(()))
+        })
+        .await?;
+        page.find("textbox", "Name").await?;
+        Ok(())
+    })
+    .await
+}
+
+/// An agent creation that fails keeps its form open with the error and
+/// the retry (the form once hid as soon as creation started).
+#[tokio::test]
+async fn setup_shows_a_failed_agent_creation_and_its_retry() -> Result<()> {
+    let root = TestRoot::new()?;
+    let app = start(&root).await?;
+    browser::smoke("setup-retry", async |page: &Browser| {
+        page.goto(&app.url("/")).await?;
         page.find("heading", "Set up Minarbot").await?;
-        page.wait_text("Setup Codex").await?;
+        let command = json!({"id": new_id(), "name": "Lost Agent", "role": "", "model": "fixture",
+            "instructions": "Help.", "threadLimit": 2, "toolBudget": 90,
+            "providerInstance": "missing-instance", "modelOptions": {}});
+        page.evaluate(&format!(
+            "sessionStorage.setItem('minarbot-agent-creation', {})",
+            json!(command.to_string())
+        ))
+        .await?;
+        page.reload().await?;
+        // The provider step loads after the form; click once it settled.
+        page.find("button", "Add provider").await?;
+        page.click("button", "Retry creation").await?;
+        page.wait_text("Provider instance not found.").await?;
+        page.find("button", "Retry creation").await?;
+        let failed = page.take_problems();
+        ensure!(
+            failed == ["HTTP 400: POST ".to_owned() + &app.url("/api/agents")],
+            "problems: {failed:?}"
+        );
         Ok(())
     })
     .await
@@ -138,8 +245,8 @@ async fn providers_add_a_codex_instance_and_offer_its_models() -> Result<()> {
         page.wait_text("Smoke Codex").await?;
         let offered = wait_models(page).await?;
         ensure!(offered == MODELS, "offered models: {offered:?}");
+        page.select("Model", MODELS[1]).await?;
         let field = page.find("combobox", "Model").await?;
-        page.fill_element(field, MODELS[1]).await?;
         let picked = page.on(field, "function() { return this.value; }").await?;
         ensure!(picked == MODELS[1], "picked model: {picked}");
         Ok(())
@@ -154,7 +261,7 @@ async fn wait_models(page: &Browser) -> Result<Vec<String>> {
         || async {
             let options = page
                 .evaluate(
-                    "[...document.querySelectorAll('#onboarding-models option')].map(o => o.value)",
+                    "[...document.querySelectorAll('select[aria-label=Model] option')].map(o => o.value).filter(Boolean)",
                 )
                 .await?;
             Ok(options

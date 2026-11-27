@@ -41,6 +41,12 @@ pub const SCRUBBED: [&str; 6] = [
 pub const WORKSPACE_SHELL: &str = "ls -al && for file in *.test.sh; do head -5 \"$file\"; done && sh fixture.test.sh && printf checked > result.txt";
 /// The plain shell loop the Claude workspace-shell turn first tries natively.
 pub const WORKSPACE_LOOP: &str = "for file in *.test.sh; do head -5 \"$file\"; done";
+/// Models fake Claude lists to model discovery.
+pub const CLAUDE_MODELS: [&str; 2] = ["default", "fixture-sonnet"];
+/// The authorization code fake Claude accepts at `auth login`.
+pub const SIGN_IN_CODE: &str = "fixture-code#fixture-state";
+/// The one-time code fake Codex prints at `login --device-auth`.
+pub const DEVICE_CODE: &str = "FAKE-C0DE1";
 /// File whose creation releases `FIRST_PARTIAL_GATE` and `STREAM_GATE` turns.
 pub const RELEASE: &str = "stream-release";
 
@@ -94,6 +100,12 @@ pub async fn main(mode: Mode, args: Args) -> Result<ExitCode> {
             .unwrap_or_else(|_| format!("{}/.claude", std::env::var("HOME").unwrap_or_default()));
         return Ok(status(Path::new(&home).join(".credentials.json").exists()));
     }
+    if args.nth(1) == Some("login") && args.has("--device-auth") {
+        return Ok(device_sign_in());
+    }
+    if args.nth(1) == Some("auth") && args.nth(2) == Some("login") {
+        return Ok(claude_sign_in());
+    }
     for key in SCRUBBED {
         let allowed =
             key == "ANTHROPIC_API_KEY" && std::env::var(key).as_deref() == Ok("minarbot-no-key");
@@ -134,6 +146,53 @@ pub async fn main(mode: Mode, args: Args) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `codex login --device-auth`: prints the link and one-time code the way
+/// Codex does (with colour codes), then signs the `CODEX_HOME` in as if the
+/// user had entered the code.
+fn device_sign_in() -> ExitCode {
+    let Some(home) = std::env::var_os("CODEX_HOME") else {
+        eprintln!("CODEX_HOME is not set");
+        return ExitCode::from(1);
+    };
+    println!("Follow these steps to sign in with ChatGPT using device code authorization:\n");
+    println!("1. Open this link in your browser and sign in to your account");
+    println!("   \x1b[94mhttps://auth.openai.com/codex/device\x1b[0m\n");
+    println!("2. Enter this one-time code \x1b[90m(expires in 15 minutes)\x1b[0m");
+    println!("   \x1b[94m{DEVICE_CODE}\x1b[0m");
+    let home = Path::new(&home);
+    status(
+        std::fs::create_dir_all(home)
+            .and_then(|()| std::fs::write(home.join("auth.json"), "{}"))
+            .is_ok(),
+    )
+}
+
+/// `claude auth login`: prints the link, reads the pasted code and signs the
+/// `CLAUDE_CONFIG_DIR` in when it is [`SIGN_IN_CODE`].
+fn claude_sign_in() -> ExitCode {
+    use std::io::Write;
+    let Some(home) = std::env::var_os("CLAUDE_CONFIG_DIR") else {
+        eprintln!("CLAUDE_CONFIG_DIR is not set");
+        return ExitCode::from(1);
+    };
+    println!("Opening browser to sign in…");
+    println!("If the browser didn't open, visit:");
+    println!("https://claude.ai/oauth/authorize?code=true&state=fixture");
+    print!("Paste code here if prompted > ");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line).is_err() || line.trim() != SIGN_IN_CODE {
+        println!("Couldn't log in: That code wasn't accepted.");
+        return ExitCode::from(1);
+    }
+    let home = Path::new(&home);
+    status(
+        std::fs::create_dir_all(home)
+            .and_then(|()| std::fs::write(home.join(".credentials.json"), "{}"))
+            .is_ok(),
+    )
 }
 
 fn status(ok: bool) -> ExitCode {
@@ -807,6 +866,14 @@ async fn claude_message(peer: &Shared, value: &Value) -> Result<()> {
         let request = &value["request"];
         let request_id = &value["request_id"];
         match request["subtype"].as_str() {
+            // Model discovery initializes without an MCP config.
+            Some("initialize") if peer.args.value("--mcp-config").is_none() => {
+                control_success(
+                    peer,
+                    request_id,
+                    json!({"models": CLAUDE_MODELS.map(|model| json!({"value": model, "displayName": model}))}),
+                );
+            }
             Some("initialize") => {
                 let first = |name: &str| {
                     request["hooks"][name][0]["hookCallbackIds"][0]

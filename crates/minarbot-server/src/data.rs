@@ -17,6 +17,7 @@ pub mod options;
 mod panel;
 pub(crate) mod projects;
 pub(crate) mod provider_instances;
+mod provider_sign_in;
 mod provider_store;
 pub(crate) mod providers;
 mod schema;
@@ -277,8 +278,16 @@ pub fn handles(path: &str) -> bool {
             "api",
             "provider-instances",
             _,
-            "edit" | "update" | "delete" | "refresh" | "sign-in" | "signin" | "models"
-        ] | ["api", "sidebar", "summary"]
+            "edit"
+                | "update"
+                | "delete"
+                | "refresh"
+                | "sign-in"
+                | "signin"
+                | "sign-in-code"
+                | "models"
+        ] | ["api", "provider-instances", "detected"]
+            | ["api", "sidebar", "summary"]
             | ["api", "conversations", "settings"]
             | ["api", "settings", "library-docs"]
             | ["api", "settings", "web-search"]
@@ -798,6 +807,11 @@ pub fn routes() -> Router<AppState> {
         .route("/api/provider-instances/{id}/delete", any(crate::dispatch))
         .route("/api/provider-instances/{id}/refresh", any(crate::dispatch))
         .route("/api/provider-instances/{id}/sign-in", any(crate::dispatch))
+        .route(
+            "/api/provider-instances/{id}/sign-in-code",
+            any(crate::dispatch),
+        )
+        .route("/api/provider-instances/detected", any(crate::dispatch))
         .route("/api/provider-instances/{id}/models", any(crate::dispatch))
         .route("/api/conversations/settings", any(crate::dispatch))
         .route("/api/settings/library-docs", any(crate::dispatch))
