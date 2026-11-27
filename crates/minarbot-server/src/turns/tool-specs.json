@@ -1446,32 +1446,5 @@
         "additionalProperties": false
       }
     }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "web_search",
-      "description": "Search the live public web through Minarbot. Returns titles, URLs and snippets. Cite the returned URLs as plain inline Markdown links.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 1000
-          },
-          "max_results": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10,
-            "description": "Defaults to 5."
-          }
-        },
-        "required": [
-          "query"
-        ],
-        "additionalProperties": false
-      }
-    }
   }
 ]

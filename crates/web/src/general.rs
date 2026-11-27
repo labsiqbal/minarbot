@@ -5,7 +5,6 @@ use serde_json::json;
 use web_sys::{Notification, NotificationPermission};
 
 const CHATS: &str = "/api/conversations/settings";
-const WEB_SEARCH: &str = "/api/settings/web-search";
 const NOTIFICATIONS: &str = "minarbot:workflow-notifications-muted";
 
 #[component]
@@ -184,128 +183,6 @@ fn conversations(error_icon: String) -> impl IntoView {
     }
 }
 
-#[derive(Clone, Deserialize)]
-struct SearchSettings {
-    url: Option<String>,
-    managed: bool,
-}
-
-#[derive(Deserialize)]
-struct SearchTest {
-    count: u64,
-}
-
-fn web_search(error_icon: String) -> impl IntoView {
-    let settings = RwSignal::new(None::<SearchSettings>);
-    let url = RwSignal::new(String::new());
-    let busy = RwSignal::new(false);
-    let error = RwSignal::new(String::new());
-    let load_error = RwSignal::new(String::new());
-    let saved = RwSignal::new(false);
-    let count = RwSignal::new(None::<u64>);
-    let input = NodeRef::<leptos::html::Input>::new();
-    leptos::task::spawn_local(async move {
-        match api::read::<SearchSettings>(WEB_SEARCH).await {
-            Ok(value) => {
-                url.try_set(value.url.clone().unwrap_or_default());
-                settings.try_set(Some(value));
-            }
-            Err(_) => {
-                load_error
-                    .try_set("Web search settings could not load. Reopen General to retry.".into());
-            }
-        }
-    });
-    let apply = move |test| {
-        if busy.get_untracked()
-            || !input
-                .get_untracked()
-                .is_some_and(|field| field.report_validity())
-        {
-            return;
-        }
-        busy.set(true);
-        saved.set(false);
-        error.set(String::new());
-        let body = json!({ "url": url.get_untracked() });
-        leptos::task::spawn_local(async move {
-            let result = if test {
-                count.try_set(None);
-                api::command::<SearchTest>("/api/settings/web-search/test", body)
-                    .await
-                    .map(|result| {
-                        count.try_set(Some(result.count));
-                    })
-            } else {
-                api::command::<SearchSettings>(WEB_SEARCH, body)
-                    .await
-                    .map(|result| {
-                        url.try_set(result.url.clone().unwrap_or_default());
-                        settings.try_set(Some(result));
-                        saved.try_set(true);
-                    })
-            };
-            if let Err(message) = result {
-                error.try_set(message);
-            }
-            busy.try_set(false);
-        });
-    };
-    let managed = move || settings.with(|value| value.as_ref().is_some_and(|value| value.managed));
-    let managed_without_url = move || {
-        settings.with(|value| {
-            value
-                .as_ref()
-                .is_some_and(|value| value.managed && value.url.is_none())
-        })
-    };
-    view! {
-        <Section title="Web search">
-            <ErrorAlert message=load_error icon=error_icon />
-            <div class="k-card" aria-hidden="true" hidden=move || settings.with(Option::is_some) || !load_error.with(String::is_empty)>
-                <div class="k-row"><div class="k-row__main"><span class="k-row__text"><span class="k-skeleton"></span><span class="k-skeleton is-small"></span></span></div></div>
-            </div>
-            <div class="k-card" hidden=move || !managed_without_url()>
-                <Row title="Backend"><span class="settings-fact">"Set by server"</span></Row>
-            </div>
-            <div class="k-card" hidden=move || settings.with(Option::is_none) || managed_without_url()>
-                <form class="web-search-settings" aria-label="Web search" on:submit=move |event| {
-                    event.prevent_default();
-                    if !managed() { apply(false); }
-                }>
-                    <div class="k-row">
-                        <div class="k-row__main"><span class="k-row__text">
-                            <span class="k-row__title"><label for="web-search-url">"SearXNG URL"</label></span>
-                            <span class="k-row__meta" hidden=managed>
-                                <span role="status">{move || count.get().map(|count| format!("{count} result{}", if count == 1 { "" } else { "s" }))}</span>
-                                <span class="sr-only" role="status">{move || saved.get().then_some("Web search settings saved.")}</span>
-                                <span id="web-search-error" class="k-field__error" role="alert" hidden=move || error.with(String::is_empty)>{error}</span>
-                            </span>
-                        </span></div>
-                        <span class="k-row__trailing">
-                            <input id="web-search-url" name="url" class="k-input" node_ref=input type="url" maxlength="4096"
-                                autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="http://127.0.0.1:8890"
-                                aria-describedby=move || (!error.with(String::is_empty)).then_some("web-search-error")
-                                prop:value=url readonly=move || managed() || busy.get()
-                                on:input=move |event| {
-                                    url.set(event_target_value(&event));
-                                    error.set(String::new());
-                                    count.set(None);
-                                    saved.set(false);
-                                } />
-                            <span class="settings-fact" hidden=move || !managed()>"Set by server"</span>
-                            <button type="button" class="k-btn k-btn--sm k-btn--secondary" hidden=managed
-                                disabled=move || busy.get() || url.with(|url| url.trim().is_empty()) on:click=move |_| apply(true)>"Test"</button>
-                            <button type="submit" class="k-btn k-btn--sm k-btn--primary" hidden=managed
-                                disabled=move || busy.get() || settings.with(|value| value.as_ref().and_then(|value| value.url.as_deref()).unwrap_or_default() == url.get().trim())>"Save"</button>
-                        </span>
-                    </div>
-                </form>
-            </div>
-        </Section>
-    }
-}
-
 fn time_zone(error_icon: String) -> impl IntoView {
     use crate::time_zone::{Settings, ZoneSelect, PATH};
     let settings = RwSignal::new(None::<Settings>);
@@ -357,7 +234,7 @@ fn time_zone(error_icon: String) -> impl IntoView {
     view! {
         <Section title="Time">
             <div class="k-card">
-                <div class="k-row">
+                <div class="k-row general-time-zone-row">
                     <div class="k-row__main"><span class="k-row__text">
                         <span class="k-row__title"><label for="general-time-zone">"Time zone"</label></span>
                         <span class="k-row__meta">"Routines follow this zone unless they set their own."</span>
@@ -380,8 +257,7 @@ pub fn panel(error_icon: String) -> impl IntoView {
             {notifications(error_icon.clone())}
             {time_zone(error_icon.clone())}
             {crate::voice::settings()}
-            {conversations(error_icon.clone())}
-            {web_search(error_icon)}
+            {conversations(error_icon)}
         </div>
     }
 }

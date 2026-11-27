@@ -18,7 +18,7 @@ Minarbot is free and open source under the [Apache License 2.0](LICENSE).
 - Coding harnesses: Codex, Claude Code, and ACP engines (Hermes, Antigravity, Grok, Pi, Gemini, OpenCode), added as providers in **Settings > Providers**. Codex and Claude Code sign in with a ChatGPT or Claude account, so no API key is needed.
 - An agent picks a provider, one of its models, and model options such as reasoning effort.
 - Shared base instructions and a self-check before an agent reports a task as done.
-- Web search and fetch for every agent, through a search backend you choose (for example a local SearXNG).
+- Web fetch for every agent; web search comes from the agent's own brain, such as Codex or Claude Code.
 
 **Tools**
 - **Computer:** an optional per-agent Linux desktop with its own Chrome profile, a live viewer and takeover. See [Computer setup](#computer-optional).

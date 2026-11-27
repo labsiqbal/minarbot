@@ -63,7 +63,7 @@ pub fn instructions(
     if !super::profile::setup(db, turn)? {
         let features: Vec<Value> = serde_json::from_str(include_str!("../mcp/feature-tools.json"))
             .map_err(|_| Failure::storage())?;
-        let web_access = super::web::access(state, db, string(turn, "agent"))?;
+        let web_access = super::web::access(db, string(turn, "agent"))?;
         specs.extend(
             features
                 .iter()
