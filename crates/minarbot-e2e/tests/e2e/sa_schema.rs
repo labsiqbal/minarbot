@@ -184,6 +184,8 @@ const NOT_CREATED: &[&str] = &[
     "engine_logins",
     "model_fallbacks",
     "provider_account_changes",
+    // The built-in web search went; upgrades keep the table unused.
+    "web_search_settings",
 ];
 
 fn diff(actual: &Value, expected: &Value) -> String {
