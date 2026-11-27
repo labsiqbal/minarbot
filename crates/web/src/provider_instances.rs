@@ -115,17 +115,29 @@ fn kind_label(kind: &str) -> &'static str {
     }
 }
 
+/// Codex and Claude Code sign in; the other agents use their own setup.
+fn signs_in(kind: &str) -> bool {
+    matches!(kind, "codex" | "claude")
+}
+
+fn ready(provider: &Instance) -> bool {
+    provider.enabled && provider.installed && (!signs_in(&provider.kind) || provider.auth.status == "authenticated")
+}
+
 fn status_line(provider: &Instance) -> String {
     if !provider.enabled {
         return "Disabled".into();
     }
+    if !provider.installed {
+        return "Not installed".into();
+    }
+    if !signs_in(&provider.kind) {
+        return "Ready".into();
+    }
     if provider.auth.status == "authenticated" {
         return format!("Authenticated · {}", provider.auth.method.clone().unwrap_or_else(|| kind_label(&provider.kind).into()));
     }
-    if provider.installed {
-        return format!("Not authenticated · {}", provider.auth.reason.clone().unwrap_or_else(|| "Sign in required".into()));
-    }
-    "Not installed".into()
+    format!("Not authenticated · {}", provider.auth.reason.clone().unwrap_or_else(|| "Sign in required".into()))
 }
 
 fn slug(value: &str) -> String {
@@ -294,7 +306,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
     let display_name = provider.display_name.clone();
     let version = provider.version.clone();
     let shadow_path = provider.shadow_home_path.clone();
-    let auth_status = provider.auth.status.clone();
+    let is_ready = ready(&provider);
     let save = UiAction::new(move |()| {
         if busy.get_untracked() { return; }
         busy.set(true);
@@ -359,8 +371,8 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
                 <div class="provider-instance-title"><span class="provider-instance-detail__icon"><ProviderMark kind=provider_kind_view.clone() /></span><div><h2>{display_name.clone()}</h2><p>{kind_label(&provider_kind_view)}{version.clone().map(|version| format!(" · v{version}"))}</p></div></div>
                 <Badge success=provider_enabled>{if provider_enabled { "Enabled" } else { "Disabled" }}</Badge>
             </div>
-            <Section title="Status" actions=Box::new(move || view! { <div class="provider-detail-actions"><Button label="Re-check" icon="refresh" busy=busy click=refresh /><Button label="Sign in" icon="key" busy=busy disabled=move || kind_for_button != "codex" && kind_for_button != "claude" click=sign_in /></div> }.into_any())>
-                <div class="provider-status-card"><span class="provider-status-dot" class:is-ready=auth_status == "authenticated" && provider_enabled></span><div><strong>{status}</strong>{(!auth_reason.is_empty()).then(|| view! { <p>{auth_reason.clone()}</p> })}</div></div>
+            <Section title="Status" actions=Box::new(move || view! { <div class="provider-detail-actions"><Button label="Re-check" icon="refresh" busy=busy click=refresh />{signs_in(&kind_for_button).then(|| view! { <Button label="Sign in" icon="key" busy=busy click=sign_in /> })}</div> }.into_any())>
+                <div class="provider-status-card"><span class="provider-status-dot" class:is-ready=is_ready></span><div><strong>{status}</strong>{(!auth_reason.is_empty()).then(|| view! { <p>{auth_reason.clone()}</p> })}</div></div>
             </Section>
             <form class="provider-detail-form" on:submit=move |event| { event.prevent_default(); save.run(()); }>
                 <Section title="Configuration">

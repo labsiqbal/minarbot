@@ -47,7 +47,7 @@ pub fn elicitation(params: &Value) -> Value {
     json!({"action":"accept","content":content})
 }
 
-fn models(value: &Value) -> Value {
+pub(crate) fn models(value: &Value) -> Value {
     let mut result = Vec::new();
     let state = value
         .get("models")
