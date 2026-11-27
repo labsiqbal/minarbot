@@ -142,7 +142,7 @@ current release, then reload the page. Restart the hosted Hub after rebuilding.
 | `crates/minarbot-server` | Rust server (Tokio, Axum, SQLite): agents, turns, engines, tools, automation, machines |
 | `crates/minarbot-launcher` | Rust launcher that starts the server, installs updates and rolls back |
 | `app/src` | TypeScript browser adapters |
-| `crates/web` | Leptos route groups, WASM bootstrap, and hosted Hub assets |
+| `crates/web` | Leptos app and hosted Hub clients, WASM bootstrap and assets |
 | `crates/minarbot-e2e`, `crates/minarbot-testkit` | Rust end-to-end tests and the kit that runs the server against fake peers |
 | `desktop/tauri` | Tauri desktop app (AppImage, DMG, NSIS) |
 | `crates/xtask` | Release, packaging, smoke tests and gates |
