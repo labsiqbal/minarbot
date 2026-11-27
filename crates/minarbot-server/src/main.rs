@@ -15,6 +15,7 @@ mod mcp;
 mod media;
 mod operator_file;
 mod platform;
+mod push;
 mod restore;
 mod restore_cli;
 mod restore_fence;
@@ -207,6 +208,9 @@ async fn local(state: &AppState, request: Request) -> Result<Response, Failure> 
     }
     if turns::handles(path, request.method()) {
         return turns::local(state, request).await;
+    }
+    if push::handles(path) {
+        return push::local(state, request).await;
     }
     if data::handles(path) {
         return data::local(state, request).await;
@@ -637,6 +641,7 @@ fn initialize_local(database: &db::Database) -> db::Result<()> {
     computer::initialize(db)?;
     updates::initialize(db)?;
     db.execute_batch(include_str!("data/attention.sql"))?;
+    push::initialize(db).map_err(|e| e.message)?;
     Ok(())
 }
 
@@ -798,6 +803,7 @@ async fn main() -> db::Result<()> {
     };
     let turn_task = turns::start(state.clone()).map_err(|e| e.message)?;
     let automation_task = automation::start(state.clone());
+    let push_task = push::start(state.clone());
     let computer_maintenance = computer::maintenance(state.clone());
     let conversation_maintenance = data::maintenance(state.clone());
     let codegraph_task = mcp::codegraph::start(state.clone());
@@ -841,6 +847,7 @@ async fn main() -> db::Result<()> {
         .route("/api/threads/{id}/turns/stream", any(dispatch))
         .route("/api/channels/{id}/turns/stream", any(dispatch))
         .merge(data::routes())
+        .merge(push::routes())
         .fallback(dispatch)
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -900,6 +907,9 @@ async fn main() -> db::Result<()> {
         task.abort();
     }
     automation_task.abort();
+    if let Some(task) = push_task {
+        task.abort();
+    }
     maintenance.abort();
     conversation_maintenance.abort();
     codegraph_task.abort();

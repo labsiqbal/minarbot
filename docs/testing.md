@@ -48,6 +48,7 @@ one module per area.
 | `fakes` | Paths to `Fake::{Codex, Claude, Acp, Gateway}`, `install` (copy a peer to delete or replace it), and `native_log`, `acp_log`, `gateway_log`, `turns`. |
 | `issuer` | `SessionIssuer` records MCP session mints and revocations and issues the fixed token `SESSION_TOKEN`. |
 | `providers` | `create_instance`, `fake_instance`, and `AgentSpec` (agent bound to an instance) through `/api/provider-instances` and `/api/agents`. |
+| `push` | `FakePush`: fake APNs (HTTP/2), OAuth2 token and FCM v1 endpoints that record requests and answer per device token (`answer`); `configure` writes test-only credentials to `data/push` and points the server at the fake. `apns_claims` and `fcm_assertion_claims` verify the signed tokens. |
 | `proxy` | `LossyProxy` forwards, records, loses replies (`drop_next`), goes offline (`set_offline`) and retargets after a restart. |
 | `cli` | `Script` runs `minarbot-server script ...` and checks that the JSON `exitCode` equals the process status. It has `run`, `run_input`, `run_chunks`, `wait` and `use_url`. |
 | `canonical` | `Canonical` sets up the canonical schema, accounts and Clerk RS256 tokens (test-only key) for hosted-mode requests. |

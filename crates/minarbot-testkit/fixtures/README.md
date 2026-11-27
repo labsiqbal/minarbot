@@ -4,6 +4,12 @@
   tests only (`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`).
   It signs fake Clerk session tokens for canonical-mode servers and protects
   nothing. Never use it outside tests.
+- `push-apns-test-key.p8` / `push-apns-test-key.pub.pem`: P-256 key pair
+  generated for tests only (`openssl genpkey -algorithm EC -pkeyopt
+  ec_paramgen_curve:P-256`), standing in for an APNs `.p8` signing key.
+- `push-fcm-test-key.pem` / `push-fcm-test-key.pub.pem`: RSA key pair generated
+  for tests only, standing in for a Firebase service-account key. Neither push
+  key protects anything; never use them outside tests.
 - `canonical-pre-collapse.sql`: canonical-mode schema fixture, copied from
   `app/test-support/fixtures/canonical-pre-collapse.sql` for #89.
 - `local-pre-collapse.sql`: local-mode schema at 85373b3, copied from
