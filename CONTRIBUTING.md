@@ -41,12 +41,11 @@ From `app/`:
 ```sh
 npm run lint
 npm run build
-npm test
 ```
 
 `cargo test --workspace` includes the end-to-end suite in `crates/minarbot-e2e`, which starts the built server against the kit's fake peers. Pick the layer for a new test from [docs/testing.md](docs/testing.md).
 
-`npm test` runs the remaining Node tests while they move to Rust ([#89](https://github.com/labsiqbal/minarbot/issues/89)). Do not add Node tests. Build the workspace and Leptos first. Suites that need a real desktop are named `*.integration.test.ts` and run only when you pass them to `node --test` directly.
+All tests are Rust ([#89](https://github.com/labsiqbal/minarbot/issues/89)). Do not add Node tests.
 
 ## Code rules
 

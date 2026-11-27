@@ -127,7 +127,7 @@ cargo xtask leptos
 cargo run --release -p minarbot-server
 ```
 
-Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_DIR` to keep data somewhere other than `~/.local/share/minarbot/new-app`. Rebuild the web client with `cargo xtask leptos` from the repository root. `npm run build` in `app/` type-checks the test and browser adapter code and leaves `app/dist` intact.
+Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_DIR` to keep data somewhere other than `~/.local/share/minarbot/new-app`. Rebuild the web client with `cargo xtask leptos` from the repository root. `npm run build` in `app/` type-checks the browser adapter code and leaves `app/dist` intact.
 
 Leptos serves the workspace and hosted Hub. Missing or invalid web builds show
 a recovery page. Rebuild from source with `cargo xtask leptos` or reinstall the
@@ -139,10 +139,9 @@ current release, then reload the page. Restart the hosted Hub after rebuilding.
 |---|---|
 | `crates/minarbot-server` | Rust server (Tokio, Axum, SQLite): agents, turns, engines, tools, automation, machines |
 | `crates/minarbot-launcher` | Rust launcher that starts the server, installs updates and rolls back |
-| `app/src` | TypeScript browser adapters and test helpers |
+| `app/src` | TypeScript browser adapters |
 | `crates/web` | Leptos route groups, WASM bootstrap, and hosted Hub assets |
 | `crates/minarbot-e2e`, `crates/minarbot-testkit` | Rust end-to-end tests and the kit that runs the server against fake peers |
-| `app/*.test.ts` | Remaining Node tests, moving to Rust in [#89](https://github.com/labsiqbal/minarbot/issues/89) |
 | `desktop/tauri` | Tauri desktop app (AppImage, DMG, NSIS) |
 | `crates/xtask` | Release, packaging, smoke tests and gates |
 | `scripts` | Install scripts and release budgets |
@@ -156,7 +155,7 @@ cargo xtask release --releases ~/.local/share/minarbot-build/releases \
   --issues 58 --desktop --no-image --notes "User-facing release notes"
 ```
 
-Release runs app lint, TypeScript checks, the Leptos build, and app tests. It runs Cargo format, Clippy, tests and the locked release build before the resource and production environment gates. Use `--no-github` for the local feed. Omit `--no-image` and set `MINARBOT_GHCR_USER` and `MINARBOT_GHCR_TOKEN` to publish the Computer image with the release.
+Release runs app lint, TypeScript checks and the Leptos build. It runs Cargo format, Clippy, tests and the locked release build before the resource and production environment gates. Use `--no-github` for the local feed. Omit `--no-image` and set `MINARBOT_GHCR_USER` and `MINARBOT_GHCR_TOKEN` to publish the Computer image with the release.
 
 Retry a completed local build with `cargo xtask release --github-only <release-id> --releases <directory>`. CI packages runtimes with `--pack-ci <binary-directory> --output <directory> --notes <notes>` and uploads a draft with `--draft-ci <directory> --notes <notes>`. Finalize that draft using `cargo xtask release --sign-ci <version>`. Signing uses `--signing-key`, `MINARBOT_RELEASE_SIGNING_KEY`, or the default `~/.config/minarbot-release/signing-ed25519.pem`.
 

@@ -29,7 +29,7 @@ jobs:
       - run: cargo build --locked --workspace
       - working-directory: app
         run: npm ci
-      - name: Lint and type-check Node tests and browser adapters
+      - name: Lint and type-check browser adapters
         working-directory: app
         run: npm run lint && npm run build
       - name: Build Leptos web client
@@ -39,15 +39,6 @@ jobs:
           npm ci
           npx playwright-core install --with-deps chromium
           node appearance-smoke.mjs
-      - name: App tests against Rust workspace and hosted Hub
-        working-directory: app
-        env:
-          NODE_OPTIONS: --max-old-space-size=2048
-          MINARBOT_XTASK_BINARY: ${{ github.workspace }}/target/debug/xtask
-          MINARBOT_RUST_BINARY: ${{ github.workspace }}/target/debug/minarbot-server
-          MINARBOT_HOSTED_HUB_BINARY: ${{ github.workspace }}/target/debug/minarbot-server
-          MINARBOT_RUST_LAUNCHER_BINARY: ${{ github.workspace }}/target/debug/minarbot-launcher
-        run: npm test
       - run: cargo xtask install-smoke target/debug
       - name: Check Tauri desktop
         working-directory: desktop/tauri

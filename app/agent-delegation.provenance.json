@@ -25,7 +25,6 @@
     ],
     "localPath": "crates/minarbot-server/src/turns/messaging.rs",
     "localPaths": [
-      "app/test-support/agent-delegation.ts",
       "crates/minarbot-server/src/turns/messaging.rs"
     ]
   },
@@ -110,7 +109,6 @@
     ],
     "localPath": "crates/minarbot-server/src/turns/messaging.rs",
     "localPaths": [
-      "app/test-support/agent-delegation.ts",
       "crates/minarbot-server/src/turns/messaging.rs",
       "crates/minarbot-server/src/turns/room.rs",
       "crates/minarbot-server/src/data/history.rs"

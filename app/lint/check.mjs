@@ -163,7 +163,7 @@ const scriptLint = new ESLint({
     { languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.node, WebSocket: 'readonly' } }, rules: { 'no-undef': 'error' } },
   ],
 });
-const scriptProblems = (await scriptLint.lintFiles(['app/scripts/*.mjs', 'app/t3/*.mjs']))
+const scriptProblems = (await scriptLint.lintFiles(['app/t3/*.mjs']))
   .flatMap(result => result.messages.map(message => `${result.filePath}:${message.line} ${message.message}`));
 assert.deepEqual(scriptProblems, [], 'Repository scripts must not reference undefined names.');
 

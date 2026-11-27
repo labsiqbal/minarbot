@@ -288,9 +288,6 @@ fn run_build(root: &Path, source: &Path) -> Result<()> {
     if root.join("crates/web/Cargo.toml").is_file() {
         leptos::build(root)?;
     }
-    run(Command::new("npm")
-        .current_dir(source)
-        .args(["run", "test"]))?;
     if root.join("Cargo.toml").is_file() {
         let checks: &[&[&str]] = &[
             &["fmt", "--check"],
