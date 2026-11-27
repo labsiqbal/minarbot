@@ -158,7 +158,8 @@ async fn page(state: &AppState, status: StatusCode, error: &str, secure: bool) -
     let mut script = String::new();
     if secure {
         if let Some(document) =
-            crate::appearance::load_document(&state.config.dist, crate::appearance::DOCUMENT).await
+            crate::appearance::load_document(&state.config.dist, crate::appearance::APP_DOCUMENT)
+                .await
         {
             if let Some(src) = crate::appearance::startup_asset(&document) {
                 script = format!(r#"<script type="module" src="{src}"></script>"#);

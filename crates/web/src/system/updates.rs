@@ -1,13 +1,13 @@
 // Adapted from app/src/updateEverything{.logic,Run}.ts and useUpdateEverything.ts.
 // The upstream T3 MIT notice is recorded in app/t3/provenance.json.
-#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[cfg(feature = "workspace")]
 use super::date;
 use super::{api, discard, kit::*, machines, restore, save, uuid, Query};
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
-#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[cfg(feature = "workspace")]
 use wasm_bindgen::JsValue;
 
 const RUN_KEY: &str = "minarbot:update-everything";
@@ -587,7 +587,7 @@ pub(crate) fn workspace() -> (impl IntoView, impl IntoView) {
     let legacy = RwSignal::new(legacy);
     let storage_error = RwSignal::new(storage_error);
     let selection = RwSignal::new(Select::All);
-    #[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+    #[cfg(feature = "workspace")]
     let selected = RwSignal::new(Vec::<String>::new());
     let command_issue = RwSignal::new(String::new());
     let flight = RwSignal::new(false);
@@ -947,7 +947,7 @@ pub(crate) fn workspace() -> (impl IntoView, impl IntoView) {
         opened.set(true);
         state.retry();
     };
-    #[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+    #[cfg(feature = "workspace")]
     let chosen = Memo::new(move |_| {
         rows.with(|rows| {
             rows.iter()
@@ -1134,8 +1134,7 @@ pub(crate) fn workspace() -> (impl IntoView, impl IntoView) {
           </button>
         </div>
     };
-    // The Updates settings route mounts in the appearance bundle.
-    #[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+    #[cfg(feature = "workspace")]
     let settings = ViewFn::from(move || {
         view! { <div class="k-page bs-root updates-page set4-page">
             <Header title="Updates" actions=content(move || view! {
@@ -1237,7 +1236,7 @@ pub(crate) fn workspace() -> (impl IntoView, impl IntoView) {
           </div>
         }
     });
-    #[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+    #[cfg(feature = "workspace")]
     provide_context(SettingsPanel(settings));
     let dialog = view! {
         <Dialog id="updates-plan" title=Signal::derive(title) description=Signal::derive(version_text) open=opened on_close=close size="lg"

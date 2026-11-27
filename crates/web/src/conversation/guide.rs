@@ -231,7 +231,7 @@ fn proposal(chat: Chat, row: RwSignal<Turn>, item: Change) -> impl IntoView {
                     guide
                         .changes
                         .iter()
-                        .find(|change| &change.id == &key.get_value())
+                        .find(|change| change.id == key.get_value())
                 })
                 .map_or_else(|| item.status.clone(), |change| change.status.clone())
         })
@@ -420,7 +420,10 @@ pub(super) fn connection(
                     let current = agent.get_untracked();
                     let choice = items
                         .iter()
-                        .find(|choice| choice.value.strip_prefix("instance:") == current.provider_instance.as_deref())
+                        .find(|choice| {
+                            choice.value.strip_prefix("instance:")
+                                == current.provider_instance.as_deref()
+                        })
                         .map(|choice| choice.value.clone())
                         .or(automatic)
                         .unwrap_or_default();
@@ -456,18 +459,27 @@ pub(super) fn connection(
         saving.set(String::new());
         let current = agent.get_untracked();
         leptos::task::spawn_local(async move {
-            match api::command::<Agent>(&format!("/api/agents/{}/edit", current.id), json!({
-                "revision": current.revision,
-                "providerInstance": choice.value.strip_prefix("instance:").unwrap_or(""),
-                "model": choice.model,
-            })).await {
+            match api::command::<Agent>(
+                &format!("/api/agents/{}/edit", current.id),
+                json!({
+                    "revision": current.revision,
+                    "providerInstance": choice.value.strip_prefix("instance:").unwrap_or(""),
+                    "model": choice.model,
+                }),
+            )
+            .await
+            {
                 Ok(next) => {
                     agent.try_set(next.clone());
                     opened.try_set(false);
                     update(next);
-                    if let Some(refresh) = refresh { refresh.0.run(()); }
+                    if let Some(refresh) = refresh {
+                        refresh.0.run(());
+                    }
                 }
-                Err(message) => { saving.try_set(message); }
+                Err(message) => {
+                    saving.try_set(message);
+                }
             }
             busy.try_set(false);
         });

@@ -73,7 +73,10 @@ pub fn settings() -> impl IntoView {
             speech.set_onerror(None);
             engine.with_value(SpeechSynthesis::cancel);
         }
-        playing.try_set(false);
+        // Cleanup calls this too: a write there would rerun disposed views.
+        if playing.try_get_untracked() == Some(true) {
+            playing.try_set(false);
+        }
     };
     let sync = move || {
         stop();

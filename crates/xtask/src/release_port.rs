@@ -56,7 +56,7 @@ fn native(directory: &Path, version: &str) -> Result<()> {
 fn fixture(source: &Path, version: &str) -> Result<()> {
     fs::create_dir_all(source.join("dist/_leptos"))?;
     fs::write(
-        source.join("dist/_leptos/conversation.html"),
+        source.join("dist/_leptos/app.html"),
         "<title>Minarbot fixture</title>",
     )?;
     fs::write(
@@ -268,7 +268,7 @@ fn desktop_build_follows_dirty_guard_and_packages_release_version_without_changi
     )?;
     native(&root.join("app"), "1.0.1")?;
     fs::create_dir_all(root.join("app/dist/_leptos"))?;
-    fs::write(root.join("app/dist/_leptos/conversation.html"), "fixture")?;
+    fs::write(root.join("app/dist/_leptos/app.html"), "fixture")?;
     desktop["version"] = json!("1.0.0");
     fs::write(root.join(config), desktop.to_string())?;
     git(root, &["init"])?;

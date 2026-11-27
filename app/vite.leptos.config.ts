@@ -74,7 +74,7 @@ const appearanceConfig: Plugin = {
       book: svg(BookOpen, 15), summary: svg(ListRestart, 15),
     };
     const configs = {
-      appearance: {
+      app: {
         ...shell,
         groups: settingsGroups.map(({ label, items }) => ({
           label, items: items.map(({ id, label, icon }) => ({ id, label, svg: svg(icons[icon]) })),
@@ -84,22 +84,10 @@ const appearanceConfig: Plugin = {
         errorIcon: svg(CircleAlert),
         mcpScopes: mcpScopeCatalog,
         systemIcons,
-        connectionIcons: iconMap(connectionIcons),
-      },
-      workflows: {
-        ...shell,
-        errorIcon: svg(CircleAlert),
-        systemIcons,
         conversationIcons,
-        connectionIcons: iconMap({ ...connectionIcons, workflow: Workflow, calendar: CalendarDays, undo: Undo2, redo: Redo2,
-          slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot, schedule: CalendarClock, pause: Pause, play: Play }),
-      },
-      conversation: {
-        ...shell,
-        systemIcons,
-        connectionIcons: iconMap({ ...connectionIcons, clock: Clock, workflow: Workflow, schedule: CalendarClock,
-          undo: Undo2, redo: Redo2 }),
-        conversationIcons,
+        connectionIcons: iconMap({ ...connectionIcons, clock: Clock, workflow: Workflow, calendar: CalendarDays,
+          undo: Undo2, redo: Redo2, slack: Hash, linear: ListTodo, sentry: Siren, github: CircleDot,
+          schedule: CalendarClock, pause: Pause, play: Play }),
       },
       hub: {
         colors: colorThemes,
@@ -130,7 +118,6 @@ export default defineConfig({
   resolve: { alias: {
     'minarbot-conversation-adapter': conversation,
     'minarbot-workflow-markdown': fileURLToPath(new URL('./src/workflow-markdown.ts', import.meta.url)),
-    'minarbot-workflows-css': fileURLToPath(new URL('../crates/web/workflow-content.css', import.meta.url)),
   } },
   plugins: [appearanceConfig],
   build: {

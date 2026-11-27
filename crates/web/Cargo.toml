@@ -12,8 +12,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [features]
-conversation = ["serde_json/preserve_order"]
-workflows = []
+# The workspace app: chat, automation, settings and first run in one document.
+workspace = ["serde_json/preserve_order"]
 hub = []
 
 [dependencies]

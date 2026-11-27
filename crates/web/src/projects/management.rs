@@ -63,7 +63,7 @@ impl Commands {
                     .as_str()
                     .filter(|id| crate::workspace_route::valid_id(id))
                 {
-                    let _ = window().location().assign(&format!("/rooms/{channel}"));
+                    crate::router::open(&format!("/rooms/{channel}"));
                 }
             }
             if archived.is_some_and(|id| {
@@ -91,7 +91,7 @@ impl Commands {
                             path == format!("/agents/{agent}/conversations/{thread}")
                         })
             }) {
-                let _ = window().location().assign("/");
+                crate::router::open("/");
             }
             if let Some(done) = done {
                 done.run(result);
@@ -135,7 +135,7 @@ impl Commands {
             })
         };
         #[cfg(feature = "hub")]
-        let create = ();
+        let (create, _) = ((), root);
         view! {
             {create}
             {move || self.name.get().map(|dialog| name_dialog(self, dialog))}
@@ -256,7 +256,7 @@ pub fn project_menu(commands: Commands, project: Project) -> impl IntoView {
             MenuItem::new(
                 "Project settings",
                 UiAction::new(move |()| {
-                    let _ = window().location().assign(&format!("/projects/{id}"));
+                    crate::router::open(&format!("/projects/{id}"));
                 }),
             ),
             archive_item(commands, project, "Archive"),

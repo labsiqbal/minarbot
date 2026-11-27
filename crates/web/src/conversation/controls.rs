@@ -942,7 +942,7 @@ fn form_approval(chat: Chat, row: RwSignal<Turn>, path: String, a: Value) -> imp
     view! {
         <div class="turn-request" id=card_id tabindex="-1">
             <div class="k-card component-reply"><section class="component-node">
-                {panels::form_reply(chat, a["input"].clone(), path, revision, open, result.to_owned(), busy, error)}
+                {panels::form_reply(chat, a["input"].clone(), path, revision, open, result.to_owned(), (busy, error))}
             </section></div>
         </div>
     }

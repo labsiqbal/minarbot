@@ -27,7 +27,6 @@ pub(crate) struct Project {
     pub(crate) sections: Vec<Section>,
     #[serde(default)]
     pub(crate) threads: Vec<Thread>,
-    #[cfg(not(feature = "workflows"))]
     #[serde(default)]
     allow_installation_apps: bool,
 }
@@ -180,7 +179,6 @@ const TABS: &[(&str, &str)] = &[
     ("environment", "Environment"),
     ("mcp", "MCP"),
 ];
-const TAB_FOCUS_KEY: &str = "minarbot:project-tab-focus";
 
 fn overview(project: Project) -> impl IntoView {
     let agents = directory();
@@ -216,20 +214,8 @@ fn overview(project: Project) -> impl IntoView {
             .unwrap_or("overview")
     };
     let tab = RwSignal::new(current_tab());
-    let same_document = move |next: &str| (next == "calendar") == cfg!(feature = "workflows");
-    let location = window().location();
-    let focus_tab = window()
-        .session_storage()
-        .ok()
-        .flatten()
-        .and_then(|storage| {
-            let target = storage.get_item(TAB_FOCUS_KEY).ok().flatten()?;
-            let _ = storage.remove_item(TAB_FOCUS_KEY);
-            let path = format!("{}{}", location.pathname().ok()?, location.search().ok()?);
-            (target == path).then_some(tab.get_untracked())
-        });
     let project_url = StoredValue::new(project_url);
-    let navigate_tab = move |next: &'static str, keyboard: bool| {
+    let select_tab = move |next: &'static str| {
         if archived || next == tab.get_untracked() {
             return;
         }
@@ -238,25 +224,12 @@ fn overview(project: Project) -> impl IntoView {
             url.push_str("?projectTab=");
             url.push_str(next);
         }
-        if same_document(next)
-            && window()
-                .history()
-                .and_then(|history| {
-                    history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url))
-                })
-                .is_ok()
-        {
+        if crate::router::push(&url) {
             tab.set(next);
         } else {
-            if keyboard {
-                if let Some(storage) = window().session_storage().ok().flatten() {
-                    let _ = storage.set_item(TAB_FOCUS_KEY, &url);
-                }
-            }
             let _ = window().location().assign(&url);
         }
     };
-    let select_tab = move |next| navigate_tab(next, false);
     let listener = window_event_listener(leptos::ev::popstate, move |_| tab.set(current_tab()));
     on_cleanup(move || listener.remove());
     let commands = expect_context::<Commands>();
@@ -295,9 +268,7 @@ fn overview(project: Project) -> impl IntoView {
                     if let (Some(agent), Some(id)) =
                         (thread["agent"].as_str(), thread["id"].as_str())
                     {
-                        let _ = window()
-                            .location()
-                            .assign(&format!("/agents/{agent}/conversations/{id}"));
+                        crate::router::open(&format!("/agents/{agent}/conversations/{id}"));
                     }
                 }
             }))
@@ -390,7 +361,7 @@ fn overview(project: Project) -> impl IntoView {
             "New conversation"
         }
     };
-    #[cfg(feature = "workflows")]
+    #[cfg(feature = "workspace")]
     let calendar_panel = view! {
                 <Show when=move || tab.get() == "calendar">
                     <div id="project-calendar-panel" class="k-tabs__panel" role="tabpanel" aria-labelledby="project-calendar-tab">
@@ -398,15 +369,11 @@ fn overview(project: Project) -> impl IntoView {
                     </div>
                 </Show>
     };
-    #[cfg(not(feature = "workflows"))]
+    #[cfg(not(feature = "workspace"))]
     let calendar_panel = ();
-    #[cfg(not(feature = "workflows"))]
     let mcp_first_page = StoredValue::new(None);
-    #[cfg(not(feature = "workflows"))]
     let apps_catalog = StoredValue::new(None);
-    #[cfg(not(feature = "workflows"))]
     let environment_data = StoredValue::new(None);
-    #[cfg(not(feature = "workflows"))]
     let messaging = RwSignal::new(false);
     let items = if archived {
         vec![management::restore_item(commands, project.get_value())]
@@ -419,7 +386,6 @@ fn overview(project: Project) -> impl IntoView {
                     edit(false);
                 }),
             ),
-            #[cfg(not(feature = "workflows"))]
             MenuItem::new(
                 "Discord and WhatsApp",
                 UiAction::new(move |()| messaging.set(true)),
@@ -427,7 +393,6 @@ fn overview(project: Project) -> impl IntoView {
             management::archive_item(commands, project.get_value(), "Archive project"),
         ]
     };
-    #[cfg(not(feature = "workflows"))]
     let messaging_dialog = move || {
         messaging.get().then(|| {
             view! {
@@ -438,8 +403,6 @@ fn overview(project: Project) -> impl IntoView {
             }
         })
     };
-    #[cfg(feature = "workflows")]
-    let messaging_dialog = ();
     view! {
         <div class="page legacy is-wide"><div class="k-page bs-root project-home">
             <header class="k-page-head">
@@ -455,23 +418,18 @@ fn overview(project: Project) -> impl IntoView {
                     on:keydown=move |event| crate::settings::move_focus(&event, "[role=tablist]", true)>
                     {TABS.iter().map(|&(id, label)| {
                         let selected = move || tab.get() == id;
-                        let button = NodeRef::<leptos::html::Button>::new();
-                        if focus_tab == Some(id) {
-                            button.on_load(|button| request_animation_frame(move || { let _ = button.focus(); }));
-                        }
                         view! {
-                            <button type="button" class="k-tabs__tab" role="tab" id=format!("project-{id}-tab") node_ref=button
+                            <button type="button" class="k-tabs__tab" role="tab" id=format!("project-{id}-tab")
                                 aria-controls=format!("project-{id}-panel") aria-selected=move || selected().to_string()
                                 tabindex=move || if selected() { 0 } else { -1 }
                                 disabled=archived && id != "overview"
                                 data-state=move || if selected() { "active" } else { "inactive" }
-                                on:click=move |event: web_sys::MouseEvent| navigate_tab(id, event.detail() == 0)>{label}</button>
+                                on:click=move |_| select_tab(id)>{label}</button>
                         }
                     }).collect_view()}
                 </div>
                 {calendar_panel}
                 {move || {
-                    #[cfg(not(feature = "workflows"))]
                     {
                         let id = tab.get();
                         let members = || project.with_value(|row| row.members.iter().map(|member| member.agent.clone()).collect::<Vec<_>>());
@@ -490,8 +448,6 @@ fn overview(project: Project) -> impl IntoView {
                         };
                         view! { <div id=format!("project-{id}-panel") class="k-tabs__panel" role="tabpanel" aria-labelledby=format!("project-{id}-tab")>{panel}</div> }.into_any()
                     }
-                    #[cfg(feature = "workflows")]
-                    ().into_any()
                 }}
             <div id="project-overview-panel" class="k-tabs__panel" role="tabpanel" aria-labelledby="project-overview-tab" hidden=move || tab.get() != "overview">
             <form class="k-stack" hidden=move || !editing.get() on:submit=save>

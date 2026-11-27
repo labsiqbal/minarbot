@@ -12,9 +12,10 @@ mod workspace_route;
 pub use workspace_route::WorkspaceRoute;
 
 pub const NAMESPACE: &str = "/_leptos/";
-pub const DOCUMENT: &str = "_leptos/appearance.html";
-pub const WORKFLOWS_DOCUMENT: &str = "_leptos/workflows.html";
-pub const CONVERSATION_DOCUMENT: &str = "_leptos/conversation.html";
+/// The one Leptos document for every workspace route, pairing included.
+pub const APP_DOCUMENT: &str = "_leptos/app.html";
+/// The document title when the route names none (chat, results, Computer).
+pub const DEFAULT_TITLE: &str = "Conversation";
 
 pub fn log_retired_selector() {
     if std::env::var_os("MINARBOT_APPEARANCE_CLIENT").is_some() {
@@ -93,20 +94,15 @@ pub fn route_title(state: &crate::AppState, path: &str, query: &str) -> Option<&
     }
 }
 
-pub fn document_for_route(path: &str, query: &str) -> &'static str {
-    if WorkspaceRoute::from_path(path).is_some_and(|route| {
-        route.is_automation()
-            || matches!(route, WorkspaceRoute::Project(_))
-                && form_urlencoded::parse(query.as_bytes())
-                    .any(|(key, value)| key == "projectTab" && value == "calendar")
-    }) {
-        WORKFLOWS_DOCUMENT
+/// Fills the app document for one route. `title` comes from [`route_title`];
+/// `Set up Minarbot` also tells the client to open first run at `/`.
+pub fn document(html: &str, title: Option<&str>, query: &str) -> String {
+    let initial = if title == Some(WorkspaceRoute::Setup.title()) {
+        "setup"
     } else {
-        DOCUMENT
-    }
-}
-
-pub fn document(html: &str, title: &str, query: &str) -> String {
+        "workspace"
+    };
+    let title = title.unwrap_or(DEFAULT_TITLE);
     let from = form_urlencoded::parse(query.as_bytes())
         .find_map(|(key, value)| (key == "from").then_some(value))
         .filter(|value| {
@@ -126,4 +122,51 @@ pub fn document(html: &str, title: &str, query: &str) -> String {
     };
     html.replace("__SETTINGS_TITLE__", title)
         .replace("__RETURN_TO__", &escape(return_to))
+        .replace("__INITIAL__", initial)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HTML: &str = r#"<title>__SETTINGS_TITLE__ · Minarbot</title><div id="leptos-root" data-return-to="__RETURN_TO__" data-initial="__INITIAL__"></div>"#;
+
+    #[test]
+    fn untitled_routes_get_the_conversation_title() {
+        let html = document(HTML, None, "");
+        assert!(
+            html.contains("<title>Conversation · Minarbot</title>"),
+            "{html}"
+        );
+        assert!(html.contains(r#"data-initial="workspace""#), "{html}");
+        assert!(!html.contains("__"), "{html}");
+    }
+
+    #[test]
+    fn setup_title_opens_first_run() {
+        let html = document(HTML, Some(WorkspaceRoute::Setup.title()), "");
+        assert!(
+            html.contains("<title>Set up Minarbot · Minarbot</title>"),
+            "{html}"
+        );
+        assert!(html.contains(r#"data-initial="setup""#), "{html}");
+    }
+
+    #[test]
+    fn settings_keep_their_title_and_escaped_return_path() {
+        let html = document(
+            HTML,
+            SettingsRoute::from_path("/settings/providers").map(SettingsRoute::title),
+            "from=%2Fagents%2F00000000-0000-4000-8000-000000000000%3Fx%3D%22",
+        );
+        assert!(
+            html.contains("<title>Providers · Minarbot</title>"),
+            "{html}"
+        );
+        assert!(html.contains(r#"data-initial="workspace""#), "{html}");
+        assert!(
+            html.contains("/agents/00000000-0000-4000-8000-000000000000?x=&quot;"),
+            "{html}"
+        );
+    }
 }

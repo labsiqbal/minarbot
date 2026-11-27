@@ -115,7 +115,7 @@ pub fn publish(releases: &Path, version: &str, commit: &str, notes: &str) -> Res
     let directory = releases.join(&id);
     fs::create_dir_all(directory.join("dist/_leptos"))?;
     fs::write(
-        directory.join("dist/_leptos/conversation.html"),
+        directory.join("dist/_leptos/app.html"),
         "<title>Minarbot fixture</title>",
     )?;
     fs::write(

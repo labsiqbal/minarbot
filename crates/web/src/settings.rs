@@ -1,19 +1,15 @@
 use crate::appearance::ColorTheme;
-use crate::routes::SettingsRoute;
-#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
-use crate::{appearance, general};
+#[cfg(feature = "workspace")]
+use crate::{appearance, general, routes::SettingsRoute};
 use leptos::prelude::*;
 use serde::Deserialize;
 use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement, KeyboardEvent, UrlSearchParams};
 
-pub(crate) const RETURN_FOCUS_KEY: &str = "minarbot:appearance-return-focus";
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub colors: Vec<ColorTheme>,
-    pub workspace_icons: crate::shell::Icons,
     groups: Vec<Group>,
     search_icon: String,
     close_icon: String,
@@ -83,11 +79,26 @@ pub fn move_focus(event: &KeyboardEvent, container: &str, activate: bool) {
     }
 }
 
+/// Closes Settings onto the page it opened over and returns focus to the
+/// sidebar control that opens it.
+#[cfg(feature = "workspace")]
 fn close(return_to: &str) {
-    if let Some(storage) = window().session_storage().ok().flatten() {
-        let _ = storage.set_item(RETURN_FOCUS_KEY, return_to);
-    }
-    let _ = window().location().assign(return_to);
+    crate::router::open(return_to);
+    request_animation_frame(|| {
+        let control = document()
+            .query_selector(".sidebar-reveal:not([hidden])")
+            .ok()
+            .flatten()
+            .or_else(|| {
+                document()
+                    .query_selector(".sidebar-settings")
+                    .ok()
+                    .flatten()
+            });
+        if let Some(control) = control.and_then(|control| control.dyn_into::<HtmlElement>().ok()) {
+            let _ = control.focus();
+        }
+    });
 }
 
 fn visible(item: &Item, group: &str, query: &str, hub: bool) -> bool {
@@ -95,26 +106,48 @@ fn visible(item: &Item, group: &str, query: &str, hub: bool) -> bool {
     (item.id != "hub" || hub) && query.split_whitespace().all(|term| label.contains(term))
 }
 
-#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
-pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl IntoView {
+#[cfg(feature = "workspace")]
+/// Settings over the workspace while the route is a Settings section.
+pub fn overlay(config: Config, section: Memo<Option<SettingsRoute>>) -> impl IntoView {
     provide_context(config.connection_icons.clone());
-    let route = RwSignal::new(route);
     provide_context(config.system_icons);
     provide_context(StoredValue::new(config.mcp_scopes));
     let (confirm, confirmation) = crate::system::kit::confirmation();
     provide_context(confirm);
-    let listener = window_event_listener(leptos::ev::popstate, move |_| {
-        if let Some(route_now) = current() {
-            confirm.set(None);
-            route.set(route_now);
-            document().set_title(&format!("{} · Minarbot", route_now.title()));
+    // The section stays put while Settings closes.
+    let route = RwSignal::new(section.get_untracked().unwrap_or(SettingsRoute::General));
+    Effect::new(move |_| {
+        if let Some(next) = section.get() {
+            if route.get_untracked() != next {
+                confirm.set(None);
+                route.set(next);
+            }
+            document().set_title(&format!("{} · Minarbot", next.title()));
         }
     });
-    on_cleanup(move || listener.remove());
+    // A page under Settings gets its title back when Settings closes.
+    if crate::router::get().is_some_and(crate::router::Router::has_background) {
+        let title = document().title();
+        on_cleanup(move || document().set_title(&title));
+    }
+    let return_to = || crate::router::settings_return(&crate::router::current());
+    let dialog = NodeRef::<leptos::html::Dialog>::new();
+    dialog.on_load(|dialog| {
+        let connected = dialog.is_connected();
+        let open = move || {
+            if !dialog.open() && dialog.show_modal().is_ok() {
+                focus_heading();
+            }
+        };
+        if connected {
+            open();
+        } else {
+            request_animation_frame(open);
+        }
+    });
     let query = RwSignal::new(String::new());
     let input = NodeRef::<leptos::html::Input>::new();
     let nav = NodeRef::<leptos::html::Nav>::new();
-    let return_to = StoredValue::new(return_to);
     let groups = StoredValue::new(config.groups);
     let colors = StoredValue::new(config.colors);
     let error_icon = StoredValue::new(config.error_icon);
@@ -159,15 +192,7 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                         if target == Some(route.get_untracked()) {
                             focus_heading();
                         } else {
-                            let url = return_to.with_value(|from| section_url(&path, from));
-                            if let Some(next) = target {
-                                if window().history().and_then(|history| history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url))).is_ok() {
-                                    route.set(next);
-                                    document().set_title(&format!("{} · Minarbot", next.title()));
-                                    return;
-                                }
-                            }
-                            let _ = window().location().assign(&url);
+                            crate::router::open(&section_url(&path, &return_to()));
                         }
                     }>
                     <span class="appearance-icon" aria-hidden="true" inner_html=item.svg.clone()></span>
@@ -184,11 +209,11 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
     }).collect_view());
 
     view! {
-        <dialog id="appearance-dialog" class="app-settings bs-root"
+        <dialog id="appearance-dialog" class="app-settings bs-root" node_ref=dialog
             aria-labelledby="settings-title"
             on:cancel=move |event: web_sys::Event| {
                 event.prevent_default();
-                return_to.with_value(|path| close(path));
+                close(&return_to());
             }
             on:keydown=move |event: KeyboardEvent| {
                 if event.key() == "/" && !event.default_prevented() && !event.is_composing()
@@ -236,7 +261,7 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
                 </nav>
             </aside>
             <button type="button" class="k-icon-btn app-settings__close" aria-label="Close settings"
-                on:click=move |_| return_to.with_value(|path| close(path))
+                on:click=move |_| close(&return_to())
                 inner_html=config.close_icon>
             </button>
             {move || {
@@ -263,21 +288,21 @@ pub fn shell(config: Config, return_to: String, route: SettingsRoute) -> impl In
     }
 }
 
-#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[cfg(feature = "workspace")]
 #[leptos::wasm_split::wasm_split(settings_skills, wasm_split_path = leptos::wasm_split, fallible)]
 fn skills() -> crate::lazy_view::ChunkView {
     request_animation_frame(focus_heading);
     Ok(crate::skills::panel().into_any())
 }
 
-#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[cfg(feature = "workspace")]
 #[leptos::wasm_split::wasm_split(settings_system, wasm_split_path = leptos::wasm_split, fallible)]
 fn system(section: SettingsRoute) -> crate::lazy_view::ChunkView {
     request_animation_frame(focus_heading);
     Ok(crate::system::panel(section))
 }
 
-#[cfg(not(any(feature = "conversation", feature = "workflows", feature = "hub")))]
+#[cfg(feature = "workspace")]
 #[leptos::wasm_split::wasm_split(settings_connections, wasm_split_path = leptos::wasm_split, fallible)]
 fn connections(section: SettingsRoute) -> crate::lazy_view::ChunkView {
     request_animation_frame(focus_heading);
@@ -302,10 +327,6 @@ pub fn section_url(path: &str, from: &str) -> String {
         }
     }
     path.to_owned()
-}
-
-fn current() -> Option<SettingsRoute> {
-    SettingsRoute::from_path(&window().location().pathname().ok()?)
 }
 
 pub fn focus_heading() {

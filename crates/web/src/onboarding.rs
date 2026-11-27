@@ -26,7 +26,7 @@ struct ProviderInstance {
     installed: bool,
     #[serde(default)]
     auth: Auth,
-    #[cfg_attr(not(feature = "conversation"), allow(dead_code))]
+    #[cfg_attr(not(feature = "workspace"), allow(dead_code))]
     #[serde(default)]
     models: Vec<Model>,
     #[serde(default)]
@@ -39,7 +39,7 @@ struct Auth {
     status: String,
     #[serde(default)]
     method: Option<String>,
-    #[cfg_attr(not(feature = "conversation"), allow(dead_code))]
+    #[cfg_attr(not(feature = "workspace"), allow(dead_code))]
     #[serde(default)]
     reason: Option<String>,
 }
@@ -93,7 +93,7 @@ struct ProviderInstances {
     providers: Vec<ProviderInstance>,
 }
 
-#[cfg_attr(not(feature = "conversation"), allow(dead_code))]
+#[cfg_attr(not(feature = "workspace"), allow(dead_code))]
 #[derive(Clone, PartialEq)]
 pub(crate) struct Connection {
     pub(crate) value: String,
@@ -104,7 +104,7 @@ pub(crate) struct Connection {
     pub(crate) reason: String,
 }
 
-#[cfg_attr(not(feature = "conversation"), allow(dead_code))]
+#[cfg_attr(not(feature = "workspace"), allow(dead_code))]
 fn ready(instance: &ProviderInstance) -> bool {
     instance.enabled
         && instance.installed
@@ -112,35 +112,54 @@ fn ready(instance: &ProviderInstance) -> bool {
             || instance.auth.status == "authenticated")
 }
 
-#[cfg_attr(not(feature = "conversation"), allow(dead_code))]
+#[cfg_attr(not(feature = "workspace"), allow(dead_code))]
 pub(crate) async fn connections() -> Result<(Vec<Connection>, Option<String>), String> {
     let response = api::read::<ProviderInstances>("/api/provider-instances").await?;
-    let entries = response.providers.into_iter().map(|instance| {
-        let is_ready = ready(&instance);
-        let reason = if !instance.enabled {
-            "Disabled".into()
-        } else if !instance.installed {
-            "Provider is not installed".into()
-        } else if instance.auth.status != "authenticated" && (instance.kind == "codex" || instance.kind == "claude") {
-            instance.auth.reason.unwrap_or_else(|| "Sign in required".into())
-        } else {
-            String::new()
-        };
-        Connection {
-            value: format!("instance:{}", instance.id),
-            label: instance.display_name,
-            kind: instance.kind,
-            model: instance.models.first().map(|model| model.id.clone()).unwrap_or_else(|| "default".into()),
-            ready: is_ready,
-            reason,
-        }
-    }).collect::<Vec<_>>();
-    let automatic = entries.iter().find(|entry| entry.ready).map(|entry| entry.value.clone());
+    let entries = response
+        .providers
+        .into_iter()
+        .map(|instance| {
+            let is_ready = ready(&instance);
+            let reason = if !instance.enabled {
+                "Disabled".into()
+            } else if !instance.installed {
+                "Provider is not installed".into()
+            } else if instance.auth.status != "authenticated"
+                && (instance.kind == "codex" || instance.kind == "claude")
+            {
+                instance
+                    .auth
+                    .reason
+                    .unwrap_or_else(|| "Sign in required".into())
+            } else {
+                String::new()
+            };
+            Connection {
+                value: format!("instance:{}", instance.id),
+                label: instance.display_name,
+                kind: instance.kind,
+                model: instance
+                    .models
+                    .first()
+                    .map(|model| model.id.clone())
+                    .unwrap_or_else(|| "default".into()),
+                ready: is_ready,
+                reason,
+            }
+        })
+        .collect::<Vec<_>>();
+    let automatic = entries
+        .iter()
+        .find(|entry| entry.ready)
+        .map(|entry| entry.value.clone());
     Ok((entries, automatic))
 }
 
 fn request_id() -> Result<String, String> {
-    window().crypto().map(|crypto| crypto.random_uuid()).map_err(|_| "Could not create a request. Reload and try again.".into())
+    window()
+        .crypto()
+        .map(|crypto| crypto.random_uuid())
+        .map_err(|_| "Could not create a request. Reload and try again.".into())
 }
 
 #[derive(Deserialize)]
@@ -151,10 +170,30 @@ struct Models {
 }
 
 fn recovery() -> Result<Option<Value>, String> {
-    let storage = window().session_storage().ok().flatten().ok_or("Recovery storage is unavailable.")?;
-    let Some(raw) = storage.get_item(RECOVERY).map_err(|_| "Recovery data could not be read.")? else { return Ok(None); };
-    let value = (raw.len() <= 64_000).then(|| serde_json::from_str::<Value>(&raw).ok()).flatten();
-    let value = value.filter(|value| value.is_object() && value["id"].as_str().is_some_and(crate::workspace_route::valid_id) && value["name"].is_string() && value["model"].is_string()).ok_or("Recovery data could not be read.")?;
+    let storage = window()
+        .session_storage()
+        .ok()
+        .flatten()
+        .ok_or("Recovery storage is unavailable.")?;
+    let Some(raw) = storage
+        .get_item(RECOVERY)
+        .map_err(|_| "Recovery data could not be read.")?
+    else {
+        return Ok(None);
+    };
+    let value = (raw.len() <= 64_000)
+        .then(|| serde_json::from_str::<Value>(&raw).ok())
+        .flatten();
+    let value = value
+        .filter(|value| {
+            value.is_object()
+                && value["id"]
+                    .as_str()
+                    .is_some_and(crate::workspace_route::valid_id)
+                && value["name"].is_string()
+                && value["model"].is_string()
+        })
+        .ok_or("Recovery data could not be read.")?;
     Ok(Some(value))
 }
 
@@ -191,17 +230,37 @@ fn choice(instance: ProviderInstance, detected: bool) -> Choice {
     } else if signs_in {
         // Claude has one sign-in method; Codex shows ChatGPT or its API provider.
         let method = instance.auth.method.filter(|method| method != "Claude");
-        (State::Ready, method.map_or_else(|| "Signed in".to_owned(), |method| format!("Signed in · {method}")))
+        (
+            State::Ready,
+            method.map_or_else(
+                || "Signed in".to_owned(),
+                |method| format!("Signed in · {method}"),
+            ),
+        )
     } else {
         (State::Ready, "Ready".to_owned())
     };
-    Choice { id: instance.id, kind: instance.kind, label: instance.display_name, revision: instance.revision, state, meta, detected }
+    Choice {
+        id: instance.id,
+        kind: instance.kind,
+        label: instance.display_name,
+        revision: instance.revision,
+        state,
+        meta,
+        detected,
+    }
 }
 
 async fn choices() -> Result<Vec<Choice>, String> {
     let instances = api::read::<ProviderInstances>(INSTANCES).await?;
-    let detected = api::read::<ProviderInstances>(&format!("{INSTANCES}/detected")).await.map(|list| list.providers).unwrap_or_default();
-    let mut rows = instances.providers.into_iter().map(|instance| choice(instance, false))
+    let detected = api::read::<ProviderInstances>(&format!("{INSTANCES}/detected"))
+        .await
+        .map(|list| list.providers)
+        .unwrap_or_default();
+    let mut rows = instances
+        .providers
+        .into_iter()
+        .map(|instance| choice(instance, false))
         .chain(detected.into_iter().map(|instance| choice(instance, true)))
         .collect::<Vec<_>>();
     // Usable providers first; the sort is stable.
@@ -211,12 +270,24 @@ async fn choices() -> Result<Vec<Choice>, String> {
 
 /// Creates the instance of a detected provider.
 async fn create(row: &Choice) -> Result<(), String> {
-    api::command::<Value>(INSTANCES, json!({"instanceId": row.id, "kind": row.kind, "displayName": row.label, "enabled": true})).await.map(|_| ())
+    api::command::<Value>(
+        INSTANCES,
+        json!({"instanceId": row.id, "kind": row.kind, "displayName": row.label, "enabled": true}),
+    )
+    .await
+    .map(|_| ())
 }
 
 pub fn page(error_icon: String) -> impl IntoView {
+    let refresh_directory = use_context::<shell::DirectoryRefresh>();
     let icons = StoredValue::new(use_context::<shell::Icons>());
-    let icon = move |pick: fn(&shell::Icons) -> &String| icons.with_value(|value| value.as_ref().map_or_else(String::new, |icons| pick(icons).clone()));
+    let icon = move |pick: fn(&shell::Icons) -> &String| {
+        icons.with_value(|value| {
+            value
+                .as_ref()
+                .map_or_else(String::new, |icons| pick(icons).clone())
+        })
+    };
     let rows = RwSignal::new(Vec::<Choice>::new());
     let choice_id = RwSignal::new(String::new());
     let loaded = RwSignal::new(false);
@@ -229,14 +300,29 @@ pub fn page(error_icon: String) -> impl IntoView {
     let error = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let pending = RwSignal::new(recovery());
-    let name = RwSignal::new(pending.with_untracked(|value| value.as_ref().ok().and_then(Option::as_ref).and_then(|value| value["name"].as_str()).unwrap_or_default().to_owned()));
+    let name = RwSignal::new(pending.with_untracked(|value| {
+        value
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .and_then(|value| value["name"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    }));
     let model = RwSignal::new(String::new());
     let models = RwSignal::new(Vec::<String>::new());
     let models_loading = RwSignal::new(false);
     let model_catalog = RwSignal::new(Vec::<Model>::new());
     let model_options = RwSignal::new(json!({}));
-    let selected = Memo::new(move |_| rows.with(|rows| rows.iter().find(|row| row.id == choice_id.get() && row.state == State::Ready && !row.detected).cloned()));
-    let has_ready = move || rows.with_untracked(|rows| rows.iter().any(|row| row.state == State::Ready));
+    let selected = Memo::new(move |_| {
+        rows.with(|rows| {
+            rows.iter()
+                .find(|row| row.id == choice_id.get() && row.state == State::Ready && !row.detected)
+                .cloned()
+        })
+    });
+    let has_ready =
+        move || rows.with_untracked(|rows| rows.iter().any(|row| row.state == State::Ready));
 
     // Runs `then` once the row has an instance, creating it for a detected provider.
     let prepare = move |row: Choice, then: Box<dyn FnOnce() + 'static>| {
@@ -245,12 +331,18 @@ pub fn page(error_icon: String) -> impl IntoView {
             then();
             return;
         }
-        if !preparing.get_untracked().is_empty() { return; }
+        if !preparing.get_untracked().is_empty() {
+            return;
+        }
         preparing.set(row.id.clone());
         spawn_local(async move {
             match create(&row).await {
                 Ok(()) => {
-                    rows.update(|rows| if let Some(entry) = rows.iter_mut().find(|entry| entry.id == row.id) { entry.detected = false; });
+                    rows.update(|rows| {
+                        if let Some(entry) = rows.iter_mut().find(|entry| entry.id == row.id) {
+                            entry.detected = false;
+                        }
+                    });
                     then();
                 }
                 Err(message) => row_error.set(message),
@@ -263,19 +355,26 @@ pub fn page(error_icon: String) -> impl IntoView {
         prepare(row, Box::new(move || choice_id.set(id)));
     };
     let refresh = move || {
-        if loading.get_untracked() { return; }
+        if loading.get_untracked() {
+            return;
+        }
         loading.set(true);
         spawn_local(async move {
             match choices().await {
                 Ok(list) => {
                     load_error.set(String::new());
-                    let keep = list.iter().any(|row| row.id == choice_id.get_untracked() && row.state == State::Ready);
+                    let keep = list.iter().any(|row| {
+                        row.id == choice_id.get_untracked() && row.state == State::Ready
+                    });
                     let first = list.iter().find(|row| row.state == State::Ready).cloned();
                     rows.set(list);
                     loaded.set(true);
                     // Keep a usable choice, else take the first usable provider.
                     if !keep {
-                        match first { Some(row) => pick(row), None => choice_id.set(String::new()) }
+                        match first {
+                            Some(row) => pick(row),
+                            None => choice_id.set(String::new()),
+                        }
                     }
                 }
                 Err(message) => load_error.set(message),
@@ -285,18 +384,39 @@ pub fn page(error_icon: String) -> impl IntoView {
     };
     refresh();
     // A provider can become usable outside setup (a terminal sign-in, Settings).
-    crate::connection_ui::poll_with_backoff(5000, move || (!loading.get_untracked() && signing.with_untracked(Option::is_none) && !adding.get_untracked() && !has_ready()).then(|| !load_error.with_untracked(String::is_empty)), refresh);
+    crate::connection_ui::poll_with_backoff(
+        5000,
+        move || {
+            (!loading.get_untracked()
+                && signing.with_untracked(Option::is_none)
+                && !adding.get_untracked()
+                && !has_ready())
+            .then(|| !load_error.with_untracked(String::is_empty))
+        },
+        refresh,
+    );
     let sign_in = move |row: Choice| {
-        let target = Target { id: row.id.clone(), kind: row.kind.clone(), name: row.label.clone() };
+        let target = Target {
+            id: row.id.clone(),
+            kind: row.kind.clone(),
+            name: row.label.clone(),
+        };
         prepare(row, Box::new(move || signing.set(Some(target))));
     };
     let enable = move |row: Choice| {
-        if !preparing.get_untracked().is_empty() { return; }
+        if !preparing.get_untracked().is_empty() {
+            return;
+        }
         preparing.set(row.id.clone());
         row_error.set(String::new());
         spawn_local(async move {
             let path = format!("{INSTANCES}/{}/update", row.id);
-            if let Err(message) = api::command::<Value>(&path, json!({"instanceId": row.id, "revision": row.revision, "enabled": true})).await {
+            if let Err(message) = api::command::<Value>(
+                &path,
+                json!({"instanceId": row.id, "revision": row.revision, "enabled": true}),
+            )
+            .await
+            {
                 row_error.set(message);
             } else {
                 choice_id.set(row.id.clone());
@@ -305,37 +425,64 @@ pub fn page(error_icon: String) -> impl IntoView {
             refresh();
         });
     };
-    let close_add = UiAction::new(move |()| { adding.set(false); refresh(); });
+    let close_add = UiAction::new(move |()| {
+        adding.set(false);
+        refresh();
+    });
     let reload = UiAction::new(move |()| refresh());
-    let open_sign_in = Callback::new(move |target: Target| { adding.set(false); signing.set(Some(target)); });
+    let open_sign_in = Callback::new(move |target: Target| {
+        adding.set(false);
+        signing.set(Some(target));
+    });
 
     let generation = RwSignal::new(0u64);
     Effect::new(move |_| {
         generation.update(|value| *value += 1);
         let request = generation.get_untracked();
-        model.set(String::new()); models.set(Vec::new()); model_catalog.set(Vec::new()); model_options.set(json!({}));
-        let Some(row) = selected.get() else { models_loading.set(false); return; };
+        model.set(String::new());
+        models.set(Vec::new());
+        model_catalog.set(Vec::new());
+        model_options.set(json!({}));
+        let Some(row) = selected.get() else {
+            models_loading.set(false);
+            return;
+        };
         models_loading.set(true);
         let url = format!("{INSTANCES}/{}/models", row.id);
         spawn_local(async move {
             let result = api::read::<Models>(&url).await;
-            if generation.try_get_untracked() != Some(request) { return; }
+            if generation.try_get_untracked() != Some(request) {
+                return;
+            }
             if let Ok(value) = result {
-                if let Some(default) = value.models.first() { model.set(default.clone()); }
+                if let Some(default) = value.models.first() {
+                    model.set(default.clone());
+                }
                 models.set(value.models);
                 model_catalog.set(value.catalog);
             }
             models_loading.set(false);
         });
     });
-    let model_options_for_selection = Signal::derive(move || model_catalog.with(|catalog| catalog.iter().find(|entry| entry.id == model.get()).map(|entry| entry.options.clone()).unwrap_or_default()));
+    let model_options_for_selection = Signal::derive(move || {
+        model_catalog.with(|catalog| {
+            catalog
+                .iter()
+                .find(|entry| entry.id == model.get())
+                .map(|entry| entry.options.clone())
+                .unwrap_or_default()
+        })
+    });
     let retry_creation = move || pending.with(|value| matches!(value, Ok(Some(_))));
     // A started creation keeps its form open, so a failure and its retry show.
-    let create_step = move || retry_creation() || pending.with(Result::is_err) || selected.with(Option::is_some);
+    let create_step =
+        move || retry_creation() || pending.with(Result::is_err) || selected.with(Option::is_some);
     let locked = move || busy.get() || pending.with(|value| !matches!(value, Ok(None)));
     let submit = move |event: web_sys::SubmitEvent| {
         event.prevent_default();
-        if busy.get_untracked() { return; }
+        if busy.get_untracked() {
+            return;
+        }
         let command = pending.get_untracked().and_then(|value| {
             if let Some(value) = value { return Ok(value); }
             let row = selected.get_untracked().ok_or("Choose a provider.")?;
@@ -345,16 +492,41 @@ pub fn page(error_icon: String) -> impl IntoView {
             Ok(json!({"id": request_id()?, "name": name, "role": "", "model": model, "instructions": "Help the user complete their tasks.", "threadLimit": 2, "toolBudget": 90, "providerInstance": row.id, "modelOptions": model_options.get_untracked()}))
         });
         let save = command.and_then(|command| {
-            let storage = window().session_storage().ok().flatten().ok_or("Recovery storage is unavailable.")?;
-            storage.set_item(RECOVERY, &command.to_string()).map_err(|_| "Recovery data could not be saved.")?;
+            let storage = window()
+                .session_storage()
+                .ok()
+                .flatten()
+                .ok_or("Recovery storage is unavailable.")?;
+            storage
+                .set_item(RECOVERY, &command.to_string())
+                .map_err(|_| "Recovery data could not be saved.")?;
             Ok(command)
         });
-        let command = match save { Ok(command) => command, Err(message) => { error.set(message); return; } };
-        pending.set(Ok(Some(command.clone()))); busy.set(true); error.set(String::new());
+        let command = match save {
+            Ok(command) => command,
+            Err(message) => {
+                error.set(message);
+                return;
+            }
+        };
+        pending.set(Ok(Some(command.clone())));
+        busy.set(true);
+        error.set(String::new());
         spawn_local(async move {
             match api::post::<shell::Agent>("/api/agents", &command).await {
-                Ok(agent) => { if let Ok(Some(storage)) = window().session_storage() { let _ = storage.remove_item(RECOVERY); } let _ = window().location().assign(&format!("/agents/{}", agent.id)); }
-                Err(message) => { error.set(message); busy.set(false); }
+                Ok(agent) => {
+                    if let Ok(Some(storage)) = window().session_storage() {
+                        let _ = storage.remove_item(RECOVERY);
+                    }
+                    if let Some(refresh) = refresh_directory {
+                        refresh.0.run(());
+                    }
+                    crate::router::open(&format!("/agents/{}", agent.id));
+                }
+                Err(message) => {
+                    error.set(message);
+                    busy.set(false);
+                }
             }
         });
     };
@@ -463,5 +635,8 @@ pub fn page(error_icon: String) -> impl IntoView {
 }
 
 fn row_ready(rows: RwSignal<Vec<Choice>>, id: &str) -> bool {
-    rows.with(|rows| rows.iter().any(|row| row.id == id && row.state == State::Ready))
+    rows.with(|rows| {
+        rows.iter()
+            .any(|row| row.id == id && row.state == State::Ready)
+    })
 }

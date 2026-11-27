@@ -262,19 +262,10 @@ async fn load(
     })
 }
 
+/// The chat route this conversation view shows. It follows the app router
+/// but ignores result-panel changes inside one conversation.
 #[derive(Clone, Copy)]
 pub(crate) struct Navigation(pub RwSignal<String>);
-
-impl Navigation {
-    pub(crate) fn page_path(self) -> String {
-        self.0.with(|route| {
-            crate::lazy_route::workflow_scope(route).map_or_else(
-                || route.split('?').next().unwrap_or_default().to_owned(),
-                |(_, back)| back,
-            )
-        })
-    }
-}
 
 #[derive(Clone, Copy)]
 pub(crate) struct ProjectConversation(pub RwSignal<bool>);
@@ -294,34 +285,6 @@ fn conversation_scope(url: &str) -> (&str, Option<String>) {
         .ok()
         .and_then(|params| params.get("focus"));
     (path, focus)
-}
-
-fn internal(path: &str) -> bool {
-    if crate::lazy_route::workflow_scope(path).is_some() {
-        return true;
-    }
-    let (path, query) = path.split_once('?').unwrap_or((path, ""));
-    let Some(route) = route(path) else {
-        return false;
-    };
-    !matches!(route, Route::Default)
-        && web_sys::UrlSearchParams::new_with_str(query).is_ok_and(|params| !params.has("computer"))
-}
-
-pub(super) fn open(nav: Option<Navigation>, path: &str) {
-    if let Some(nav) = nav.filter(|_| internal(path)) {
-        if window()
-            .history()
-            .and_then(|history| {
-                history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path))
-            })
-            .is_ok()
-        {
-            nav.0.set(location());
-            return;
-        }
-    }
-    let _ = window().location().assign(path);
 }
 
 fn agent_surface(path: &str) -> Option<AnyView> {
@@ -385,77 +348,37 @@ pub fn standalone() -> impl IntoView {
     let lifecycle = use_context::<crate::agent_profile::Lifecycle>();
     let deleting = move || lifecycle.is_some_and(|lifecycle| lifecycle.deleting_current());
     let error = RwSignal::new(String::new());
-    let nav = use_context::<Navigation>().unwrap_or_else(|| Navigation(RwSignal::new(location())));
+    let nav = Navigation(RwSignal::new(location()));
+    provide_context(nav);
     let workflow = Memo::new(move |_| {
         (!deleting())
-            .then(|| nav.0.with(|path| crate::lazy_route::workflow_scope(path)))
+            .then(|| nav.0.with(|path| crate::router::workflow_scope(path)))
             .flatten()
     });
     let was_workflow = RwSignal::new(false);
     let restore_conversation_focus = RwSignal::new(false);
     let project_conversation = use_context::<ProjectConversation>();
-    let pop = window_event_listener(leptos::ev::popstate, move |_| {
-        let location = location();
-        if results::current().is_err()
-            || !error.with_untracked(String::is_empty)
-            || nav.0.with_untracked(|current| {
-                conversation_scope(current) != conversation_scope(&location)
-            })
-        {
-            nav.0.set(location);
-        }
-    });
-    let click = window_event_listener(leptos::ev::click, move |event| {
-        if event.default_prevented()
-            || event.button() != 0
-            || event.ctrl_key()
-            || event.meta_key()
-            || event.shift_key()
-            || event.alt_key()
-        {
-            return;
-        }
-        let Some(anchor) = event
-            .target()
-            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-            .and_then(|element| element.closest("a[href]").ok().flatten())
-            .and_then(|element| element.dyn_into::<web_sys::HtmlAnchorElement>().ok())
-        else {
-            return;
-        };
-        if anchor.has_attribute("download")
-            || !anchor.target().is_empty()
-            || !anchor.hash().is_empty()
-            || window().location().origin().ok().as_deref() != Some(anchor.origin().as_str())
-            || anchor.has_attribute("data-minarbot-result")
-                && window().location().pathname().ok().as_deref()
-                    == Some(anchor.pathname().as_str())
-        {
-            return;
-        }
-        let path = format!("{}{}", anchor.pathname(), anchor.search());
-        if internal(&path) {
-            event.prevent_default();
-            if anchor.has_attribute("data-scoped-workflow-back")
-                && workflow.with_untracked(Option::is_some)
+    let router = crate::router::get();
+    if let Some(router) = router {
+        Effect::new(move |_| {
+            let location = router.url();
+            if !router
+                .kind_of(&location)
+                .is_some_and(|kind| kind == crate::router::RouteKind::Conversation)
+                || nav.0.with_untracked(|current| current == &location)
             {
-                if window()
-                    .history()
-                    .and_then(|history| history.back())
-                    .is_ok()
-                {
-                    return;
-                }
+                return;
             }
-            if path != location() {
-                open(Some(nav), &path);
+            if results::current().is_err()
+                || !error.with_untracked(String::is_empty)
+                || nav.0.with_untracked(|current| {
+                    conversation_scope(current) != conversation_scope(&location)
+                })
+            {
+                nav.0.set(location);
             }
-        }
-    });
-    on_cleanup(move || {
-        click.remove();
-        pop.remove();
-    });
+        });
+    }
     let revision = RwSignal::new(0_u64);
     Effect::new(move |_| {
         let path = nav.0.get();
@@ -463,7 +386,7 @@ pub fn standalone() -> impl IntoView {
         generation.update(|value| *value += 1);
         let version = generation.get_untracked();
         error.set(String::new());
-        if crate::lazy_route::workflow_scope(&path).is_some() {
+        if crate::router::workflow_scope(&path).is_some() {
             was_workflow.set(true);
             document().set_title("Workflows · Minarbot");
             // Release the hidden chat after the route switch gets a frame.
@@ -499,17 +422,8 @@ pub fn standalone() -> impl IntoView {
                         if let Some(agent) = &value.agent {
                             let search = window().location().search().unwrap_or_default();
                             let url = format!("/agents/{}{search}", agent.id);
-                            if window()
-                                .history()
-                                .and_then(|history| {
-                                    history.replace_state_with_url(
-                                        &wasm_bindgen::JsValue::NULL,
-                                        "",
-                                        Some(&url),
-                                    )
-                                })
-                                .is_ok()
-                            {
+                            if let Some(router) = router {
+                                router.replace(&url);
                                 nav.0.set(url);
                                 return;
                             }
@@ -540,9 +454,7 @@ pub fn standalone() -> impl IntoView {
                 config.get().map(|config| chat_view(config, restore_conversation_focus.get_untracked())).into_any()
             }}
         </div>
-        {move || workflow.get().map(|(owner, back)| {
-            crate::lazy_route::outlet("workflows", "workflows", nav.0.get_untracked(), owner, Some(back))
-        })}
+        {move || workflow.get().map(|(owner, back)| crate::app::scoped_workflows(owner, back))}
         <p class="conversation-startup" role="status" hidden=move || workflow.with(Option::is_some) || config.with(Option::is_some) || !error.with(String::is_empty)>"Loading conversation…"</p>
         <div class="conversation-startup" hidden=move || error.with(String::is_empty)>
             <p class="message-error" role="alert">{error}</p>
@@ -626,7 +538,6 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
     let key = StoredValue::new(format!("minarbot:thread-command:{}", owner.get_value()));
     let pending = RwSignal::new(saved(&key.get_value()));
     let selected = StoredValue::new(current.clone());
-    let nav = use_context::<Navigation>();
     let thread_cache = use_context::<ThreadCache>();
     let dialog = NodeRef::<leptos::html::Dialog>::new();
     let editing = RwSignal::new(None::<(Thread, &'static str)>);
@@ -707,7 +618,7 @@ pub fn chats(chat: Chat, edit_profile: Callback<()>) -> impl IntoView {
                             format!("/agents/{agent}/conversations/{}", thread.id)
                         };
                         if create {
-                            open(nav, &route);
+                            crate::router::open(&route);
                         } else {
                             let _ = window().location().assign(&route);
                         }

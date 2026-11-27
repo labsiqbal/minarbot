@@ -363,7 +363,7 @@ pub(super) fn render(opened: RwSignal<bool>, data: Data, icons: Icons) -> impl I
                 if matches!(item.group, "Projects" | "Sections") {
                     super::save_preference(super::TAB, "projects");
                 }
-                let _ = window().location().assign(&path);
+                crate::router::open(&path);
             }
             Destination::NewConversation => super::start_conversation(),
             Destination::NewProject => data.new_project.set(true),

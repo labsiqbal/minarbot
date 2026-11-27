@@ -34,7 +34,6 @@ fn row_element(id: &str) -> Option<web_sys::Element> {
 }
 
 pub(super) fn minimap(
-    chat: Chat,
     rows: Memo<Vec<Turn>>,
     viewport: NodeRef<leptos::html::Section>,
     content: NodeRef<leptos::html::Div>,

@@ -337,19 +337,44 @@ fn status(value: &str) -> &str {
     }
 }
 
-pub(crate) fn mount(
-    path: String,
-    colors: StoredValue<Vec<crate::appearance::ColorTheme>>,
-    icons: crate::shell::Icons,
-) -> impl IntoView {
-    let route = RwSignal::new(path.clone());
-    provide_context(crate::shell::AutomationNavigation(route));
-    let listener = window_event_listener(leptos::ev::popstate, move |_| {
-        if let Ok(path) = window().location().pathname() {
-            route.set(path);
-        }
+thread_local! {
+    static LIBRARY: std::cell::RefCell<Option<(String, js_sys::Promise, f64)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Fetches an agent's workflow library while its chat menu opens, so the
+/// scoped Workflows page can start from it.
+pub(crate) fn prefetch_library(owner: &str) {
+    let fresh = LIBRARY.with_borrow(|slot| {
+        slot.as_ref()
+            .is_some_and(|(agent, _, at)| agent == owner && js_sys::Date::now() - at < 3000.0)
     });
-    on_cleanup(move || listener.remove());
+    if !fresh {
+        let request = window().fetch_with_str(&format!("/api/agents/{owner}/workflows"));
+        LIBRARY.with_borrow_mut(|slot| {
+            *slot = Some((owner.to_owned(), request, js_sys::Date::now()));
+        });
+    }
+}
+
+/// The prefetched library response for `owner`, if it is still fresh.
+pub(crate) fn take_library(owner: &str) -> Option<js_sys::Promise> {
+    LIBRARY
+        .with_borrow_mut(Option::take)
+        .filter(|(agent, _, at)| agent == owner && js_sys::Date::now() - at < 3000.0)
+        .map(|(_, request, _)| request)
+}
+
+/// Routines, Workflows and the calendar. Each page stays mounted while the
+/// others show, so switching keeps its state.
+pub(crate) fn outlet() -> impl IntoView {
+    let router = crate::router::get();
+    let route = Memo::new(move |_| {
+        router.map_or_else(
+            || window().location().pathname().unwrap_or_default(),
+            |router| router.with_url(|url| url.split('?').next().unwrap_or_default().to_owned()),
+        )
+    });
     let routines_active = Memo::new(move |_| route.with(|route| route == "/routines"));
     let routines_mounted = RwSignal::new(routines_active.get_untracked());
     Effect::watch(
@@ -373,14 +398,7 @@ pub(crate) fn mount(
     );
     let calendar_active = Memo::new(move |_| route.with(|route| route == "/calendar"));
     let calendar_visited = RwSignal::new(calendar_active.get_untracked());
-    let workflows_scoped = Memo::new(move |_| {
-        route.with(|route| route == "/workflows")
-            && window().location().search().is_ok_and(|search| {
-                crate::lazy_route::workflow_scope(&format!("/workflows{search}")).is_some()
-            })
-    });
-    let workflows_active =
-        Memo::new(move |_| route.with(|route| route == "/workflows") && !workflows_scoped.get());
+    let workflows_active = Memo::new(move |_| route.with(|route| route == "/workflows"));
     let workflows_visited = RwSignal::new(workflows_active.get_untracked());
     Effect::new(move |_| {
         if calendar_active.get() {
@@ -393,21 +411,16 @@ pub(crate) fn mount(
         }
     });
     view! {
-        <crate::shell::WorkspaceShell base_path=path colors icons>
-            {move || crate::workspace_route::WorkspaceRoute::from_path(&route.get())
-                .filter(|route| *route == crate::workspace_route::WorkspaceRoute::Workflows && workflows_scoped.get())
-                .map(|route| workspace::page(route, String::new()))}
-            <Show when=move || routines_mounted.get()>
-                <div class="automation-routines-route" hidden=move || !routines_active.get() inert=move || !routines_active.get()>
-                    {routines_page()}
-                </div>
-            </Show>
-            <Show when=move || calendar_visited.get()>{calendar_page(calendar_active.into())}</Show>
-            <Show when=move || workflows_visited.get()>
-                <div class="automation-workflows-route" hidden=move || !workflows_active.get() inert=move || !workflows_active.get()>
-                    {workflows_page(workflows_active.into())}
-                </div>
-            </Show>
-        </crate::shell::WorkspaceShell>
+        <Show when=move || routines_mounted.get()>
+            <div class="automation-routines-route" hidden=move || !routines_active.get() inert=move || !routines_active.get()>
+                {routines_page()}
+            </div>
+        </Show>
+        <Show when=move || calendar_visited.get()>{calendar_page(calendar_active.into())}</Show>
+        <Show when=move || workflows_visited.get()>
+            <div class="automation-workflows-route" hidden=move || !workflows_active.get() inert=move || !workflows_active.get()>
+                {workflows_page(workflows_active.into())}
+            </div>
+        </Show>
     }
 }

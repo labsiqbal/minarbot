@@ -143,34 +143,11 @@ pub(crate) struct Icons {
     pub chevron: String,
 }
 
-#[cfg(feature = "conversation")]
 #[derive(Clone, Copy)]
 pub(crate) struct DirectoryRefresh(pub Callback<()>);
 
 const COLLAPSED: &str = "minarbot:sidebar-collapsed";
 const TAB: &str = "minarbot:sidebar-tab";
-
-#[derive(Clone, Copy)]
-pub(crate) struct AutomationNavigation(pub RwSignal<String>);
-
-impl AutomationNavigation {
-    fn open(self, path: &str) {
-        let location = window().location();
-        if self.0.with_untracked(|current| current == path)
-            && location.search().is_ok_and(|query| query.is_empty())
-        {
-            return;
-        }
-        let pushed = window().history().and_then(|history| {
-            history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path))
-        });
-        if pushed.is_ok() {
-            self.0.set(path.to_owned());
-        } else {
-            let _ = location.assign(path);
-        }
-    }
-}
 
 fn preference(key: &str) -> Option<String> {
     window()
@@ -212,10 +189,8 @@ fn relative_time(value: &str) -> String {
 
 #[component]
 pub(crate) fn WorkspaceShell(
-    base_path: String,
     colors: StoredValue<Vec<appearance::ColorTheme>>,
     icons: Icons,
-    #[prop(optional)] conversation_navigation: bool,
     #[prop(optional)] header: Option<Children>,
     children: Children,
 ) -> impl IntoView {
@@ -232,13 +207,23 @@ pub(crate) fn WorkspaceShell(
     let projects = RwSignal::new(None::<Result<Projects, String>>);
     let summaries = RwSignal::new(Vec::<Summary>::new());
     let machines = RwSignal::new(None::<Result<Machines, String>>);
-    let route_tab = if base_path.starts_with("/projects/") || base_path.starts_with("/rooms/") {
-        Some("projects")
-    } else if base_path.starts_with("/agents/") || base_path.starts_with("/machines/") {
-        Some("agents")
-    } else {
-        None
+    let router = crate::router::get();
+    let route_path = Memo::new(move |_| {
+        router.map_or_else(
+            || window().location().pathname().unwrap_or_default(),
+            crate::router::Router::page_path,
+        )
+    });
+    let tab_for = |path: &str| {
+        if path.starts_with("/projects/") || path.starts_with("/rooms/") {
+            Some("projects")
+        } else if path.starts_with("/agents/") || path.starts_with("/machines/") {
+            Some("agents")
+        } else {
+            None
+        }
     };
+    let route_tab = route_path.with_untracked(|path| tab_for(path));
     if let Some(tab) = route_tab {
         save_preference(TAB, tab);
     }
@@ -298,7 +283,6 @@ pub(crate) fn WorkspaceShell(
             directory.try_set(Some(api::read("/api/agents").await));
         });
     };
-    #[cfg(feature = "conversation")]
     provide_context(DirectoryRefresh(Callback::new(move |()| {
         refresh_directory()
     })));
@@ -411,52 +395,33 @@ pub(crate) fn WorkspaceShell(
         event.prevent_default();
     });
     on_cleanup(move || keys.remove());
-    let base_path = StoredValue::new(base_path);
-    let automation = use_context::<AutomationNavigation>();
-    #[cfg(feature = "conversation")]
-    let conversation = use_context::<crate::conversation::Navigation>();
-    #[cfg(feature = "conversation")]
-    let conversation_path =
-        conversation.map(|navigation| Memo::new(move |_| navigation.page_path()));
-    #[cfg(feature = "conversation")]
+    #[cfg(feature = "workspace")]
     let project_conversation = use_context::<crate::conversation::ProjectConversation>();
-    #[cfg(feature = "conversation")]
-    if let Some(navigation) = conversation {
-        Effect::new(move |previous: Option<String>| {
-            let path = navigation.0.get();
-            if previous.as_ref().is_some_and(|previous| previous != &path) {
-                narrow_open.set(false);
-                if path.starts_with("/rooms/") {
-                    projects_tab.set(true);
-                    save_preference(TAB, "projects");
-                } else if path.starts_with("/agents/") || path.starts_with("/machines/") {
-                    projects_tab.set(false);
-                    save_preference(TAB, "agents");
-                }
+    Effect::new(move |previous: Option<String>| {
+        let path = route_path.get();
+        if previous.as_ref().is_some_and(|previous| previous != &path) {
+            narrow_open.set(false);
+            if let Some(tab) = tab_for(&path) {
+                projects_tab.set(tab == "projects");
+                save_preference(TAB, tab);
             }
-            path
-        });
-    }
-    let route_path = move || {
-        #[cfg(feature = "conversation")]
-        if let Some(path) = conversation_path {
-            return path.get();
-        }
-        automation
-            .map(|nav| nav.0.get())
-            .unwrap_or_else(|| base_path.get_value())
-    };
-    let current_url = move || {
-        #[cfg(feature = "conversation")]
-        if let Some(navigation) = conversation {
-            navigation.0.track();
-        }
-        let mut path = route_path();
-        let location = window().location();
-        if location.pathname().ok().as_deref() == Some(path.as_str()) {
-            path.push_str(&location.search().unwrap_or_default());
         }
         path
+    });
+    let route_path = move || route_path.get();
+    // Settings links return to the page under Settings.
+    let current_url = move || match router {
+        Some(router) => router.with_url(|url| {
+            if matches!(
+                crate::router::RouteKind::parse(url),
+                Some(crate::router::RouteKind::Settings(_))
+            ) {
+                crate::router::settings_return(url)
+            } else {
+                url.clone()
+            }
+        }),
+        None => crate::router::current(),
     };
     let settings_link = move |section| settings::section_url(section, &current_url());
     let automation_link = move |path: &'static str, label: &'static str, icon: String| {
@@ -464,39 +429,11 @@ pub(crate) fn WorkspaceShell(
             <button type="button" class="k-icon-btn" aria-label=label title=label aria-current=move || (route_path() == path).then_some("page")
                 on:click=move |_| {
                     narrow_open.set(false);
-                    if let Some(automation) = automation { automation.open(path); }
-                    else { let _ = window().location().assign(path); }
+                    crate::router::open(path);
                 }><span class="appearance-icon" inner_html=icon></span></button>
         }
     };
     provide_context(icons.clone());
-    let settings_focus = NodeRef::<leptos::html::A>::new();
-    let location = window().location();
-    let return_path = format!(
-        "{}{}",
-        location.pathname().unwrap_or_default(),
-        location.search().unwrap_or_default()
-    );
-    if window()
-        .session_storage()
-        .ok()
-        .flatten()
-        .is_some_and(|storage| {
-            let key = settings::RETURN_FOCUS_KEY;
-            storage.get_item(key).ok().flatten().as_deref() == Some(&return_path)
-                && storage.remove_item(key).is_ok()
-        })
-    {
-        request_animation_frame(move || {
-            if is_collapsed() {
-                if let Some(button) = reveal.get_untracked() {
-                    let _ = button.focus();
-                }
-            } else if let Some(link) = settings_focus.get_untracked() {
-                let _ = link.focus();
-            }
-        });
-    }
     let panel_icon = icons.panel.clone();
     let hidden = move || {
         let _ = viewport.get();
@@ -519,7 +456,7 @@ pub(crate) fn WorkspaceShell(
             let current = {
                 let base = route_path();
                 let local = base == path || base.strip_prefix(&path).is_some_and(|suffix| suffix.starts_with('/'));
-                #[cfg(feature = "conversation")]
+                #[cfg(feature = "workspace")]
                 let local = local && !project_conversation.is_some_and(|active| active.0.get());
                 local
             };
@@ -772,7 +709,7 @@ pub(crate) fn WorkspaceShell(
     };
     let directory_ready = move || directory.with(|data| data.as_ref().is_some_and(Result::is_ok));
     let conversation_creation = Signal::derive(move || {
-        conversation_navigation && route_path().strip_prefix("/agents/").and_then(|path| path.split('/').next())
+        router.is_some_and(|router| router.kind().is_some_and(|kind| kind.is_conversation())) && route_path().strip_prefix("/agents/").and_then(|path| path.split('/').next())
             .is_some_and(|id| directory.with(|result| matches!(result, Some(Ok(data)) if data.agents.iter().any(|agent| agent.id == id && !agent.hidden))))
     });
     let plus = icons.plus.clone();
@@ -911,7 +848,7 @@ pub(crate) fn WorkspaceShell(
                     <button type="button" class="k-icon-btn" aria-label="Help" title="Help" on:click=move |_| {
                         if let Some(dialog) = help.get_untracked() { let _ = dialog.show_modal(); }
                     }><span class="appearance-icon" inner_html=icons.book></span></button>
-                    <a class="k-icon-btn sidebar-settings" node_ref=settings_focus aria-label="Settings" title="Settings" href=move || settings_link("/settings/general")><span class="appearance-icon" inner_html=icons.settings></span></a>
+                    <a class="k-icon-btn sidebar-settings" aria-label="Settings" title="Settings" href=move || settings_link("/settings/general")><span class="appearance-icon" inner_html=icons.settings></span></a>
                 </div>
             </aside>
             {update_dialog}
