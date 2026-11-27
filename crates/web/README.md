@@ -71,7 +71,7 @@ and [test ledger](../../docs/test-ledger.md#67-ui-coverage-ledger).
 
 The Rust browser smokes in `crates/minarbot-e2e/tests/e2e/browser_smokes.rs`
 drive this client in headless Chrome. Build the client first, then run them
-with the e2e suite (see [testing](../../docs/testing.md#ui-smokes)):
+with the e2e suite (see [testing](../../docs/testing.md#browser-smokes)):
 
 ```sh
 ~/.cache/minarbot-cargo-slot.sh cargo xtask leptos

@@ -14,7 +14,7 @@ New integration tests use `crates/minarbot-testkit`. Do not add
 
 The e2e tests start `target/<profile>/minarbot-server`, the kit's fake peer
 binaries and, for the GitHub update cases, `minarbot-launcher`, so build them
-first, and the [UI smokes](#ui-smokes) serve the Leptos client, so build it
+first, and the [browser smokes](#browser-smokes) serve the Leptos client, so build it
 too. On shared hosts, run everything through the slot script:
 
 ```sh
@@ -127,7 +127,7 @@ with `ServerConfig::executable`, script the turn with a prompt keyword
 (table below), and read `fake-log.jsonl` with `fakes::native_log`. See
 `crates/minarbot-e2e/tests/e2e/harness.rs`.
 
-## UI smokes
+## Browser smokes
 
 `crates/minarbot-e2e/tests/e2e/browser_smokes.rs` drives the main journeys
 in headless Chrome against the built Leptos client: fresh data, adding a
