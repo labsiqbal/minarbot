@@ -96,7 +96,8 @@ fn install(root: &Path, paths: &Paths, port: u16, tailnet: Option<&str>) -> Resu
         &bin.join("minarbot-server"),
     )?;
     // The server reads dist next to its bin directory; swap only while stopped.
-    systemctl(&["stop", UNIT]).ok();
+    // Fails harmlessly on the first run, before the unit exists.
+    output(Command::new("systemctl").args(["--user", "stop", UNIT])).ok();
     if paths.runtime.symlink_metadata().is_ok() {
         fs::remove_dir_all(&paths.runtime)?;
     }
@@ -135,7 +136,8 @@ fn systemctl(args: &[&str]) -> Result<()> {
 }
 
 /// Serves the port over HTTPS on the tailnet and returns its origin, or
-/// `None` when Tailscale is missing or refuses.
+/// `None` when Tailscale is missing or refuses. Serving needs root or a
+/// Tailscale operator, so a refused call is retried with `sudo -n`.
 fn tailnet_origin(port: u16) -> Option<String> {
     let status = output(Command::new("tailscale").args(["status", "--json"])).ok()?;
     let status: serde_json::Value = serde_json::from_str(&status).ok()?;
@@ -143,16 +145,26 @@ fn tailnet_origin(port: u16) -> Option<String> {
     if name.is_empty() {
         return None;
     }
-    let serve = output(Command::new("tailscale").args([
-        "serve",
-        "--bg",
-        &format!("--https={port}"),
-        &format!("http://127.0.0.1:{port}"),
-    ]));
-    match serve {
-        Ok(_) => Some(format!("https://{name}:{port}")),
+    let origin = format!("https://{name}:{port}");
+    let target = format!("http://127.0.0.1:{port}");
+    let served = output(Command::new("tailscale").args(["serve", "status", "--json"]))
+        .ok()
+        .and_then(|config| serde_json::from_str::<serde_json::Value>(&config).ok())
+        .is_some_and(|config| {
+            config["Web"][format!("{name}:{port}")]["Handlers"]["/"]["Proxy"] == target.as_str()
+        });
+    if served {
+        return Some(origin);
+    }
+    let serve = ["serve", "--bg", &format!("--https={port}"), &target];
+    let result = output(Command::new("tailscale").args(serve))
+        .or_else(|_| output(Command::new("sudo").args(["-n", "tailscale"]).args(serve)));
+    match result {
+        Ok(_) => Some(origin),
         Err(error) => {
-            eprintln!("Tailscale did not serve the preview: {error}");
+            eprintln!(
+                "Tailscale did not serve the preview ({error}). Run once: sudo tailscale serve --bg --https={port} {target}"
+            );
             None
         }
     }
