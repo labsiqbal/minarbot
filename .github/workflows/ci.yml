@@ -10,9 +10,18 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+      # Without a cache every run compiled all dependencies from scratch.
+      # Only main saves it, so pull requests do not fill the cache quota.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            crates/web -> target
+            desktop/tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.4'
