@@ -153,6 +153,36 @@ async fn setup_adds_a_provider_in_the_wizard_and_signs_it_in() -> Result<()> {
     .await
 }
 
+#[tokio::test]
+async fn providers_add_a_detected_cli_and_offer_it_again_after_delete() -> Result<()> {
+    let root = TestRoot::new()?;
+    let app = start_with_claude(&root).await?;
+    browser::smoke("providers-detected", async |page: &Browser| {
+        page.goto(&app.url("/settings/providers")).await?;
+        page.find("heading", "Providers").await?;
+        let machine = page.find("group", "On this machine").await?;
+        page.click_element(page.find_in("button", "Add Claude", Some(machine)).await?)
+            .await?;
+        page.find("heading", "Claude").await?;
+        page.gone("group", "On this machine").await?;
+        // An instance named after its kind deletes like any other.
+        page.click("button", "Delete instance").await?;
+        let confirm = page
+            .find("alertdialog", "Delete provider instance?")
+            .await?;
+        page.click_element(
+            page.find_in("button", "Delete instance", Some(confirm))
+                .await?,
+        )
+        .await?;
+        page.gone("heading", "Claude").await?;
+        let machine = page.find("group", "On this machine").await?;
+        page.find_in("button", "Add Claude", Some(machine)).await?;
+        Ok(())
+    })
+    .await
+}
+
 /// An agent creation that fails keeps its form open with the error and
 /// the retry (the form once hid as soon as creation started).
 #[tokio::test]

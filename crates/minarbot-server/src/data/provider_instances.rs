@@ -745,9 +745,6 @@ fn save(state: &AppState, body: &Value, id: &str, previous: Option<Value>) -> Re
 }
 
 fn remove(state: &AppState, id: &str) -> Result<Response> {
-    if KINDS.contains(&id) {
-        return Err(error(409, "Default provider instances cannot be deleted."));
-    }
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
     let db = &guard.connection;
     if db.execute("DELETE FROM provider_instances WHERE id=?", [id])? == 0 {
@@ -830,18 +827,41 @@ async fn sign_in_code(state: &AppState, id: &str, body: &Value) -> Result<Respon
     Ok(json_response(200, public(state, &row)))
 }
 
-/// Codex and Claude installed on this host without an instance of the same
-/// id yet, with the sign-in state of their default homes, so setup can offer
-/// them before anything is configured.
+/// Agent CLIs installed on this host that have no instance of their kind
+/// yet, with the sign-in state of their default homes, so setup and
+/// Settings can offer them before anything is configured. Each carries a
+/// free instance ID (the kind, or the kind with a number).
 fn detected(state: &AppState) -> Result<Value> {
     let guard = state.database.lock().map_err(|_| Failure::storage())?;
+    let db = &guard.connection;
+    let rows = all(db, &format!("{SELECT} ORDER BY rowid"), [])?;
+    let taken = |id: &str| rows.iter().any(|row| string(row, "id") == id);
     let mut found = Vec::new();
-    for kind in ["claude", "codex"] {
-        if row(&guard.connection, kind)?.is_some() || harness::executable(state, kind).is_none() {
+    // Claude and Codex first: setup picks the first usable provider.
+    let kinds = ["claude", "codex"].into_iter().chain(
+        KINDS
+            .iter()
+            .copied()
+            .filter(|kind| !matches!(*kind, "claude" | "codex")),
+    );
+    for kind in kinds {
+        if rows.iter().any(|row| string(row, "kind") == kind)
+            || harness::executable(state, kind).is_none()
+        {
             continue;
         }
+        let id = (1..)
+            .map(|n| {
+                if n == 1 {
+                    kind.to_owned()
+                } else {
+                    format!("{kind}-{n}")
+                }
+            })
+            .find(|id| !taken(id))
+            .unwrap_or_else(|| kind.to_owned());
         let virtual_row = json!({
-            "id":kind, "kind":kind, "display_name":kind_name(kind), "enabled":1,
+            "id":id, "kind":kind, "display_name":kind_name(kind), "enabled":1,
             "binary_path":"", "home_path":"", "shadow_home_path":"", "launch_args":"[]",
             "environment":"[]", "accent_color":"", "revision":0,
         });
@@ -851,10 +871,17 @@ fn detected(state: &AppState) -> Result<Value> {
 }
 
 fn kind_name(kind: &str) -> &'static str {
-    if kind == "codex" {
-        "Codex"
-    } else {
-        "Claude"
+    match kind {
+        "codex" => "Codex",
+        "claude" => "Claude",
+        "hermes" => "Hermes",
+        "antigravity" => "Antigravity",
+        "grok" => "Grok",
+        "pi" => "Pi",
+        "opencode" => "OpenCode",
+        "gemini" => "Gemini",
+        "kiro" => "Kiro",
+        _ => "Provider",
     }
 }
 
