@@ -27,6 +27,7 @@ mod pairing;
 mod project_integrations;
 mod projects;
 mod provider_instances;
+mod provider_sign_in;
 mod provider_icons;
 mod routes;
 #[cfg(any(feature = "conversation", feature = "workflows"))]

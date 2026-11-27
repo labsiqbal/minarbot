@@ -12,5 +12,29 @@
 .first-run__form { max-width: 440px; padding: 2px 0 20px 38px; }
 .first-run__form:empty { display: none; }
 .first-run__form .k-btn { min-height: 40px; }
-.first-run__computer { margin-bottom: 16px; }
 .composer__note--blocked { flex-wrap: wrap; }
+.first-run .setup-providers { padding: 0; overflow: hidden; }
+.setup-provider { display: flex; align-items: center; gap: 8px; padding-right: 12px; }
+.setup-provider + .setup-provider { border-top: .5px solid var(--color-border-tertiary); }
+.setup-provider.is-selected { background: var(--color-brand-soft); }
+.setup-provider--loading { min-height: 56px; padding: 10px 14px; gap: 12px; }
+.setup-provider__pick { display: flex; flex: 1; min-width: 0; align-items: center; gap: 12px; min-height: 56px; padding: 10px 0 10px 14px; border: 0; color: inherit; background: none; text-align: left; cursor: pointer; }
+.setup-provider__pick:disabled { cursor: default; }
+.setup-provider__pick:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; border-radius: 8px; }
+.setup-provider:not(.is-unavailable):not(.is-selected):hover { background: var(--color-bg-hover); }
+.setup-provider__mark { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: none; border-radius: 8px; color: var(--color-text-primary); background: var(--color-bg-tertiary); }
+.setup-provider__mark svg { width: 18px; height: 18px; }
+.setup-provider__text { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.setup-provider__name { overflow: hidden; color: var(--color-text-primary); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.setup-provider__meta { color: var(--color-text-secondary); font-size: 12.5px; }
+.setup-provider.is-unavailable .setup-provider__name { color: var(--color-text-secondary); }
+.setup-provider__check { display: inline-flex; flex: none; color: var(--color-brand-text); }
+.setup-provider__check[hidden] { display: none; }
+.first-run__form .setup-provider .k-btn { min-height: 32px; flex: none; }
+.provider-sign-in__steps { display: grid; gap: 14px; margin: 0; padding: 0 0 0 20px; }
+.provider-sign-in__steps li { padding-left: 4px; }
+.provider-sign-in__steps li::marker { color: var(--color-text-secondary); font-weight: 600; }
+.provider-sign-in__steps li > span:first-child, .provider-sign-in__steps li > label { display: block; margin-bottom: 8px; color: var(--color-text-primary); font-size: 14px; font-weight: 500; }
+.provider-sign-in__code-row { display: flex; align-items: center; gap: 8px; }
+.provider-sign-in__code { flex: 1; padding: 8px 12px; border-radius: 8px; color: var(--color-text-primary); background: var(--color-bg-tertiary); font-family: var(--font-mono-stack); font-size: 18px; font-weight: 600; letter-spacing: .08em; text-align: center; }
+.provider-sign-in__waiting { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--color-text-secondary); font-size: 13px; }

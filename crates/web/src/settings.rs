@@ -292,13 +292,6 @@ fn connections(section: SettingsRoute) -> crate::lazy_view::ChunkView {
     })
 }
 
-pub fn linked_section_url(path: &str) -> String {
-    let from = document()
-        .get_element_by_id("leptos-root")
-        .and_then(|root| root.get_attribute("data-return-to"));
-    section_url(path, from.as_deref().unwrap_or("/"))
-}
-
 pub fn section_url(path: &str, from: &str) -> String {
     if from != "/" {
         if let Ok(params) = UrlSearchParams::new() {

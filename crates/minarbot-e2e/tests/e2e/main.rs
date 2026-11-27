@@ -51,6 +51,7 @@ mod pr_room_chat;
 mod pr_support;
 mod pr_tp;
 mod pr_updates;
+mod provider_sign_in;
 mod questions;
 mod rg_craft_anything;
 mod rg_mcp_feature_tools;
