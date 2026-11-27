@@ -145,7 +145,9 @@ fn expected(mode: Mode) -> Result<(Value, Value)> {
              CREATE TABLE install_token_targets(
                token BLOB PRIMARY KEY REFERENCES install_tokens(digest) ON DELETE CASCADE,
                origin TEXT NOT NULL
-             ) STRICT;",
+             ) STRICT;
+             ALTER TABLE routines ADD COLUMN zone_follows INTEGER NOT NULL DEFAULT 0;
+             CREATE TABLE time_zone_settings(id INTEGER PRIMARY KEY CHECK(id=1),zone TEXT);",
         )?;
     }
     db.execute_batch(
