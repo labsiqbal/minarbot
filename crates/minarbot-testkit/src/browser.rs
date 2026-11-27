@@ -267,12 +267,13 @@ impl Browser {
 
     /// Visible text of the page (`document.body.innerText`).
     pub async fn text(&self) -> Result<String> {
-        Ok(self
-            .evaluate("document.body ? document.body.innerText : ''")
-            .await?
-            .as_str()
-            .unwrap_or_default()
-            .to_owned())
+        Ok(
+            settled(|| self.evaluate("document.body ? document.body.innerText : ''"))
+                .await?
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        )
     }
 
     /// Wait until the visible text contains `text`.
@@ -295,6 +296,15 @@ impl Browser {
     /// `name`) in the accessibility tree, optionally inside `within`, with
     /// their accessible names.
     pub async fn query(
+        &self,
+        role: &str,
+        name: Option<&str>,
+        within: Option<Element>,
+    ) -> Result<Vec<(Element, String)>> {
+        settled(|| self.query_once(role, name, within)).await
+    }
+
+    async fn query_once(
         &self,
         role: &str,
         name: Option<&str>,
@@ -583,6 +593,40 @@ impl Drop for Browser {
     }
 }
 
+/// CDP errors a navigation causes: the old page's context or nodes are gone
+/// before the new page has its own.
+fn navigating(error: &Error) -> bool {
+    let error = error.to_string();
+    [
+        "Cannot find context with specified id",
+        "Execution context was destroyed",
+        "Inspected target navigated or closed",
+        "No node with given id",
+        "Could not find node with given id",
+    ]
+    .iter()
+    .any(|message| error.contains(message))
+}
+
+/// Run a page read again while a navigation settles, so waits see the new
+/// page instead of failing on the old one. Other errors return at once.
+async fn settled<T, F, Fut>(mut read: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut attempts = 0;
+    loop {
+        match read().await {
+            Err(error) if navigating(&error) && attempts < 40 => {
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            result => return result,
+        }
+    }
+}
+
 fn find_browser() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("MINARBOT_CHROME") {
         let path = PathBuf::from(path);
@@ -778,5 +822,43 @@ impl PageState {
             .cloned()
             .or_else(|| params["response"]["url"].as_str().map(str::to_owned))
             .unwrap_or_else(|| "unknown request".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn settled_retries_navigation_errors_and_returns_others_at_once() -> Result<()> {
+        let calls = AtomicUsize::new(0);
+        let value = settled(|| async {
+            if calls.fetch_add(1, Ordering::SeqCst) < 2 {
+                Err::<u8, Error>(
+                    r#"Accessibility.queryAXTree: {"code":-32000,"message":"Cannot find context with specified id"}"#
+                        .into(),
+                )
+            } else {
+                Ok(7)
+            }
+        })
+        .await?;
+        crate::ensure!(
+            value == 7 && calls.load(Ordering::SeqCst) == 3,
+            "retried read"
+        );
+
+        let calls = AtomicUsize::new(0);
+        let failed = settled(|| async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err::<u8, Error>("Page.navigate: net::ERR_CONNECTION_REFUSED".into())
+        })
+        .await;
+        crate::ensure!(
+            failed.is_err() && calls.load(Ordering::SeqCst) == 1,
+            "other errors return at once"
+        );
+        Ok(())
     }
 }
