@@ -61,6 +61,10 @@ fn bindgen(target: &Path) -> Result<PathBuf> {
             .arg(&archive)
             .arg("-C")
             .arg(temp.path()))?;
+        // A cache can restore the tool directory without its binary.
+        if target.join(&name).exists() {
+            fs::remove_dir_all(target.join(&name))?;
+        }
         if let Err(error) = fs::rename(temp.path().join(&name), target.join(&name)) {
             if !bin.is_file() {
                 return Err(error.into());
@@ -112,6 +116,10 @@ fn wasm_opt(target: &Path) -> Result<PathBuf> {
             .arg("-C")
             .arg(temp.path())
             .arg(format!("{unpacked}/bin/wasm-opt")))?;
+        // A cache can restore the tool directory without its binary.
+        if target.join(&name).exists() {
+            fs::remove_dir_all(target.join(&name))?;
+        }
         if let Err(error) = fs::rename(temp.path().join(unpacked), target.join(&name)) {
             if !bin.is_file() {
                 return Err(error.into());
