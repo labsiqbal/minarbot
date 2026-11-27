@@ -183,6 +183,68 @@ async fn providers_add_a_detected_cli_and_offer_it_again_after_delete() -> Resul
     .await
 }
 
+/// The agent profile lists the provider's models in a dropdown (a native
+/// datalist opened off to the side, unstyled, with each ID twice).
+#[tokio::test]
+async fn agent_profile_lists_the_provider_models_in_a_dropdown() -> Result<()> {
+    let root = TestRoot::new()?;
+    let app = start(&root).await?;
+    minarbot_testkit::providers::create_instance(
+        &app,
+        "work-hermes",
+        "hermes",
+        fakes::path(Fake::Acp)?,
+    )
+    .await?;
+    let agent = minarbot_testkit::providers::AgentSpec::new("Model Agent")
+        .field("model", "fixture-model")
+        .instance("work-hermes")
+        .create(&app)
+        .await?;
+    let agent = agent["id"].as_str().ok_or("agent id")?.to_owned();
+    browser::smoke("agent-model", async |page: &Browser| {
+        page.goto(&app.url(&format!("/agents/{agent}"))).await?;
+        page.find("textbox", "Message Model Agent").await?;
+        page.evaluate("document.querySelector('.chat__pill').click()")
+            .await?;
+        // The pill menu and the sidebar row menu both offer it.
+        let edit = page.query("button", Some("Edit profile"), None).await?;
+        page.click_element(edit.first().ok_or("no Edit profile")?.0)
+            .await?;
+        page.click("tab", "Model").await?;
+        let labels = until_value(
+            "model options",
+            || async {
+                page.evaluate(
+                    "[...document.querySelectorAll('#model option')].map(o => o.textContent)",
+                )
+                .await
+            },
+            |labels| labels.to_string().contains("Fixture model"),
+        )
+        .await?;
+        ensure!(
+            labels == json!(["Choose a model", "Fixture model"]),
+            "model options: {labels}"
+        );
+        let field = page.find("combobox", "Model").await?;
+        let chosen = page.on(field, "function() { return this.value; }").await?;
+        ensure!(chosen == "fixture-model", "selected model: {chosen}");
+        // The provider list loads after the select; the bound instance stays chosen.
+        let provider = page.find("combobox", "Provider instance").await?;
+        let bound = page
+            .on(provider, "function() { return this.value; }")
+            .await?;
+        ensure!(bound == "work-hermes", "provider: {bound}");
+        let lists = page
+            .evaluate("document.querySelectorAll('datalist').length")
+            .await?;
+        ensure!(lists == 0, "datalists left: {lists}");
+        Ok(())
+    })
+    .await
+}
+
 /// An agent creation that fails keeps its form open with the error and
 /// the retry (the form once hid as soon as creation started).
 #[tokio::test]
