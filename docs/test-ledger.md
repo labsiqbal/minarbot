@@ -624,7 +624,7 @@ Behaviour that changed with #87, and how the ports treat it:
 
 | Node case | Rust test | Assertions Node -> Rust | Notes |
 | --- | --- | ---: | --- |
-| HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 132 | Full since the #89 integration: both create replays while the instance is disabled return the edited receipt (B6), before and after a restart. "No provider" is a disabled instance (the seeded test instance keeps its binary); `configured: false` became `runnable: false` with a `blocked_reason`. Found S4 (teammate roster missing from prompts). The static page is a minimal Leptos shell in a test `dist`. |
+| HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery | `sb_http::http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupted_recovery` | 184 -> 132 | Full since the #89 integration: both create replays while the instance is disabled return the edited receipt (B6), before and after a restart. "No provider" is a disabled instance (the seeded test instance keeps its binary); `configured: false` became `runnable: false` with a `blocked_reason`, checked once the instance is disabled (an enabled instance with its own binary path stays runnable). Found S4 (teammate roster missing from prompts). The static page is a minimal Leptos shell in a test `dist`. |
 
 ### `app/rust-workspace-writes-http.test.ts`
 
