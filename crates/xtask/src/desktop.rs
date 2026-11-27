@@ -80,7 +80,7 @@ fn cargo() -> Command {
     Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
 }
 
-fn install_cli(root: &Path) -> Result<PathBuf> {
+pub(crate) fn install_cli(root: &Path) -> Result<PathBuf> {
     let installation = root.join("target/tauri-cli");
     let binary = installation
         .join("bin")
