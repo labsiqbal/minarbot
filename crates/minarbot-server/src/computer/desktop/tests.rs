@@ -1113,8 +1113,12 @@ async fn shared_browser_profile_preserves_state_and_has_one_writer() -> TestResu
     check(manager.start(THIRD, 0).await)?;
     let shared = manager.root.join("owner-chrome");
     fs::write(shared.join("Default/session-fixture"), "session")?;
+    // A reservation or a request in flight can still hold the stopped
+    // Computer; stopping must release the shared profile anyway.
+    let held = check(manager.get(FIRST))?;
     check(manager.stop(FIRST).await)?;
     check(manager.start(SECOND, 0).await)?;
+    drop(held);
     assert_eq!(
         fs::read_to_string(shared.join("Default/session-fixture"))?,
         "session"
