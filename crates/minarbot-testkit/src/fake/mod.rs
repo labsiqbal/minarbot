@@ -23,6 +23,23 @@ use std::{
 pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
 /// Fail with `message` unless `condition` holds.
+/// Why Codex app-server would reject `turn/start` input, as its `UserInput`
+/// union allows only these item shapes.
+pub fn codex_input_error(input: &Value) -> Option<String> {
+    let Some(items) = input.as_array() else {
+        return Some("Invalid request: input must be an array".into());
+    };
+    items.iter().find_map(|item| {
+        let valid = match item["type"].as_str() {
+            Some("text") => item["text"].is_string(),
+            Some("image" | "audio") => item["url"].is_string() || item["fileId"].is_string(),
+            Some("localImage" | "skill" | "mention") => item["path"].is_string(),
+            _ => false,
+        };
+        (!valid).then(|| format!("Invalid request: unsupported user input {item}"))
+    })
+}
+
 pub fn check(condition: bool, message: impl Into<String>) -> Result<()> {
     if condition {
         Ok(())

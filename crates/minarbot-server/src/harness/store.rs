@@ -467,7 +467,44 @@ pub(super) async fn rpc(
     process
         .send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
         .await?;
-    tokio::time::timeout(Duration::from_secs(15),async{loop{let value=process.next().await?;if value["id"]==id{if value.get("error").is_some(){return Err(error(502,"Harness rejected a protocol request. Check host login, version and session; no automatic replay."));}return Ok(value["result"].clone());}}}).await.map_err(|_|error(502,format!("Coding harness timed out during {method}. No automatic replay.")))?
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let value = process.next().await?;
+            if value["id"] == id {
+                if let Some(failure) = value.get("error") {
+                    return Err(rejected(method, failure));
+                }
+                return Ok(value["result"].clone());
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        error(
+            502,
+            format!("Coding harness timed out during {method}. No automatic replay."),
+        )
+    })?
+}
+/// A JSON-RPC error from the harness, with the method and the harness's own
+/// reason so the owner can act on it.
+fn rejected(method: &str, failure: &Value) -> Failure {
+    let reason: String = failure["message"]
+        .as_str()
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(300)
+        .collect();
+    let reason = reason.trim();
+    error(
+        502,
+        if reason.is_empty() {
+            format!("The harness rejected {method}. No automatic replay.")
+        } else {
+            format!("The harness rejected {method}: {reason}. No automatic replay.")
+        },
+    )
 }
 pub(super) fn acp_args(runtime: &str, path: &Path) -> Vec<String> {
     match runtime {
@@ -613,7 +650,7 @@ async fn execute(
             None => None,
         }
     };
-    // Codex receives attached images as `input_image` items (below); keeping
+    // Codex receives attached images as `image` input items (below); keeping
     // their data URLs in the text prompt as well sent each image twice and
     // pushed turns with valid images over the 2 MiB context limit.
     let prompt_messages: Vec<Value> = if runtime == "codex" {
@@ -1023,7 +1060,7 @@ async fn execute(
                 .flatten()
             {
                 if let Some(url) = part["image_url"]["url"].as_str() {
-                    input.push(json!({"type":"input_image","image_url":url}));
+                    input.push(json!({"type":"image","url":url}));
                 }
             }
             let result=rpc(process,&mut seq,"turn/start",json!({"threadId":session,"additionalContext":context,"input":input,"cwd":workspace,"approvalPolicy":if judging{"never"}else{"on-request"},"sandboxPolicy":if binding.write{json!({"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})}else{json!({"type":"readOnly"})}})).await?;
