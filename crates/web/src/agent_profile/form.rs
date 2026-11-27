@@ -169,13 +169,11 @@ fn valid_edit(value: &Value) -> bool {
                 && ["webAccess", "learnFromConversations"]
                     .iter()
                     .all(|key| value[*key].is_boolean())
-                && ["memoryModel", "goalJudgeModel"]
-                    .iter()
-                    .all(|key| {
-                        value
-                            .get(*key)
-                            .is_none_or(|value| bounded(value, 160, false))
-                    })
+                && ["memoryModel", "goalJudgeModel"].iter().all(|key| {
+                    value
+                        .get(*key)
+                        .is_none_or(|value| bounded(value, 160, false))
+                })
                 && value.get("setup").is_none()))
 }
 
@@ -219,7 +217,11 @@ fn ModelSelect(
     placeholder: &'static str,
     #[prop(optional)] changed: Option<Callback<()>>,
 ) -> impl IntoView {
-    let changed = Callback::new(move |()| if let Some(changed) = changed { changed.run(()); });
+    let changed = Callback::new(move |()| {
+        if let Some(changed) = changed {
+            changed.run(());
+        }
+    });
     view! {
         <Show when=move || !catalog.with(Vec::is_empty)
             fallback=move || view! { <Text id label value locked required optional=optional placeholder=text(placeholder) changed=changed /> }>
@@ -333,10 +335,7 @@ pub(super) fn agent_form(
             default_model
         },
     ));
-    let provider_instance = RwSignal::new(initial(
-        "providerInstance",
-        profile.provider_instance,
-    ));
+    let provider_instance = RwSignal::new(initial("providerInstance", profile.provider_instance));
     let model_options = RwSignal::new(
         saved["modelOptions"]
             .as_object()
@@ -549,11 +548,33 @@ pub(super) fn agent_form(
         ];
         content(move || view! { <Menu name="Agent profile actions".to_owned() items>{icon(icons().more)}</Menu> })
     });
-    let catalog = Signal::derive(move || models.data.with(|data| data.as_ref().map(|data| data.models.iter().map(|id| {
-        let label = data.catalog.iter().find(|item| item.id == *id).map_or(id, |item| &item.label).clone();
-        (id.clone(), label)
-    }).collect::<Vec<_>>()).unwrap_or_default()));
-    let name_label = Signal::derive(move || if !editing && setup.get() { "Temporary name".to_owned() } else { "Name".to_owned() });
+    let catalog = Signal::derive(move || {
+        models.data.with(|data| {
+            data.as_ref()
+                .map(|data| {
+                    data.models
+                        .iter()
+                        .map(|id| {
+                            let label = data
+                                .catalog
+                                .iter()
+                                .find(|item| item.id == *id)
+                                .map_or(id, |item| &item.label)
+                                .clone();
+                            (id.clone(), label)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+    });
+    let name_label = Signal::derive(move || {
+        if !editing && setup.get() {
+            "Temporary name".to_owned()
+        } else {
+            "Name".to_owned()
+        }
+    });
     let profile_fields = view! {
         <div class="agent-profile__avatar">
             {move || {
@@ -574,12 +595,57 @@ pub(super) fn agent_form(
         </label>
     };
     let goal_open = goal.with_untracked(|value| !value.is_empty());
-    let instance_options = Signal::derive(move || instances.data.with(|data| data.as_ref().map(|data| data.providers.iter().map(|provider| {
-        let ready = provider.enabled && provider.installed && (provider.kind != "codex" && provider.kind != "claude" || provider.auth.as_ref().is_some_and(|auth| auth.status == "authenticated"));
-        let reason = if !provider.enabled { "Disabled".into() } else if !provider.installed { "Not installed".into() } else if !ready { provider.auth.as_ref().and_then(|auth| auth.reason.clone()).unwrap_or_else(|| "Not authenticated".into()) } else { String::new() };
-        (provider.id.clone(), provider.display_name.clone(), ready, reason)
-    }).collect::<Vec<_>>()).unwrap_or_default()));
-    let model_options_for_selection = Signal::derive(move || models.data.with(|data| data.as_ref().and_then(|data| data.catalog.iter().find(|entry| entry.id == model.get()).map(|entry| entry.options.clone())).unwrap_or_default()));
+    let instance_options = Signal::derive(move || {
+        instances.data.with(|data| {
+            data.as_ref()
+                .map(|data| {
+                    data.providers
+                        .iter()
+                        .map(|provider| {
+                            let ready = provider.enabled
+                                && provider.installed
+                                && (provider.kind != "codex" && provider.kind != "claude"
+                                    || provider
+                                        .auth
+                                        .as_ref()
+                                        .is_some_and(|auth| auth.status == "authenticated"));
+                            let reason = if !provider.enabled {
+                                "Disabled".into()
+                            } else if !provider.installed {
+                                "Not installed".into()
+                            } else if !ready {
+                                provider
+                                    .auth
+                                    .as_ref()
+                                    .and_then(|auth| auth.reason.clone())
+                                    .unwrap_or_else(|| "Not authenticated".into())
+                            } else {
+                                String::new()
+                            };
+                            (
+                                provider.id.clone(),
+                                provider.display_name.clone(),
+                                ready,
+                                reason,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+    });
+    let model_options_for_selection = Signal::derive(move || {
+        models.data.with(|data| {
+            data.as_ref()
+                .and_then(|data| {
+                    data.catalog
+                        .iter()
+                        .find(|entry| entry.id == model.get())
+                        .map(|entry| entry.options.clone())
+                })
+                .unwrap_or_default()
+        })
+    });
     let model_fields = view! {
         <ui::Field label="Provider" name="provider-instance">
             <span class="connection-select"><select class="k-input" name="providerInstance" aria-label="Provider instance" prop:value=provider_instance disabled=locked

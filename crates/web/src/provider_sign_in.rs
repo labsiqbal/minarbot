@@ -63,7 +63,8 @@ pub(crate) fn SignIn(target: Target, close: UiAction, signed_in: UiAction) -> im
         let request = attempt.get_untracked();
         spawn_local(async move {
             let path = format!("{PATH}/{}/sign-in", id.get_value());
-            let result = api::command::<Started>(&path, json!({"instanceId": id.get_value()})).await;
+            let result =
+                api::command::<Started>(&path, json!({"instanceId": id.get_value()})).await;
             if attempt.try_get_untracked() != Some(request) {
                 return;
             }
@@ -78,14 +79,18 @@ pub(crate) fn SignIn(target: Target, close: UiAction, signed_in: UiAction) -> im
     let checking = StoredValue::new(false);
     if let Ok(timer) = set_interval_with_handle(
         move || {
-            let waiting = started.with_untracked(|value| value.as_ref().is_some_and(|value| !value.needs_code));
+            let waiting = started
+                .with_untracked(|value| value.as_ref().is_some_and(|value| !value.needs_code));
             if !waiting || checking.get_value() {
                 return;
             }
             checking.set_value(true);
             spawn_local(async move {
                 if let Ok(list) = api::read::<Listed>(PATH).await {
-                    let done = list.providers.iter().any(|row| row.id == id.get_value() && row.auth.status == "authenticated");
+                    let done = list
+                        .providers
+                        .iter()
+                        .any(|row| row.id == id.get_value() && row.auth.status == "authenticated");
                     if done && started.try_get_untracked().flatten().is_some() {
                         started.set(None);
                         signed_in.run(());
@@ -108,7 +113,11 @@ pub(crate) fn SignIn(target: Target, close: UiAction, signed_in: UiAction) -> im
         error.set(String::new());
         spawn_local(async move {
             let path = format!("{PATH}/{}/sign-in-code", id.get_value());
-            let result = api::command::<serde_json::Value>(&path, json!({"instanceId": id.get_value(), "code": value})).await;
+            let result = api::command::<serde_json::Value>(
+                &path,
+                json!({"instanceId": id.get_value(), "code": value}),
+            )
+            .await;
             let _ = busy.try_set(false);
             match result {
                 Ok(_) => signed_in.run(()),
@@ -121,15 +130,31 @@ pub(crate) fn SignIn(target: Target, close: UiAction, signed_in: UiAction) -> im
         });
     };
     let copy = move |_| {
-        if let Some(value) = started.with_untracked(|value| value.as_ref().and_then(|value| value.code.clone())) {
+        if let Some(value) =
+            started.with_untracked(|value| value.as_ref().and_then(|value| value.code.clone()))
+        {
             let _ = window().navigator().clipboard().write_text(&value);
             copied.set(true);
-            set_timeout(move || { let _ = copied.try_set(false); }, Duration::from_secs(2));
+            set_timeout(
+                move || {
+                    let _ = copied.try_set(false);
+                },
+                Duration::from_secs(2),
+            );
         }
     };
-    let url = move || started.with(|value| value.as_ref().map(|value| value.url.clone()).unwrap_or_default());
-    let device_code = move || started.with(|value| value.as_ref().and_then(|value| value.code.clone()));
-    let needs_code = move || started.with(|value| value.as_ref().is_some_and(|value| value.needs_code));
+    let url = move || {
+        started.with(|value| {
+            value
+                .as_ref()
+                .map(|value| value.url.clone())
+                .unwrap_or_default()
+        })
+    };
+    let device_code =
+        move || started.with(|value| value.as_ref().and_then(|value| value.code.clone()));
+    let needs_code =
+        move || started.with(|value| value.as_ref().is_some_and(|value| value.needs_code));
     view! {
         <Modal title=format!("Sign in to {}", target.name) busy=busy close=close
             footer=Box::new(move || view! {

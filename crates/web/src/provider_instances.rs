@@ -1,6 +1,6 @@
-use crate::{api, connection_ui::*};
 use crate::provider_icons::ProviderMark;
 use crate::provider_sign_in::{SignIn, Target};
+use crate::{api, connection_ui::*};
 use leptos::{prelude::*, task::spawn_local};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -51,7 +51,11 @@ struct Auth {
 
 impl Default for Auth {
     fn default() -> Self {
-        Self { status: "unknown".into(), method: None, reason: None }
+        Self {
+            status: "unknown".into(),
+            method: None,
+            reason: None,
+        }
     }
 }
 
@@ -121,7 +125,9 @@ fn signs_in(kind: &str) -> bool {
 }
 
 fn ready(provider: &Instance) -> bool {
-    provider.enabled && provider.installed && (!signs_in(&provider.kind) || provider.auth.status == "authenticated")
+    provider.enabled
+        && provider.installed
+        && (!signs_in(&provider.kind) || provider.auth.status == "authenticated")
 }
 
 fn status_line(provider: &Instance) -> String {
@@ -135,9 +141,23 @@ fn status_line(provider: &Instance) -> String {
         return "Ready".into();
     }
     if provider.auth.status == "authenticated" {
-        return format!("Authenticated · {}", provider.auth.method.clone().unwrap_or_else(|| kind_label(&provider.kind).into()));
+        return format!(
+            "Authenticated · {}",
+            provider
+                .auth
+                .method
+                .clone()
+                .unwrap_or_else(|| kind_label(&provider.kind).into())
+        );
     }
-    format!("Not authenticated · {}", provider.auth.reason.clone().unwrap_or_else(|| "Sign in required".into()))
+    format!(
+        "Not authenticated · {}",
+        provider
+            .auth
+            .reason
+            .clone()
+            .unwrap_or_else(|| "Sign in required".into())
+    )
 }
 
 fn slug(value: &str) -> String {
@@ -150,14 +170,21 @@ fn slug(value: &str) -> String {
         }
     }
     let result = result.trim_matches('-');
-    if result.is_empty() { "provider-instance".into() } else { result.chars().take(64).collect() }
+    if result.is_empty() {
+        "provider-instance".into()
+    } else {
+        result.chars().take(64).collect()
+    }
 }
 
 pub fn panel() -> impl IntoView {
     let providers = query::<Envelope>(|| PATH.into());
     // Agent CLIs installed here that have no instance yet.
     let detected = query::<Envelope>(|| format!("{PATH}/detected"));
-    let reload = UiAction::new(move |()| { providers.reload.run(()); detected.reload.run(()); });
+    let reload = UiAction::new(move |()| {
+        providers.reload.run(());
+        detected.reload.run(());
+    });
     let selected = RwSignal::new(None::<String>);
     let adding = RwSignal::new(false);
     let error = RwSignal::new(String::new());
@@ -167,7 +194,10 @@ pub fn panel() -> impl IntoView {
 
     Effect::new(move |_| {
         if selected.get_untracked().is_none() {
-            if let Some(id) = providers.data.with_untracked(|data| data.as_ref().and_then(|data| data.providers.first().map(|provider| provider.id.clone()))) {
+            if let Some(id) = providers.data.with_untracked(|data| {
+                data.as_ref()
+                    .and_then(|data| data.providers.first().map(|provider| provider.id.clone()))
+            }) {
                 selected.set(Some(id));
             }
         }
@@ -177,20 +207,33 @@ pub fn panel() -> impl IntoView {
         reload.run(());
         checked.set("Checked just now".into());
     });
-    let current = move || providers.data.with(|data| data.as_ref().and_then(|data| {
-        selected.get().as_deref().and_then(|id| data.providers.iter().find(|provider| provider.id == id)).cloned()
-            .or_else(|| data.providers.first().cloned())
-    }));
+    let current = move || {
+        providers.data.with(|data| {
+            data.as_ref().and_then(|data| {
+                selected
+                    .get()
+                    .as_deref()
+                    .and_then(|id| data.providers.iter().find(|provider| provider.id == id))
+                    .cloned()
+                    .or_else(|| data.providers.first().cloned())
+            })
+        })
+    };
     let close_add = UiAction::new(move |()| adding.set(false));
     let adding_detected = RwSignal::new(String::new());
     let add_detected = move |provider: Instance| {
-        if !adding_detected.get_untracked().is_empty() { return; }
+        if !adding_detected.get_untracked().is_empty() {
+            return;
+        }
         adding_detected.set(provider.id.clone());
         error.set(String::new());
         let body = json!({"instanceId":provider.id,"kind":provider.kind,"displayName":provider.display_name,"enabled":true});
         spawn_local(async move {
             match api::command::<Instance>(PATH, body).await {
-                Ok(created) => { saved.set(String::new()); selected.set(Some(created.id)); }
+                Ok(created) => {
+                    saved.set(String::new());
+                    selected.set(Some(created.id));
+                }
                 Err(message) => error.set(message),
             }
             adding_detected.set(String::new());
@@ -198,7 +241,10 @@ pub fn panel() -> impl IntoView {
         });
     };
     let signing = RwSignal::new(None::<Target>);
-    let sign_in = Callback::new(move |target: Target| { adding.set(false); signing.set(Some(target)); });
+    let sign_in = Callback::new(move |target: Target| {
+        adding.set(false);
+        signing.set(Some(target));
+    });
     view! {
         <div class="k-page bs-root provider-instances-page">
             <Header title="Providers" actions=Box::new(move || view! {
@@ -288,7 +334,13 @@ pub fn panel() -> impl IntoView {
     }
 }
 
-fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: RwSignal<String>, open_sign_in: Callback<Target>) -> AnyView {
+fn detail(
+    provider: Instance,
+    reload: UiAction,
+    error: RwSignal<String>,
+    saved: RwSignal<String>,
+    open_sign_in: Callback<Target>,
+) -> AnyView {
     let name = RwSignal::new(provider.display_name.clone());
     let binary = RwSignal::new(provider.binary_path.clone());
     let home = RwSignal::new(provider.home_path.clone());
@@ -308,7 +360,9 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
     let shadow_path = provider.shadow_home_path.clone();
     let is_ready = ready(&provider);
     let save = UiAction::new(move |()| {
-        if busy.get_untracked() { return; }
+        if busy.get_untracked() {
+            return;
+        }
         busy.set(true);
         let body = json!({
             "instanceId": save_id.clone(),
@@ -327,13 +381,20 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
         let request_id = save_id.clone();
         spawn_local(async move {
             match api::command::<Instance>(&format!("{PATH}/{request_id}/update"), body).await {
-                Ok(_) => { saved.set("Saved".into()); reload.run(()); }
+                Ok(_) => {
+                    saved.set("Saved".into());
+                    reload.run(());
+                }
                 Err(message) => error.set(message),
             }
             busy.set(false);
         });
     });
-    let sign_in_target = Target { id: provider_id.clone(), kind: provider.kind.clone(), name: provider.display_name.clone() };
+    let sign_in_target = Target {
+        id: provider_id.clone(),
+        kind: provider.kind.clone(),
+        name: provider.display_name.clone(),
+    };
     let sign_in = UiAction::new(move |()| open_sign_in.run(sign_in_target.clone()));
     let refresh_id = provider_id.clone();
     let refresh = UiAction::new(move |()| {
@@ -342,8 +403,15 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
         let reload = reload;
         let error = error;
         spawn_local(async move {
-            let result = api::command::<Value>(&format!("{PATH}/{id}/refresh"), json!({"instanceId":id})).await;
-            if let Err(message) = result { error.set(message); } else { saved.set("Checked just now".into()); reload.run(()); }
+            let result =
+                api::command::<Value>(&format!("{PATH}/{id}/refresh"), json!({"instanceId":id}))
+                    .await;
+            if let Err(message) = result {
+                error.set(message);
+            } else {
+                saved.set("Checked just now".into());
+                reload.run(());
+            }
             busy.set(false);
         });
     });
@@ -355,7 +423,12 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
         confirm_open.set(false);
         spawn_local(async move {
             let request_id = id;
-            match api::command::<Value>(&format!("{PATH}/{request_id}/delete"), json!({"instanceId":request_id,"revision":provider_revision})).await {
+            match api::command::<Value>(
+                &format!("{PATH}/{request_id}/delete"),
+                json!({"instanceId":request_id,"revision":provider_revision}),
+            )
+            .await
+            {
                 Ok(_) => reload.run(()),
                 Err(message) => error.set(message),
             }
@@ -412,7 +485,12 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
 /// `reload` runs once the instance exists, `saved` after a manual setup and
 /// `sign_in` with the new Codex or Claude instance to sign in.
 #[component]
-pub(crate) fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + Copy + Send + 'static, sign_in: Callback<Target>) -> impl IntoView {
+pub(crate) fn AddProvider(
+    close: UiAction,
+    reload: UiAction,
+    saved: impl Fn() + Copy + Send + 'static,
+    sign_in: Callback<Target>,
+) -> impl IntoView {
     let existing = query::<Envelope>(|| PATH.into());
     // Shown inside the modal: the page behind it sits under the backdrop.
     let error = RwSignal::new(String::new());
@@ -428,19 +506,45 @@ pub(crate) fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + 
     let busy = RwSignal::new(false);
     let submit = move |event: web_sys::SubmitEvent| {
         event.prevent_default();
-        if busy.get_untracked() { return; }
+        if busy.get_untracked() {
+            return;
+        }
         let display = name.get_untracked().trim().to_owned();
         let requested_id = instance_id.get_untracked();
         let id = if requested_id.trim().is_empty() {
             // A generated ID never collides with an existing instance.
             let base = slug(&display);
-            let taken = existing.data.with_untracked(|data| data.as_ref().map(|data| data.providers.iter().map(|provider| provider.id.clone()).collect::<Vec<_>>()).unwrap_or_default());
-            (1..).map(|n| if n == 1 { base.clone() } else { format!("{base}-{n}") }).find(|id| !taken.contains(id)).unwrap_or(base)
+            let taken = existing.data.with_untracked(|data| {
+                data.as_ref()
+                    .map(|data| {
+                        data.providers
+                            .iter()
+                            .map(|provider| provider.id.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            });
+            (1..)
+                .map(|n| {
+                    if n == 1 {
+                        base.clone()
+                    } else {
+                        format!("{base}-{n}")
+                    }
+                })
+                .find(|id| !taken.contains(id))
+                .unwrap_or(base)
         } else {
             slug(requested_id.trim())
         };
-        if display.is_empty() { error.set("Display name is required.".into()); return; }
-        let signing_in = event.submitter().and_then(|button| button.get_attribute("value")) == Some("signin".into());
+        if display.is_empty() {
+            error.set("Display name is required.".into());
+            return;
+        }
+        let signing_in = event
+            .submitter()
+            .and_then(|button| button.get_attribute("value"))
+            == Some("signin".into());
         let kind_value = kind.get_untracked();
         let body = json!({"instanceId":id,"kind":kind_value,"displayName":display,"binaryPath":binary.get_untracked().trim(),"homePath":home.get_untracked().trim(),"shadowHomePath":shadow.get_untracked().trim(),"launchArgs":args.get_untracked().lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>(),"environment":[]});
         busy.set(true);
@@ -451,14 +555,28 @@ pub(crate) fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + 
             match result {
                 Ok(_) if signing_in => {
                     reload.run(());
-                    sign_in.run(Target { id, kind: kind_value, name: display });
+                    sign_in.run(Target {
+                        id,
+                        kind: kind_value,
+                        name: display,
+                    });
                 }
                 Ok(_) => saved(),
                 Err(message) => error.set(message),
             }
         });
     };
-    let kinds = [("codex", "Codex"), ("claude", "Claude"), ("hermes", "Hermes"), ("antigravity", "Antigravity"), ("grok", "Grok"), ("pi", "Pi"), ("opencode", "OpenCode"), ("gemini", "Gemini"), ("kiro", "Kiro")];
+    let kinds = [
+        ("codex", "Codex"),
+        ("claude", "Claude"),
+        ("hermes", "Hermes"),
+        ("antigravity", "Antigravity"),
+        ("grok", "Grok"),
+        ("pi", "Pi"),
+        ("opencode", "OpenCode"),
+        ("gemini", "Gemini"),
+        ("kiro", "Kiro"),
+    ];
     let sign_in_kind = move || matches!(kind.get().as_str(), "codex" | "claude");
     view! {
         <Modal title="Add provider".to_owned() size="lg" busy=busy close=close
