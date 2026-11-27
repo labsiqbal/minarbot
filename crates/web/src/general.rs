@@ -306,11 +306,79 @@ fn web_search(error_icon: String) -> impl IntoView {
     }
 }
 
+fn time_zone(error_icon: String) -> impl IntoView {
+    use crate::time_zone::{Settings, ZoneSelect, PATH};
+    let settings = RwSignal::new(None::<Settings>);
+    let value = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let error = RwSignal::new(String::new());
+    let load = move |result: Result<Settings, String>, failure: &str| match result {
+        Ok(next) => {
+            value.try_set(next.zone.clone().unwrap_or_default());
+            settings.try_set(Some(next));
+        }
+        Err(_) => {
+            error.try_set(failure.into());
+        }
+    };
+    leptos::task::spawn_local(async move {
+        load(
+            api::read::<Settings>(PATH).await,
+            "Time zone could not load. Reopen General to retry.",
+        );
+    });
+    let change = Callback::new(move |zone: String| {
+        busy.set(true);
+        error.set(String::new());
+        leptos::task::spawn_local(async move {
+            let zone = (!zone.is_empty()).then_some(zone);
+            load(
+                api::command::<Settings>(PATH, json!({ "zone": zone })).await,
+                "Time zone could not be saved. Reopen General to check the current value.",
+            );
+            busy.try_set(false);
+        });
+    });
+    let first = Signal::derive(move || {
+        settings.with(|settings| {
+            settings.as_ref().map_or_else(String::new, |settings| {
+                format!("Automatic · {}", settings.machine.replace('_', " "))
+            })
+        })
+    });
+    let zones = Signal::derive(move || {
+        settings.with(|settings| {
+            settings
+                .as_ref()
+                .map(|settings| settings.zones.clone())
+                .unwrap_or_default()
+        })
+    });
+    view! {
+        <Section title="Time">
+            <div class="k-card">
+                <div class="k-row">
+                    <div class="k-row__main"><span class="k-row__text">
+                        <span class="k-row__title"><label for="general-time-zone">"Time zone"</label></span>
+                        <span class="k-row__meta">"Routines follow this zone unless they set their own."</span>
+                    </span></div>
+                    <span class="k-row__trailing general-time-zone">
+                        <ZoneSelect id="general-time-zone" value first zones change
+                            disabled=Signal::derive(move || settings.with(Option::is_none) || busy.get()) />
+                    </span>
+                </div>
+            </div>
+            <ErrorAlert message=error icon=error_icon />
+        </Section>
+    }
+}
+
 pub fn panel(error_icon: String) -> impl IntoView {
     view! {
         <div class="k-page bs-root">
             <header class="k-page-head"><div class="k-page-head__text"><h1 tabindex="-1">"General"</h1></div></header>
             {notifications(error_icon.clone())}
+            {time_zone(error_icon.clone())}
             {crate::voice::settings()}
             {conversations(error_icon.clone())}
             {web_search(error_icon)}

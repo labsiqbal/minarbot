@@ -304,7 +304,10 @@ pub fn route(
         let project=v.get("project").cloned().unwrap_or_else(||current.as_ref().map(|r|r["project"].clone()).unwrap_or(Value::Null));
         let report=v["reportTo"].as_str().or_else(||current.as_ref().and_then(|r|r["report_to"].as_str())).unwrap_or(if v.get("schedule").is_some(){"direct"}else{"run"});binding(db,agent,&project,report)?;
         if v.get("schedule").is_some() && (v.get("nextAt").is_some() || v.get("intervalSeconds").is_some()) { return Err(error(400,"Choose a schedule or legacy interval, not both.")); }
-        let zone = schedule::zone(v["zone"].as_str().or_else(||current.as_ref().and_then(|r|r["schedule_zone"].as_str())))?;
+        // A routine on the General time zone follows it; another zone is pinned.
+        let general = schedule::home(db)?;
+        let zone = match v["zone"].as_str() { Some(zone) => schedule::zone(Some(zone))?, None => general.clone() };
+        let follows = i64::from(zone == general);
         let (spec, mut next, interval) = if let Some(value) = v.get("schedule") {
             let (spec,next,interval) = schedule::local(value,&zone,state.config.now())?;
             (Some(spec.to_string()),next,interval)
@@ -322,8 +325,8 @@ pub fn route(
                 db.execute("UPDATE routines SET webhook_source=NULL WHERE id=?",[p[2]])?;
             }
             db.execute("UPDATE turns SET status='cancelled',paused=0,error='The schedule changed before the run.' WHERE status='queued' AND id IN(SELECT turn FROM routine_runs WHERE routine=?)",[p[2]])?;
-            db.execute("UPDATE routines SET name=?,prompt=?,next_at=?,interval_ms=?,enabled=?,trigger=coalesce(?,trigger),project=?,report_to=?,schedule_json=?,schedule_zone=?,revision=revision+1 WHERE id=?",params![name,prompt,next,interval,i64::from(v["enabled"]==true),v["trigger"].as_str(),project.as_str(),report,spec,zone,p[2]])?;
-        }else{db.execute("INSERT INTO routines(id,agent,name,prompt,next_at,interval_ms,enabled,trigger,project,report_to,schedule_json,schedule_zone,webhook_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",params![string(v,"id"),agent,name,prompt,next,interval,i64::from(v["enabled"]==true),v["trigger"].as_str().unwrap_or("schedule"),project.as_str(),report,spec,zone,v["webhookSource"].as_str()])?;}
+            db.execute("UPDATE routines SET name=?,prompt=?,next_at=?,interval_ms=?,enabled=?,trigger=coalesce(?,trigger),project=?,report_to=?,schedule_json=?,schedule_zone=?,zone_follows=?,revision=revision+1 WHERE id=?",params![name,prompt,next,interval,i64::from(v["enabled"]==true),v["trigger"].as_str(),project.as_str(),report,spec,zone,follows,p[2]])?;
+        }else{db.execute("INSERT INTO routines(id,agent,name,prompt,next_at,interval_ms,enabled,trigger,project,report_to,schedule_json,schedule_zone,zone_follows,webhook_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![string(v,"id"),agent,name,prompt,next,interval,i64::from(v["enabled"]==true),v["trigger"].as_str().unwrap_or("schedule"),project.as_str(),report,spec,zone,follows,v["webhookSource"].as_str()])?;}
         present(db,read(db,current.as_ref().map(|r|string(r,"id")).unwrap_or(string(v,"id")))?)
     }).map(|v|(200,v));
     }

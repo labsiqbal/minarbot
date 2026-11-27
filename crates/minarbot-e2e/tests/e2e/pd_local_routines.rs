@@ -530,3 +530,121 @@ async fn scheduled_cron_catches_up_once_and_unavailable_project_folders_do_not_s
     ensure!(model.calls() == 1, "restart calls: {}", model.calls());
     Ok(())
 }
+
+/// Settings > General picks the time zone; routines on it follow a change,
+/// a routine pinned to another zone keeps its clock.
+#[tokio::test]
+async fn routines_on_the_general_time_zone_follow_it() -> Result<()> {
+    let root = TestRoot::new()?;
+    let app = root.start(ServerConfig::new()).await?;
+    let settings = app.get_expect("/api/settings/time-zone", 200).await?;
+    ensure!(
+        settings["zone"].is_null()
+            && settings["effective"] == settings["machine"]
+            && settings["zones"]
+                .as_array()
+                .is_some_and(|zones| zones.contains(&json!("Asia/Jakarta"))),
+        "defaults: {settings}"
+    );
+    let general = |zone: Value| json!({"id": new_id(), "zone": zone});
+    app.post_expect(
+        "/api/settings/time-zone",
+        general(json!("Asia/Jakarta")),
+        200,
+    )
+    .await?;
+
+    let agent = app
+        .post_expect(
+            "/api/agents",
+            json!({"runtime": "api", "id": new_id(), "name": "Clock", "model": "test",
+                "instructions": "Help."}),
+            201,
+        )
+        .await?;
+    let routines = format!("/api/agents/{}/routines", id_of(&agent)?);
+    let cron = json!({"kind": "cron", "expression": "0 9 * * *"});
+    let routine = |zone: Option<&str>| {
+        let mut body = json!({"id": new_id(), "name": "Daily", "prompt": "Run.",
+            "schedule": cron, "enabled": true});
+        if let Some(zone) = zone {
+            body["zone"] = json!(zone);
+        }
+        body
+    };
+    let follows = app.post(&routines, routine(None)).await?;
+    let pinned = app.post(&routines, routine(Some("Europe/London"))).await?;
+    ensure!(
+        follows["schedule_zone"] == "Asia/Jakarta" && follows["zone_follows"] == 1,
+        "follows: {follows}"
+    );
+    ensure!(pinned["zone_follows"] == 0, "pinned: {pinned}");
+
+    let changed = app
+        .post_expect(
+            "/api/settings/time-zone",
+            general(json!("America/New_York")),
+            200,
+        )
+        .await?;
+    ensure!(
+        changed["effective"] == "America/New_York",
+        "changed: {changed}"
+    );
+    let new_york = app
+        .get_expect(
+            &format!(
+                "/api/routine-schedule?zone=America%2FNew_York&schedule={}",
+                urlencoding(&cron.to_string())
+            ),
+            200,
+        )
+        .await?;
+    let list = app.get(&routines).await?;
+    let row = |id: &Value| {
+        list.as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == *id).cloned())
+            .ok_or_else(|| format!("{id} missing: {list}"))
+    };
+    let moved = row(&follows["id"])?;
+    ensure!(
+        moved["schedule_zone"] == "America/New_York" && moved["next_at"] == new_york["times"][0],
+        "moved: {moved}"
+    );
+    let kept = row(&pinned["id"])?;
+    ensure!(
+        kept["schedule_zone"] == "Europe/London" && kept["next_at"] == pinned["next_at"],
+        "kept: {kept}"
+    );
+    // A preview without a zone uses the General zone.
+    let preview = app
+        .get_expect(
+            &format!(
+                "/api/routine-schedule?schedule={}",
+                urlencoding(&cron.to_string())
+            ),
+            200,
+        )
+        .await?;
+    ensure!(preview["zone"] == "America/New_York", "preview: {preview}");
+
+    let automatic = app
+        .post_expect("/api/settings/time-zone", general(Value::Null), 200)
+        .await?;
+    ensure!(
+        automatic["zone"].is_null() && automatic["effective"] == automatic["machine"],
+        "automatic: {automatic}"
+    );
+    Ok(())
+}
+
+fn urlencoding(raw: &str) -> String {
+    raw.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}

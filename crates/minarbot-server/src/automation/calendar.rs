@@ -158,7 +158,7 @@ pub fn read(db: &Connection, q: &[(String, String)], now: i64) -> Result<Value> 
         return Err(invalid());
     }
     let param = |key| data::param(q, key);
-    let zone = schedule::zone(None)?;
+    let zone = schedule::home(db)?;
     let tz: Tz = zone.parse().map_err(|_| Failure::storage())?;
     let start = param("start").ok_or_else(invalid)?;
     let end = param("end").ok_or_else(invalid)?;

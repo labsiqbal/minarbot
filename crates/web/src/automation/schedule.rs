@@ -109,10 +109,10 @@ pub(super) fn ScheduleFields(
 ) -> impl IntoView {
     let now = js_sys::Date::now() as i64;
     let existing_zone = zone
-        .as_deref()
+        .clone()
         .filter(|zone| !zone.is_empty())
-        .unwrap_or("UTC");
-    let (fallback_day, fallback_time) = wall_time(next_at, existing_zone);
+        .unwrap_or_else(device_zone);
+    let (fallback_day, fallback_time) = wall_time(next_at, &existing_zone);
     let date = RwSignal::new(initial["date"].as_str().unwrap_or(&fallback_day).to_owned());
     let parts = text(&initial["expression"])
         .split_whitespace()
@@ -173,23 +173,22 @@ pub(super) fn ScheduleFields(
     ));
     let unit = RwSignal::new(initial["unit"].as_str().unwrap_or("hour").to_owned());
     let old = StoredValue::new(initial);
-    let has_zone = zone.as_ref().is_some_and(|zone| !zone.is_empty());
+    // An empty zone follows Settings > General.
     let zone = RwSignal::new(zone.unwrap_or_default());
     let zone_error = RwSignal::new(String::new());
+    let general = RwSignal::new(None::<crate::time_zone::Settings>);
     let preview = RwSignal::new(None::<Result<Value, String>>);
     let version = RwSignal::new(0_u64);
-    if !has_zone {
-        spawn_local(async move {
-            match api::read::<Value>("/api/routine-schedule").await {
-                Ok(value) => {
-                    zone.try_set(text(&value["zone"]).into());
-                }
-                Err(error) => {
-                    zone_error.try_set(error);
-                }
+    spawn_local(async move {
+        match api::read::<crate::time_zone::Settings>(crate::time_zone::PATH).await {
+            Ok(value) => {
+                general.try_set(Some(value));
             }
-        });
-    }
+            Err(error) => {
+                zone_error.try_set(error);
+            }
+        }
+    });
     Effect::new(move |previous: Option<Option<TimeoutHandle>>| {
         if let Some(Some(previous)) = previous {
             previous.clear();
@@ -198,7 +197,8 @@ pub(super) fn ScheduleFields(
         let current = version.get_untracked();
         let zone = zone.get();
         if !active.get() {
-            let mut timing = json!({"nextAt":next_at,"intervalSeconds":interval_ms.map(|ms| ms/1000)});
+            let mut timing =
+                json!({"nextAt":next_at,"intervalSeconds":interval_ms.map(|ms| ms/1000)});
             if !zone.is_empty() {
                 timing["zone"] = json!(zone);
             }
@@ -249,13 +249,12 @@ pub(super) fn ScheduleFields(
         };
         output.set(None);
         preview.set(None);
-        if zone.is_empty() {
-            return None;
+        let spec_text = spec.to_string();
+        let mut query = vec![("schedule", spec_text.as_str())];
+        if !zone.is_empty() {
+            query.insert(0, ("zone", zone.as_str()));
         }
-        let path = url(
-            "/api/routine-schedule",
-            &[("zone", &zone), ("schedule", &spec.to_string())],
-        );
+        let path = url("/api/routine-schedule", &query);
         set_timeout_with_handle(move || spawn_local(async move {
             let result = api::read::<Value>(&path).await;
             if version.try_get_untracked() != Some(current) { return; }
@@ -291,9 +290,14 @@ pub(super) fn ScheduleFields(
                     <kit::Field id="routine-time" label="Time"><input id="routine-time" class="k-input" type="time" required=active disabled=locked
                         prop:value=time on:input=move |event| time.set(event_target_value(&event)) /></kit::Field>
                 </Show>
-                <kit::Field id="routine-zone" label="Time zone"><input id="routine-zone" class="k-input" required=active disabled=locked maxlength="100"
-                    aria-describedby="routine-zone-hint" placeholder="Asia/Jakarta" prop:value=zone on:input=move |event| zone.set(event_target_value(&event)) />
-                    <span class="k-field__hint" id="routine-zone-hint">"IANA zone. Daily and weekly times follow its local clock."</span>
+                <kit::Field id="routine-zone" label="Time zone">
+                    <crate::time_zone::ZoneSelect id="routine-zone" value=zone described_by=Some("routine-zone-hint")
+                        disabled=Signal::derive(move || locked.get() || general.with(Option::is_none))
+                        first=Signal::derive(move || general.with(|general| general.as_ref().map_or_else(String::new,
+                            |general| format!("Same as General · {}", general.effective.replace('_', " ")))))
+                        zones=Signal::derive(move || general.with(|general| general.as_ref().map(|general| general.zones.clone()).unwrap_or_default()))
+                        change=Callback::new(|_| ()) />
+                    <span class="k-field__hint" id="routine-zone-hint">"Daily and weekly times follow this zone's clock."</span>
                 </kit::Field>
             </div>
             <Show when=move || mode.get() == "weekly">

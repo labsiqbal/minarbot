@@ -7,24 +7,105 @@ pub const CRON_HORIZON: i64 = 1825 * 86400000;
 fn invalid() -> Failure {
     error(400, "Invalid schedule.")
 }
-pub fn zone(value: Option<&str>) -> Result<String> {
-    let home = || {
-        std::env::var("TZ")
-            .ok()
-            .or_else(|| {
-                std::fs::read_link("/etc/localtime").ok().and_then(|p| {
-                    p.to_str()?
-                        .split_once("zoneinfo/")
-                        .map(|(_, z)| z.to_owned())
-                })
+/// The time zone of the machine Minarbot runs on.
+pub fn machine_zone() -> String {
+    std::env::var("TZ")
+        .ok()
+        .filter(|zone| zone.parse::<Tz>().is_ok())
+        .or_else(|| {
+            std::fs::read_link("/etc/localtime").ok().and_then(|p| {
+                p.to_str()?
+                    .split_once("zoneinfo/")
+                    .map(|(_, z)| z.to_owned())
             })
-            .unwrap_or_else(|| "UTC".to_owned())
-    };
-    let value = value.map(str::to_owned).unwrap_or_else(home);
+        })
+        .unwrap_or_else(|| "UTC".to_owned())
+}
+pub fn zone(value: Option<&str>) -> Result<String> {
+    let value = value.map_or_else(machine_zone, str::to_owned);
     if value.len() > 100 || value.parse::<Tz>().is_err() {
         return Err(error(400, "Enter an IANA time zone, such as Asia/Jakarta."));
     }
     Ok(value)
+}
+/// The zone chosen in Settings > General, or the machine's zone.
+pub fn home(db: &Connection) -> Result<String> {
+    Ok(chosen(db)?.unwrap_or_else(machine_zone))
+}
+fn chosen(db: &Connection) -> Result<Option<String>> {
+    Ok(
+        one(db, "SELECT zone FROM time_zone_settings WHERE id=1", [])?
+            .and_then(|row| row["zone"].as_str().map(str::to_owned)),
+    )
+}
+/// Settings > General time zone. Routines that follow it move with it.
+pub fn settings(db: &Connection, v: &Value, get: bool, now: i64) -> Result<Value> {
+    if !get {
+        let chosen = match &v["zone"] {
+            Value::Null => None,
+            Value::String(value) => Some(zone(Some(value))?),
+            _ => return Err(error(400, "Invalid time zone settings.")),
+        };
+        if !data::closed(v, &["id", "zone"]) {
+            return Err(error(400, "Invalid time zone settings."));
+        }
+        let before = home(db)?;
+        db.execute(
+            "INSERT INTO time_zone_settings(id,zone) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET zone=excluded.zone",
+            [&chosen],
+        )?;
+        let after = home(db)?;
+        if after != before {
+            follow(db, &after, now)?;
+        }
+    }
+    let zones = chrono_tz::TZ_VARIANTS
+        .iter()
+        .map(|zone| zone.name())
+        .filter(|name| {
+            *name == "UTC"
+                || name.split_once('/').is_some_and(|(region, _)| {
+                    matches!(
+                        region,
+                        "Africa"
+                            | "America"
+                            | "Antarctica"
+                            | "Asia"
+                            | "Atlantic"
+                            | "Australia"
+                            | "Europe"
+                            | "Indian"
+                            | "Pacific"
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    Ok(
+        json!({"zone": chosen(db)?, "machine": machine_zone(), "effective": home(db)?, "zones": zones}),
+    )
+}
+/// Moves the routines that follow the General zone to `zone`, with their
+/// next one-time or calendar run on its clock.
+fn follow(db: &Connection, zone: &str, now: i64) -> Result<()> {
+    for row in all(
+        db,
+        "SELECT id,schedule_json FROM routines WHERE zone_follows=1",
+        [],
+    )? {
+        let spec = row["schedule_json"]
+            .as_str()
+            .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+        let next = spec.and_then(|spec| match string(&spec, "kind") {
+            "once" => once(&spec, zone).ok(),
+            "cron" => next_cron(string(&spec, "expression"), zone, now, true).ok(),
+            _ => None,
+        });
+        db.execute(
+            "UPDATE routines SET schedule_zone=?,next_at=coalesce(?,next_at),revision=revision+1 WHERE id=?",
+            params![zone, next, string(&row, "id")],
+        )?;
+    }
+    Ok(())
 }
 fn timezone(zone: &str) -> Result<Tz> {
     zone.parse()
@@ -424,13 +505,16 @@ pub fn local(value: &Value, zone: &str, now: i64) -> Result<(Value, i64, Option<
     }
     Ok((spec, next, (duration != 0).then_some(duration)))
 }
-pub fn preview(q: &[(String, String)], now: i64) -> Result<Value> {
+pub fn preview(db: &Connection, q: &[(String, String)], now: i64) -> Result<Value> {
     if q.iter().any(|(k, _)| {
         !["zone", "schedule"].contains(&k.as_str()) || q.iter().filter(|(n, _)| n == k).count() != 1
     }) {
         return Err(error(400, "Invalid schedule preview."));
     }
-    let zone = zone(data::param(q, "zone"))?;
+    let zone = match data::param(q, "zone").filter(|zone| !zone.is_empty()) {
+        Some(value) => zone(Some(value))?,
+        None => home(db)?,
+    };
     let mut resolved = None;
     let times = if let Some(raw) = data::param(q, "schedule") {
         let value: Value =

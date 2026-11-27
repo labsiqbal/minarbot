@@ -26,6 +26,9 @@ type Result<T> = std::result::Result<T, Failure>;
 
 pub fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(include_str!("schema.sql"))?;
+    let follows = all(db, "PRAGMA table_info(routines)", [])?
+        .iter()
+        .any(|r| r["name"] == "zone_follows");
     for (table, name, ty) in [
         ("routines", "project", "TEXT"),
         ("routines", "report_to", "TEXT NOT NULL DEFAULT 'run'"),
@@ -36,6 +39,7 @@ pub fn initialize(db: &Connection) -> Result<()> {
         ("workflow_steps", "parallel_group", "INTEGER"),
         ("workflow_steps", "parallel_branch", "INTEGER"),
         ("turns", "workflow_run", "TEXT"),
+        ("routines", "zone_follows", "INTEGER NOT NULL DEFAULT 0"),
     ] {
         if !all(db, &format!("PRAGMA table_info({table})"), [])?
             .iter()
@@ -43,6 +47,16 @@ pub fn initialize(db: &Connection) -> Result<()> {
         {
             db.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {name} {ty}"))?;
         }
+    }
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS time_zone_settings(id INTEGER PRIMARY KEY CHECK(id=1),zone TEXT)",
+    )?;
+    if !follows {
+        // Routines on the machine's clock follow the new General time zone.
+        db.execute(
+            "UPDATE routines SET zone_follows=1 WHERE schedule_zone=? OR schedule_zone IS NULL",
+            [schedule::machine_zone()],
+        )?;
     }
     let columns = all(db, "PRAGMA table_info(routine_runs)", [])?;
     if columns
@@ -69,6 +83,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/routines", any(entry))
         .route("/api/routines/{id}", any(entry))
         .route("/api/routine-schedule", any(entry))
+        .route("/api/settings/time-zone", any(entry))
         .route("/api/agents/{id}/routines", any(entry))
         .route("/api/routines/{id}/edit", any(entry))
         .route("/api/routines/{id}/delete", any(entry))
@@ -235,8 +250,17 @@ pub(crate) async fn local(state: &AppState, request: Request) -> Result<Response
     if method == Method::GET && path == "/api/routine-schedule" {
         return Ok(crate::json_response(
             200,
-            schedule::preview(&q, state.config.now())?,
+            schedule::preview(db, &q, state.config.now())?,
         ));
+    }
+    if path == "/api/settings/time-zone" {
+        let now = state.config.now();
+        let value = match method {
+            Method::GET => schedule::settings(db, &v, true, now)?,
+            Method::POST => transaction(db, || schedule::settings(db, &v, false, now))?,
+            _ => return Err(error(405, "Method not allowed.")),
+        };
+        return Ok(crate::json_response(200, value));
     }
     let run = || {
         if matches!(p.last(), Some(&"webhook") | Some(&"webhook-events")) {

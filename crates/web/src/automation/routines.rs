@@ -576,9 +576,12 @@ fn RoutineEditor(
                 json!({"kind":"instant","at":next})
             }
         });
+    // A routine that follows the General zone shows "Same as General".
     let zone = initial["zone"]
         .as_str()
-        .or(row["schedule_zone"].as_str())
+        .or(row["schedule_zone"]
+            .as_str()
+            .filter(|_| row["zone_follows"] != 1))
         .map(str::to_owned);
     let enabled = RwSignal::new(
         initial["enabled"]
