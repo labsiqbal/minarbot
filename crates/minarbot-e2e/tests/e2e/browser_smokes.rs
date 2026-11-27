@@ -62,8 +62,18 @@ async fn fresh_data_opens_setup_without_errors() -> Result<()> {
         page.goto(&app.url("/")).await?;
         page.find("heading", "Set up Minarbot").await?;
         page.wait_text("Connect a provider").await?;
-        page.wait_text("Add or enable a provider in Settings > Providers")
+        // Setup adds a provider in place, without a trip to Settings.
+        page.click("button", "Add provider").await?;
+        let dialog = page.find("dialog", "Add provider").await?;
+        page.click_element(page.find_in("button", "Codex", Some(dialog)).await?)
             .await?;
+        page.click_element(page.find_in("button", "Continue", Some(dialog)).await?)
+            .await?;
+        page.fill("textbox", "Display name", "Setup Codex").await?;
+        page.click("button", "Configure manually").await?;
+        page.gone("dialog", "Add provider").await?;
+        page.find("heading", "Set up Minarbot").await?;
+        page.wait_text("Setup Codex").await?;
         Ok(())
     })
     .await

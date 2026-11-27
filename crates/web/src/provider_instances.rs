@@ -170,7 +170,7 @@ pub fn panel() -> impl IntoView {
         <div class="k-page bs-root provider-instances-page">
             <Header title="Providers" actions=Box::new(move || view! {
                 <span class="provider-check-status" role="status"><Icon name="refresh" />{checked}</span>
-                <Button label="Add provider" variant="primary" icon="plus" click=UiAction::new(move |()| { error.set(String::new()); adding.set(true); }) />
+                <Button label="Add provider" variant="primary" icon="plus" click=UiAction::new(move |()| adding.set(true)) />
                 <Button label="Refresh providers" aria="Refresh providers" icon="refresh" click=refresh.clone() busy=providers.busy />
             }.into_any()) />
             <ErrorNotice error=error.into() />
@@ -219,7 +219,7 @@ pub fn panel() -> impl IntoView {
                 </div>
             </Show>
             <Show when=move || adding.get()>
-                <AddProvider close=close_add.clone() reload=providers.reload saved=move || { providers.reload.run(()); adding.set(false); } error=error />
+                <AddProvider close=close_add.clone() reload=providers.reload saved=move || { providers.reload.run(()); adding.set(false); } />
             </Show>
         </div>
     }
@@ -357,8 +357,12 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
     }.into_any()
 }
 
+/// The Add provider wizard, shared by Settings > Providers and setup.
+/// `reload` runs once the instance exists, `saved` after a manual setup.
 #[component]
-fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + Copy + Send + 'static, error: RwSignal<String>) -> impl IntoView {
+pub(crate) fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + Copy + Send + 'static) -> impl IntoView {
+    // Shown inside the modal: the page behind it sits under the backdrop.
+    let error = RwSignal::new(String::new());
     let machine = query::<MachineEnvironment>(|| "/api/environment".into());
     let step = RwSignal::new(0u8);
     let kind = RwSignal::new("codex".to_owned());
@@ -381,6 +385,7 @@ fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + Copy + Send
         let kind_value = kind.get_untracked();
         let body = json!({"instanceId":id,"kind":kind_value,"displayName":display,"binaryPath":binary.get_untracked().trim(),"homePath":home.get_untracked().trim(),"shadowHomePath":shadow.get_untracked().trim(),"launchArgs":args.get_untracked().lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>(),"environment":[]});
         busy.set(true);
+        error.set(String::new());
         sign_in_status.set(String::new());
         spawn_local(async move {
             let result = match api::command::<Instance>(PATH, body).await {
@@ -439,6 +444,7 @@ fn AddProvider(close: UiAction, reload: UiAction, saved: impl Fn() + Copy + Send
                     <label class="k-field"><span class="k-field__label">Launch arguments <span class="k-field__optional">Optional</span></span><textarea class="k-input k-textarea provider-args" name="launchArgs" prop:value=args on:input=move |event| args.set(event_target_value(&event)) placeholder="One argument per line"></textarea></label>
                 </Show>
                 <Show when=move || !sign_in_status.get().is_empty()><p class="provider-wizard-status" role="status">{sign_in_status}</p></Show>
+                <ErrorNotice error=error.into() />
             </form>
         </Modal>
     }

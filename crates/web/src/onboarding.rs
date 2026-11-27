@@ -1,4 +1,4 @@
-use crate::{api, connection_ui::Switch, general::ErrorAlert, shell, workspace};
+use crate::{api, connection_ui::{Switch, UiAction}, general::ErrorAlert, provider_instances::AddProvider, shell, workspace};
 use leptos::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -175,6 +175,9 @@ pub fn page(error_icon: String) -> impl IntoView {
         });
     };
     retry();
+    let adding = RwSignal::new(false);
+    let close_add = UiAction::new(move |()| { adding.set(false); retry(); });
+    let reload = UiAction::new(move |()| retry());
     let generation = RwSignal::new(0u64);
     Effect::new(move |_| {
         generation.update(|value| *value += 1);
@@ -247,13 +250,18 @@ pub fn page(error_icon: String) -> impl IntoView {
                 <li class:is-active=move || !create() class:is-done=create aria-current=move || (!create()).then_some("step")>
                     <div class="first-run__step"><span class="first-run__icon" aria-hidden="true" inner_html=move || if create() { icon(|icons| &icons.check) } else { icon(|icons| &icons.plug) }></span><strong>"Connect a provider"</strong><span class="first-run__status" hidden=move || !create()>{move || selected.get().map(|entry| entry.label)}</span></div>
                     <div class="first-run__form" hidden=move || create() || !loaded.get() && load_error.with(String::is_empty)><div class="k-stack">
-                        <p class="k-field__hint" hidden=move || available.with(|entries| entries.iter().any(|entry| entry.ready))>"Add or enable a provider in Settings > Providers, then check again."</p>
-                        <button type="button" class="k-btn k-btn--md k-btn--secondary" disabled=loading on:click=move |_| retry()>"Check again"</button>
-                        <select class="k-input" aria-label="Provider" prop:value=choice on:change=move |event| choice.set(event_target_value(&event))>
+                        <select class="k-input" aria-label="Provider" hidden=move || available.with(Vec::is_empty) prop:value=choice on:change=move |event| choice.set(event_target_value(&event))>
                             <option value="">"Choose a provider"</option>
                             {move || available.get().into_iter().map(|entry| view! { <option value=entry.value.clone() disabled=!entry.ready>{if entry.ready { entry.label } else { format!("{} · {}", entry.label, entry.reason) }}</option> }).collect_view()}
                         </select>
+                        <div class="k-row-actions">
+                            <button type="button" class="k-btn k-btn--md k-btn--primary" on:click=move |_| adding.set(true)>"Add provider"</button>
+                            <button type="button" class="k-btn k-btn--md k-btn--secondary" hidden=move || available.with(Vec::is_empty) disabled=loading on:click=move |_| retry()>"Check again"</button>
+                        </div>
                     </div></div>
+                    <Show when=move || adding.get()>
+                        <AddProvider close=close_add reload=reload saved=move || close_add.run(()) />
+                    </Show>
                 </li>
                 <li class:is-active=create aria-current=move || create().then_some("step")>
                     <div class="first-run__step"><span class="first-run__icon" aria-hidden="true" inner_html=icon(|icons| &icons.plus)></span><strong>"Create agent"</strong></div>
