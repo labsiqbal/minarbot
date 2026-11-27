@@ -786,6 +786,10 @@ fn codex_message(peer: &Shared, value: &Value) -> Result<()> {
             peer.send(json!({"id": id, "result": {"thread": {"id": peer.session()}}}));
         }
         Some("turn/start") => {
+            if let Some(message) = super::codex_input_error(&params["input"]) {
+                peer.send(json!({"id": id, "error": {"code": -32600, "message": message}}));
+                return Ok(());
+            }
             match params.get("additionalContext") {
                 Some(context) => log(LOG, &json!({"context": context})),
                 None => log(LOG, &json!({})),
