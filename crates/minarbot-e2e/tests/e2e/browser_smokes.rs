@@ -8,7 +8,7 @@
 //! which lists and answers with a `ScriptedModel`.
 
 use minarbot_testkit::{
-    browser::{self, Browser},
+    browser::{self, Browser, Element},
     fake::native::{CLAUDE_MODELS, SIGN_IN_CODE},
     fakes::{self, Fake},
     model::{Reply, ScriptedModel},
@@ -514,4 +514,156 @@ async fn workspace_routes_load_directly() -> Result<()> {
         Ok(())
     })
     .await
+}
+
+/// The phone layout at 390 x 844: the agent list with bottom tabs, a chat
+/// as its own page, the details sheet, the agent menu as a bottom sheet,
+/// Automations and a Settings section, all in one document and none wider
+/// than the screen. `minarbot:back` is the phone app's Back button and
+/// `minarbot:open` its notification tap.
+#[tokio::test]
+async fn phone_layout_pages_sheets_and_back() -> Result<()> {
+    let root = TestRoot::new()?;
+    let model = catalog_model().await?;
+    let app = start(&root).await?;
+    seed_instance(&app, &root, &model).await?;
+    minarbot_testkit::providers::AgentSpec::new("Smoke Agent")
+        .field("model", MODELS[0])
+        .instance("smoke-codex")
+        .create(&app)
+        .await?;
+    browser::smoke("phone", async |page: &Browser| {
+        page.phone(390, 844).await?;
+        page.goto(&app.url("/")).await?;
+        mark_document(page).await?;
+        let agents = page.find("navigation", "Choose agent").await?;
+        page.find("navigation", "Main").await?;
+        fits(page, "agent list").await?;
+
+        let rows = page.query("link", None, Some(agents)).await?;
+        let (row, _) = rows
+            .iter()
+            .find(|(_, name)| name.contains("Smoke Agent"))
+            .ok_or_else(|| format!("agent rows: {rows:?}"))?;
+        page.click_element(*row).await?;
+        page.find("textbox", "Message Smoke Agent").await?;
+        page.gone("navigation", "Main").await?;
+        page.find("button", "Back to agents").await?;
+        fits(page, "chat").await?;
+
+        page.click("button", "Show details").await?;
+        let panel = page.find("dialog", "Conversation panel").await?;
+        full_screen(page, panel, "details sheet").await?;
+        page.click("button", "Close details").await?;
+        page.gone("dialog", "Conversation panel").await?;
+
+        page.evaluate("document.querySelector('.chat__pill').click()")
+            .await?;
+        let menu = page.find("navigation", "Menu Smoke Agent").await?;
+        until_value(
+            "agent menu as a bottom sheet",
+            || async {
+                page.on(
+                    menu,
+                    "function() { const box = this.getBoundingClientRect(); \
+                     return [box.left, Math.round(box.right), Math.round(box.bottom)]; }",
+                )
+                .await
+            },
+            |sheet| sheet == &json!([0, 390, 844]),
+        )
+        .await?;
+        ensure!(phone_back(page).await?, "Back did not close the agent menu");
+        page.gone("navigation", "Menu Smoke Agent").await?;
+        fits(page, "chat after the menu").await?;
+
+        page.click("button", "Back to agents").await?;
+        page.find("navigation", "Choose agent").await?;
+        page.find("navigation", "Main").await?;
+
+        // Settings over the agent list, then Automations from its tabs.
+        page.click("link", "Settings").await?;
+        let list = page.find("navigation", "Settings").await?;
+        page.find_in("button", "General", Some(list)).await?;
+        fits(page, "Settings over the agent list").await?;
+        page.click("link", "Automations").await?;
+        page.find("heading", "Routines").await?;
+        page.find("navigation", "Automations").await?;
+        fits(page, "Routines").await?;
+        page.click("link", "Workflows").await?;
+        page.find("heading", "Workflows").await?;
+        fits(page, "Workflows").await?;
+
+        page.click("link", "Settings").await?;
+        let list = page.find("navigation", "Settings").await?;
+        fits(page, "Settings list").await?;
+        page.click_element(page.find_in("button", "General", Some(list)).await?)
+            .await?;
+        page.find("heading", "General").await?;
+        page.gone("navigation", "Settings").await?;
+        fits(page, "General").await?;
+        page.click("button", "Settings").await?;
+        page.find("navigation", "Settings").await?;
+
+        // Back steps through the app's own history: the list came from Workflows.
+        ensure!(phone_back(page).await?, "Back was not handled");
+        page.gone("navigation", "Settings").await?;
+        page.find("heading", "Workflows").await?;
+
+        // A tapped notification opens its route in the app.
+        let opened = page
+            .evaluate(
+                "!window.dispatchEvent(new CustomEvent('minarbot:open', { detail: '/routines', cancelable: true }))",
+            )
+            .await?;
+        ensure!(opened == json!(true), "minarbot:open was not handled");
+        page.find("heading", "Routines").await?;
+        same_document(page, "phone journey").await?;
+        page.expect_clean("phone journey")?;
+        Ok(())
+    })
+    .await
+}
+
+/// No page wider than the screen: neither the document nor its main panes.
+async fn fits(page: &Browser, step: &str) -> Result<()> {
+    let overflow = page
+        .evaluate(
+            "[document.scrollingElement, ...document.querySelectorAll('.sidebar, .leptos-workspace__outlet, .chat, .transcript, .app-settings__nav, .app-settings__main')]
+                .filter(e => e.offsetParent !== null || e === document.scrollingElement)
+                .filter(e => e.scrollWidth > Math.max(e.clientWidth, 0) + 1 || e.getBoundingClientRect().right > innerWidth + 1)
+                .map(e => `${e.className || e.tagName} ${e.scrollWidth}/${e.clientWidth}`)",
+        )
+        .await?;
+    ensure!(
+        overflow == json!([]),
+        "{step} is wider than the screen: {overflow}"
+    );
+    Ok(())
+}
+
+/// The sheet covers the 390 x 844 screen once it has slid in.
+async fn full_screen(page: &Browser, element: Element, step: &str) -> Result<()> {
+    until_value(
+        step,
+        || async {
+            page.on(
+                element,
+                "function() { const box = this.getBoundingClientRect(); \
+                 return [box.left, box.top, Math.round(box.right), Math.round(box.bottom)]; }",
+            )
+            .await
+        },
+        |size| size == &json!([0, 0, 390, 844]),
+    )
+    .await?;
+    Ok(())
+}
+
+/// The phone app's Back button: true when the web client handled it.
+async fn phone_back(page: &Browser) -> Result<bool> {
+    Ok(page
+        .evaluate("!window.dispatchEvent(new CustomEvent('minarbot:back', { cancelable: true }))")
+        .await?
+        == json!(true))
 }

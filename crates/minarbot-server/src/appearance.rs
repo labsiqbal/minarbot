@@ -109,6 +109,7 @@ pub fn document(html: &str, title: Option<&str>, query: &str) -> String {
             let path = value.split('?').next().unwrap_or("");
             !value.contains(['\\', '#'])
                 && !value.chars().any(char::is_control)
+                && path != "/settings"
                 && !path.starts_with("/settings/")
                 && crate::navigation(path)
         });
@@ -150,6 +151,16 @@ mod tests {
             "{html}"
         );
         assert!(html.contains(r#"data-initial="setup""#), "{html}");
+    }
+
+    #[test]
+    fn the_settings_list_is_a_route_but_never_the_page_to_return_to() {
+        let title = SettingsRoute::from_path("/settings").map(SettingsRoute::title);
+        assert_eq!(title, Some("Settings"));
+        for from in ["%2Fsettings", "%2Fsettings%2Fgeneral"] {
+            let html = document(HTML, title, &format!("from={from}"));
+            assert!(html.contains(r#"data-return-to="/""#), "{html}");
+        }
     }
 
     #[test]

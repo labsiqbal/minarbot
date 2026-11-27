@@ -240,6 +240,30 @@ pub(crate) fn WorkspaceShell(
             .is_some_and(|query| query.matches())
     };
     let narrow_open = RwSignal::new(false);
+    // Phones get bottom tabs: the agent list is the page at `/` and every
+    // chat is a page of its own. Hosted Hub has no router and keeps the drawer.
+    let phone = move || router.is_some_and(crate::router::Router::phone);
+    let phone_page = Memo::new(move |_| {
+        if !phone() {
+            return PhonePage::None;
+        }
+        // Settings draws over the page it opened from, inside the outlet.
+        if router.is_some_and(|router| {
+            matches!(router.kind(), Some(crate::router::RouteKind::Settings(_)))
+        }) {
+            return PhonePage::Tab;
+        }
+        match router.and_then(|router| router.page().and_then(|url| router.kind_of(&url))) {
+            Some(crate::router::RouteKind::AgentList) => PhonePage::List,
+            Some(
+                crate::router::RouteKind::Conversation
+                | crate::router::RouteKind::Inbox(_)
+                | crate::router::RouteKind::Remote(..)
+                | crate::router::RouteKind::Project(_),
+            ) => PhonePage::Detail,
+            _ => PhonePage::Tab,
+        }
+    });
     let sidebar = NodeRef::<leptos::html::Aside>::new();
     let reveal = NodeRef::<leptos::html::Button>::new();
     let close_sidebar = move || {
@@ -251,13 +275,18 @@ pub(crate) fn WorkspaceShell(
         });
     };
     let is_collapsed = move || {
-        if narrow() {
+        if phone() {
+            phone_page.get() != PhonePage::List
+        } else if narrow() {
             !narrow_open.get()
         } else {
             collapsed.get()
         }
     };
     let toggle_sidebar = move || {
+        if phone() {
+            return;
+        }
         if narrow() {
             if narrow_open.get_untracked() {
                 close_sidebar();
@@ -742,13 +771,19 @@ pub(crate) fn WorkspaceShell(
     };
     let (update_capsule, update_dialog) = crate::system::updates::workspace();
     view! {
-        <div class="app bs-root leptos-workspace" class:is-sidebar-collapsed=hidden>
-            <button type="button" class="sidebar-reveal k-icon-btn icon-btn--bordered" hidden=move || !hidden()
+        <div class="app bs-root leptos-workspace" class:is-sidebar-collapsed=hidden
+            data-phone-page=move || phone_page.get().name()>
+            <button type="button" class="sidebar-reveal k-icon-btn icon-btn--bordered" hidden=move || !hidden() || phone()
                 node_ref=reveal aria-label="Expand sidebar" aria-keyshortcuts="Control+b Meta+b" on:click=move |_| toggle_sidebar()>
                 <span class="appearance-icon" inner_html=panel_icon></span>
             </button>
             <button type="button" class="sidebar-backdrop" hidden=move || !viewport.get() || !narrow_open.get()
                 tabindex="-1" aria-label="Close workspace navigation" on:click=move |_| close_sidebar()></button>
+            <button type="button" class="phone-back icon-btn icon-btn--bordered" aria-label="Back to agents"
+                hidden=move || phone_page.get() != PhonePage::Detail
+                on:click=move |_| if let Some(router) = router { router.up("/"); }>
+                <crate::connection_ui::Icon name="chevron-left" />
+            </button>
             <aside class="sidebar bs-root" node_ref=sidebar tabindex="-1" aria-label="Workspace navigation" hidden=hidden>
                 <div class="sidebar__titlebar">
                     <span class="sidebar__bots-label">"Minarbot"</span>
@@ -884,9 +919,90 @@ pub(crate) fn WorkspaceShell(
             {project_commands.dialogs(Signal::derive(move || projects.with(|data| data.as_ref().and_then(|result| result.as_ref().ok()).map_or_else(String::new, |data| data.root.clone()))))}
             <div class="leptos-workspace__outlet" inert=move || viewport.get() && narrow_open.get()>
                 {header.map(|header| view! { <header class="leptos-workspace__header">{header()}</header> })}
+                <Show when=move || phone() && router.is_some_and(|router| router.page().and_then(|url| router.kind_of(&url)) == Some(crate::router::RouteKind::Automation))>
+                    <nav class="phone-segments" aria-label="Automations">
+                        {[("/routines", "Routines"), ("/workflows", "Workflows"), ("/calendar", "Calendar")].into_iter().map(|(path, label)| view! {
+                            <a class="phone-segments__item" href=path aria-current=move || (route_path() == path).then_some("page")>{label}</a>
+                        }).collect_view()}
+                    </nav>
+                </Show>
                 {children()}
             </div>
+            <Show when=move || matches!(phone_page.get(), PhonePage::List | PhonePage::Tab)>
+                {phone_tabs()}
+            </Show>
         </div>
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PhonePage {
+    /// Not the phone layout.
+    None,
+    /// The agent list at `/`.
+    List,
+    /// A page the bottom tabs lead to: Automations or Settings.
+    Tab,
+    /// A chat or project, opened from the list.
+    Detail,
+}
+
+impl PhonePage {
+    fn name(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::List => Some("list"),
+            Self::Tab => Some("tab"),
+            Self::Detail => Some("detail"),
+        }
+    }
+}
+
+/// The bottom tabs of the phone layout: Agents, Automations and Settings.
+/// Settings draws them too, since its dialog covers the shell.
+pub(crate) fn phone_tabs() -> impl IntoView {
+    use crate::router::RouteKind;
+    // Only closures over the router, which lives as long as the document: the
+    // route change that closes Settings also updates the tabs inside it.
+    let icons = use_context::<Icons>().unwrap_or_default();
+    let router = crate::router::get();
+    let current = move |active: fn(&RouteKind) -> bool| {
+        router
+            .and_then(crate::router::Router::kind)
+            .is_some_and(|kind| active(&kind))
+            .then_some("page")
+    };
+    let settings_href = move || {
+        let from = router.map_or_else(crate::router::current, |router| {
+            router.with_url(|url| match RouteKind::parse(url) {
+                Some(RouteKind::Settings(_)) => crate::router::settings_return(url),
+                _ => url.clone(),
+            })
+        });
+        settings::section_url("/settings", &from)
+    };
+    let tab = |name: &'static str, icon: String| {
+        view! {
+            <span class="appearance-icon" aria-hidden="true" inner_html=icon></span>
+            <span class="phone-tabs__label">{name}</span>
+        }
+    };
+    let agents: fn(&RouteKind) -> bool =
+        |kind| !matches!(kind, RouteKind::Automation | RouteKind::Settings(_));
+    let automation: fn(&RouteKind) -> bool = |kind| matches!(kind, RouteKind::Automation);
+    let settings_page: fn(&RouteKind) -> bool = |kind| matches!(kind, RouteKind::Settings(_));
+    view! {
+        <nav class="phone-tabs" aria-label="Main">
+            <a class="phone-tabs__tab" href="/" aria-current=move || current(agents)>
+                {tab("Agents", icons.message)}
+            </a>
+            <a class="phone-tabs__tab" href="/routines" aria-current=move || current(automation)>
+                {tab("Automations", icons.routines)}
+            </a>
+            <a class="phone-tabs__tab" href=settings_href aria-current=move || current(settings_page)>
+                {tab("Settings", icons.settings)}
+            </a>
+        </nav>
     }
 }
 

@@ -210,6 +210,22 @@ impl Browser {
         self.cdp.call(Some(&self.session), method, params).await
     }
 
+    /// Emulate a phone: a `width` x `height` mobile viewport (CSS pixels,
+    /// device scale 3) with touch, until the tab closes. Call before `goto`.
+    pub async fn phone(&self, width: u32, height: u32) -> Result<()> {
+        self.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": width, "height": height, "deviceScaleFactor": 3, "mobile": true}),
+        )
+        .await?;
+        self.call(
+            "Emulation.setTouchEmulationEnabled",
+            json!({"enabled": true, "maxTouchPoints": 5}),
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Navigate and wait for the load event.
     pub async fn goto(&self, url: &str) -> Result<()> {
         let before = self.loads();

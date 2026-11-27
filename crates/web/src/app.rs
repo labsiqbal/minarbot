@@ -161,7 +161,8 @@ fn outlet(router: Router, error_icon: StoredValue<String>) -> impl IntoView {
                 lazy_view::load("project", move || project(id.clone(), error_icon.get_value()))
                     .into_any()
             }
-            RouteKind::Settings(_) => ().into_any(),
+            // The shell shows the agent list itself.
+            RouteKind::Settings(_) | RouteKind::AgentList => ().into_any(),
         })}
         <Show when=move || settings.with(Option::is_some)>
             {lazy_view::load("Settings", move || settings_overlay(settings))}

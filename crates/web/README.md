@@ -59,12 +59,29 @@ register in `routes::SettingsRoute`; use `settings::section_url` to preserve
 `from`. A lazy chunk's view builds once: reads while it builds do not rebuild
 it. Do not write signals in `on_cleanup`; routes now unmount in place.
 
+## Phone layout
+
+Below 768 px (`router::PHONE`, the same width as `assets/ui/phone.css`) the
+shell shows one page at a time with bottom tabs: Agents, Automations and
+Settings. `/` is the agent list (`RouteKind::AgentList`) instead of the default
+chat, a chat or project is a page of its own with a back button
+(`Router::up`), `/settings` is the section list and each section has a back
+button. Menus and dialogs open as bottom sheets and the conversation panel as a
+full-screen sheet. Wider screens keep the desktop layout; every phone rule sits
+in the media query.
+
+A host app drives the router with two cancelable window events, both
+cancelled when handled: `minarbot:open` (detail: a route) opens a route in the
+app, and `minarbot:back` closes the top menu, sheet or dialog, or steps back
+through the app's history. The Android app sends them for a notification tap
+and its Back button.
+
 ## Route ownership
 
 | Route kind | Public paths and surfaces | Chunk |
 | --- | --- | --- |
 | First run | Fresh install at `/` (`data-initial="setup"`), until an agent can chat | `app_setup` |
-| Settings | `/settings/:section` including General, Appearance, Providers, Skills, minarbot.com, Connected apps, Email, MCP connections, Vault, Machines, Devices, Computer, Updates, Usage, Shared data, Backup & restore, External access | `app_settings`, over the page it opened from |
+| Settings | `/settings` (the section list on a phone, General elsewhere) and `/settings/:section` including General, Appearance, Providers, Skills, minarbot.com, Connected apps, Email, MCP connections, Vault, Machines, Devices, Computer, Updates, Usage, Shared data, Backup & restore, External access | `app_settings`, over the page it opened from |
 | Pairing | `/pair` on a secure origin | Axum pairing form with the app startup module, `app_pairing` |
 | Conversation | Configured workspace at `/`, `/agents/:id`, `/agents/:id/conversations/:thread`, `/rooms/:id`, Guide, Files, Changes, workspace browser and results | `app_conversation` |
 | Inbox and remote agents | `/agents/:id/inbox` and `/machines/:id/agents/:id` | `app_conversation` |

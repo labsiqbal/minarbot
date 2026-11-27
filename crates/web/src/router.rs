@@ -4,16 +4,18 @@ use crate::{
     workspace_route::{valid_id, WorkspaceRoute},
 };
 use leptos::prelude::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use wasm_bindgen::{JsCast, JsValue};
 
 /// What the outlet renders for a URL. Kinds that keep one view across
 /// their own URLs (chat, automation) carry no payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RouteKind {
-    /// `/`: first run or the default chat, decided by [`Router::setup`].
+    /// `/`: first run, the agent list on a phone, or the default chat.
     Root,
     Setup,
+    /// `/` on a phone: the agent list, with no chat beside it.
+    AgentList,
     Conversation,
     Inbox(String),
     Remote(String, String),
@@ -120,8 +122,39 @@ fn path(url: &str) -> &str {
     url.split('?').next().unwrap_or_default()
 }
 
+/// The phone layout's media query. CSS uses the same width.
+pub(crate) const PHONE: &str = "(max-width: 767px)";
+
+fn phone_query() -> Option<web_sys::MediaQueryList> {
+    window().match_media(PHONE).ok().flatten()
+}
+
 thread_local! {
     static ROUTER: Cell<Option<Router>> = const { Cell::new(None) };
+    /// The URL of each history entry of this document, by depth, as far as
+    /// this document has seen them.
+    static ENTRIES: RefCell<Vec<Option<String>>> = const { RefCell::new(Vec::new()) };
+}
+
+fn depth() -> usize {
+    window()
+        .history()
+        .and_then(|history| history.state())
+        .ok()
+        .and_then(|state| state.as_f64())
+        .map_or(0, |depth| depth.max(0.0) as usize)
+}
+
+fn record(depth: usize, url: String, truncate: bool) {
+    ENTRIES.with_borrow_mut(|entries| {
+        if truncate {
+            entries.truncate(depth + 1);
+        }
+        if entries.len() <= depth {
+            entries.resize(depth + 1, None);
+        }
+        entries[depth] = Some(url);
+    });
 }
 
 #[derive(Clone, Copy)]
@@ -129,23 +162,93 @@ pub(crate) struct Router {
     location: RwSignal<String>,
     background: RwSignal<Option<String>>,
     setup: RwSignal<bool>,
+    phone: RwSignal<bool>,
 }
 
 impl Router {
     /// Installs the app router: one `popstate` listener and one interceptor
     /// for same-origin links to app routes. Lives as long as the document.
     pub(crate) fn install(setup: bool) -> Self {
+        let query = phone_query();
         let router = Self {
             location: RwSignal::new(current()),
             background: RwSignal::new(None),
             setup: RwSignal::new(setup),
+            phone: RwSignal::new(query.as_ref().is_some_and(web_sys::MediaQueryList::matches)),
         };
         ROUTER.with(|cell| cell.set(Some(router)));
-        let pop = window_event_listener(leptos::ev::popstate, move |_| router.set(current()));
+        record(depth(), current(), false);
+        let pop = window_event_listener(leptos::ev::popstate, move |_| {
+            record(depth(), current(), false);
+            router.set(current());
+        });
         let click = window_event_listener(leptos::ev::click, move |event| router.intercept(event));
+        // A host app (the phone app) opens a route and steps back through
+        // these events; a handled event is cancelled.
+        let open = window_event_listener(
+            leptos::ev::Custom::<web_sys::CustomEvent>::new("minarbot:open"),
+            move |event| {
+                let path = event.detail().as_string();
+                if let Some(path) = path.filter(|path| RouteKind::parse(path).is_some()) {
+                    event.prevent_default();
+                    router.navigate(&path);
+                }
+            },
+        );
+        let back = window_event_listener(
+            leptos::ev::Custom::<web_sys::Event>::new("minarbot:back"),
+            move |event| {
+                if close_top_layer()
+                    || router.can_go_back()
+                        && window()
+                            .history()
+                            .and_then(|history| history.back())
+                            .is_ok()
+                {
+                    event.prevent_default();
+                }
+            },
+        );
+        if let Some(query) = query {
+            let change = wasm_bindgen::closure::Closure::<dyn Fn()>::new(move || {
+                let matches = phone_query().is_some_and(|query| query.matches());
+                if router.phone.get_untracked() != matches {
+                    router.phone.set(matches);
+                }
+            });
+            let _ =
+                query.add_event_listener_with_callback("change", change.as_ref().unchecked_ref());
+            change.forget();
+        }
         // The app document never unmounts its router.
-        std::mem::forget((pop, click));
+        std::mem::forget((pop, click, open, back));
         router
+    }
+
+    /// Whether the phone layout applies, tracked.
+    pub(crate) fn phone(self) -> bool {
+        self.phone.get()
+    }
+
+    /// Goes up to `parent`: back when the previous entry is that page,
+    /// else in place of the current entry, so Back does not return here.
+    pub(crate) fn up(self, parent: &str) {
+        let depth = depth();
+        let previous = ENTRIES.with_borrow(|entries| {
+            depth
+                .checked_sub(1)
+                .and_then(|index| entries.get(index).cloned().flatten())
+        });
+        if previous.is_some_and(|url| path(&url) == path(parent))
+            && self.can_go_back()
+            && window()
+                .history()
+                .and_then(|history| history.back())
+                .is_ok()
+        {
+            return;
+        }
+        self.replace(parent);
     }
 
     /// Path and query of the current entry, tracked.
@@ -174,6 +277,7 @@ impl Router {
     pub(crate) fn kind_of(self, url: &str) -> Option<RouteKind> {
         RouteKind::parse(url).map(|kind| match kind {
             RouteKind::Root if self.setup.get() => RouteKind::Setup,
+            RouteKind::Root if self.phone.get() => RouteKind::AgentList,
             RouteKind::Root => RouteKind::Conversation,
             kind => kind,
         })
@@ -246,6 +350,12 @@ impl Router {
             history.push_state_with_url(&JsValue::from_f64(depth + 1.0), "", Some(url))
         };
         if changed.is_ok() {
+            let depth = if replace {
+                depth as usize
+            } else {
+                depth as usize + 1
+            };
+            record(depth, current(), !replace);
             self.set(current());
         } else {
             let _ = window().location().assign(url);
@@ -341,4 +451,41 @@ pub(crate) fn push(url: &str) -> bool {
             .and_then(|history| history.push_state_with_url(&JsValue::NULL, "", Some(url)))
             .is_ok(),
     }
+}
+
+/// Closes the topmost menu, sheet or dialog, as Escape or a phone's Back
+/// would. Settings is a page, not an overlay, so it stays.
+fn close_top_layer() -> bool {
+    let last = |selector: &str| {
+        document()
+            .query_selector_all(selector)
+            .ok()
+            .and_then(|list| list.item(list.length().checked_sub(1)?))
+            .and_then(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+    };
+    if let Some(popover) = last(":popover-open") {
+        return popover.hide_popover().is_ok();
+    }
+    if let Some(menu) = last("details[open]:has(> .k-pop)")
+        .and_then(|menu| menu.dyn_into::<web_sys::HtmlDetailsElement>().ok())
+    {
+        menu.set_open(false);
+        return true;
+    }
+    let Some(dialog) = last("dialog:modal:not(#appearance-dialog)")
+        .and_then(|dialog| dialog.dyn_into::<web_sys::HtmlDialogElement>().ok())
+    else {
+        return false;
+    };
+    let Ok(cancel) = web_sys::Event::new_with_event_init_dict("cancel", &{
+        let init = web_sys::EventInit::new();
+        init.set_cancelable(true);
+        init
+    }) else {
+        return false;
+    };
+    if dialog.dispatch_event(&cancel).unwrap_or(false) {
+        dialog.close();
+    }
+    true
 }

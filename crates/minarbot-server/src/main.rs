@@ -371,7 +371,7 @@ fn navigation(path: &str) -> bool {
     }
     let parts: Vec<_> = path.split('/').skip(1).collect();
     match parts.as_slice() {
-        [""] | ["routines"] | ["workflows"] | ["calendar"] => true,
+        [""] | ["routines"] | ["workflows"] | ["calendar"] | ["settings"] => true,
         ["settings", section] => [
             "general",
             "appearance",
@@ -944,7 +944,7 @@ mod tests {
     #[test]
     fn navigation_matches_node_paths() {
         assert!(navigation("/settings/engines"));
-        for path in ["/", "/routines", "/workflows", "/settings/appearance", "/settings/email", "/agents/00000000-0000-4000-8000-000000000000", "/agents/00000000-0000-4000-8000-000000000000/inbox", "/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001"] { assert!(navigation(path), "{path}"); }
+        for path in ["/", "/routines", "/workflows", "/settings", "/settings/appearance", "/settings/email", "/agents/00000000-0000-4000-8000-000000000000", "/agents/00000000-0000-4000-8000-000000000000/inbox", "/agents/00000000-0000-4000-8000-000000000000/conversations/00000000-0000-4000-8000-000000000001"] { assert!(navigation(path), "{path}"); }
         for path in [
             "/settings/craft-anything",
             "/settings/nope",
