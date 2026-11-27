@@ -815,10 +815,7 @@ pub(crate) fn WorkspaceShell(
             <aside class="sidebar bs-root" node_ref=sidebar tabindex="-1" aria-label="Workspace navigation" hidden=hidden>
                 <div class="sidebar__titlebar">
                     <span class="sidebar__bots-label">"Minarbot"</span>
-                    <nav class="sidebar__controls" aria-label="Automation">
-                        {automation_link("/routines", "Routines", icons.routines)}
-                        {automation_link("/workflows", "Workflows", icons.workflows)}
-                        {automation_link("/calendar", "Automation calendar", icons.calendar)}
+                    <div class="sidebar__controls">
                         <details class="sidebar-create" node_ref=create_menu>
                             <summary class="k-icon-btn" node_ref=create_trigger aria-label="Create new" title="Create new"><span class="appearance-icon" inner_html=plus></span></summary>
                             <div class="k-pop k-menu">
@@ -839,7 +836,7 @@ pub(crate) fn WorkspaceShell(
                             </div>
                         </details>
                         <button type="button" class="k-icon-btn" aria-label="Collapse sidebar" on:click=move |_| toggle_sidebar()><span class="appearance-icon" inner_html=icons.panel></span></button>
-                    </nav>
+                    </div>
                 </div>
                 <div class="sidebar__tabs"><div class="k-tabs">
                     <div class="k-tabs__list" role="tablist" aria-label="Sidebar"
@@ -902,6 +899,11 @@ pub(crate) fn WorkspaceShell(
                 <div class="sidebar__footer">
                     <div class="sidebar__fade" aria-hidden="true"></div>
                     <a class="provider-status" aria-label=provider_status title=provider_status href=move || settings_link("/settings/providers")><i class:is-on=provider_ready aria-hidden="true"></i></a>
+                    <nav class="sidebar__automation" aria-label="Automation">
+                        {automation_link("/routines", "Routines", icons.routines)}
+                        {automation_link("/workflows", "Workflows", icons.workflows)}
+                        {automation_link("/calendar", "Automation calendar", icons.calendar)}
+                    </nav>
                     <button type="button" class="k-icon-btn" aria-label="Quick switcher (Ctrl/Cmd+K)" title="Quick switcher (Ctrl/Cmd+K)"
                         aria-keyshortcuts="Control+k Meta+k" on:click=move |_| open_switcher()>
                         <span class="appearance-icon" inner_html=icons.quick_search.clone()></span>
