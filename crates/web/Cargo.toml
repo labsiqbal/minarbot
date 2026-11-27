@@ -20,7 +20,7 @@ hub = []
 base64 = "0.22"
 crc32fast = "1"
 serde_yaml = "0.9"
-zip = { version = "=7.4.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "=9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 wasm-bindgen-futures = "=0.4.80"
 gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json"] }
 js-sys = "=0.3.107"
