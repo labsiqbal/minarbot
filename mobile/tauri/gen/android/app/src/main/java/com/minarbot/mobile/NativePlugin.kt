@@ -6,7 +6,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -28,7 +30,12 @@ class SystemBarsArgs {
 
 /**
  * Minarbot's Android code. Rust calls `register` and `systemBars` and listens for
- * `tap`, `token` and `resume`; no webview has a permission for it.
+ * `tap`, `token`, `resume` and `bars`; no webview has a permission for it.
+ *
+ * Back asks the page first (`minarbot:back`): the web client closes its top menu,
+ * sheet or dialog, or steps back through its own history. Only an unhandled Back
+ * goes back in the webview, which leaves the server for the connect form, and at
+ * the first page Android closes the app.
  *
  * Without google-services.json the build has no Firebase app, so `register`
  * reports the reason instead of a token and the app works without push.
@@ -36,10 +43,47 @@ class SystemBarsArgs {
 @TauriPlugin
 class NativePlugin(private val activity: Activity) : Plugin(activity) {
     private var opened: String? = null
+    private var webView: WebView? = null
+
+    private val back = object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            val view = webView ?: return leave()
+            view.evaluateJavascript(BACK) { handled ->
+                if (handled != "true") leave()
+            }
+        }
+    }
 
     override fun load(webView: WebView) {
         instance = this
         opened = route(activity.intent)
+        this.webView = webView
+        // The page may only ask for the bars to be painted again; Rust reads the colour itself.
+        webView.addJavascriptInterface(Bars(), "MinarbotBars")
+        // Added after Tauri's and Wry's callbacks, so it runs first.
+        val owner = activity as AppCompatActivity
+        owner.onBackPressedDispatcher.addCallback(owner, back)
+    }
+
+    private fun leave() {
+        val view = webView
+        if (view != null && view.canGoBack()) {
+            view.goBack()
+            return
+        }
+        back.isEnabled = false
+        (activity as AppCompatActivity).onBackPressedDispatcher.onBackPressed()
+        back.isEnabled = true
+    }
+
+    /** The page's look or route changed; Rust paints the bars again. */
+    fun repaint() {
+        activity.runOnUiThread { trigger("bars", JSObject()) }
+    }
+
+    private inner class Bars {
+        @JavascriptInterface
+        fun changed() = repaint()
     }
 
     /** The owner came back to the app; Rust checks the server. */
@@ -104,8 +148,17 @@ class NativePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     companion object {
+        /** True when the page handled Back; a page without the listener returns false. */
+        private const val BACK =
+            "!window.dispatchEvent(new CustomEvent('minarbot:back', { cancelable: true }))"
+
         @Volatile
         private var instance: NativePlugin? = null
+
+        /** The webview's history changed: a route change can change the top colour. */
+        fun historyChanged() {
+            instance?.repaint()
+        }
 
         /** The route of a notification the owner tapped, when the intent came from FCM. */
         fun route(intent: Intent?): String? {

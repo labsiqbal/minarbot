@@ -148,6 +148,8 @@ fn show_server(app: &AppHandle, url: Url, generation: u64) -> Result<()> {
     .save(&state.path)?;
     *lock(&state.saved)? = Some(url.clone());
     *lock(&state.server)? = Some(url.clone());
+    // Back from the server returns to the form; it shows no stale status then.
+    *lock(&state.form)? = (String::new(), String::new());
     window(app)?.navigate(url)?;
     Ok(())
 }
@@ -256,12 +258,25 @@ pub(crate) fn open_route(app: &AppHandle, path: &str) {
             log::warn!("Push: ignored a notification route outside the server");
             return Ok(());
         };
-        window(app)?.navigate(target)?;
+        window(app)?.eval(open_script(&target)?)?;
         Ok(())
     })();
     if let Err(error) = result {
         log::error!("Push: could not open the notification: {error}");
     }
+}
+
+/// Opens a route of the shown server inside its web client, without a page load;
+/// a client without the `minarbot:open` listener loads the route instead.
+fn open_script(target: &Url) -> Result<String> {
+    let path = match target.query() {
+        Some(query) => format!("{}?{query}", target.path()),
+        None => target.path().to_owned(),
+    };
+    let path = serde_json::to_string(&path)?;
+    Ok(format!(
+        "if (window.dispatchEvent(new CustomEvent('minarbot:open', {{ detail: {path}, cancelable: true }}))) location.assign({path});"
+    ))
 }
 
 fn navigation(app: &AppHandle, target: &Url) -> bool {
@@ -306,6 +321,7 @@ fn page_loaded(window: &WebviewWindow, url: &Url) {
     };
     if same_origin(url, &server) {
         log::info!("Opened {}", server.origin().ascii_serialization());
+        native::watch_theme(window);
         let state = app.state::<Phone>();
         state.push.deliver(window, &server);
         if let Some(path) = state
@@ -351,6 +367,11 @@ fn setup(app: &mut tauri::App) -> Result<()> {
     .build()?;
     push::register(app.handle());
     native::on_resume(app.handle(), resumed);
+    native::on_bars(app.handle(), |app| {
+        if let Ok(window) = window(app) {
+            native::repaint_system_bars(&window);
+        }
+    });
     *lock(&app.state::<Phone>().form)? = (status.into(), String::new());
     Ok(())
 }
@@ -423,6 +444,20 @@ mod tests {
         ] {
             assert!(route(&server, path).is_none(), "{path}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn notification_routes_open_inside_the_web_client() -> Result<()> {
+        let target =
+            Url::parse("https://server.example:4317/workflows?agent=a1&from=%2Fagents%2Fa1")?;
+        assert_eq!(
+            open_script(&target)?,
+            "if (window.dispatchEvent(new CustomEvent('minarbot:open', { detail: \"/workflows?agent=a1&from=%2Fagents%2Fa1\", cancelable: true }))) location.assign(\"/workflows?agent=a1&from=%2Fagents%2Fa1\");"
+        );
+        // A quote in the path stays inside the string.
+        let quoted = Url::parse("https://server.example/agents/a'1")?;
+        assert!(open_script(&quoted)?.contains(r#"detail: "/agents/a'1""#));
         Ok(())
     }
 

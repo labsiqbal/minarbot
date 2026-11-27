@@ -1,6 +1,7 @@
 //! The app's own Android code (`NativePlugin.kt`): push registration, the
-//! system bar colours and the resume signal. It exposes no JavaScript commands,
-//! so no webview can call it; only Rust does.
+//! system bar colours, Back and the resume signal. It exposes no JavaScript
+//! commands, so no webview can call it; only Rust does. The one thing a page can
+//! do is ask for the bars to be painted again (`MinarbotBars.changed()`).
 
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -30,31 +31,78 @@ pub fn init() -> TauriPlugin<Wry> {
 
 /// Calls `on_resume` each time the owner returns to the app. Tauri does not report
 /// an Android activity resume as `RunEvent::Resumed`, so the plugin sends it.
-#[cfg(target_os = "android")]
 pub fn on_resume(app: &AppHandle, on_resume: impl Fn(&AppHandle) + Send + Sync + 'static) {
+    listen(app, "resume", on_resume);
+}
+
+/// Calls `on_bars` when the page's theme or route changed, so the bars can follow.
+pub fn on_bars(app: &AppHandle, on_bars: impl Fn(&AppHandle) + Send + Sync + 'static) {
+    listen(app, "bars", on_bars);
+}
+
+#[cfg(target_os = "android")]
+fn listen(
+    app: &AppHandle,
+    event: &'static str,
+    on_event: impl Fn(&AppHandle) + Send + Sync + 'static,
+) {
     let Some(handle) = handle(app) else {
         return;
     };
-    let resumed = app.clone();
+    let target = app.clone();
     let channel = tauri::ipc::Channel::<serde_json::Value>::new(move |_| {
-        on_resume(&resumed);
+        on_event(&target);
         Ok(())
     });
     tauri::async_runtime::spawn(async move {
         if let Err(error) = handle
             .run_mobile_plugin_async::<serde_json::Value>(
                 "registerListener",
-                serde_json::json!({ "event": "resume", "handler": channel }),
+                serde_json::json!({ "event": event, "handler": channel }),
             )
             .await
         {
-            log::error!("Could not listen for resume: {error}");
+            log::error!("Could not listen for {event}: {error}");
         }
     });
 }
 
 #[cfg(not(target_os = "android"))]
-pub fn on_resume(_app: &AppHandle, _on_resume: impl Fn(&AppHandle) + Send + Sync + 'static) {}
+fn listen(
+    _app: &AppHandle,
+    _event: &'static str,
+    _on_event: impl Fn(&AppHandle) + Send + Sync + 'static,
+) {
+}
+
+/// Watches the server page for a theme change made inside it (the root's theme
+/// attributes or the system colour scheme) and asks for the bars to be painted again.
+const THEME_WATCH: &str = "(() => {
+  if (window.__minarbotBars || !window.MinarbotBars) return;
+  window.__minarbotBars = true;
+  let timer = 0;
+  const changed = () => { clearTimeout(timer); timer = setTimeout(() => window.MinarbotBars.changed(), 60); };
+  new MutationObserver(changed).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-color-theme', 'class', 'style'] });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', changed);
+})()";
+
+/// Starts [`THEME_WATCH`] in a loaded server page.
+pub fn watch_theme(window: &WebviewWindow) {
+    if let Err(error) = window.eval(THEME_WATCH) {
+        log::warn!("Could not watch the page theme: {error}");
+    }
+}
+
+/// Paints the bars again after a theme or route change: now, and once the
+/// new route has rendered.
+pub fn repaint_system_bars(window: &WebviewWindow) {
+    check_bars(window);
+    let window = window.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        check_bars(&window);
+    });
+}
 
 /// The colour at the top of the page, as `[r, g, b]`: the first opaque background
 /// under the top edge, or the canvas white.
