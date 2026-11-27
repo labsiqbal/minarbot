@@ -241,6 +241,30 @@ fn parse_issues(value: Option<&String>) -> Result<Vec<u64>> {
     Ok(issues)
 }
 
+/// The head commit of the merged pull request from `branch`, if any.
+fn merged_head(root: &Path, branch: &str) -> Option<String> {
+    let report = output(
+        Command::new("gh")
+            .args([
+                "pr",
+                "list",
+                "-R",
+                REPOSITORY,
+                "--head",
+                branch,
+                "--state",
+                "merged",
+                "--json",
+                "headRefOid",
+            ])
+            .current_dir(root),
+    )
+    .ok()?;
+    let value: Value = serde_json::from_str(&report).ok()?;
+    let head = value[0]["headRefOid"].as_str()?;
+    (head.len() == 40 && head.bytes().all(|byte| byte.is_ascii_hexdigit())).then(|| head.to_owned())
+}
+
 fn ancestry(root: &Path, issues: &[u64], commit: &str) -> Result<()> {
     if issues.is_empty() {
         eprintln!("WARNING: RELEASE ANCESTRY GATE SKIPPED. Supply --issues 30,31 for every shipped issue.");
@@ -267,11 +291,15 @@ fn ancestry(root: &Path, issues: &[u64], commit: &str) -> Result<()> {
             return Err(format!("Issue #{issue}: no claim comment. Add \"Claimed by <agent>, branch t3/<slug>\" and retry.").into());
         }
         for branch in branches {
-            let reference = format!("refs/heads/{branch}");
-            if git(root, &["show-ref", "--verify", "--quiet", &reference]).is_err() {
-                return Err(format!("Issue #{issue}: local branch {branch} is missing. Restore the task branch locally and retry.").into());
-            }
-            if git(root, &["merge-base", "--is-ancestor", &reference, commit]).is_err() {
+            let local = format!("refs/heads/{branch}");
+            // A branch deleted after its pull request merged is checked by
+            // the head that merged.
+            let tip = if git(root, &["show-ref", "--verify", "--quiet", &local]).is_ok() {
+                local
+            } else {
+                merged_head(root, branch).ok_or_else(|| format!("Issue #{issue}: branch {branch} is neither local nor the head of a merged pull request. Restore the task branch locally and retry."))?
+            };
+            if git(root, &["merge-base", "--is-ancestor", &tip, commit]).is_err() {
                 return Err(format!("Issue #{issue}: {branch} is not an ancestor of {commit}. Merge the branch tip and retry.").into());
             }
         }

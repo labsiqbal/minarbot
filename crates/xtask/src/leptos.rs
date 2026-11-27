@@ -11,6 +11,9 @@ use std::{
 
 const VERSION: &str = "0.2.130";
 const WASM_PROFILE: &str = "wasm-release";
+/// `cargo xtask leptos --dev`: incremental, without LTO, `wasm-opt` or
+/// size budgets, for trying UI changes. Releases use [`WASM_PROFILE`].
+const WASM_DEV_PROFILE: &str = "wasm-dev";
 const BINARYEN_VERSION: &str = "133";
 const NAMESPACE: &str = "/_leptos/";
 // Each route group gets its own document, CSS and Wasm.
@@ -138,6 +141,10 @@ fn hash_asset(source: &Path, assets: &Path, name: &str, ext: &str) -> Result<Str
 }
 
 fn optimize(optimizer: &Path, input: &Path, output: &Path) -> Result<()> {
+    if optimizer.as_os_str().is_empty() {
+        fs::copy(input, output)?;
+        return Ok(());
+    }
     run(Command::new(optimizer)
         .args(["-Oz", "--strip-debug", "--strip-producers", "-o"])
         .arg(output)
@@ -260,12 +267,26 @@ pub fn require_build(app: &Path) -> Result<()> {
 }
 
 pub fn build(root: &Path) -> Result<()> {
+    build_profile(root, false)
+}
+
+pub fn build_dev(root: &Path) -> Result<()> {
+    build_profile(root, true)
+}
+
+fn build_profile(root: &Path, dev: bool) -> Result<()> {
     let app = root.join("app");
     let web = root.join("crates/web");
     let target = web.join("target");
     fs::create_dir_all(&target)?;
     let cli = bindgen(&target)?;
-    let optimizer = wasm_opt(&target)?;
+    // An empty optimizer path copies modules unoptimized.
+    let optimizer = if dev {
+        PathBuf::new()
+    } else {
+        wasm_opt(&target)?
+    };
+    let profile = if dev { WASM_DEV_PROFILE } else { WASM_PROFILE };
     let began = Instant::now();
     let dist = app.join("dist");
     fs::create_dir_all(&dist)?;
@@ -276,31 +297,62 @@ pub fn build(root: &Path) -> Result<()> {
     let mut inputs = BTreeMap::new();
     let mut cargo_time = Duration::ZERO;
     let mut bundles = BTreeMap::new();
-    for (name, features, budget) in ROUTE_GROUPS {
+    let cargo = |name: &str, features: &[&str], target: &Path| {
         let rustflags = if name == "hub" {
             "target.wasm32-unknown-unknown.rustflags=['--cfg','erase_components']"
         } else {
             "target.wasm32-unknown-unknown.rustflags=['--cfg','erase_components','-Clink-arg=--emit-relocs']"
         };
-        let cargo_began = Instant::now();
-        run(Command::new("cargo")
+        let mut command = Command::new("cargo");
+        command
             .current_dir(&web)
             .env_remove("RUSTUP_TOOLCHAIN")
-            .env("CARGO_TARGET_DIR", &target)
+            .env("CARGO_TARGET_DIR", target)
             .args([
                 "build",
                 "--locked",
                 "--profile",
-                WASM_PROFILE,
+                profile,
                 "--target",
                 "wasm32-unknown-unknown",
                 "--config",
                 rustflags,
             ])
-            .args(features))?;
+            .args(features);
+        command
+    };
+    // Dev builds give each route group its own target directory and build
+    // them at once; release builds share one and run in turn.
+    let group_target = |name: &str| {
+        if dev {
+            target.join(format!("dev-{name}"))
+        } else {
+            target.clone()
+        }
+    };
+    if dev {
+        let cargo_began = Instant::now();
+        let children = ROUTE_GROUPS
+            .iter()
+            .map(|(name, features, _)| {
+                Ok((*name, cargo(name, features, &group_target(name)).spawn()?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for (name, mut child) in children {
+            if !child.wait()?.success() {
+                return Err(format!("Leptos {name} dev build failed.").into());
+            }
+        }
         cargo_time += cargo_began.elapsed();
-        let input = target.join(format!(
-            "wasm32-unknown-unknown/{WASM_PROFILE}/minarbot_web.wasm"
+    }
+    for (name, features, budget) in ROUTE_GROUPS {
+        if !dev {
+            let cargo_began = Instant::now();
+            run(&mut cargo(name, features, &target))?;
+            cargo_time += cargo_began.elapsed();
+        }
+        let input = group_target(name).join(format!(
+            "wasm32-unknown-unknown/{profile}/minarbot_web.wasm"
         ));
         let (input, chunks) = if name == "hub" {
             (input, BTreeMap::new())
@@ -333,7 +385,7 @@ pub fn build(root: &Path) -> Result<()> {
         optimize(&optimizer, &unoptimized, &optimized)?;
         let after_raw = fs::metadata(&optimized)?.len();
         let after_gzip = gzip(&optimized, &optimized.with_extension("wasm.gz"))?;
-        if after_gzip > budget {
+        if !dev && after_gzip > budget {
             return Err(format!(
                 "Leptos {name} Wasm is {after_gzip} gzip bytes (budget {budget})."
             )
@@ -489,7 +541,7 @@ pub fn build(root: &Path) -> Result<()> {
         serde_json::to_string_pretty(&json!({
             "cargoWallSeconds": cargo_time.as_secs_f64(),
             "packageSeconds": began.elapsed().saturating_sub(cargo_time).as_secs_f64(),
-            "wasmProfile": WASM_PROFILE,
+            "wasmProfile": profile,
             "binaryen": BINARYEN_VERSION,
             "bundles": bundles,
             "sizes": sizes,

@@ -162,6 +162,7 @@ fn execute(args: &[String], public_key: &[u8]) -> Result<()> {
             "preview" => return preview::command(&root, args),
             "desktop" => return desktop::command(args),
             "leptos" if args.is_empty() => return leptos::build(&root),
+            "leptos" if args == ["--dev"] => return leptos::build_dev(&root),
             "resource-gate" => return gates::resource_command(args),
             "production-env-gate" => return gates::production_command(&root, args),
             "install-smoke" => return smoke::command(&root, args),

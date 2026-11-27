@@ -76,12 +76,14 @@ fn build(root: &Path) -> Result<()> {
     if !app.join("node_modules").is_dir() {
         run(Command::new("npm").current_dir(&app).arg("ci"))?;
     }
-    leptos::build(root)?;
-    // Pin the target directory: staging reads root/target/release.
+    // Previews favour build speed: the dev web client and an incremental,
+    // lightly optimized server. Releases build both fully optimized.
+    leptos::build_dev(root)?;
+    // Pin the target directory: staging reads root/target/preview.
     run(Command::new("cargo")
         .current_dir(root)
         .env("CARGO_TARGET_DIR", root.join("target"))
-        .args(["build", "--release", "-p", "minarbot-server"]))
+        .args(["build", "--profile", "preview", "-p", "minarbot-server"]))
 }
 
 fn install(root: &Path, paths: &Paths, port: u16, tailnet: Option<&str>) -> Result<()> {
@@ -92,7 +94,7 @@ fn install(root: &Path, paths: &Paths, port: u16, tailnet: Option<&str>) -> Resu
     let bin = stage.path().join("bin");
     files::mkdir(&bin)?;
     copy(
-        &root.join("target/release/minarbot-server"),
+        &root.join("target/preview/minarbot-server"),
         &bin.join("minarbot-server"),
     )?;
     // The server reads dist next to its bin directory; swap only while stopped.

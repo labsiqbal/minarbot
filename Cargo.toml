@@ -14,6 +14,13 @@ rusqlite = { version = "0.32.1", features = ["bundled"] }
 unwrap_used = "deny"
 expect_used = "deny"
 
+# `cargo xtask preview`: an optimized server that rebuilds incrementally.
+[profile.preview]
+inherits = "release"
+opt-level = 1
+incremental = true
+codegen-units = 256
+
 [profile.dev.package.image]
 opt-level = 2
 
