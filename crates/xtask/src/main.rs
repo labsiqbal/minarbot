@@ -1,3 +1,6 @@
+#[cfg(unix)]
+mod android;
+
 mod desktop;
 
 #[cfg(unix)]

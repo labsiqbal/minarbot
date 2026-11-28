@@ -161,6 +161,7 @@ fn execute(args: &[String], public_key: &[u8]) -> Result<()> {
             "release" => return release::command(&root, args, public_key),
             "preview" => return preview::command(&root, args),
             "desktop" => return desktop::command(args),
+            "android" => return android::command(&root, args),
             "leptos" if args.is_empty() => return leptos::build(&root),
             "leptos" if args == ["--dev"] => return leptos::build_dev(&root),
             "resource-gate" => return gates::resource_command(args),
@@ -181,7 +182,7 @@ fn execute(args: &[String], public_key: &[u8]) -> Result<()> {
             _ => return Err(format!("Unknown xtask command or arguments: {command}").into()),
         }
     }
-    println!("cargo xtask <release|preview|desktop|leptos|check-served|install-smoke|resource-gate|production-env-gate|test-port>");
+    println!("cargo xtask <release|preview|desktop|android|leptos|check-served|install-smoke|resource-gate|production-env-gate|test-port>");
     Ok(())
 }
 
