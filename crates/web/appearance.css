@@ -55,6 +55,10 @@ dialog.k-dialog:modal { overflow: visible; }
 .leptos-workspace .appearance-icon { display: contents; }
 .leptos-workspace :is(.bot-row, .project-navigation__name, .project-navigation__room, .k-icon-btn) { text-decoration: none; }
 .leptos-workspace .sidebar { flex: 0 0 300px; width: 300px; max-width: 100vw; }
+/* A resized sidebar (src/panel_resize.rs); phones keep their own layout. */
+@media (min-width: 768px) {
+  .leptos-workspace > .sidebar { flex-basis: var(--sidebar-width, 300px); width: var(--sidebar-width, 300px); }
+}
 .leptos-workspace .sidebar a, .leptos-workspace a.k-btn { text-decoration: none; }
 .leptos-workspace .sidebar .bs-avatar { width: 36px; height: 36px; font-size: 15px; }
 .leptos-workspace .sidebar .provider-status { margin-right: auto; }

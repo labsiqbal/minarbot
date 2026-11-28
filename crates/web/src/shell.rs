@@ -195,6 +195,8 @@ pub(crate) fn WorkspaceShell(
     children: Children,
 ) -> impl IntoView {
     appearance::initialize(colors);
+    let widths = crate::panel_resize::Widths::new();
+    provide_context(widths);
     #[cfg(not(feature = "hub"))]
     crate::session::watch_device();
     let directory = RwSignal::new(None::<Result<Directory, String>>);
@@ -374,7 +376,10 @@ pub(crate) fn WorkspaceShell(
     let online = RwSignal::new(false);
     let attention = RwSignal::new(false);
     let viewport = RwSignal::new(narrow());
-    let resize = window_event_listener(leptos::ev::resize, move |_| viewport.set(narrow()));
+    let resize = window_event_listener(leptos::ev::resize, move |_| {
+        viewport.set(narrow());
+        widths.fit();
+    });
     on_cleanup(move || resize.remove());
     let switcher = RwSignal::new(false);
     let switcher_requested = RwSignal::new(false);
@@ -468,6 +473,12 @@ pub(crate) fn WorkspaceShell(
         let _ = viewport.get();
         is_collapsed()
     };
+    // A shown or hidden sidebar, or a route without the details panel,
+    // changes the room each pane may take.
+    Effect::new(move |_| {
+        let _ = (hidden(), route_path());
+        request_animation_frame(move || widths.fit());
+    });
     let agent_rows = move || {
         let Some(result) = directory.get() else {
             return view! { <p class="machine-group__note" role="status">"Loading agents…"</p> }
@@ -885,6 +896,9 @@ pub(crate) fn WorkspaceShell(
                     }><span class="appearance-icon" inner_html=icons.book></span></button>
                     <a class="k-icon-btn sidebar-settings" aria-label="Settings" title="Settings" href=move || settings_link("/settings/general")><span class="appearance-icon" inner_html=icons.settings></span></a>
                 </div>
+                <Show when=move || !viewport.get() && !phone()>
+                    {crate::panel_resize::handle(crate::panel_resize::Pane::Sidebar)}
+                </Show>
             </aside>
             {update_dialog}
             {

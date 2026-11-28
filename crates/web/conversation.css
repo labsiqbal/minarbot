@@ -19,6 +19,10 @@
 .conversation-route.is-workflow { display: none; }
 .agent-inbox .k-icon-btn svg { width: 16px; height: 16px; }
 body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
+@media (min-width: 768px) {
+  body[data-view="conversation"] .leptos-workspace > .sidebar { flex-basis: var(--sidebar-width, 300px); }
+  .conversation-panel-shell.is-resizable { position: relative; flex-basis: var(--details-width, 360px); }
+}
 .chat-pilot-menu summary { list-style: none; cursor: pointer; }
 .chat__pill-chev > svg { opacity: 0.5; flex-shrink: 0; }
 .chat-pilot-menu summary::-webkit-details-marker, .turn-activity__details summary::-webkit-details-marker { display: none; }

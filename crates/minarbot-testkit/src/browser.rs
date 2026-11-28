@@ -406,6 +406,32 @@ impl Browser {
 
     /// Click `element` at its center.
     pub async fn click_element(&self, element: Element) -> Result<()> {
+        let (x, y) = self.center(element).await?;
+        self.press(x, y, 1).await
+    }
+
+    /// Double-click `element` at its center.
+    pub async fn double_click(&self, element: Element) -> Result<()> {
+        let (x, y) = self.center(element).await?;
+        self.press(x, y, 1).await?;
+        self.press(x, y, 2).await
+    }
+
+    /// Press the left button at the center of `element`, move the mouse
+    /// `dx` pixels sideways in a few steps and release it there.
+    pub async fn drag(&self, element: Element, dx: f64) -> Result<()> {
+        let (x, y) = self.center(element).await?;
+        self.mouse("mouseMoved", x, y, 0, 0).await?;
+        self.mouse("mousePressed", x, y, 1, 1).await?;
+        for step in 1..=4 {
+            self.mouse("mouseMoved", x + dx * f64::from(step) / 4.0, y, 1, 0)
+                .await?;
+        }
+        self.mouse("mouseReleased", x + dx, y, 0, 1).await
+    }
+
+    /// The center of `element`'s box, scrolled into view.
+    async fn center(&self, element: Element) -> Result<(f64, f64)> {
         let node = json!({"backendNodeId": element.node});
         self.call("DOM.scrollIntoViewIfNeeded", node.clone())
             .await?;
@@ -414,7 +440,7 @@ impl Browser {
             .as_array()
             .filter(|quad| quad.len() == 8)
             .ok_or("element has no box to click")?;
-        // Four (x, y) corners; click their mean.
+        // Four (x, y) corners; take their mean.
         let coordinate = |offset: usize| {
             quad.iter()
                 .skip(offset)
@@ -423,14 +449,21 @@ impl Browser {
                 .sum::<f64>()
                 / 4.0
         };
-        let (x, y) = (coordinate(0), coordinate(1));
-        for (kind, buttons) in [("mouseMoved", 0), ("mousePressed", 1), ("mouseReleased", 0)] {
-            self.call(
-                "Input.dispatchMouseEvent",
-                json!({"type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": 1}),
-            )
-            .await?;
-        }
+        Ok((coordinate(0), coordinate(1)))
+    }
+
+    async fn press(&self, x: f64, y: f64, count: u32) -> Result<()> {
+        self.mouse("mouseMoved", x, y, 0, 0).await?;
+        self.mouse("mousePressed", x, y, 1, count).await?;
+        self.mouse("mouseReleased", x, y, 0, count).await
+    }
+
+    async fn mouse(&self, kind: &str, x: f64, y: f64, buttons: u32, count: u32) -> Result<()> {
+        self.call(
+            "Input.dispatchMouseEvent",
+            json!({"type": kind, "x": x, "y": y, "button": "left", "buttons": buttons, "clickCount": count}),
+        )
+        .await?;
         Ok(())
     }
 
@@ -481,18 +514,25 @@ impl Browser {
         }
     }
 
-    /// Press and release a named key (`Enter`, `Backspace`, `Escape`, ...).
+    /// Press and release a named key (`Enter`, `Backspace`, `Escape`, `Tab`,
+    /// `ArrowLeft`, `ArrowRight`, `Home`, `End`) on the focused element;
+    /// `Shift+` before the name holds Shift.
     pub async fn key(&self, key: &str) -> Result<()> {
+        let (modifiers, key) = key.strip_prefix("Shift+").map_or((0, key), |key| (8, key));
         let (code, text) = match key {
             "Enter" => (13, "\r"),
             "Backspace" => (8, ""),
             "Escape" => (27, ""),
             "Tab" => (9, ""),
+            "End" => (35, ""),
+            "Home" => (36, ""),
+            "ArrowLeft" => (37, ""),
+            "ArrowRight" => (39, ""),
             other => return Err(format!("unsupported key {other}").into()),
         };
         for kind in ["keyDown", "keyUp"] {
-            let mut event =
-                json!({"type": kind, "key": key, "code": key, "windowsVirtualKeyCode": code});
+            let mut event = json!({"type": kind, "key": key, "code": key,
+                "windowsVirtualKeyCode": code, "modifiers": modifiers});
             if kind == "keyDown" && !text.is_empty() {
                 event["text"] = json!(text);
             }
