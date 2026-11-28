@@ -1230,7 +1230,7 @@ fn CalendarDialog(
                             else { slot.with_value(|(date,time)| json!({"kind":"once","date":date,"time":time})) };
                     }
                     let at = routine_row["next_at"].as_i64().unwrap_or_else(|| slot.with_value(|(day,_)| parse_day(day)));
-                    let routine_zone = routine_row["schedule_zone"].as_str().map(str::to_owned).unwrap_or_else(|| zone.get_value());
+                    let routine_zone = routine_row["schedule_zone"].as_str().filter(|_| routine_row["zone_follows"] != 1).map(str::to_owned).unwrap_or_default();
                     view! {
                         <form id="calendar-action-form" class="k-stack" on:submit=submit>
                             {(!existing).then(|| view! {
