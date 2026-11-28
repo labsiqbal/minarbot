@@ -16,7 +16,8 @@ It is a sibling of `desktop/tauri`, not a mobile target inside it. The desktop a
 - Addresses must be HTTPS. Debug builds also accept plain HTTP on loopback, for a server on the development host reached through `adb reverse`.
 - The last server is remembered in the app's config directory and opened once the form has loaded (Android drops a navigation that starts earlier). If it cannot be reached, the form shows the error with the address filled in.
 - On resume, the app checks the server. If it is gone, the form shows why; after a failure, the next resume tries again. If the server is there, the page gets a `visibilitychange` event so its polls catch up.
-- Android 15 draws apps edge to edge, and the system WebView may expose no safe-area insets, so `MainActivity` pads the webview by the status bar, gesture bar, cutout and keyboard. After each page load the app paints the bars with the colour at the top of the page and picks contrasting icons.
+- Android 15 draws apps edge to edge, and the system WebView may expose no safe-area insets, so `MainActivity` pads the webview by the status bar, gesture bar, cutout and keyboard. The app paints the bars with the colour at the top of the page and picks contrasting icons: after each page load, after each route change, and when the page changes its theme. For the theme, the server page may call `MinarbotBars.changed()`, a JavaScript interface that only asks Rust to read the page colour again.
+- Back goes to the web client first (`minarbot:back`, see `crates/web/README.md`): it closes the open menu, sheet or dialog, or steps back through the client's own history. Only when the client has nothing to go back to does the webview go back, which returns to the connect form; at the form, Android closes the app.
 - Rust logs go to logcat through `tauri-plugin-log` (`adb logcat | grep -i minarbot`).
 
 ## Build a debug APK
@@ -73,7 +74,7 @@ The phone registers its FCM token with the server's `POST /api/push/devices` (co
 
 - `NativePlugin.register` returns the FCM token and the device model. Without a Firebase config it returns a reason instead, and logcat shows `Push: registration skipped: This build has no Firebase config (google-services.json).` The app works normally without push.
 - A rotated token (`PushService.onNewToken`) is sent to the server the phone shows, and the old device is deleted.
-- Tapping a notification opens its `path` (for example `/agents/<id>/conversations/<thread>`) on the connected server. Routes that leave the server are ignored.
+- Tapping a notification opens its `path` (for example `/agents/<id>/conversations/<thread>`) inside the shown web client (`minarbot:open`), without a page load; a client without that event loads the route. Routes that leave the server are ignored.
 - On Android 13 and later, the app asks for notification permission once Firebase is configured.
 
 Existing Tauri push plugins were checked in November 2026 and not used: `tauri-plugin-mobile-push` 0.1.4 never reaches its Android code, `tauri-plugin-notifications` 0.5.0-rc.17 calls Firebase unguarded from a permission callback (a likely crash without Firebase), `tauri-plugin-fcm` 0.2.1 has no tap events, `tauri-plugin-firebase` 0.1.0-alpha.8 is guarded but brings Analytics and Crashlytics, and `tauri-plugin-push-notifications` 0.1.0 has one author and drops token refreshes. The in-repo plugin is about 100 lines of Kotlin.

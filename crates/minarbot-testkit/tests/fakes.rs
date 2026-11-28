@@ -322,7 +322,7 @@ async fn n5_n6_codex_thread_and_turn_assertions_fail_the_peer() -> Result<()> {
     );
     let mut peer = codex(&workspace, &[]).await?;
     peer.send(json!({"id": 3, "method": "turn/start", "params": {"threadId": "thread-1",
-        "input": [{"text": "x"}], "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": true}}}))
+        "input": [{"type": "text", "text": "x"}], "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": true}}}))
         .await?;
     ensure!(
         peer.exit().await?.0 == Some(1),
@@ -1129,7 +1129,7 @@ async fn gateway(
 
 async fn gateway_turn(peer: &mut Peer, id: u64, text: &str) -> Result<Value> {
     peer.seen.clear();
-    peer.send(json!({"id": id, "method": "turn/start", "params": {"threadId": "thread-1", "input": [{"text": text}]}})).await?;
+    peer.send(json!({"id": id, "method": "turn/start", "params": {"threadId": "thread-1", "input": [{"type": "text", "text": text}]}})).await?;
     let end = peer
         .expect("turn end", |v| {
             v["method"] == "turn/completed" || v["method"] == "error"
@@ -1348,7 +1348,7 @@ async fn g8_g9_g11_g15_g16_gateway_budget_resume_interrupt_judge_and_catalog() -
     );
     model.respond(|_| Reply::hold());
     resumed.seen.clear();
-    resumed.send(json!({"id": 7, "method": "turn/start", "params": {"threadId": "thread-1", "input": [{"text": "hold"}]}})).await?;
+    resumed.send(json!({"id": 7, "method": "turn/start", "params": {"threadId": "thread-1", "input": [{"type": "text", "text": "hold"}]}})).await?;
     model.wait_calls(model.calls() + 1).await?;
     resumed
         .send(json!({"id": 8, "method": "turn/interrupt", "params": {"threadId": "thread-1"}}))

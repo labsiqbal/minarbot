@@ -15,6 +15,7 @@ const LOCAL: &str = include_str!("../../../minarbot-testkit/fixtures/local-pre-c
 const PROVIDER_INSTANCES: &str =
     include_str!("../../../minarbot-server/src/data/provider-instances.sql");
 const GOALS: &str = include_str!("../../../minarbot-server/src/turns/goals.sql");
+const PUSH: &str = include_str!("../../../minarbot-server/src/push/schema.sql");
 const FILES: &str = include_str!("../../../minarbot-server/src/files/schema.sql");
 const LIBRARY_DOCS: &str =
     include_str!("../../../minarbot-server/src/turns/library_docs/schema.sql");
@@ -149,6 +150,7 @@ fn expected(mode: Mode) -> Result<(Value, Value)> {
              ALTER TABLE routines ADD COLUMN zone_follows INTEGER NOT NULL DEFAULT 0;
              CREATE TABLE time_zone_settings(id INTEGER PRIMARY KEY CHECK(id=1),zone TEXT);",
         )?;
+        db.execute_batch(PUSH)?;
     }
     db.execute_batch(
         "CREATE TABLE pairing_code_targets(id TEXT PRIMARY KEY REFERENCES pairing_codes(id) ON DELETE CASCADE,origin TEXT NOT NULL) STRICT;

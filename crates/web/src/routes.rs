@@ -1,6 +1,8 @@
 // Settings sections, shared by the browser and Axum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsRoute {
+    /// `/settings`: the section list on a phone; General elsewhere.
+    Index,
     General,
     Appearance,
     Machines,
@@ -23,6 +25,7 @@ pub enum SettingsRoute {
 impl SettingsRoute {
     pub fn title(self) -> &'static str {
         match self {
+            Self::Index => "Settings",
             Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Machines => "Machines",
@@ -45,6 +48,7 @@ impl SettingsRoute {
 
     pub fn from_path(path: &str) -> Option<Self> {
         match path {
+            "/settings" => Some(Self::Index),
             "/settings/general" => Some(Self::General),
             "/settings/appearance" => Some(Self::Appearance),
             "/settings/machines" => Some(Self::Machines),

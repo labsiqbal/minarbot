@@ -131,6 +131,25 @@ pub fn overlay(config: Config, section: Memo<Option<SettingsRoute>>) -> impl Int
         on_cleanup(move || document().set_title(&title));
     }
     let return_to = || crate::router::settings_return(&crate::router::current());
+    let router = crate::router::get();
+    let phone = move || router.is_some_and(crate::router::Router::phone);
+    // `/settings` is the section list on a phone and General elsewhere.
+    Effect::new(move |_| {
+        if route.get() == SettingsRoute::Index && !phone() {
+            if let Some(router) = router {
+                router.replace(&section_url("/settings/general", &return_to()));
+            }
+        }
+    });
+    let phone_page = move || {
+        phone().then(|| {
+            if route.get() == SettingsRoute::Index {
+                "list"
+            } else {
+                "section"
+            }
+        })
+    };
     let dialog = NodeRef::<leptos::html::Dialog>::new();
     dialog.on_load(|dialog| {
         let connected = dialog.is_connected();
@@ -210,7 +229,7 @@ pub fn overlay(config: Config, section: Memo<Option<SettingsRoute>>) -> impl Int
 
     view! {
         <dialog id="appearance-dialog" class="app-settings bs-root" node_ref=dialog
-            aria-labelledby="settings-title"
+            aria-labelledby="settings-title" data-phone-page=phone_page
             on:cancel=move |event: web_sys::Event| {
                 event.prevent_default();
                 close(&return_to());
@@ -229,7 +248,7 @@ pub fn overlay(config: Config, section: Memo<Option<SettingsRoute>>) -> impl Int
                 }
             }>
             <aside class="app-settings__nav">
-                <div id="settings-title" class="app-settings__heading">"Settings"</div>
+                <div id="settings-title" class="app-settings__heading" tabindex="-1">"Settings"</div>
                 <div class="app-settings__search">
                     <span class="appearance-icon" aria-hidden="true" inner_html=config.search_icon></span>
                     <input type="search" aria-label="Search settings" aria-keyshortcuts="/" placeholder="Search"
@@ -266,10 +285,14 @@ pub fn overlay(config: Config, section: Memo<Option<SettingsRoute>>) -> impl Int
             </button>
             {move || {
                 let section = route.get();
+                if section == SettingsRoute::Index && phone() {
+                    return ().into_any();
+                }
+                let section = if section == SettingsRoute::Index { SettingsRoute::General } else { section };
                 let preferences = matches!(section, SettingsRoute::General | SettingsRoute::Appearance);
                 let page = match section {
                     SettingsRoute::Appearance => appearance::panel(colors.get_value(), error_icon.get_value()).into_any(),
-                    SettingsRoute::General => general::panel(error_icon.get_value()).into_any(),
+                    SettingsRoute::General | SettingsRoute::Index => general::panel(error_icon.get_value()).into_any(),
                     SettingsRoute::Skills => crate::lazy_view::load("Skills", skills).into_any(),
                     SettingsRoute::Machines | SettingsRoute::Devices | SettingsRoute::Computer
                     | SettingsRoute::Updates | SettingsRoute::Usage | SettingsRoute::Data
@@ -279,10 +302,16 @@ pub fn overlay(config: Config, section: Memo<Option<SettingsRoute>>) -> impl Int
                 };
                 view! {
                     <main class="app-settings__main" node_ref=main>
+                        <div class="app-settings__top" hidden=move || !phone()>
+                            <button type="button" class="k-btn k-btn--ghost app-settings__back" on:click=move |_| {
+                                if let Some(router) = router { router.up(&section_url("/settings", &return_to())); }
+                            }><crate::connection_ui::Icon name="chevron-left" />"Settings"</button>
+                        </div>
                         <div class="app-settings__page legacy" class:app-settings__page--preferences=preferences>{page}</div>
                     </main>
-                }
+                }.into_any()
             }}
+            <Show when=phone>{crate::shell::phone_tabs()}</Show>
             {confirmation}
         </dialog>
     }
@@ -330,8 +359,16 @@ pub fn section_url(path: &str, from: &str) -> String {
 }
 
 pub fn focus_heading() {
+    // The phone's section list has no page heading; its title takes focus, so
+    // the keyboard does not open over the list for the search field.
+    let phone = crate::router::get().is_some_and(crate::router::Router::phone);
+    let selector = if phone {
+        "#appearance-dialog .app-settings__page h1, #appearance-dialog[data-phone-page=list] #settings-title"
+    } else {
+        "#appearance-dialog .app-settings__page h1"
+    };
     if let Some(heading) = document()
-        .query_selector("#appearance-dialog .app-settings__page h1")
+        .query_selector(selector)
         .ok()
         .flatten()
         .and_then(|element| element.dyn_into::<HtmlElement>().ok())

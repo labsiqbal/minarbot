@@ -2,6 +2,7 @@ package com.minarbot.mobile
 
 import android.os.Bundle
 import android.view.View
+import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -22,5 +23,9 @@ class MainActivity : TauriActivity() {
       view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
       WindowInsetsCompat.CONSUMED
     }
+  }
+
+  override fun onWebViewHistoryChanged(webView: WebView) {
+    NativePlugin.historyChanged()
   }
 }

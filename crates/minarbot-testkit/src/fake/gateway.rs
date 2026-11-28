@@ -871,6 +871,11 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                     .send(&json!({"id": id, "result": {"thread": {"id": session}}}));
             }
             Some("turn/start") => {
+                if let Some(message) = super::codex_input_error(&params["input"]) {
+                    peer.out
+                        .send(&json!({"id": id, "error": {"code": -32600, "message": message}}));
+                    continue;
+                }
                 peer.out.send(&json!({"id": id,
                     "result": {"turn": {"id": "fake-turn", "status": "inProgress"}}}));
                 peer.notify("turn/started", json!({"turn": {"id": "fake-turn"}}));
@@ -882,13 +887,13 @@ pub async fn main(args: Args) -> Result<ExitCode> {
                     .unwrap_or_default()
                     .to_owned();
                 let additional = params["additionalContext"].clone();
-                // Attached images arrive as `input_image` items after the text.
+                // Attached images arrive as `image` items after the text.
                 let images: Vec<String> = params["input"]
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .filter(|item| item["type"] == "input_image")
-                    .filter_map(|item| item["image_url"].as_str().map(str::to_owned))
+                    .filter(|item| item["type"] == "image")
+                    .filter_map(|item| item["url"].as_str().map(str::to_owned))
                     .collect();
                 let worker = peer.clone();
                 let finished = key.clone();
