@@ -22,7 +22,10 @@ body[data-view="conversation"] .leptos-workspace .sidebar { flex-basis: 300px; }
 .chat-pilot-menu summary { list-style: none; cursor: pointer; }
 .chat__pill-chev > svg { opacity: 0.5; flex-shrink: 0; }
 .chat-pilot-menu summary::-webkit-details-marker, .turn-activity__details summary::-webkit-details-marker { display: none; }
-.chat-pilot-menu__items { position: absolute; z-index: 6; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); min-width: 160px; animation: none; }
+.chat-pilot-menu__items { position: absolute; z-index: 6; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); width: max-content; min-width: 200px; animation: none; }
+.chat-pilot-menu__items .k-menu__item { justify-content: flex-start; white-space: nowrap; text-decoration: none; }
+.chat-pilot-menu__items .k-menu__item > .appearance-icon { display: inline-flex; flex: none; width: 16px; height: 16px; align-items: center; justify-content: center; color: var(--color-icon-secondary); }
+.chat-pilot-menu__items .k-menu__item > .appearance-icon > svg { width: 16px; height: 16px; }
 .conversation-layout .chat-pilot-menu.turn-task-controls:not([hidden]) { display: inline-block; position: relative; }
 .turn-task-controls [hidden] { display: none; }
 .task-actions { position: absolute; z-index: 6; bottom: calc(100% + 4px); left: 0; min-width: 140px; }

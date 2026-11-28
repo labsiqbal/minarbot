@@ -223,27 +223,51 @@ async fn codex_home_on_an_api_key_provider_is_signed_in_without_chatgpt() -> Res
 }
 
 #[tokio::test]
-async fn detected_offers_installed_claude_until_it_has_an_instance() -> Result<()> {
+async fn detected_offers_each_installed_kind_until_it_has_an_instance() -> Result<()> {
     let root = TestRoot::new()?;
-    let claude = fakes::path(Fake::Claude)?;
     let app = root
-        .start(ServerConfig::new().executable("claude", &claude))
+        .start(
+            ServerConfig::new()
+                .executable("claude", fakes::path(Fake::Claude)?)
+                .executable("hermes", fakes::path(Fake::Acp)?),
+        )
         .await?;
     let detected = app
         .get_expect("/api/provider-instances/detected", 200)
         .await?;
-    let offered = row(&detected, "claude")?;
+    let kinds = detected["providers"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| row["kind"].clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    // Claude comes first, so setup picks it before other usable kinds.
     ensure!(
-        offered["kind"] == "claude"
-            && offered["displayName"] == "Claude"
-            && offered["installed"] == true
-            && offered["auth"]["status"] == "unauthenticated",
+        kinds == [json!("claude"), json!("hermes")],
         "detected: {detected}"
     );
+    let claude = row(&detected, "claude")?;
+    ensure!(
+        claude["displayName"] == "Claude"
+            && claude["installed"] == true
+            && claude["auth"]["status"] == "unauthenticated",
+        "claude: {detected}"
+    );
+    let hermes = row(&detected, "hermes")?;
+    ensure!(
+        hermes["displayName"] == "Hermes"
+            && hermes["installed"] == true
+            && hermes["enabled"] == true,
+        "hermes: {detected}"
+    );
+
+    // An instance of the kind under any ID stops the offer.
     app.post_expect(
         "/api/provider-instances",
-        json!({"id": new_id(), "instanceId": "claude", "kind": "claude", "displayName": "Claude",
-            "enabled": true}),
+        json!({"id": new_id(), "instanceId": "work-claude", "kind": "claude",
+            "displayName": "Work Claude", "enabled": true}),
         201,
     )
     .await?;
@@ -253,6 +277,51 @@ async fn detected_offers_installed_claude_until_it_has_an_instance() -> Result<(
     ensure!(
         row(&detected, "claude").is_err(),
         "still offered: {detected}"
+    );
+    ensure!(
+        row(&detected, "hermes").is_ok(),
+        "hermes dropped: {detected}"
+    );
+    Ok(())
+}
+
+/// An instance whose ID is its kind is an ordinary instance: it can be
+/// deleted, and the installed kind is offered again.
+#[tokio::test]
+async fn an_instance_named_after_its_kind_can_be_deleted() -> Result<()> {
+    let root = TestRoot::new()?;
+    let app = root
+        .start(ServerConfig::new().executable("pi", fakes::path(Fake::Acp)?))
+        .await?;
+    let created = app
+        .post_expect(
+            "/api/provider-instances",
+            json!({"id": new_id(), "instanceId": "pi", "kind": "pi", "displayName": "Pi",
+                "enabled": true}),
+            201,
+        )
+        .await?;
+    let detected = app
+        .get_expect("/api/provider-instances/detected", 200)
+        .await?;
+    ensure!(
+        row(&detected, "pi").is_err(),
+        "offered while added: {detected}"
+    );
+    app.post_expect(
+        "/api/provider-instances/pi/delete",
+        json!({"id": new_id(), "instanceId": "pi", "revision": created["revision"]}),
+        200,
+    )
+    .await?;
+    let list = app.get("/api/provider-instances").await?;
+    ensure!(row(&list, "pi").is_err(), "not deleted: {list}");
+    let detected = app
+        .get_expect("/api/provider-instances/detected", 200)
+        .await?;
+    ensure!(
+        row(&detected, "pi").is_ok(),
+        "not offered again: {detected}"
     );
     Ok(())
 }

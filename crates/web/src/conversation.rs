@@ -1709,7 +1709,7 @@ fn header(
                     <span class="appearance-icon chat__pill-chev" inner_html=icons.chevron></span>
                 </summary>
                 <nav class="k-pop chat-pilot-menu__items" aria-label=format!("Menu {title}")>
-                    {project.map(|id| view! { <a class="k-menu__item" href=format!("/projects/{id}")>"Back to project"</a> })}
+                    {project.map(|id| view! { <a class="k-menu__item" href=format!("/projects/{id}")><crate::connection_ui::Icon name="arrow-left" />"Back to project"</a> })}
                     {section_settings.then(|| view! {
                         <button type="button" class="k-menu__item" on:click=move |_| {
                             if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
@@ -1725,7 +1725,7 @@ fn header(
                         <button type="button" class="k-menu__item" on:click=move |_| {
                             if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                             chat.guide_connection.set(true);
-                        }>"AI connection"</button>
+                        }><crate::connection_ui::Icon name="plug" />"AI connection"</button>
                     })}
                     {named.then(|| view! {
                         <button type="button" class="k-menu__item" on:click=move |_| {
@@ -1749,7 +1749,7 @@ fn header(
                         if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                         if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                         controls::dialog_open(search_dialog);
-                    }><span class="appearance-icon" inner_html=icons.search></span>"Search chat history"</button>
+                    }><crate::connection_ui::Icon name="history" />"Search chat history"</button>
                     {workspace.then(|| view! {
                         <button type="button" class="k-menu__item" on:click=move |_| {
                             if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
@@ -1765,18 +1765,19 @@ fn header(
                     {profile_agent.map(|id| {
                         let target = StoredValue::new(id);
                         view! {
+                            <div class="k-menu__sep" role="separator"></div>
                             {main_chat.then(|| view! { <button type="button" class="k-menu__item" on:click=move |_| {
                                 if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                                 if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                                 if let Some(lifecycle) = lifecycle { lifecycle.open(crate::agent_profile::DialogTarget::Edit(target.get_value())); }
-                            }>"Edit profile"</button> })}
+                            }><crate::connection_ui::Icon name="edit" />"Edit profile"</button> })}
                             <a class="k-menu__item" href=target.with_value(|agent| routines::manage(agent))><crate::connection_ui::Icon name="schedule" />"Routines"</a>
                             <a class="k-menu__item" href=target.with_value(|agent| routines::workflow_url(agent))><crate::connection_ui::Icon name="workflow" />"Workflows"</a>
                             <button type="button" class="k-menu__item" on:click=move |_| {
                                 if let Some(menu) = menu.get_untracked() { menu.set_open(false); }
                                 if let Some(trigger) = trigger.get_untracked() { let _ = trigger.focus(); }
                                 if let Some(lifecycle) = lifecycle { lifecycle.open(crate::agent_profile::DialogTarget::Export(target.get_value())); }
-                            }>"Export template"</button>
+                            }><crate::connection_ui::Icon name="download" />"Export template"</button>
                         }
                     })}
                 </nav>

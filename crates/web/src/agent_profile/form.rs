@@ -188,35 +188,62 @@ fn Text(
     #[prop(default = 160)] max: u32,
     #[prop(optional, into)] optional: Signal<bool>,
     #[prop(optional)] required: bool,
-    #[prop(optional)] models: bool,
-    #[prop(optional, into)] suggestions: Signal<bool>,
     #[prop(optional, into)] placeholder: Signal<String>,
     #[prop(optional)] changed: Option<Callback<()>>,
 ) -> impl IntoView {
-    let input = NodeRef::<leptos::html::Input>::new();
-    let label_for = if id == "backupModel" { "fallback" } else { id };
     view! {
         <div class="k-field">
             <label class="k-field__label" for=id>{label}
               <span class="k-field__optional" hidden=move || !optional.get()>"Optional"</span></label>
-            <div class:k-combobox=models>
-                <input id=id name=id type="text" node_ref=input class="k-input" autofocus=id == "name" prop:value=value readonly=locked maxlength=max
-                  required=required placeholder=move || placeholder.get() autocomplete="off" list=models.then_some("agent-model-catalog")
-                  on:input=move |event| {
-                      value.set(event_target_value(&event));
-                      if let Some(changed) = changed { changed.run(()); }
-                  } />
-                <Show when=move || models && !locked.get() && suggestions.get()>
-                    <button type="button" class="k-icon-btn k-combobox__toggle" aria-label=format!("Show {label_for} suggestions")
-                      on:click=move |_| {
-                          if let Some(input) = input.get_untracked() {
-                              let _ = input.focus();
-                              let _ = input.show_picker();
-                          }
-                      }><ui::Icon name="chevron-down" /></button>
-                </Show>
-            </div>
+            <input id=id name=id type="text" class="k-input" autofocus=id == "name" prop:value=value readonly=locked maxlength=max
+              required=required placeholder=move || placeholder.get() autocomplete="off"
+              on:input=move |event| {
+                  value.set(event_target_value(&event));
+                  if let Some(changed) = changed { changed.run(()); }
+              } />
         </div>
+    }
+}
+
+/// A provider's models as a dropdown, or a text field while the provider
+/// lists none. A saved model missing from the list stays selectable.
+#[component]
+fn ModelSelect(
+    id: &'static str,
+    #[prop(into)] label: Signal<String>,
+    value: RwSignal<String>,
+    #[prop(into)] locked: Signal<bool>,
+    #[prop(into)] catalog: Signal<Vec<(String, String)>>,
+    #[prop(optional)] required: bool,
+    #[prop(optional)] optional: bool,
+    placeholder: &'static str,
+    #[prop(optional)] changed: Option<Callback<()>>,
+) -> impl IntoView {
+    let changed = Callback::new(move |()| if let Some(changed) = changed { changed.run(()); });
+    view! {
+        <Show when=move || !catalog.with(Vec::is_empty)
+            fallback=move || view! { <Text id label value locked required optional=optional placeholder=text(placeholder) changed=changed /> }>
+            <div class="k-field">
+                <label class="k-field__label" for=id>{label}
+                  <span class="k-field__optional" hidden=!optional>"Optional"</span></label>
+                <span class="connection-select">
+                    <select id=id name=id class="k-input" required=required disabled=locked prop:value=move || value.get()
+                      on:change=move |event| { value.set(event_target_value(&event)); changed.run(()); }>
+                        <option value="">{placeholder}</option>
+                        {move || {
+                            let current = value.get();
+                            (!current.is_empty() && !catalog.with(|catalog| catalog.iter().any(|(id, _)| *id == current)))
+                                .then(|| view! { <option value=current.clone() selected>{current.clone()}</option> })
+                        }}
+                        {move || catalog.get().into_iter().map(|(id, label)| {
+                            let selected = id.clone();
+                            view! { <option value=id prop:selected=move || value.with(|value| *value == selected)>{label}</option> }
+                        }).collect_view()}
+                    </select>
+                    <span class="k-select__chev" aria-hidden="true"><ui::Icon name="chevron-down" /></span>
+                </span>
+            </div>
+        </Show>
     }
 }
 
@@ -522,11 +549,10 @@ pub(super) fn agent_form(
         ];
         content(move || view! { <Menu name="Agent profile actions".to_owned() items>{icon(icons().more)}</Menu> })
     });
-    let suggestions = Signal::derive(move || {
-        models
-            .data
-            .with(|data| data.as_ref().is_some_and(|data| !data.models.is_empty()))
-    });
+    let catalog = Signal::derive(move || models.data.with(|data| data.as_ref().map(|data| data.models.iter().map(|id| {
+        let label = data.catalog.iter().find(|item| item.id == *id).map_or(id, |item| &item.label).clone();
+        (id.clone(), label)
+    }).collect::<Vec<_>>()).unwrap_or_default()));
     let name_label = Signal::derive(move || if !editing && setup.get() { "Temporary name".to_owned() } else { "Name".to_owned() });
     let profile_fields = view! {
         <div class="agent-profile__avatar">
@@ -559,16 +585,16 @@ pub(super) fn agent_form(
             <span class="connection-select"><select class="k-input" name="providerInstance" aria-label="Provider instance" prop:value=provider_instance disabled=locked
                 on:change=move |event| { provider_instance.set(event_target_value(&event)); model.set(String::new()); model_options.set(json!({})); }>
                 <option value="">"Choose a provider"</option>
-                {move || instance_options.get().into_iter().map(|(id, label, available, reason)| view! { <option value=id disabled=!available>{if available { label } else { format!("{label} · {reason}") }}</option> }).collect_view()}
-            </select></span>
+                {move || instance_options.get().into_iter().map(|(id, label, available, reason)| {
+                    // Options arrive after the select renders; each marks itself selected.
+                    let selected = id.clone();
+                    view! { <option value=id prop:selected=move || provider_instance.with(|value| *value == selected) disabled=!available>{if available { label } else { format!("{label} · {reason}") }}</option> }
+                }).collect_view()}
+            </select><span class="k-select__chev" aria-hidden="true"><ui::Icon name="chevron-down" /></span></span>
             <ErrorNotice error=instances.error.into() retry=instances.reload />
         </ui::Field>
         <div class="k-stack agent-model-field">
-            <Text id="model" label=text("Model") value=model locked=Signal::derive(move || locked.get() || provider_instance.with(|value| value.is_empty())) required=true models=true suggestions=suggestions placeholder=text("Choose a provider model") changed=Callback::new(move |()| model_edited.set(true)) />
-            <datalist id="agent-model-catalog">{move || models.data.with(|data| data.iter().flat_map(|data| data.models.iter().map(|id| {
-                let label = data.catalog.iter().find(|item| item.id == *id).map_or(id, |item| &item.label).clone();
-                view! { <option value=id.clone() label=label></option> }
-            })).collect_view())}</datalist>
+            <ModelSelect id="model" label=text("Model") value=model locked=Signal::derive(move || locked.get() || provider_instance.with(|value| value.is_empty())) catalog required=true placeholder="Choose a model" changed=Callback::new(move |()| model_edited.set(true)) />
             <span class="k-field__hint" role="status" hidden=move || !models.busy.get()>"Loading models"</span>
             <ErrorNotice error=models.error.into() retry=models.reload />
         </div>
@@ -593,7 +619,7 @@ pub(super) fn agent_form(
         </Show>
         {editing.then(|| view! {
             <ui::Disclosure title="Goal judge model" open=goal_open>
-                <Text id="goalJudgeModel" label=text("Goal judge model") value=goal locked optional=true models=true suggestions=suggestions placeholder=text("Use agent model") />
+                <ModelSelect id="goalJudgeModel" label=text("Goal judge model") value=goal locked catalog optional=true placeholder="Use agent model" />
             </ui::Disclosure>
             <Card>{switch_row("Learn from conversations", learn.into(), locked, Callback::new(move |value| learn.set(value)))}</Card>
         })}

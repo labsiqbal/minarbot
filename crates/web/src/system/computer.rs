@@ -45,7 +45,6 @@ pub fn panel() -> impl IntoView {
     let busy = RwSignal::new(false);
     let status = Query::<Status>::new(|| PATH.into(), 5000, busy);
     let command_error = RwSignal::new(String::new());
-    let directory = use_context::<ReadSignal<Option<Result<crate::shell::Directory, String>>>>();
     let downloading = move || {
         status.value.with(|status| {
             status
@@ -115,16 +114,6 @@ pub fn panel() -> impl IntoView {
           </Show>
           <Show when=move || !status_error().is_empty()>
             <Alert tone="error">{status_error}</Alert>
-          </Show>
-          <Show when=move || status.value.with(|value| value.as_ref().is_some_and(|status| status.state == State::Ready))>
-            {move || directory.and_then(|directory| directory.get()).and_then(Result::ok).map(|directory| {
-                directory.agents.into_iter().filter(|agent| !agent.hidden).map(|agent| {
-                    let href = "/".to_owned();
-                    let params = web_sys::UrlSearchParams::new().ok();
-                    let href = params.map_or(href, |params| { params.set("computer", &agent.id); format!("/?{}", String::from(params.to_string())) });
-                    view! { <a class="k-link" href=href target="_blank" rel="noopener noreferrer">{format!("Open {}’s computer viewer", agent.name)}</a> }
-                }).collect_view()
-            })}
           </Show>
         </div>
       </div>

@@ -115,17 +115,29 @@ fn kind_label(kind: &str) -> &'static str {
     }
 }
 
+/// Codex and Claude Code sign in; the other agents use their own setup.
+fn signs_in(kind: &str) -> bool {
+    matches!(kind, "codex" | "claude")
+}
+
+fn ready(provider: &Instance) -> bool {
+    provider.enabled && provider.installed && (!signs_in(&provider.kind) || provider.auth.status == "authenticated")
+}
+
 fn status_line(provider: &Instance) -> String {
     if !provider.enabled {
         return "Disabled".into();
     }
+    if !provider.installed {
+        return "Not installed".into();
+    }
+    if !signs_in(&provider.kind) {
+        return "Ready".into();
+    }
     if provider.auth.status == "authenticated" {
         return format!("Authenticated · {}", provider.auth.method.clone().unwrap_or_else(|| kind_label(&provider.kind).into()));
     }
-    if provider.installed {
-        return format!("Not authenticated · {}", provider.auth.reason.clone().unwrap_or_else(|| "Sign in required".into()));
-    }
-    "Not installed".into()
+    format!("Not authenticated · {}", provider.auth.reason.clone().unwrap_or_else(|| "Sign in required".into()))
 }
 
 fn slug(value: &str) -> String {
@@ -143,6 +155,9 @@ fn slug(value: &str) -> String {
 
 pub fn panel() -> impl IntoView {
     let providers = query::<Envelope>(|| PATH.into());
+    // Agent CLIs installed here that have no instance yet.
+    let detected = query::<Envelope>(|| format!("{PATH}/detected"));
+    let reload = UiAction::new(move |()| { providers.reload.run(()); detected.reload.run(()); });
     let selected = RwSignal::new(None::<String>);
     let adding = RwSignal::new(false);
     let error = RwSignal::new(String::new());
@@ -159,7 +174,7 @@ pub fn panel() -> impl IntoView {
     });
     let refresh = UiAction::new(move |()| {
         checked.set("Checking now…".into());
-        providers.reload.run(());
+        reload.run(());
         checked.set("Checked just now".into());
     });
     let current = move || providers.data.with(|data| data.as_ref().and_then(|data| {
@@ -167,6 +182,21 @@ pub fn panel() -> impl IntoView {
             .or_else(|| data.providers.first().cloned())
     }));
     let close_add = UiAction::new(move |()| adding.set(false));
+    let adding_detected = RwSignal::new(String::new());
+    let add_detected = move |provider: Instance| {
+        if !adding_detected.get_untracked().is_empty() { return; }
+        adding_detected.set(provider.id.clone());
+        error.set(String::new());
+        let body = json!({"instanceId":provider.id,"kind":provider.kind,"displayName":provider.display_name,"enabled":true});
+        spawn_local(async move {
+            match api::command::<Instance>(PATH, body).await {
+                Ok(created) => { saved.set(String::new()); selected.set(Some(created.id)); }
+                Err(message) => error.set(message),
+            }
+            adding_detected.set(String::new());
+            reload.run(());
+        });
+    };
     let signing = RwSignal::new(None::<Target>);
     let sign_in = Callback::new(move |target: Target| { adding.set(false); signing.set(Some(target)); });
     view! {
@@ -215,18 +245,44 @@ pub fn panel() -> impl IntoView {
                                     </div>
                                 }
                             } />
+                        <Show when=move || detected.data.with(|data| data.as_ref().is_some_and(|data| !data.providers.is_empty()))>
+                            <div class="provider-instances-group" role="group" aria-label="On this machine">
+                                <h3>"On this machine"</h3>
+                                <For each=move || detected.data.with(|data| data.clone().unwrap_or_default().providers)
+                                    key=|provider| (provider.id.clone(), status_line(provider))
+                                    children=move |provider| {
+                                        let id = provider.id.clone();
+                                        let row = provider.clone();
+                                        view! {
+                                            <div class="provider-instance-row is-detected">
+                                                <span class="provider-instance-row__select">
+                                                    <span class="provider-instance-row__icon"><ProviderMark kind=provider.kind.clone() /></span>
+                                                    <span class="provider-instance-row__main">
+                                                        <strong>{provider.display_name.clone()}</strong>
+                                                        <small>{if matches!(provider.kind.as_str(), "codex" | "claude") && provider.auth.status != "authenticated" { "Installed · Not signed in" } else { "Installed" }}</small>
+                                                    </span>
+                                                </span>
+                                                <Button label="Add" aria=format!("Add {}", provider.display_name) size="sm"
+                                                    busy=Signal::derive(move || adding_detected.with(|value| value == &id))
+                                                    disabled=Signal::derive(move || !adding_detected.with(String::is_empty))
+                                                    click=UiAction::new(move |()| add_detected(row.clone())) />
+                                            </div>
+                                        }
+                                    } />
+                            </div>
+                        </Show>
                     </nav>
                     <Show when=move || current().is_some() fallback=|| view! { <Empty title="Choose a provider" icon="server" /> }>
-                        {move || current().map(|provider| detail(provider, providers.reload, error, saved, sign_in))}
+                        {move || current().map(|provider| detail(provider, reload, error, saved, sign_in))}
                     </Show>
                 </div>
             </Show>
             <Show when=move || adding.get()>
-                <AddProvider close=close_add reload=providers.reload saved=move || { providers.reload.run(()); adding.set(false); } sign_in=sign_in />
+                <AddProvider close=close_add reload=reload saved=move || { reload.run(()); adding.set(false); } sign_in=sign_in />
             </Show>
             {move || signing.get().map(|target| view! {
-                <SignIn target close=UiAction::new(move |()| { signing.set(None); providers.reload.run(()); })
-                    signed_in=UiAction::new(move |()| { signing.set(None); saved.set("Signed in".into()); providers.reload.run(()); }) />
+                <SignIn target close=UiAction::new(move |()| { signing.set(None); reload.run(()); })
+                    signed_in=UiAction::new(move |()| { signing.set(None); saved.set("Signed in".into()); reload.run(()); }) />
             })}
         </div>
     }
@@ -250,7 +306,7 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
     let display_name = provider.display_name.clone();
     let version = provider.version.clone();
     let shadow_path = provider.shadow_home_path.clone();
-    let auth_status = provider.auth.status.clone();
+    let is_ready = ready(&provider);
     let save = UiAction::new(move |()| {
         if busy.get_untracked() { return; }
         busy.set(true);
@@ -315,8 +371,8 @@ fn detail(provider: Instance, reload: UiAction, error: RwSignal<String>, saved: 
                 <div class="provider-instance-title"><span class="provider-instance-detail__icon"><ProviderMark kind=provider_kind_view.clone() /></span><div><h2>{display_name.clone()}</h2><p>{kind_label(&provider_kind_view)}{version.clone().map(|version| format!(" · v{version}"))}</p></div></div>
                 <Badge success=provider_enabled>{if provider_enabled { "Enabled" } else { "Disabled" }}</Badge>
             </div>
-            <Section title="Status" actions=Box::new(move || view! { <div class="provider-detail-actions"><Button label="Re-check" icon="refresh" busy=busy click=refresh /><Button label="Sign in" icon="key" busy=busy disabled=move || kind_for_button != "codex" && kind_for_button != "claude" click=sign_in /></div> }.into_any())>
-                <div class="provider-status-card"><span class="provider-status-dot" class:is-ready=auth_status == "authenticated" && provider_enabled></span><div><strong>{status}</strong>{(!auth_reason.is_empty()).then(|| view! { <p>{auth_reason.clone()}</p> })}</div></div>
+            <Section title="Status" actions=Box::new(move || view! { <div class="provider-detail-actions"><Button label="Re-check" icon="refresh" busy=busy click=refresh />{signs_in(&kind_for_button).then(|| view! { <Button label="Sign in" icon="key" busy=busy click=sign_in /> })}</div> }.into_any())>
+                <div class="provider-status-card"><span class="provider-status-dot" class:is-ready=is_ready></span><div><strong>{status}</strong>{(!auth_reason.is_empty()).then(|| view! { <p>{auth_reason.clone()}</p> })}</div></div>
             </Section>
             <form class="provider-detail-form" on:submit=move |event| { event.prevent_default(); save.run(()); }>
                 <Section title="Configuration">

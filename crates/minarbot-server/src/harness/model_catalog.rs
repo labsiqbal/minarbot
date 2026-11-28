@@ -279,17 +279,49 @@ pub(crate) async fn models_for_instance(
     env.extend(configured_environment);
     env.insert("TMPDIR".into(), scratch.0.to_string_lossy().into_owned());
     mise_environment(&executable, &mut env);
-    let mut launch_args = if configured_args.is_empty() {
-        args(&runtime)
+    let catalog = if matches!(runtime.as_str(), "codex" | "claude") {
+        let mut launch_args = if configured_args.is_empty() {
+            args(&runtime)
+        } else {
+            configured_args
+        };
+        if launch_args.is_empty() {
+            launch_args = args(&runtime);
+        }
+        let process = Process::launch(&executable, &launch_args, &scratch.0, &env)
+            .map_err(|_| launch_error(&runtime))?;
+        probe_process(process, &runtime, PROBE_TIMEOUT).await?
     } else {
-        configured_args
+        if runtime == "hermes" {
+            env.extend(
+                super::process::HERMES_ENV.map(|(key, value)| (key.to_owned(), value.to_owned())),
+            );
+        }
+        let launch_args = if configured_args.is_empty() {
+            agent_args(&runtime, &executable)
+        } else {
+            configured_args
+        };
+        let process = Process::launch(&executable, &launch_args, &scratch.0, &env)
+            .map_err(|_| launch_error(&runtime))?;
+        // Hermes loads its plugins before it answers.
+        let budget = if runtime == "hermes" {
+            Duration::from_secs(45)
+        } else {
+            Duration::from_secs(20)
+        };
+        timeout(budget, agent_models(process, &runtime, &scratch.0))
+            .await
+            .map_err(|_| {
+                error(
+                    502,
+                    format!(
+                        "{} model discovery timed out. Check the engine and try again.",
+                        super::label(&runtime)
+                    ),
+                )
+            })??
     };
-    if launch_args.is_empty() {
-        launch_args = args(&runtime);
-    }
-    let process = Process::launch(&executable, &launch_args, &scratch.0, &env)
-        .map_err(|_| launch_error(&runtime))?;
-    let catalog = probe_process(process, &runtime, PROBE_TIMEOUT).await?;
     let mut result = response(catalog);
     // A catalog that echoes an instance secret (for example the provider key
     // as a model id) is invalid and must not reach the browser.
@@ -320,6 +352,92 @@ pub(crate) async fn models_for_instance(
         }
     }
     Ok(result)
+}
+
+/// Launch arguments for agents other than Codex and Claude Code: Pi's RPC
+/// mode, and ACP for the rest.
+fn agent_args(runtime: &str, executable: &Path) -> Vec<String> {
+    if runtime == "pi" {
+        [
+            "--mode",
+            "rpc",
+            "--offline",
+            "--no-extensions",
+            "--no-session",
+        ]
+        .map(str::to_owned)
+        .into()
+    } else {
+        store::acp_args(runtime, executable)
+    }
+}
+
+/// The models an agent other than Codex and Claude Code offers: Pi through
+/// `get_available_models`, ACP agents in `initialize` or, as most report
+/// them, in the result of `session/new`.
+async fn agent_models(mut process: Process, runtime: &str, cwd: &Path) -> Result<Vec<Model>> {
+    async fn reply(process: &mut Process, id: i64, runtime: &str) -> Result<Value> {
+        loop {
+            let value = process.next().await.map_err(|_| launch_error(runtime))?;
+            if value["id"] == id {
+                if value.get("error").is_some() || value["success"] == false {
+                    return Err(launch_error(runtime));
+                }
+                return Ok(value);
+            }
+        }
+    }
+    let rows = if runtime == "pi" {
+        process
+            .send(json!({"id":1,"type":"get_available_models"}))
+            .await
+            .map_err(|_| launch_error(runtime))?;
+        let value = reply(&mut process, 1, runtime).await?;
+        Value::Array(
+            value["data"]["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|model| json!({"id":format!("{}/{}", string(model, "provider"), string(model, "id")),"label":model["name"]}))
+                .collect(),
+        )
+    } else {
+        process
+            .send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"minarbot","version":"0.1.0"},"clientCapabilities":{"terminal":false}}}))
+            .await
+            .map_err(|_| launch_error(runtime))?;
+        let initialized = reply(&mut process, 1, runtime).await?;
+        let listed = super::protocol::models(&initialized["result"]);
+        if listed.as_array().is_some_and(|rows| !rows.is_empty()) {
+            listed
+        } else {
+            process
+                .send(json!({"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":cwd,"mcpServers":[]}}))
+                .await
+                .map_err(|_| launch_error(runtime))?;
+            let session = reply(&mut process, 2, runtime).await?;
+            super::protocol::models(&session["result"])
+        }
+    };
+    Ok(rows
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let id = row["id"]
+                .as_str()
+                .filter(|id| providers::valid_model_id(id))?;
+            let label = row["label"]
+                .as_str()
+                .filter(|label| {
+                    !label.is_empty()
+                        && label.chars().count() <= 160
+                        && !label.chars().any(char::is_control)
+                })
+                .unwrap_or(id);
+            Some(Model::new(id, label, false))
+        })
+        .collect())
 }
 
 fn launch_error(runtime: &str) -> Failure {
