@@ -1,4 +1,4 @@
-// Shared by the browser and Axum. Add route groups after their parity checks pass.
+// Settings sections, shared by the browser and Axum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsRoute {
     General,

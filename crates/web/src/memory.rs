@@ -4,7 +4,7 @@ mod notes;
 use crate::{connection_ui as ui, system::kit};
 use leptos::{html, prelude::*};
 use serde::Deserialize;
-#[cfg(feature = "conversation")]
+#[cfg(feature = "workspace")]
 use wasm_bindgen::JsCast;
 
 const TABS: [(&str, &str); 3] = [
@@ -80,7 +80,7 @@ fn pager<Cursor: Clone + Send + Sync + 'static>(
     }
 }
 
-#[cfg(feature = "conversation")]
+#[cfg(feature = "workspace")]
 pub(crate) fn panel(
     path: String,
     channel: bool,
@@ -222,7 +222,7 @@ pub(crate) fn profile_resources(agent: String) -> impl IntoView {
     }
 }
 
-#[cfg(feature = "conversation")]
+#[cfg(feature = "workspace")]
 pub(crate) fn context_dialog(base: String, open: RwSignal<bool>) -> impl IntoView {
     view! {
         {move || open.get().then(|| crate::lazy_view::load("history summary", {
@@ -232,7 +232,7 @@ pub(crate) fn context_dialog(base: String, open: RwSignal<bool>) -> impl IntoVie
     }
 }
 
-#[cfg(feature = "conversation")]
+#[cfg(feature = "workspace")]
 #[leptos::wasm_split::wasm_split(context, wasm_split_path = leptos::wasm_split, fallible)]
 fn context_view(base: String, open: RwSignal<bool>) -> crate::lazy_view::ChunkView {
     let path = StoredValue::new(format!("{base}/compaction"));
@@ -336,7 +336,7 @@ fn summary(path: String) -> impl IntoView {
     }
 }
 
-#[cfg(feature = "conversation")]
+#[cfg(feature = "workspace")]
 pub(crate) fn focus_chat_menu() {
     request_animation_frame(|| {
         if let Ok(Some(menu)) = document().query_selector(".chat__pill") {

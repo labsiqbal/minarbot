@@ -105,7 +105,7 @@ async fn http_persistence_idempotent_fifo_turns_isolation_failure_and_interrupte
     let assets = root.dir("dist/_leptos/assets")?;
     std::fs::write(assets.join("app.0123456789abcdef.js"), "export {};")?;
     std::fs::write(
-        dist.join("_leptos/conversation.html"),
+        dist.join("_leptos/app.html"),
         r#"<!doctype html><title>Minarbot</title><script type="module" src="/_leptos/assets/app.0123456789abcdef.js"></script>"#,
     )?;
     let config = ServerConfig::new()

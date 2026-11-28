@@ -111,9 +111,7 @@ fn navigate(chat: Chat, target: Option<ResultTarget>) {
         return;
     }
     if window().location().href().ok().as_deref() != Some(&location.href()) {
-        let _ = window().history().and_then(|history| {
-            history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&location.href()))
-        });
+        crate::router::push(&format!("{}{}", location.pathname(), location.search()));
     }
     sync(chat, target);
 }

@@ -459,7 +459,7 @@ fn order_dialog(
     let load = move || {
         let recovery = pending.get_untracked();
         let empty = queued.with_untracked(Vec::is_empty);
-        if (!open.get_untracked() && !(recovery.is_some() && empty))
+        if !(open.get_untracked() || recovery.is_some() && empty)
             || busy.get_untracked()
             || loading.get_untracked()
         {

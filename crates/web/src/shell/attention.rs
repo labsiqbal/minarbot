@@ -75,7 +75,7 @@ impl Notice {
                 let _ = storage.remove_item(&card);
             }
         }
-        let _ = window().location().assign(&self.href());
+        crate::router::open(&self.href());
     }
 }
 

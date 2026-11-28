@@ -1405,8 +1405,7 @@ pub fn form_reply(
     revision: u64,
     open: bool,
     state: String,
-    busy: RwSignal<bool>,
-    error: RwSignal<String>,
+    (busy, error): (RwSignal<bool>, RwSignal<String>),
 ) -> impl IntoView {
     let label = value["actions"][0]["label"]
         .as_str()

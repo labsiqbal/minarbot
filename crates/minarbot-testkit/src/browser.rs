@@ -51,7 +51,7 @@ const TEXT_EXCERPT: usize = 2000;
 /// Fails with the build command when `cargo xtask leptos` has not run.
 pub fn client_dist() -> Result<PathBuf> {
     let dist = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/dist");
-    if dist.join("_leptos/conversation.html").is_file() {
+    if dist.join("_leptos/app.html").is_file() {
         Ok(dist)
     } else {
         Err(format!(

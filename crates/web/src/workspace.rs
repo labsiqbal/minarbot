@@ -1,35 +1,21 @@
-#[cfg(feature = "workflows")]
-use crate::automation;
-#[cfg(not(any(feature = "conversation", feature = "hub")))]
+#[cfg(feature = "workspace")]
 use crate::{onboarding, projects, workspace_route::WorkspaceRoute};
 use leptos::prelude::*;
 
-#[cfg(not(any(feature = "conversation", feature = "hub")))]
-pub fn page(route: WorkspaceRoute, error_icon: String) -> impl IntoView {
-    document().set_title(&format!("{} · Minarbot", route.title()));
-    match route {
-        WorkspaceRoute::Setup => onboarding::page(error_icon).into_any(),
-        #[cfg(feature = "workflows")]
-        WorkspaceRoute::Routines => automation::routines_page().into_any(),
-        #[cfg(feature = "workflows")]
-        WorkspaceRoute::Workflows => automation::workflows_page(Signal::stored(true)).into_any(),
-        #[cfg(feature = "workflows")]
-        WorkspaceRoute::Calendar => automation::calendar_page(Signal::stored(true)).into_any(),
-        #[cfg(not(feature = "workflows"))]
-        WorkspaceRoute::Routines | WorkspaceRoute::Workflows | WorkspaceRoute::Calendar => {
-            ().into_any()
-        }
-        WorkspaceRoute::Project(id) => {
-            crate::lazy_view::load("project", move || project(id.clone(), error_icon.clone()))
-                .into_any()
-        }
-    }
+/// First run at `/` while no agent can chat.
+#[cfg(feature = "workspace")]
+pub fn setup(error_icon: String) -> impl IntoView {
+    document().set_title(&format!("{} · Minarbot", WorkspaceRoute::Setup.title()));
+    onboarding::page(error_icon)
 }
 
-#[cfg(not(any(feature = "conversation", feature = "hub")))]
-#[leptos::wasm_split::wasm_split(project, wasm_split_path = leptos::wasm_split, fallible)]
-fn project(id: String, error_icon: String) -> crate::lazy_view::ChunkView {
-    Ok(projects::page(id, error_icon).into_any())
+#[cfg(feature = "workspace")]
+pub fn project(id: String, error_icon: String) -> impl IntoView {
+    document().set_title(&format!(
+        "{} · Minarbot",
+        WorkspaceRoute::Project(String::new()).title()
+    ));
+    projects::page(id, error_icon)
 }
 
 pub fn heading(title: String, description: String) -> impl IntoView {

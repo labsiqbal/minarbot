@@ -43,7 +43,7 @@ pub(crate) enum DialogTarget {
     Create,
     Import,
     Edit(String),
-    #[cfg(feature = "conversation")]
+    #[cfg(feature = "workspace")]
     Export(String),
 }
 
@@ -82,7 +82,7 @@ impl Lifecycle {
             .as_str()
             .filter(|id| crate::workspace_route::valid_id(id))
         {
-            let _ = window().location().assign(&self.link(id));
+            crate::router::open(&self.link(id));
         }
     }
 
@@ -104,7 +104,7 @@ impl Lifecycle {
         self.directory.with(|data| find_agent(data.as_ref(), id))
     }
 
-    #[cfg(feature = "conversation")]
+    #[cfg(feature = "workspace")]
     pub fn deleting_current(self) -> bool {
         self.deleting.with(|id| !id.is_empty() && self.current(id))
     }
@@ -157,7 +157,7 @@ fn profile_dialog(lifecycle: Lifecycle, target: DialogTarget) -> crate::lazy_vie
             .get(&id)
             .map(|agent| form::agent_form(lifecycle, Some(agent), String::new()))
             .into_any(),
-        #[cfg(feature = "conversation")]
+        #[cfg(feature = "workspace")]
         DialogTarget::Export(id) => lifecycle
             .get(&id)
             .map(|agent| templates::export(agent, move || lifecycle.close(), true))
@@ -217,7 +217,7 @@ pub(crate) fn row_actions(lifecycle: Lifecycle, agent: Agent) -> impl IntoView {
         danger: false,
         action: Callback::new(move |()| {
             if builtin {
-                let _ = window().location().assign(&crate::settings::section_url(
+                crate::router::open(&crate::settings::section_url(
                     "/settings/providers",
                     &lifecycle.link(&id.get_value()),
                 ));
@@ -231,9 +231,7 @@ pub(crate) fn row_actions(lifecycle: Lifecycle, agent: Agent) -> impl IntoView {
             label: "Inbox".into(),
             danger: false,
             action: Callback::new(move |()| {
-                let _ = window()
-                    .location()
-                    .assign(&format!("/agents/{}/inbox", id.get_value()));
+                crate::router::open(&format!("/agents/{}/inbox", id.get_value()));
             }),
         });
     }

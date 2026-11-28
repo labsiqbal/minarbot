@@ -2,6 +2,7 @@ const status = document.getElementById('appearance-startup');
 const fallback = document.getElementById('appearance-fallback');
 const title = fallback.querySelector('h1')?.textContent ?? 'Conversation';
 let glue;
+__PRELUDE__
 
 for (const cache of ['default', 'reload']) {
   try {
@@ -22,7 +23,6 @@ if (glue) {
     const editing = pairing && (fallback.contains(document.activeElement)
       || Array.from(fallback.querySelectorAll('input')).some(input => input.value));
     if (!editing) {
-      __ADAPTER__
       glue.__MOUNT__();
       fallback.hidden = true;
       // Cached documents can still contain data from a revoked browser session.

@@ -153,7 +153,7 @@ fn workflow_detail(
 
 pub(crate) fn workflows_page(active: Signal<bool>) -> impl IntoView {
     let search = window().location().search().unwrap_or_default();
-    if let Some((owner, back)) = crate::lazy_route::workflow_scope(&format!("/workflows{search}")) {
+    if let Some((owner, back)) = crate::router::workflow_scope(&format!("/workflows{search}")) {
         return agent_library(owner, format!("{back}?ui=leptos"), None).into_any();
     }
     let screen = RwSignal::new(Screen::List);
@@ -1595,7 +1595,7 @@ fn Detail(
                         }>{back_label}</button>
                     }) /></div>
                     <div class="workflow-step-chat">
-                        {crate::lazy_route::outlet("step", "step conversation", current.agent, current.thread, None)}
+                        {crate::app::workflow_step(current.agent, current.thread)}
                     </div>
                 </div>
             }

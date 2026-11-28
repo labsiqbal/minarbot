@@ -16,13 +16,25 @@ const WASM_PROFILE: &str = "wasm-release";
 const WASM_DEV_PROFILE: &str = "wasm-dev";
 const BINARYEN_VERSION: &str = "133";
 const NAMESPACE: &str = "/_leptos/";
-// Each route group gets its own document, CSS and Wasm.
-const ROUTE_GROUPS: [(&str, &[&str], u64); 4] = [
-    ("appearance", &[], 960_000),
-    ("workflows", &["--features", "workflows"], 610_000),
-    ("conversation", &["--features", "conversation"], 430_000),
+// The workspace app and hosted Hub each get one document, CSS and Wasm.
+// Budgets cover the primary module; route code loads as split chunks.
+const ROUTE_GROUPS: [(&str, &[&str], u64); 2] = [
+    ("app", &["--features", "workspace"], 430_000),
     ("hub", &["--features", "hub"], 240_000),
 ];
+/// Defines the app's browser adapters before its Wasm loads: workflow
+/// Markdown, and the conversation adapter, fetched at once on chat routes.
+const APP_PRELUDE: &str = "globalThis.minarbotWorkflowMarkdown = (text, scope) =>
+  import('minarbot-workflow-markdown').then(({ renderWorkflowMarkdown }) => renderWorkflowMarkdown(text, scope));
+let conversation;
+globalThis.minarbotLoadConversation = () => conversation ??= import('minarbot-conversation-adapter')
+  .then(({ browserAdapter }) => { globalThis.MinarbotConversation = browserAdapter; })
+  .catch(error => { conversation = undefined; throw error; });
+if (!document.querySelector('#leptos-root[data-pairing], #leptos-root[data-initial=setup]')
+  && !/^\\/(settings|routines|calendar|projects|pair)(\\/|$)/.test(location.pathname)
+  && !(location.pathname === '/workflows' && !new URLSearchParams(location.search).has('agent'))) {
+  globalThis.minarbotLoadConversation().catch(() => {});
+}";
 
 fn bindgen(target: &Path) -> Result<PathBuf> {
     let (host, checksum) = match (env::consts::OS, env::consts::ARCH) {
@@ -400,17 +412,10 @@ fn build_profile(root: &Path, dev: bool) -> Result<()> {
             .into());
         }
         let wasm = hash_asset(&optimized, &assets, name, "wasm")?;
-        if name == "workflows" {
-            fs::write(
-                temp.path().join("route-chunks.js"),
-                fs::read_to_string(web.join("route-chunks.js"))?
-                    .replace("__WORKFLOWS_WASM__", &wasm),
-            )?;
-        }
         bundles.insert(
             name,
             json!({
-                "routeGroup": if name == "appearance" { "shell-settings" } else { name },
+                "routeGroup": name,
                 "beforeWasmOpt": { "raw": before_raw, "gzip": before_gzip },
                 "afterWasmOpt": { "raw": after_raw, "gzip": after_gzip },
                 "asset": wasm,
@@ -420,22 +425,7 @@ fn build_profile(root: &Path, dev: bool) -> Result<()> {
         );
         let glue = temp.path().join(format!("{name}.js"));
         fs::write(&glue, fs::read_to_string(&glue)?.replace(&wasm_name, &wasm))?;
-        let adapter = match name {
-            "conversation" => {
-                "const [adapter, routes] = await Promise.all([
-                    import('minarbot-conversation-adapter'), import('./route-chunks.js')
-                ]);
-                globalThis.MinarbotConversation = adapter.browserAdapter;
-                globalThis.minarbotPreloadWorkflows = routes.preloadWorkflows;
-                globalThis.minarbotMountRoute = routes.mountRoute;"
-            }
-            "workflows" => {
-                "const chunks = await import('./route-chunks.js');
-                globalThis.minarbotWorkflowMarkdown = chunks.workflowMarkdown;
-                globalThis.minarbotMountRoute = chunks.mountRoute;"
-            }
-            _ => "",
-        };
+        let prelude = if name == "app" { APP_PRELUDE } else { "" };
         let start = temp.path().join(format!("{name}-start.js"));
         fs::write(
             &start,
@@ -443,7 +433,7 @@ fn build_profile(root: &Path, dev: bool) -> Result<()> {
                 .replace("__APP__", name)
                 .replace("__MOUNT__", &format!("mount_{name}"))
                 .replace("__WASM_URL__", &wasm)
-                .replace("__ADAPTER__", adapter),
+                .replace("__PRELUDE__", prelude),
         )?;
         inputs.insert(format!("{name}-start"), start);
         inputs.insert(name.to_owned(), web.join(format!("{name}.css")));

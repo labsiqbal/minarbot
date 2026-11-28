@@ -38,8 +38,8 @@ pub(crate) fn computer_window() -> impl IntoView {
 fn computer_screen() -> crate::lazy_view::ChunkView {
     Ok(panels::computer_window().into_any())
 }
+pub(crate) use routes::ProjectConversation;
 pub use routes::{standalone, Agent, Thread};
-pub(crate) use routes::{Navigation, ProjectConversation};
 
 #[derive(Clone, Copy)]
 struct EmbeddedStep;
@@ -881,16 +881,26 @@ fn restore_details() -> bool {
         && preference("minarbot:details-open").map_or(viewport >= 1280.0, |open| open == "1")
 }
 
+/// The poll's dispatch request in flight and its retry time and count.
+#[derive(Clone, Copy)]
+struct DispatchPoll {
+    busy: RwSignal<bool>,
+    retry: RwSignal<(f64, u32)>,
+}
+
 fn polling(
     chat: Chat,
     snapshots: StoredValue<HashMap<String, Partial>>,
     generation: RwSignal<u64>,
     epoch: u64,
     abort: StoredValue<Option<web_sys::AbortController>, LocalStorage>,
-    dispatch_busy: RwSignal<bool>,
-    dispatch_retry: RwSignal<(f64, u32)>,
+    dispatch: DispatchPoll,
     mut failures: u32,
 ) {
+    let DispatchPoll {
+        busy: dispatch_busy,
+        retry: dispatch_retry,
+    } = dispatch;
     let current = move || generation.try_get_untracked() == Some(epoch);
     if !current() || document().hidden() {
         return;
@@ -1042,14 +1052,7 @@ fn polling(
         set_timeout(
             move || {
                 polling(
-                    chat,
-                    snapshots,
-                    generation,
-                    epoch,
-                    abort,
-                    dispatch_busy,
-                    dispatch_retry,
-                    failures,
+                    chat, snapshots, generation, epoch, abort, dispatch, failures,
                 )
             },
             delay,
@@ -1214,11 +1217,10 @@ fn copy_action(text: impl Fn() -> String + 'static, label: &'static str) -> impl
     }
 }
 
-pub(super) fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
+fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
     let icons = use_context::<Icons>().unwrap_or_default();
     let turn_id = row.with_untracked(|turn| turn.id.clone());
     let endpoint = format!("{}/turns/{turn_id}/fork", chat.base());
-    let nav = use_context::<Navigation>();
     let key = format!("minarbot:fork:{turn_id}");
     let finished = move || {
         row.with(|turn| {
@@ -1247,7 +1249,7 @@ pub(super) fn answer_actions(chat: Chat, row: RwSignal<Turn>) -> impl IntoView {
                     match post::<Thread>(&endpoint, &serde_json::json!({"id": id}).to_string()).await {
                         Ok(thread) if protocol::id(&thread.agent) && protocol::id(&thread.id) => {
                             let _ = remove(&key);
-                            routes::open(nav, &format!("/agents/{}/conversations/{}", thread.agent, thread.id));
+                            crate::router::open(&format!("/agents/{}/conversations/{}", thread.agent, thread.id));
                         }
                         Ok(_) => { error.try_set("Fork response was invalid.".into()); }
                         Err(reason) => { error.try_set(reason.message); }
@@ -1682,7 +1684,10 @@ fn header(
     let preload_workflows = move |include_library| {
         workflow_owner.with_value(|owner| {
             if let Some(owner) = owner {
-                crate::lazy_route::preload_workflows(owner, include_library);
+                crate::app::preload_scoped_workflows();
+                if include_library {
+                    crate::automation::prefetch_library(owner);
+                }
             }
         });
     };
@@ -1860,8 +1865,10 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
             generation,
             generation.get_untracked(),
             abort,
-            RwSignal::new(false),
-            RwSignal::new((0.0, 0)),
+            DispatchPoll {
+                busy: RwSignal::new(false),
+                retry: RwSignal::new((0.0, 0)),
+            },
             0,
         );
     });
@@ -1920,13 +1927,13 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                 .filter(|turn| {
                     turn.id == focus
                         || (!chat.queued(turn)
-                            && !(turn.status == "cancelled"
-                                && !turn
+                            && (turn.status != "cancelled"
+                                || turn
                                     .error
                                     .as_deref()
                                     .is_some_and(|error| error.starts_with("Stopped"))
-                                && turn.activity.calls.is_empty()
-                                && turn.room.is_none())
+                                || !turn.activity.calls.is_empty()
+                                || turn.room.is_some())
                             && turn.room.as_ref().is_none_or(|room| {
                                 room["root"] == turn.id
                                     || !rows.iter().any(|root| room["root"] == root.id)
@@ -2122,7 +2129,7 @@ pub fn shell(config: ConversationConfig) -> impl IntoView {
                         <div></div>
                     </div>
                 </section>
-                {minimap::minimap(chat, rows, timeline, content, follow, last_scroll)}
+                {minimap::minimap(rows, timeline, content, follow, last_scroll)}
                 <div class="transcript-jump" hidden=move || follow.get() || chat.before().is_some() || !chat.focus.with(String::is_empty) || chat.finding.get()>
                     <button type="button" class="k-icon-btn jump-btn" aria-label="Jump to latest" on:click=move |_| to_latest()><span class="appearance-icon" inner_html=icons.chevron></span></button>
                 </div>

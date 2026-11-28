@@ -286,18 +286,11 @@ async fn static_ui(
         (file, bytes, encoded, false)
     } else if navigation(path) {
         let title = appearance::route_title(state, path, query);
-        let document = if title.is_some() {
-            appearance::document_for_route(path, query)
-        } else {
-            appearance::CONVERSATION_DOCUMENT
-        };
+        let document = appearance::APP_DOCUMENT;
         let Some(html) = appearance::load_document(&state.config.dist, document).await else {
             return Ok(appearance::recovery_page());
         };
-        let html = match title {
-            Some(title) => appearance::document(&html, title, query),
-            None => html,
-        };
+        let html = appearance::document(&html, title, query);
         (
             state.config.dist.join(document),
             html.into_bytes(),

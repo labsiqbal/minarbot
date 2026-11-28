@@ -207,7 +207,7 @@ pub const DIST_ICON: &str = "/_leptos/assets/icon.fedcba9876543210.svg";
 /// Bytes of [`DIST_SCRIPT`]; not valid UTF-8, so a re-encoding server fails.
 pub const DIST_SCRIPT_BYTES: &[u8] = b"export const fixture = 1;\n\xff\x00";
 
-/// Minimal packaged web build (`dist` option): the documents the server
+/// Minimal packaged web build (`dist` option): the document the server
 /// requires plus one hashed script and icon, so static serving is tested
 /// without building the Leptos client.
 pub fn web_dist(root: &minarbot_testkit::TestRoot) -> Result<std::path::PathBuf> {
@@ -218,9 +218,7 @@ pub fn web_dist(root: &minarbot_testkit::TestRoot) -> Result<std::path::PathBuf>
          <link rel=\"icon\" href=\"{DIST_ICON}\"><script type=\"module\" src=\"{DIST_SCRIPT}\"></script>\
          </head><body></body></html>"
     );
-    for document in ["appearance.html", "workflows.html", "conversation.html"] {
-        std::fs::write(dist.join("_leptos").join(document), &page)?;
-    }
+    std::fs::write(dist.join("_leptos/app.html"), &page)?;
     std::fs::write(assets.join("app.0123456789abcdef.js"), DIST_SCRIPT_BYTES)?;
     std::fs::write(
         assets.join("icon.fedcba9876543210.svg"),

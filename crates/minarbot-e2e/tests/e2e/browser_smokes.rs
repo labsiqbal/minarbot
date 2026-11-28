@@ -422,10 +422,12 @@ async fn main_routes_render_without_errors() -> Result<()> {
     browser::smoke("routes", async |page: &Browser| {
         page.goto(&app.url(&format!("/agents/{agent}"))).await?;
         page.find("textbox", "Message Smoke Agent").await?;
+        mark_document(page).await?;
         for name in ["Routines", "Workflows", "Automation calendar"] {
             page.click("button", name).await?;
             page.find("heading", name).await?;
             page.expect_clean(name)?;
+            same_document(page, name).await?;
         }
         page.click("link", "Settings").await?;
         let nav = page.find("navigation", "Settings").await?;
@@ -436,7 +438,79 @@ async fn main_routes_render_without_errors() -> Result<()> {
             page.click_element(button).await?;
             page.find("heading", section).await?;
             page.expect_clean(section)?;
+            same_document(page, section).await?;
         }
+        // Settings closes onto the calendar it opened over.
+        page.click("button", "Close settings").await?;
+        page.gone("navigation", "Settings").await?;
+        page.find("heading", "Automation calendar").await?;
+        same_document(page, "Close settings").await?;
+        page.evaluate("history.back()").await?;
+        page.find("navigation", "Settings").await?;
+        same_document(page, "history.back()").await?;
+        page.expect_clean("history.back()")?;
+        Ok(())
+    })
+    .await
+}
+
+/// Marks the loaded document so [`same_document`] can tell an in-app
+/// route change from a page load.
+async fn mark_document(page: &Browser) -> Result<()> {
+    page.evaluate("window.__noReload = 1").await?;
+    Ok(())
+}
+
+async fn same_document(page: &Browser, step: &str) -> Result<()> {
+    let marked = page.evaluate("window.__noReload === 1").await?;
+    ensure!(marked == json!(true), "{step} loaded a new document");
+    Ok(())
+}
+
+#[tokio::test]
+async fn workspace_routes_load_directly() -> Result<()> {
+    let root = TestRoot::new()?;
+    let model = catalog_model().await?;
+    let app = start(&root).await?;
+    seed_instance(&app, &root, &model).await?;
+    let agent = minarbot_testkit::providers::AgentSpec::new("Smoke Agent")
+        .field("model", MODELS[0])
+        .instance("smoke-codex")
+        .create(&app)
+        .await?;
+    let agent = agent["id"].as_str().ok_or("agent id")?.to_owned();
+    let project = new_id();
+    app.post_expect(
+        "/api/projects",
+        json!({"id": project, "name": "Smoke Project"}),
+        200,
+    )
+    .await?;
+    browser::smoke("direct-routes", async |page: &Browser| {
+        page.goto(&app.url("/routines")).await?;
+        page.find("heading", "Routines").await?;
+        page.expect_clean("/routines")?;
+
+        page.goto(&app.url(&format!("/projects/{project}?projectTab=calendar")))
+            .await?;
+        page.find("heading", "Smoke Project").await?;
+        page.find("tabpanel", "Calendar").await?;
+        page.expect_clean("project calendar")?;
+
+        page.goto(&app.url(&format!("/workflows?agent={agent}&from=/agents/{agent}")))
+            .await?;
+        page.find("heading", "Workflows").await?;
+        page.wait_text("Workflow library").await?;
+        page.expect_clean("agent workflows")?;
+
+        page.goto(&app.url("/settings/general")).await?;
+        page.find("heading", "General").await?;
+        page.expect_clean("/settings/general")?;
+        mark_document(page).await?;
+        page.click("button", "Close settings").await?;
+        page.find("textbox", "Message Smoke Agent").await?;
+        same_document(page, "Close settings").await?;
+        page.expect_clean("chat after Settings")?;
         Ok(())
     })
     .await
