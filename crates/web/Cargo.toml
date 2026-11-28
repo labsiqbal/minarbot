@@ -34,7 +34,7 @@ web-sys = { version = "=0.3.107", features = [
     "File", "FileList", "FocusOptions", "FormData", "History", "HtmlAnchorElement", "HtmlDetailsElement",
     "HtmlCanvasElement", "HtmlDialogElement", "HtmlDocument", "HtmlFormElement", "HtmlImageElement", "HtmlInputElement", "HtmlTextAreaElement",
     "Location", "MediaQueryList", "MessageEvent", "Navigator", "NodeList", "Notification",
-    "NotificationOptions", "NotificationPermission", "ScrollIntoViewOptions", "ScrollLogicalPosition", "PopStateEvent", "ResizeObserver", "SpeechSynthesis",
+    "NotificationOptions", "NotificationPermission", "PointerEvent", "ScrollIntoViewOptions", "ScrollLogicalPosition", "PopStateEvent", "ResizeObserver", "SpeechSynthesis",
     "SpeechSynthesisUtterance", "SpeechSynthesisVoice", "Storage", "StorageEvent", "SubmitEvent", "SubtleCrypto", "Url", "UrlSearchParams", "VisibilityState",
 ] }
 

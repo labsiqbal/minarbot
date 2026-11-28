@@ -625,6 +625,161 @@ async fn phone_layout_pages_sheets_and_back() -> Result<()> {
     .await
 }
 
+/// On a wide screen both panes resize by pointer and keyboard, stay inside
+/// their bounds and beside a 420 px chat, keep their widths across in-app
+/// routes and a reload, and a double-click restores the default. Phones
+/// show no handles.
+#[tokio::test]
+async fn sidebar_and_details_panel_resize_and_keep_their_widths() -> Result<()> {
+    let root = TestRoot::new()?;
+    let model = catalog_model().await?;
+    let app = start(&root).await?;
+    seed_instance(&app, &root, &model).await?;
+    let agent = minarbot_testkit::providers::AgentSpec::new("Smoke Agent")
+        .field("model", MODELS[0])
+        .instance("smoke-codex")
+        .create(&app)
+        .await?;
+    let agent = agent["id"].as_str().ok_or("agent id")?.to_owned();
+    let chat = app.url(&format!("/agents/{agent}"));
+    browser::smoke("resize", async |page: &Browser| {
+        page.goto(&chat).await?;
+        page.find("textbox", "Message Smoke Agent").await?;
+        let sidebar = page.find("separator", "Resize sidebar").await?;
+        let details = page.find("separator", "Resize details panel").await?;
+        widths(page, [300, 360], "default").await?;
+        ensure!(
+            separator(page, sidebar).await? == json!(["220", "480", "300"]),
+            "sidebar separator values: {}",
+            separator(page, sidebar).await?
+        );
+
+        page.drag(sidebar, 80.0).await?;
+        widths(page, [380, 360], "sidebar dragged").await?;
+        page.drag(details, -100.0).await?;
+        widths(page, [380, 460], "panel dragged").await?;
+        page.expect_clean("drag")?;
+
+        // 1280 px minus the 460 px panel and the 420 px chat leaves 400.
+        page.on(sidebar, "function() { this.focus(); }").await?;
+        page.key("ArrowLeft").await?;
+        widths(page, [364, 460], "ArrowLeft").await?;
+        page.key("Shift+ArrowLeft").await?;
+        widths(page, [300, 460], "Shift+ArrowLeft").await?;
+        page.key("Home").await?;
+        widths(page, [220, 460], "Home").await?;
+        page.key("End").await?;
+        widths(page, [400, 460], "End").await?;
+        page.key("ArrowLeft").await?;
+        page.on(details, "function() { this.focus(); }").await?;
+        page.key("ArrowLeft").await?;
+        widths(page, [384, 476], "panel ArrowLeft").await?;
+        page.key("End").await?;
+        widths(page, [384, 476], "panel End beside the sidebar").await?;
+        page.key("ArrowRight").await?;
+        widths(page, [384, 460], "panel ArrowRight").await?;
+
+        mark_document(page).await?;
+        page.click("button", "Routines").await?;
+        page.find("heading", "Routines").await?;
+        until_value(
+            "sidebar width on Routines",
+            || async { pane_width(page, ".leptos-workspace > .sidebar").await },
+            |width| width == &json!(384),
+        )
+        .await?;
+        page.evaluate("history.back()").await?;
+        page.find("textbox", "Message Smoke Agent").await?;
+        widths(page, [384, 460], "back in the chat").await?;
+        same_document(page, "resize routes").await?;
+
+        page.reload().await?;
+        page.find("textbox", "Message Smoke Agent").await?;
+        widths(page, [384, 460], "after reload").await?;
+        let sidebar = page.find("separator", "Resize sidebar").await?;
+        ensure!(
+            separator(page, sidebar).await? == json!(["220", "400", "384"]),
+            "restored sidebar separator values: {}",
+            separator(page, sidebar).await?
+        );
+
+        page.double_click(sidebar).await?;
+        widths(page, [300, 460], "sidebar double-click").await?;
+        page.double_click(page.find("separator", "Resize details panel").await?)
+            .await?;
+        page.reload().await?;
+        page.find("textbox", "Message Smoke Agent").await?;
+        widths(page, [300, 360], "defaults after reload").await?;
+        page.expect_clean("resize journey")?;
+        Ok(())
+    })
+    .await?;
+    browser::smoke("resize-phone", async |page: &Browser| {
+        page.phone(390, 844).await?;
+        page.goto(&chat).await?;
+        page.evaluate(
+            "localStorage.setItem('minarbot:sidebar-width', '480'); \
+             localStorage.setItem('minarbot:details-width', '600')",
+        )
+        .await?;
+        page.reload().await?;
+        page.find("textbox", "Message Smoke Agent").await?;
+        page.click("button", "Show details").await?;
+        let panel = page.find("dialog", "Conversation panel").await?;
+        full_screen(page, panel, "details sheet with stored widths").await?;
+        let handles = page.query("separator", None, None).await?;
+        ensure!(
+            !handles.iter().any(|(_, name)| name.starts_with("Resize")),
+            "phone shows resize handles: {handles:?}"
+        );
+        page.click("button", "Close details").await?;
+        page.click("button", "Back to agents").await?;
+        page.find("navigation", "Choose agent").await?;
+        fits(page, "agent list with stored widths").await?;
+        let handles = page.query("separator", None, None).await?;
+        ensure!(
+            !handles.iter().any(|(_, name)| name.starts_with("Resize")),
+            "phone list shows resize handles: {handles:?}"
+        );
+        Ok(())
+    })
+    .await
+}
+
+/// The rendered width of the first element matching `selector`, rounded.
+async fn pane_width(page: &Browser, selector: &str) -> Result<Value> {
+    page.evaluate(&format!(
+        "(e => e ? Math.round(e.getBoundingClientRect().width) : null)(document.querySelector({}))",
+        json!(selector)
+    ))
+    .await
+}
+
+/// Wait until the sidebar and the open details panel are `want` wide.
+async fn widths(page: &Browser, want: [u64; 2], step: &str) -> Result<()> {
+    until_value(
+        step,
+        || async {
+            Ok(json!([
+                pane_width(page, ".leptos-workspace > .sidebar").await?,
+                pane_width(page, ".conversation-panel-shell[open]").await?,
+            ]))
+        },
+        |widths| widths == &json!(want),
+    )
+    .await?;
+    Ok(())
+}
+
+/// A separator's `aria-valuemin`, `aria-valuemax` and `aria-valuenow`.
+async fn separator(page: &Browser, element: Element) -> Result<Value> {
+    page.on(
+        element,
+        "function() { return ['aria-valuemin', 'aria-valuemax', 'aria-valuenow'].map(n => this.getAttribute(n)); }",
+    )
+    .await
+}
+
 /// No page wider than the screen: neither the document nor its main panes.
 async fn fits(page: &Browser, step: &str) -> Result<()> {
     let overflow = page

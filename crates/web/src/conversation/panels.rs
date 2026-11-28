@@ -1243,6 +1243,8 @@ fn right_panel_impl(chat: Chat) -> impl IntoView {
     let drawer = NodeRef::<leptos::html::Dialog>::new();
     let narrow = RwSignal::new(details_overlay());
     let embedded = use_context::<EmbeddedStep>().is_some();
+    // A workflow step's panel sits inside the step, not beside the chat.
+    let widths = use_context::<crate::panel_resize::Widths>().filter(|_| !embedded);
     let resize = window_event_listener(leptos::ev::resize, move |_| {
         let overlay = details_overlay();
         if embedded && overlay && !narrow.get_untracked() {
@@ -1293,12 +1295,21 @@ fn right_panel_impl(chat: Chat) -> impl IntoView {
                 }
             }
         }
+        if let Some(widths) = widths {
+            request_animation_frame(move || widths.fit());
+        }
         overlay
     });
     view! {
         <div class="right-panel-backdrop conversation-panel-backdrop" aria-hidden="true"></div>
-        <dialog class="conversation-panel-shell" class:is-overlay=narrow node_ref=drawer aria-label="Conversation panel"
+        <dialog class="conversation-panel-shell" class:is-overlay=narrow class:is-resizable=widths.is_some()
+            node_ref=drawer aria-label="Conversation panel"
             on:cancel=move |event: web_sys::Event| { event.prevent_default(); chat.set_details(false); }>
+        {widths.map(|_| view! {
+            <Show when=move || !narrow.get()>
+                {crate::panel_resize::handle(crate::panel_resize::Pane::Details)}
+            </Show>
+        })}
         <aside class="details right-panel conversation-panel bs-root" aria-label="Conversation details">
             <div class="right-panel__header"><div>
                 {agent.as_ref().filter(|_| !embedded).map(|agent| if agent.builtin {

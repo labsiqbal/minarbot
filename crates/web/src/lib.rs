@@ -26,6 +26,7 @@ mod memory;
 mod messaging_connections;
 mod onboarding;
 mod pairing;
+mod panel_resize;
 mod project_integrations;
 mod projects;
 mod provider_icons;

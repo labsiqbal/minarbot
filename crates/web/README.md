@@ -59,6 +59,17 @@ register in `routes::SettingsRoute`; use `settings::section_url` to preserve
 `from`. A lazy chunk's view builds once: reads while it builds do not rebuild
 it. Do not write signals in `on_cleanup`; routes now unmount in place.
 
+## Pane widths
+
+From 768 px up, the sidebar (220-480 px, default 300) and the conversation
+details panel (280-600 px, default 360) have a `separator` handle on their
+inner edge: drag it, use the arrow keys (Shift for 64 px steps, Home and End
+for the bounds), or double-click it for the default width. `panel_resize`
+keeps both widths per browser in local storage, bounds them so the chat
+keeps 420 px, and writes `--sidebar-width` and `--details-width` on the root
+element before the shell first renders. A pane never resized has no
+property and keeps its stylesheet width.
+
 ## Phone layout
 
 Below 768 px (`router::PHONE`, the same width as `assets/ui/phone.css`) the
