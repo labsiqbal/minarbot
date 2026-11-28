@@ -1,0 +1,7 @@
+.general-time-zone { flex-shrink: 1; min-width: 0; }
+.general-time-zone .connection-select { width: 18rem; max-width: 100%; }
+
+@media (max-width: 767px) {
+  .general-time-zone-row { flex-wrap: wrap; }
+  .general-time-zone-row .k-row__main { flex-basis: 100%; }
+}

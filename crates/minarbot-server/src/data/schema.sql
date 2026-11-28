@@ -9,8 +9,6 @@ CREATE TABLE IF NOT EXISTS delivery_conversations(
     thread TEXT PRIMARY KEY REFERENCES threads(id),sender TEXT NOT NULL,machine TEXT,activity INTEGER NOT NULL,settled_at INTEGER) STRICT;
     CREATE TABLE IF NOT EXISTS conversation_settings(id INTEGER PRIMARY KEY CHECK(id=1),auto_archive INTEGER NOT NULL CHECK(auto_archive IN (0,1))) STRICT;
     INSERT OR IGNORE INTO conversation_settings VALUES (1,1);
-    CREATE TABLE IF NOT EXISTS web_search_settings(id INTEGER PRIMARY KEY CHECK(id=1),url TEXT) STRICT;
-    INSERT OR IGNORE INTO web_search_settings VALUES (1,NULL);
     CREATE TRIGGER IF NOT EXISTS delivery_activity_insert AFTER INSERT ON turns WHEN NEW.thread IS NOT NULL BEGIN
       UPDATE delivery_conversations SET activity=CAST(unixepoch('subsec')*1000 AS INTEGER),settled_at=NULL WHERE thread=NEW.thread;
     END;

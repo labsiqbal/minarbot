@@ -64,7 +64,7 @@ async fn declarations(state: &AppState, caller: &Value) -> Result<Vec<Value>> {
                         [string(&turn, "id")],
                     )?
                     .is_some());
-            web_access = crate::turns::web::access(state, db, string(caller, "agent"))?;
+            web_access = crate::turns::web::access(db, string(caller, "agent"))?;
             harness::specs(state, db, &turn)?
         };
         for spec in native_specs {

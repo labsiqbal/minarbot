@@ -114,7 +114,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
     let binding = workspace(state, db, turn)?;
     let bound = binding.is_some();
     let writable = bound && binding.as_ref().is_some_and(|b| b.write);
-    let web_access = super::web::access(state, db, string(turn, "agent"))?;
+    let web_access = super::web::access(db, string(turn, "agent"))?;
     let docs_enabled = super::library_docs::enabled(db, string(turn, "agent"))?;
     specs.retain(|t| match string(&t["function"], "name") {
         "read_history" | "read_message" | "read_attachment" | "create_text_file"
@@ -122,7 +122,7 @@ pub fn offered(state: &AppState, db: &Connection, turn: &Value) -> Result<Vec<Va
         | "search_memory" | "recall" | "reflect" | "remember" | "search_history"
         | "verify_result" | "wait_for_event" | "list_data_tables" | "query_data" => true,
         "project_stack" | "library_docs" => docs_enabled,
-        "web_fetch" | "web_search" => web_access.offered(string(&t["function"], "name")),
+        "web_fetch" => web_access.offered(string(&t["function"], "name")),
         "html_render" | "html_preview" => crate::files::rich_html::available(state, turn),
         "read_provider_settings" => private,
         "generate_image" => state.config.media.image_provider.is_some(),
@@ -297,7 +297,7 @@ pub async fn run(state: &AppState, turn: &Value, call: &Value) -> Result<Value> 
     if name == "generate_image" {
         return super::media::generate(state, turn, call, &args).await;
     }
-    if ["web_fetch", "web_search"].contains(&name) {
+    if name == "web_fetch" {
         let result = super::web::run(state, turn, name, &args).await?;
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         journal(&guard.connection, turn, call, &result)?;

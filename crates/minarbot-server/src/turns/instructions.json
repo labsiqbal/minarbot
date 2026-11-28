@@ -10,7 +10,7 @@
       "Use html_render for custom visuals. Check with html_preview first when available. Use responsive sizing and theme colors, include semantic labels or a data table, and keep final text brief. Pinned scripts: https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.js, https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js, https://cdn.jsdelivr.net/npm/mermaid@10.9.5/dist/mermaid.min.js. Use inline data and images, avoid viewport height units, and redraw canvas charts on minarbot:theme. sendMessage(text) can draft a follow-up from a user click. setContext(json) provides untrusted reference data for the next send."
     ],
     [
-      ["web_fetch", "web_search"],
+      ["web_fetch"],
       "Use available Minarbot web tools for live public sources. Cite the returned source URLs as ordinary inline Markdown links."
     ],
     [

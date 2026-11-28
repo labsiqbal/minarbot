@@ -10,7 +10,7 @@
 @import "./assets/ui/minarbot.css";
 @import "./assets/ui/kit.css";
 @import "./assets/ui/density.css";
-@import "./assets/ui/web-search-settings.css";
+@import "./assets/ui/general-settings.css";
 @import "./assets/ui/agent-email.css";
 @import "./assets/whatsapp-settings.css";
 @import "./assets/hub/hub.css";
@@ -79,7 +79,8 @@ dialog.k-dialog:modal { overflow: visible; }
 
 @media (max-width: 767px) {
   .leptos-workspace .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 81; max-width: calc(100vw - 40px); }
-  .leptos-workspace .sidebar :is(.sidebar__controls, .sidebar__footer) .k-icon-btn { width: 44px; height: 44px; }
+  .leptos-workspace .sidebar .sidebar__controls .k-icon-btn { width: 44px; height: 44px; }
+  .leptos-workspace .sidebar .sidebar__footer .k-icon-btn { width: 40px; height: 40px; }
 }
 .leptos-workspace .project-dialog:not([open]) { display: none; }
 .leptos-workspace .project-dialog { inset: 50% auto auto 50%; margin: 0; color: var(--color-text-primary); }
